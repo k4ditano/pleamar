@@ -8,6 +8,7 @@ mod escena;
 mod escenas;
 mod formas;
 mod gpu;
+mod lenguaje;
 mod logica;
 mod plataforma;
 mod render;
@@ -20,7 +21,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const AYUDA: &str = "pleamar [opciones]
-  --escena NOMBRE     marea (por defecto), isla, cara, muestrario o enjambre (PLEAMAR_N formas)
+  --escena NOMBRE     un fichero de escena (.plm), que se recarga solo al guardarlo; o una de las
+                      escritas en Rust: marea (por defecto), isla, cara, muestrario, enjambre
+  --comprobar FICHERO lee una escena, dice si está bien y sale
   --pantalla NOMBRES  «todas», o monitores separados por comas (por defecto, lo que pida la escena).
                       Un nombre repetido da dos superficies en el mismo monitor.
   --bloqueo MS        lo que se bloquea la lógica tras cada decisión (600)
@@ -55,6 +58,19 @@ fn args() -> Args {
         let mut valor = || it.next().unwrap_or_else(|| { eprintln!("{AYUDA}"); std::process::exit(2) });
         match op.as_str() {
             "--escena" => a.escena = valor(),
+            "--comprobar" => {
+                let ruta = valor();
+                std::process::exit(match escenas::de_fichero::leer(&ruta) {
+                    Ok(e) => {
+                        println!("{ruta}: bien · {} propiedades, {} instrucciones, {} capas, {} reglas, {} zonas, {} gestos", e.props.len(), e.instrs.len(), e.capas.len(), e.reglas.len(), e.zonas.len(), e.gestos.len());
+                        0
+                    }
+                    Err(m) => {
+                        eprintln!("{m}");
+                        1
+                    }
+                });
+            }
             "--pantalla" => a.pantalla = Some(valor()),
             "--bloqueo" => a.bloqueo = valor().parse().expect("--bloqueo quiere milisegundos"),
             "--raton" => a.raton = Some(valor()),
@@ -81,8 +97,9 @@ fn main() {
         "cara" => Box::<escenas::cara::Cara>::default(),
         "muestrario" => Box::<escenas::muestrario::Muestrario>::default(),
         "enjambre" => Box::<escenas::enjambre::Enjambre>::default(),
+        ruta if std::path::Path::new(ruta).is_file() => Box::new(escenas::de_fichero::DeFichero::nueva(ruta)),
         otra => {
-            eprintln!("no conozco la escena «{otra}»\n{AYUDA}");
+            eprintln!("no conozco la escena «{otra}», ni es un fichero\n{AYUDA}");
             std::process::exit(2)
         }
     };
@@ -110,6 +127,9 @@ fn main() {
         a.bloqueo
     );
     let _ = a_render.send(ARender::Escena(escena));
+    if std::path::Path::new(&a.escena).is_file() {
+        escenas::de_fichero::vigilar(a.escena.clone(), a_render.clone());
+    }
     let render = {
         let bloqueada = bloqueada.clone();
         let op = render::Opciones { hud: a.hud, ingenuo: a.ingenuo, reducido: a.reducido, sin_vsync: a.sin_vsync, arranque };

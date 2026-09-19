@@ -131,7 +131,10 @@ pub fn hilo(
                             viejas.iter().find(|(n, _)| n == nombre).map(|(_, a)| *a).unwrap_or(Animada::en(*inicial, *muelle))
                         })
                         .collect();
-                    hechos = nueva.hechos.iter().map(|h| h.1).collect();
+                    // Lo que era verdad y lo que ponían los textos también sobrevive: al
+                    // recargar en caliente, la escena sigue donde estaba.
+                    let en_caliente = !escena.props.is_empty();
+                    hechos = nueva.hechos.iter().map(|(n, inicial)| escena.hechos.iter().position(|h| h.0 == *n).map_or(*inicial, |k| hechos[k])).collect();
                     dentro = vec![false; nueva.zonas.len()];
                     parpadeos = nueva
                         .comportamientos
@@ -143,7 +146,7 @@ pub fn hilo(
                             _ => None,
                         })
                         .collect();
-                    capas = nueva.capas.iter().map(|c| EstadoCapa::nueva(c.reclamaciones.len())).collect();
+                    capas = nueva.capas.iter().map(|c| EstadoCapa::nueva(c.reclamaciones.len(), en_caliente)).collect();
                     reglas = nueva
                         .reglas
                         .iter()
@@ -158,7 +161,7 @@ pub fn hilo(
                     gesto = None;
                     pendientes.clear();
                     tam = (nueva.superficie.ancho as f32, nueva.superficie.alto as f32 + if op.hud { ALTO_INSTRUMENTOS } else { 0.0 });
-                    textos = nueva.textos.iter().map(|t| t.1.clone()).collect();
+                    textos = nueva.textos.iter().map(|(n, inicial)| escena.textos.iter().position(|t| t.0 == *n).map_or_else(|| inicial.clone(), |k| textos[k].clone())).collect();
                     atlas_por_rehacer = true;
                     println!(
                         "render · escena: {} propiedades, {} instrucciones, {} hechos, {} capas, {} gestos, {} reglas, {} zonas",
@@ -398,7 +401,10 @@ pub fn hilo(
                 .unwrap_or(capa.reclamaciones.len().saturating_sub(1));
             citas.extend(est.hasta.iter().flatten().filter(|h| **h > ahora));
             if est.gana != Some(gana) {
-                let primera_vez = est.gana.is_none();
+                // Recién cargada, una capa se posa donde toca. Recargada en caliente
+                // no: si el fichero cambió un destino, se va hacia él con su muelle.
+                let primera_vez = est.gana.is_none() && !est.en_caliente;
+                let callada = est.gana.is_none();
                 let antes = est.gana.map_or("—", |k| capa.reclamaciones[k].nombre);
                 est.gana = Some(gana);
                 let r = &capa.reclamaciones[gana];
@@ -416,7 +422,7 @@ pub fn hilo(
                         pendientes.push((ahora + t.retraso, t.clone()));
                     }
                 }
-                if !primera_vez {
+                if !primera_vez && !callada {
                     println!("capa {} · {} → {}", capa.nombre, antes, r.nombre);
                     let _ = a_logica.send(Evento::Capa(capa.nombre, r.nombre));
                 }
@@ -660,14 +666,15 @@ fn repartir_el_ritmo(g: &Gpu, laminas: &mut [Lamina], tam: (f32, f32), sin_vsync
 }
 
 struct EstadoCapa {
+    en_caliente: bool,
     gana: Option<usize>,
     hasta: Vec<Option<Instant>>,
     encendida: Vec<bool>,
 }
 
 impl EstadoCapa {
-    fn nueva(n: usize) -> Self {
-        EstadoCapa { gana: None, hasta: vec![None; n], encendida: vec![false; n] }
+    fn nueva(n: usize, en_caliente: bool) -> Self {
+        EstadoCapa { en_caliente, gana: None, hasta: vec![None; n], encendida: vec![false; n] }
     }
 }
 

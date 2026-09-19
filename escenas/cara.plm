@@ -1,0 +1,100 @@
+// La cara de Marea: una capa `shape` con reclamaciones por prioridad, y gestos
+// por fotogramas. Aquí no hay lógica ninguna: todo lo dispara el reloj.
+
+scene Face {
+    surface { size: 720, 216; anchor: top; margin: 40; screens: "HDMI-A-1" }
+
+    fact recording = false
+    fact searching = false
+    event confirmed
+    event urgent
+
+    // De más a menos. Dejar de buscar no puede borrar el disco rojo: nadie
+    // borra nada, solo deja de reclamar.
+    layer shape ~quick {
+        rec     while recording
+        alert   for 700ms after urgent
+        happy   for 620ms after confirmed
+        lens    while searching
+        eyes
+    }
+
+    // La pose, en las unidades de Marea: lo que un gesto lleva de la mano.
+    pose eyes   = 14
+    pose wide   = 6
+    pose gap    = 16
+    pose tilt   = 0
+    pose sx     = 1
+    pose sy     = 1
+    pose lift   = 0
+    pose look.x = 0
+    pose look.y = 0
+
+    prop eyelid = 1
+    prop gaze.x = 0 ~eyes
+    prop gaze.y = 0 ~eyes
+
+    let s  = 1.5                       // la bolita, a vez y media
+    let cx = 360
+    let cy = 108 + lift * s
+    let ex = look.x * s + gaze.x       // adónde miran los ojos
+    let ey = look.y * s + gaze.y
+
+    body {
+        color: #151616; rim: 5%; light: 3%, 66, 84; shadow: 0, 12, 34, 34%
+        ellipse face { at: cx, cy; radius: 42; scale: sx, sy }
+    }
+
+    // La cara entera gira con la cabeza.
+    group {
+        pivot: cx, cy
+        rotate: tilt * 0.01745
+        clip inset 3 ellipse { at: cx, cy; radius: 42; scale: sx, sy }
+
+        // Una forma solo se ve con más de media presencia: como las de una capa
+        // suman uno, una se va y entra la otra, en vez de fundirse en un borrón.
+        box     { at: cx + ex - gap * 0.75, cy + ey; size: wide * s, max(eyes * s * eyelid, 3.2); corner: wide * 0.75; color: #f5f7f5; opacity: smooth(0.5, 1, shape.eyes + shape.rec) }
+        box     { at: cx + ex + gap * 0.75, cy + ey; size: wide * s, max(eyes * s * eyelid, 3.2); corner: wide * 0.75; color: #f5f7f5; opacity: smooth(0.5, 1, shape.eyes) }
+        ellipse { at: cx + ex + gap * 0.75, cy + ey; radius: shape.rec * 9.75; color: #ed3b33; opacity: smooth(0.5, 1, shape.rec) }
+
+        arc     { at: cx + ex - gap * 0.75, cy + ey + 3.75; radius: 6.9; span: 138deg; width: 4; color: #f5f7f5; opacity: smooth(0.5, 1, shape.happy) }
+        arc     { at: cx + ex + gap * 0.75, cy + ey + 3.75; radius: 6.9; span: 138deg; width: 4; color: #f5f7f5; opacity: smooth(0.5, 1, shape.happy) }
+
+        box     { at: cx, cy - 6; size: 6.9, 21; corner: 3.45; color: #fac252; opacity: smooth(0.5, 1, shape.alert) }
+        ellipse { at: cx, cy + 13.5; radius: 4; color: #fac252; opacity: smooth(0.5, 1, shape.alert) }
+
+        ellipse { at: cx + ex - 3.75, cy + ey - 3; radius: 9.3; stroke: 3.9; color: #f5f7f5; opacity: smooth(0.5, 1, shape.lens) }
+        line    { from: cx + ex + 4.35, cy + ey + 5.1; to: cx + ex + 10.65, cy + ey + 11.4; width: 4.35; color: #f5f7f5; opacity: smooth(0.5, 1, shape.lens) }
+    }
+
+    blink eyelid every 2.5s..7s for 170ms
+    look gaze.x, gaze.y at cx, 108 reach 7.5, 4.8 within 160
+
+    // Los fotogramas de Marea, tal cual están en su ExpressionController.
+    gesture nod reflex {
+        130ms out_quad { look.y: 4; eyes: 10 }
+        170ms out_back { eyes: 15 }
+        160ms
+    }
+    gesture joy asked {
+        130ms in_quad          { eyes: 5; wide: 8; sx: 1.12; sy: 0.78; lift: 5 }
+        90ms  out_quad         { eyes: 5; wide: 8; sx: 0.90; sy: 1.12; lift: -3 }
+        150ms out_quad hold 35ms { eyes: 5; wide: 8; sx: 0.99; sy: 1.03; lift: -9; tilt: -5 }
+        140ms in_quad          { eyes: 5; wide: 8; sx: 0.94; sy: 1.08; lift: -1; tilt: 2 }
+        105ms out_quad         { eyes: 5; wide: 8; sx: 1.12; sy: 0.80; lift: 5 }
+        150ms out_quad         { eyes: 5; wide: 8; sx: 0.98; sy: 1.04; lift: -4; tilt: 3 }
+        130ms in_quad          { eyes: 5; wide: 8; sx: 1.04; sy: 0.94; lift: 1 }
+        200ms
+    }
+    posture working while searching and not recording {
+        320ms hold 60ms { eyes: 9; wide: 7; tilt: -5; look.x: -2 }
+        360ms hold 60ms { eyes: 9; wide: 7; tilt: 5;  look.x: 2 }
+        260ms           { eyes: 11 }
+    }
+
+    // El guion, a reloj: graba, busca, confirma con alegría, y deja de grabar.
+    on demo          { toggle recording }
+    every 1.7s..1.7s { toggle searching }
+    every 2.3s..2.3s { emit confirmed; play joy }
+    every 5.1s..5.1s { emit urgent; play nod }
+}

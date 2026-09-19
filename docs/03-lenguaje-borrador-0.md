@@ -1,5 +1,7 @@
 # El lenguaje — borrador 0
 
+> **Histórico.** Este es el boceto, con palabras clave en castellano, de antes de implementarlo. Lo que funciona de verdad está en [[pleamar · 09 El lenguaje v0]].
+
 **Estado:** borrador para discutir. Nada de esto tiene parser todavía. Sale de los bocetos A+B ([[pleamar · 06 Bocetos A-B-C]]) corregidos por la prueba con Marea ([[pleamar · 04 Prueba - cabe Marea]]).
 
 **Sin nombre todavía**, ni extensión de fichero. Las palabras clave están en castellano a la espera de decidirlo ([[pleamar · 05 Decisiones y preguntas abiertas]]).

@@ -19,6 +19,22 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 
 ## Pendientes
 
+### El lenguaje
+
+| # | Limitación | Gravedad | Cómo se arregla |
+| --- | --- | --- | --- |
+| G1 | **Sin componentes, sin `repeat` y sin layout.** No se puede hacer una lista de notificaciones ni un lanzador | 🔴 | `component Chip(label) { … }`, `repeat i in 0..12 { … }` sobre un número o sobre una lista que ponga la lógica, y `row`/`column` con `taffy`, donde el layout pone *destinos* y los muelles van hacia ellos |
+| G2 | **Una escena de fichero no tiene lógica propia**: la acompaña un guion mínimo en Rust que solo escucha | 🔴 | Punto 5: un bloque o un fichero Luau al lado, con `on("view_event", …)`, `fact.open = true`, `text["notice.title"] = …` |
+| G3 | Los destinos de una capa y los valores de un fotograma son **números, no expresiones**: `orb.x: 140`, no `orb.x: center - 220`. Tampoco hay gestos con parámetros | 🟡 | Que `Transicion` y `Fotograma` guarden expresiones y se evalúen al dispararse. Tacha también L3 |
+| G4 | Se lee de arriba abajo, una vez: lo que se usa tiene que estar declarado antes, y una capa tiene que ir antes del dibujo que mire su presencia | 🟡 | Dos pasadas: primero recoger todas las declaraciones, luego resolver |
+| G5 | Solo se informa del **primer** error, y los mensajes están en castellano aunque las palabras clave sean inglesas | 🟡 | Seguir tras un error por bloque y juntar los fallos; catálogo de mensajes en inglés (y castellano) |
+| G6 | No hay colores con nombre (`let mint = #9ed6bd`), ni un color como propiedad animada; solo literales y `mix(#a, #b, t)` | 🟡 | `let` con tipo —número o color— y `prop` de color con tres muelles |
+| G7 | Al recargar no se aplican los cambios de `surface` (S1), y el gesto que estuviera sonando y los retrasos pendientes se pierden | ⚪ | Reconfigurar la superficie; conservar el gesto si sigue existiendo con ese nombre |
+| G8 | Cada recarga deja unos bytes sin liberar: los nombres se guardan como `&'static str` | ⚪ | Nombres internados (`Arc<str>`) en vez de fugas |
+| G9 | **Sin ayuda en el editor**: ni colores, ni autocompletado, ni errores mientras se escribe | 🟡 | Una gramática de tree-sitter para el resaltado, y un LSP pequeño que reutilice este mismo parser: los fallos ya vienen con su sitio |
+| G10 | Toda forma con nombre es una zona y para el clic, aunque el nombre fuera solo para leer mejor; una sin nombre no se puede pulsar | ⚪ | `active: false` lo apaga hoy. Mejor: que sea zona solo si alguna regla la nombra |
+| G11 | La recarga mira la fecha del fichero cuatro veces por segundo | ⚪ | Vale en los tres sistemas, que es por lo que se hizo así. Si molesta: el crate `notify` |
+
 ### Texto e imágenes
 
 | # | Limitación | Gravedad | Cómo se arregla |
@@ -70,9 +86,8 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | L3 | Los gestos no tienen parámetros (`point(side)`) | 🟡 | Fotogramas con expresiones en vez de números, evaluadas al empezar el gesto |
 | L4 | Lo que emite un fotograma se atiende en el frame siguiente, y lo del *primero* se ignora | ⚪ | Procesar los sucesos del gesto en el mismo bucle que los demás |
 | L5 | Los hechos son números. Hay textos vivos, pero no símbolos (`dropping: page`) | 🟡 | Un tipo símbolo internado: un número por nombre |
-| L6 | Una zona bajo transformaciones hay que declararla a mano | ⚪ | Con el árbol del lenguaje saldrá sola |
 | L7 | El movimiento reducido arranca y no se cae, pero no está mirado con capturas | 🟡 | Mirarlo |
-| L8 | **Las escenas se escriben en Rust.** Sin parser, sin recarga en caliente, y la lógica es un `trait` de Rust, no Luau | 🔴 | Puntos 4 y 5 |
+| L8 | La lógica es un `trait` de Rust, no Luau (ver G2) | 🔴 | Punto 5 |
 
 ## Arregladas
 
@@ -91,3 +106,5 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | 2026-09-19 | Las fuentes se buscaban con `fc-match`, que solo existe en Linux → `fontdb`, leídas en otro hilo desde el arranque |
 | 2026-09-19 | **T1** · Dar forma al texto y decodificar imágenes costaba frames (245 ms en frío) → un hilo «taller»; el render pide, no espera, y enseña lo que tenía. Ni un frame lento después del primero |
 | 2026-09-19 | **T2** · No se podía medir un texto desde una expresión → `mide`: dos propiedades que rellena el render; con `Sigue`, una caja persigue a su rótulo con un muelle |
+| 2026-09-19 | **L8 (a medias)** · Las escenas se escribían en Rust → el lenguaje v0: parser, comprobación de nombres, errores con su sitio y recarga en caliente |
+| 2026-09-19 | **L6** · Una zona bajo transformaciones había que declararla a mano → en el lenguaje, una forma con nombre hereda las de sus grupos |

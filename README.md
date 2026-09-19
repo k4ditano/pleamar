@@ -12,6 +12,8 @@ aviso que le nace del costado.
 
 ```sh
 cargo build --release
+./target/release/pleamar --escena escenas/marea.plm   # una escena escrita en el lenguaje; se recarga al guardarla
+./target/release/pleamar --comprobar escenas/cara.plm # la lee, dice si está bien, y sale
 ./target/release/pleamar                 # pasa el ratón por la bolita; botón derecho la cierra
 ./target/release/pleamar --escena isla   # otra escena, el mismo render
 ./target/release/pleamar --escena cara   # la cara de Marea: capas, gestos y su guion
@@ -25,6 +27,23 @@ enchufen después—; `--pantalla A,B` en los que digas. `--bloqueo MS` cambia l
 atasca la lógica tras cada decisión; por defecto 600 ms de espera activa.
 `--raton "360,90@500 pulsa@3200 fuera@4500"` mueve un ratón de mentira y cuenta
 cada evento que le llega a la lógica: sirve para ensayar sin tocar el de verdad.
+
+## El lenguaje
+
+Una escena se escribe en un fichero `.plm` —palabras clave en inglés— y no hace
+falta Rust: `escenas/marea.plm` es Marea entera, y `escenas/cara.plm` su cara
+con capas y gestos, sin lógica ninguna. Los errores salen al cargar, con línea,
+flecha y «¿querías decir…?»; al guardar, la escena se recarga sin perder valores,
+velocidades, hechos ni textos. La referencia está en `docs/09-lenguaje-v0.md`.
+
+```
+layer shape ~quick {
+    rec    while recording
+    happy  for 620ms after confirmed
+    eyes
+}
+on hover orb for 320ms { open = true }
+```
 
 ## Una escena son datos
 
@@ -65,6 +84,7 @@ El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
 | `forma.wgsl` | Un quad por elemento: cada píxel solo ejecuta las formas del elemento que lo cubre. |
 | `formas.rs` | La geometría, una vez, para tres usos: la GPU, el ratón y las cajas. Elipse, caja, arco, segmento, trazo y giro. |
 | `logica.rs` | Donde corre un `Guion`: recibe eventos, declara transiciones y alarmas, y se bloquea a propósito. |
+| `lenguaje/` | Del texto a la escena: `fichas` trocea, `arbol` agrupa sin saber qué significa nada, y `obra` le da sentido y comprueba los nombres. |
 | `escenas/marea.rs` | La bolita y su tarjeta: 12 propiedades, 12 instrucciones, 4 zonas. |
 | `escenas/isla.rs` | Una isla como la de k4 que suelta una gota. Su lógica no decide nada: dos capas y tres reglas. |
 | `escenas/muestrario.rs` | Degradado y borde, un reloj con tres transformaciones anidadas, una textura girada y fundir un grupo frente a fundir sus piezas. |
@@ -106,8 +126,8 @@ falta —con la lista de limitaciones conocidas en `docs/08`— están en `docs/
 
 ## Lo que no es
 
-Una escena se escribe todavía en Rust y se compila con el programa: falta el
-lenguaje que la describa desde un fichero y la recargue en caliente. No hay
+El lenguaje no tiene todavía componentes, `repeat` ni layout, y una escena de
+fichero no tiene lógica propia: falta Luau. No hay
 layout —las posiciones son expresiones a mano—
 y todas las superficies pintan la misma escena. Y los primeros frames tras despertar salen
 sin esperar al vsync, así que el reloj de animación debería ir con el tiempo de

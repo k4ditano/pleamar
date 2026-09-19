@@ -47,7 +47,7 @@ Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
 | Scroll, inercia, `Flickable` | ⬜ |
 | `Loader` (no instanciar lo que no se ve) | ⬜ |
 | Componentes reutilizables, importar ficheros, singletons | ⬜ |
-| Recarga en caliente | ⬜ (la mitad difícil —conservar propiedades por nombre— sí está) |
+| Recarga en caliente | ✅ y sin perder valores, velocidades, hechos ni textos |
 
 ### Entrada
 
@@ -70,7 +70,7 @@ Todo ⬜: Hyprland (workspaces, ventanas, eventos), PipeWire, MPRIS, bandeja + s
 
 | Quickshell | pleamar |
 | --- | --- |
-| Lenguaje de escenas | ⬜ borrador; las escenas se escriben en Rust |
+| Lenguaje de escenas | 🟡 v0: todo el modelo, con errores y recarga en caliente; sin componentes, `repeat` ni layout |
 | Lógica en un lenguaje de script | ⬜ un `trait` de Rust; Luau por integrar |
 | Muelles propiedad del render | ✅ **y QtQuick no** |
 | Animación por fotogramas, estados, transiciones | ⬜ diseñado, sin hacer |
