@@ -144,9 +144,19 @@ struct Entorno {
     visible: Option<Expr>,
     /// Si es la copia de un componente: cuál, y en qué línea se puso.
     copia: Option<(String, usize)>,
+    /// Los muelles que llegaron como parámetro: `~bounce`.
+    muelles: HashMap<String, Muelle>,
+    /// Marca de un hijo que viene de fuera del componente (`children`): se lee con
+    /// los nombres de quien lo escribió, no con los de dentro.
+    ambito_de_fuera: Option<Vec<Entorno>>,
+    /// De una biblioteca `strict`: aquí dentro solo vale lo que se pide, lo que se
+    /// declara y lo de la propia biblioteca.
+    estricta: bool,
 }
 
 struct Componente<'a> {
+    /// De una biblioteca `strict`.
+    estricta: bool,
     parametros: Vec<Parametro>,
     nodo: &'a Nodo,
 }
@@ -165,6 +175,16 @@ struct Obra<'a> {
     e: Escena,
     /// Los nombres de los ficheros de los que está hecha, para decir dónde está algo.
     ficheros: &'a [String],
+    /// Qué ficheros, por su número, son bibliotecas `strict`.
+    estrictos: &'a [usize],
+    /// Lo que cada copia en curso trae para el `children` de su componente: los
+    /// nodos, el ámbito de quien los escribió, y si ya se han puesto.
+    hijos_de_copia: Vec<(&'a [Entrada], Vec<Entorno>, bool)>,
+    /// Lo que declaran las bibliotecas: un componente `strict` puede leerlo.
+    de_biblioteca: std::collections::HashSet<String>,
+    /// Lo que un componente `strict` ha leído de la escena sin pedirlo: (componente, nombre).
+    sin_pedir: std::cell::RefCell<Vec<(String, String)>>,
+    sin_vigilar: std::cell::Cell<bool>,
     props: HashMap<String, PropId>,
     hechos: HashMap<String, HechoId>,
     sucesos: HashMap<String, SucesoId>,
@@ -196,7 +216,7 @@ struct Obra<'a> {
     bajo: Vec<Transformacion>,
 }
 
-pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String]) -> Result<Escena, Vec<Fallo>> {
+pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], estrictos: &'a [usize]) -> Result<Escena, Vec<Fallo>> {
     let escena = match arbol {
         [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "scene") => n,
         [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "library") => {
@@ -218,7 +238,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String]) -> Result<Esce
             otro => unreachable!("«{otro}» está en el vocabulario, pero no tiene rigidez ni freno"),
         })).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
-        ficheros, entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
+        ficheros, estrictos, hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
@@ -233,28 +253,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String]) -> Result<Esce
     let Some(cuerpo) = escena.cuerpo.as_ref() else {
         return Err(vec![Fallo::en(escena.linea, escena.col, "a la escena le falta su bloque `{ … }`")]);
     };
-    // Lo que ocupa un reparto con nombre se sabe al acabar de dibujarlo, pero se
-    // puede querer leer antes (el panel que envuelve a su lista): sus medidas
-    // se declaran ya, como propiedades, y el reparto las rellena al final.
-    fn adelantar<'a>(o: &mut Obra<'a>, entradas: &'a [Entrada]) {
-        for e in entradas {
-            let Entrada::Nodo(n) = e else { continue };
-            let palabra = |k: usize| match n.cabeza.get(k).map(|f| &f.f) { Some(F::Id(p)) => Some(p.as_str()), _ => None };
-            match palabra(0) {
-                Some("component" | "repeat" | "for") => continue,
-                Some("row" | "column") => if let Some(nombre) = palabra(1) {
-                    for parte in ["width", "height"] {
-                        let entero = format!("{nombre}.{parte}");
-                        let p = o.e.prop_con(fijo(&entero), 0.0, Muelle::VIVO);
-                        o.props.insert(entero, p);
-                    }
-                },
-                _ => {}
-            }
-            adelantar(o, n.cuerpo.as_deref().unwrap_or(&[]));
-        }
-    }
-    adelantar(&mut o, cuerpo);
+    o.adelantar_medidas(cuerpo);
     // Cuatro vueltas: declaraciones; nombres y capas; dibujo; reglas.
     for vuelta in 0..3 {
         let de_esta: Vec<&Entrada> = cuerpo.iter().filter(|e| vuelta_de(e) == vuelta).collect();
@@ -281,6 +280,12 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String]) -> Result<Esce
     let (w, h) = (o.e.superficie.ancho as f32, o.e.superficie.alto as f32);
     o.e.hechos[0].1 = if w > 0.0 { w } else { 1920.0 };
     o.e.hechos[1].1 = h;
+    // Lo que un componente de biblioteca `strict` leyó de la escena sin pedirlo.
+    for (componente, nombre) in o.sin_pedir.take() {
+        let donde = o.componentes.get(&componente).map_or((1, 1), |k| (k.nodo.linea, k.nodo.col));
+        o.entornos.clear();
+        o.anotar(Fallo::en(donde.0, donde.1, format!("«{componente}» es de una biblioteca `strict` y lee «{nombre}», que es de la escena, sin pedirlo. Que lo reciba como parámetro, o que lo declare su biblioteca")));
+    }
     if o.fallos.is_empty() { Ok(o.e) } else { Err(o.fallos) }
 }
 
@@ -342,7 +347,35 @@ impl<'a> Obra<'a> {
                 }
             }
         }
+        self.vigilar(&n);
         n
+    }
+
+    /// Dentro de un componente de biblioteca `strict`, un nombre que no es suyo, ni de
+    /// su biblioteca, ni de los que siempre existen, es algo que lee de la escena sin
+    /// haberlo pedido. Se apunta; se dice al acabar.
+    fn vigilar(&self, nombre: &str) {
+        if self.sin_vigilar.get() {
+            return;
+        }
+        let Some(e) = self.entornos.iter().rev().find(|e| e.copia.is_some()) else { return };
+        if !e.estricta || self.de_biblioteca.contains(nombre) {
+            return;
+        }
+        // Un parámetro, o un `let` del componente: es suyo aunque no tenga sufijo.
+        if self.entornos.iter().any(|e| e.exprs.contains_key(nombre) || e.colores.contains_key(nombre) || e.cadenas.contains_key(nombre) || e.muelles.contains_key(nombre)) {
+            return;
+        }
+        let de_siempre = ["screen.", "pointer.", "local.", "drag."].iter().any(|p| nombre.starts_with(p)) || nombre == "wheel";
+        // Lo que declaró la propia copia lleva su sufijo; lo que no, es de fuera.
+        let suyo = self.entornos.iter().any(|e| !e.sufijo.is_empty() && nombre.ends_with(&e.sufijo));
+        if !de_siempre && !suyo {
+            let componente = e.copia.as_ref().unwrap().0.clone();
+            let mut v = self.sin_pedir.borrow_mut();
+            if !v.iter().any(|(c, n)| *c == componente && n == nombre) {
+                v.push((componente, nombre.to_owned()));
+            }
+        }
     }
 
     /// El nombre con el que se declara algo desde aquí dentro.
@@ -448,6 +481,12 @@ impl<'a> Obra<'a> {
             let freno = c.num()?;
             c.exige_sim(")")?;
             return Ok(Muelle { rigidez, freno });
+        }
+        if let Some(m) = self.entornos.iter().rev().find_map(|e| e.muelles.get(&n)) {
+            return Ok(*m);
+        }
+        if !voz::MUELLES.contains(&n.as_str()) {
+            self.vigilar(&n);
         }
         match self.muelles.get(&n) {
             Some(m) => Ok(*m),
@@ -632,6 +671,9 @@ impl<'a> Obra<'a> {
             }
             Some(F::Id(n)) if self.entornos.iter().any(|e| e.colores.contains_key(n)) || self.colores.contains_key(n) => {
                 c.i += 1;
+                if !self.entornos.iter().any(|e| e.colores.contains_key(n)) {
+                    self.vigilar(n);
+                }
                 Ok(self.entornos.iter().rev().find_map(|e| e.colores.get(n)).unwrap_or_else(|| &self.colores[n]).clone())
             }
             Some(F::Id(m)) if m == "mix" => {
@@ -804,6 +846,9 @@ impl<'a> Obra<'a> {
                 }
                 "spring" => {
                     let nombre = c.id("un nombre para el muelle")?;
+                    if n.linea >= super::POR_FICHERO {
+                        self.de_biblioteca.insert(nombre.clone());
+                    }
                     c.exige_sim("=")?;
                     let rigidez = c.num()?;
                     c.exige_sim(",")?;
@@ -878,6 +923,9 @@ impl<'a> Obra<'a> {
                 }
                 "let" => {
                     let nombre = c.id("un nombre")?;
+                    if n.linea >= super::POR_FICHERO {
+                        self.de_biblioteca.insert(nombre.clone());
+                    }
                     c.exige_sim("=")?;
                     // `let mint = #9ed6bd`: un color con nombre.
                     let es_color = match (c.mira(), c.f.get(c.i + 2).map(|x| &x.f)) {
@@ -928,6 +976,7 @@ impl<'a> Obra<'a> {
                 }
                 "group" => self.grupo_con_propiedades(n, n.cuerpo.as_deref().unwrap_or(&[]))?,
                 "popup" => self.emergente(n, &mut c)?,
+                "children" => self.hijos_de_fuera(n)?,
                 "component" => self.declarar_componente(n, &mut c)?,
                 "repeat" => self.repetir(n, &mut c)?,
                 "for" => self.para(n, &mut c)?,
@@ -995,6 +1044,69 @@ impl<'a> Obra<'a> {
             self.e.pintar(Instr::Opacidad(None));
         }
         if transforma {
+            self.bajo.pop();
+            self.e.pintar(Instr::Transformar(None));
+        }
+        Ok(())
+    }
+
+    /// Lo que ocupa un reparto con nombre se sabe al acabar de dibujarlo, pero se
+    /// puede querer leer antes (el panel que envuelve a su lista, el `size:` de un
+    /// componente): sus medidas se declaran ya, como propiedades, y el reparto las
+    /// rellena al final. Dentro de una copia, con el nombre propio de esa copia.
+    fn adelantar_medidas(&mut self, entradas: &'a [Entrada]) {
+        for e in entradas {
+            let Entrada::Nodo(n) = e else { continue };
+            let palabra = |k: usize| match n.cabeza.get(k).map(|f| &f.f) { Some(F::Id(p)) => Some(p.as_str()), _ => None };
+            match palabra(0) {
+                Some("component" | "repeat" | "for") => continue,
+                Some("row" | "column") => if let Some(local) = palabra(1) {
+                    let nombre = self.declarar(local);
+                    if let Some(e) = self.entornos.last_mut() {
+                        e.con_partes.insert(local.to_owned());
+                    }
+                    for parte in ["width", "height"] {
+                        let entero = format!("{nombre}.{parte}");
+                        if !self.props.contains_key(&entero) {
+                            let p = self.e.prop_con(fijo(&entero), 0.0, Muelle::VIVO);
+                            self.props.insert(entero, p);
+                        }
+                    }
+                },
+                _ => {}
+            }
+            self.adelantar_medidas(n.cuerpo.as_deref().unwrap_or(&[]));
+        }
+    }
+
+    /// `children { move: 12, 40 }`, dentro de un componente: aquí va lo que cada copia
+    /// traiga en su bloque. Es un grupo, y lo de dentro se lee con los nombres de
+    /// quien lo escribió: un componente no ve —ni pisa— lo que le meten.
+    fn hijos_de_fuera(&mut self, n: &'a Nodo) -> R<()> {
+        let Some((hijos, fuera, puestos)) = self.hijos_de_copia.last_mut() else {
+            return Err(Fallo::en(n.linea, n.col, "`children` solo vale dentro de un componente: es donde va lo que cada copia traiga dentro"));
+        };
+        if std::mem::replace(puestos, true) {
+            return Err(Fallo::en(n.linea, n.col, "un componente tiene un solo `children`"));
+        }
+        let (hijos, fuera) = (*hijos, fuera.clone());
+        let mut p = self.propiedades(n, voz::propiedades("children"))?;
+        let mueve = match p.get_mut("move") {
+            Some(c) => Some(self.punto(c)?),
+            None => None,
+        };
+        if let Some(m) = &mueve {
+            let t = Transformacion { mueve: m.clone(), ..Transformacion::en((0.0.into(), 0.0.into())) };
+            self.e.pintar(Instr::Transformar(Some(t.clone())));
+            self.bajo.push(t);
+        }
+        // Mientras se leen, el componente no está: sus parámetros no tapan nada de fuera.
+        let dentro = std::mem::replace(&mut self.entornos, fuera);
+        let pendientes = std::mem::take(&mut self.hijos_de_copia);
+        self.grupo(hijos.iter());
+        self.hijos_de_copia = pendientes;
+        self.entornos = dentro;
+        if mueve.is_some() {
             self.bajo.pop();
             self.e.pintar(Instr::Transformar(None));
         }
@@ -1211,6 +1323,16 @@ impl<'a> Obra<'a> {
             if let Some(letras) = letras {
                 c.i += 2;
                 let nombre = c.id("el nombre de un texto")?;
+                // Primero lo de dentro: un parámetro de texto gana a un texto de la escena que se llame igual.
+                if let Some(e) = self.entornos.iter().rev().find(|e| e.cadenas.contains_key(&nombre)) {
+                    if e.contenidos.contains_key(&nombre) {
+                        return c.fallo(format!("«{nombre}» llegó con huecos, y `{f}` solo sabe de un texto entero: pon el `{f}` dentro de esos huecos, donde se escribió"));
+                    }
+                    c.exige_sim(")")?;
+                    c.nada_mas()?;
+                    let fijo = &e.cadenas[&nombre];
+                    return Ok(if fijo.is_empty() { Trozo::Vacio } else { Trozo::Fijo(if letras == Letras::Mayusculas { fijo.to_uppercase() } else { fijo.to_lowercase() }) });
+                }
                 let Some(t) = es_texto(self, &nombre) else {
                     let g = self.global(&nombre);
                     if self.hechos.contains_key(&g) || self.props.contains_key(&g) {
@@ -1580,6 +1702,7 @@ impl<'a> Obra<'a> {
     /// `component Chip(label, tone) { size: …; … }`
     fn declarar_componente(&mut self, n: &'a Nodo, c: &mut Cur) -> R<()> {
         let nombre = c.id("un nombre para el componente")?;
+        let estricta = self.estrictos.contains(&(n.linea / super::POR_FICHERO));
         // (r: record, chosen: event, tone: color = mint, height = 30)
         let mut parametros: Vec<Parametro> = Vec::new();
         if c.sim("(") && !c.sim(")") {
@@ -1629,7 +1752,7 @@ impl<'a> Obra<'a> {
         if n.cuerpo.is_none() {
             return Err(Fallo::en(n.linea, n.col, "a este componente le falta su bloque `{ … }`"));
         }
-        self.componentes.insert(nombre, Componente { parametros, nodo: n });
+        self.componentes.insert(nombre, Componente { estricta, parametros, nodo: n });
         Ok(())
     }
 
@@ -1639,8 +1762,20 @@ impl<'a> Obra<'a> {
         let nombre = &p.nombre;
         let esperaba = |c: &Cur, que: &str| c.fallo::<()>(format!("«{nombre}», de «{componente}», es {que}, y esto no lo es")).unwrap_err();
         match p.tipo.as_deref() {
-            Some("number") => {
+            Some("number" | "bool") => {
                 env.exprs.insert(nombre.clone(), self.expr(c)?);
+            }
+            Some("spring") => {
+                env.muelles.insert(nombre.clone(), self.muelle(c)?);
+            }
+            Some("gesture") => {
+                let Some(F::Id(x)) = c.mira() else { return Err(esperaba(c, "un gesto")) };
+                if !self.gestos.contains_key(x) {
+                    c.i += 1;
+                    return self.desconocido(c, "ningún gesto", x, self.gestos.keys().collect());
+                }
+                env.alias.insert(nombre.clone(), x.clone());
+                c.i += 1;
             }
             Some("color") => {
                 env.colores.insert(nombre.clone(), self.color(c).map_err(|_| esperaba(c, "un color"))?);
@@ -1832,21 +1967,39 @@ impl<'a> Obra<'a> {
         self.copias += 1;
         env.sufijo = format!("#{nombre}{}", self.copias);
         env.copia = Some((nombre.clone(), n.linea));
+        env.estricta = self.componentes[&nombre].estricta;
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let desde = self.reglas.len();
+        // Lo que la copia trae dentro de su bloque va donde el componente diga `children`,
+        // y se lee con los nombres de aquí fuera.
+        let hijos: &'a [Entrada] = n.cuerpo.as_deref().unwrap_or(&[]);
+        let trae_hijos = hijos.iter().any(|e| matches!(e, Entrada::Nodo(_)));
+        self.hijos_de_copia.push((hijos, self.entornos.clone(), false));
         self.entornos.push(env);
-        // Cuánto ocupa lo dice el propio componente: `size: 300, 44`.
+        self.adelantar_medidas(cuerpo);
+        // Cuánto ocupa lo dice el propio componente: `size: 300, 44`. Si falla, el ámbito
+        // se cierra igual: si no, lo de después se leería como si estuviera aquí dentro.
         let mut tam = None;
+        let mut r = Ok(());
         for e in cuerpo {
             if let Entrada::Prop { nombre, valor, linea, col } = e {
                 if nombre == "size" {
                     let mut c = Cur::de(valor, *linea, *col);
-                    tam = Some(self.punto(&mut c)?);
+                    match self.punto(&mut c) {
+                        Ok(t) => tam = Some(t),
+                        Err(f) => r = Err(f),
+                    }
                 }
             }
         }
-        let r = self.grupo_con_propiedades(n, cuerpo);
+        if r.is_ok() {
+            r = self.grupo_con_propiedades(n, cuerpo);
+        }
         self.cerrar_ambito(desde);
+        let (_, _, puestos) = self.hijos_de_copia.pop().unwrap();
+        if r.is_ok() && trae_hijos && !puestos {
+            return Err(Fallo::en(n.linea, n.col, format!("«{nombre}» no tiene sitio para lo que se le mete dentro: a su componente le falta un `children`")));
+        }
         let _ = en_hueco;
         if tam.is_some() {
             self.ultimo_tam = tam;
@@ -1987,8 +2140,22 @@ impl<'a> Obra<'a> {
         let mut puestos: Vec<Puesto> = Vec::new();
         for (hijo, entornos) in hijos {
             let marca = self.reglas.len();
-            let extra = entornos.len();
-            self.entornos.extend(entornos);
+            // Un hijo que viene de fuera del componente se lee con el ámbito de quien lo escribió.
+            let de_fuera = entornos.first().and_then(|e| e.ambito_de_fuera.clone());
+            let (extra, dentro, pendientes) = match de_fuera {
+                Some(fuera) => {
+                    // Tras la marca van las vueltas de `repeat` o `for` que lo envuelvan, si las hay.
+                    let dentro = std::mem::replace(&mut self.entornos, fuera);
+                    let extra = entornos.len() - 1;
+                    self.entornos.extend(entornos.into_iter().skip(1));
+                    (extra, Some(dentro), std::mem::take(&mut self.hijos_de_copia))
+                }
+                None => {
+                    let extra = entornos.len();
+                    self.entornos.extend(entornos);
+                    (extra, None, Vec::new())
+                }
+            };
             // `show:` decide si el hijo está: ocupa y se ve, o ni lo uno ni lo otro.
             let mut visible = Expr::K(1.0);
             for e in hijo.cuerpo.as_deref().unwrap_or(&[]) {
@@ -2039,6 +2206,10 @@ impl<'a> Obra<'a> {
             }
             for _ in 0..extra {
                 self.cerrar_ambito(marca);
+            }
+            if let Some(dentro) = dentro {
+                self.entornos = dentro;
+                self.hijos_de_copia = pendientes;
             }
             r?;
             let Some(tam) = self.ultimo_tam.take() else {
@@ -2150,6 +2321,21 @@ impl<'a> Obra<'a> {
                     self.desplegar(n.cuerpo.as_deref().unwrap_or(&[]), ambito, hijos)?;
                     ambito.pop();
                 }
+            } else if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "children") {
+                let Some((de_fuera, fuera, puestos)) = self.hijos_de_copia.last_mut() else {
+                    return Err(Fallo::en(n.linea, n.col, "`children` solo vale dentro de un componente: es donde va lo que cada copia traiga dentro"));
+                };
+                if std::mem::replace(puestos, true) {
+                    return Err(Fallo::en(n.linea, n.col, "un componente tiene un solo `children`"));
+                }
+                // Cada uno ocupa su sitio en el reparto, y se lee con los nombres de quien lo
+                // escribió. Un `repeat` o un `for` de fuera se despliega como los de dentro.
+                let (de_fuera, fuera) = (*de_fuera, fuera.clone());
+                let mut ambito_de_fuera = vec![Entorno { ambito_de_fuera: Some(fuera.clone()), ..Default::default() }];
+                let dentro = std::mem::replace(&mut self.entornos, fuera);
+                let r = self.desplegar(de_fuera, &mut ambito_de_fuera, hijos);
+                self.entornos = dentro;
+                r?;
             } else if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "for") {
                 let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
                 let (var, modelo, caben) = self.cabeza_de_for(&mut c)?;
@@ -2291,6 +2477,8 @@ impl<'a> Obra<'a> {
         // `hit` es la zona de esa copia y no la de otra.
         let mut nombradas = std::collections::HashSet::new();
         let reglas = std::mem::take(&mut self.reglas);
+        // (Esto mira todas las palabras de cada regla, también `on` y `press`: no es leer nada.)
+        self.sin_vigilar.set(true);
         for (n, entornos) in &reglas {
             self.entornos = entornos.clone();
             for f in &n.cabeza {
@@ -2299,6 +2487,7 @@ impl<'a> Obra<'a> {
                 }
             }
         }
+        self.sin_vigilar.set(false);
         self.entornos.clear();
         self.reglas = reglas;
         for k in std::mem::take(&mut self.candidatas) {
@@ -2419,7 +2608,7 @@ impl<'a> Obra<'a> {
                         }
                         "impulse" => Efecto::Impulso(self.prop(&mut c)?, c.num()?),
                         "play" => {
-                            let g = c.id("el nombre de un gesto")?;
+                            let g = self.global(&c.id("el nombre de un gesto")?);
                             match self.gestos.get(&g) {
                                 Some(id) => Efecto::Gesto(*id),
                                 None => return self.desconocido(&c, "ningún gesto", &g, self.gestos.keys().collect()),
@@ -2590,6 +2779,9 @@ fn nombre_de_tipo(t: &str) -> &'static str {
         "record" => "una ficha de un modelo",
         "event" => "un suceso",
         "image" => "una imagen",
+        "bool" => "un sí o no",
+        "spring" => "un muelle",
+        "gesture" => "un gesto",
         _ => "algo",
     }
 }

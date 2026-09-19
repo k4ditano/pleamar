@@ -1,0 +1,9 @@
+// espera: fallo «es de una biblioteca `strict` y lee «secret», que es de la escena, sin pedirlo»
+import "comun/estricta.plm"
+scene StrictNosy {
+    surface { size: 200, 60 }
+    let accent = #e86a9a
+    fact secret = 1
+    event leaked
+    row { at: 10, 10; Nosy }
+}

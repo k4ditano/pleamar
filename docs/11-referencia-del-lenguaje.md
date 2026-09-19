@@ -44,7 +44,7 @@ En EBNF: `[ x ]` es opcional, `{ x }` cero o más veces, `|` alternativas, `"x"`
 ```
 fichero      = [ "language" numero fin ] { "import" texto fin } ( escena | biblioteca ) ;
 escena       = "scene" nombre "{" { sentencia } "}" ;
-biblioteca   = "library" nombre "{" { let | muelle | componente } "}" ;
+biblioteca   = "library" nombre [ "strict" ] "{" { let | muelle | componente } "}" ;
 
 sentencia    = declaracion | dibujo | estructura | capa | regla | comportamiento | gesto ;
 
@@ -75,11 +75,12 @@ recorte      = "clip" [ "inset" numero ] forma ;
 grupo        = "group" "{" { propiedad_de | sentencia } "}" ;
 emergente    = "popup" nombre "{" { propiedad_de | sentencia } "}" ;
 
-estructura   = componente | copia | repeat | for | reparto | espacio ;
+estructura   = componente | copia | hijos | repeat | for | reparto | espacio ;
 componente   = "component" nombre [ "(" [ parametro { "," parametro } ] ")" ] "{" { propiedad_de | sentencia } "}" ;
 parametro    = nombre [ ":" tipo_param ] [ "=" argumento ] ;
-tipo_param   = "number" | "color" | "text" | "record" | "event" | "image" ;
-copia        = Nombre [ "(" [ argumentos ] ")" ] [ "{" { propiedad_de } "}" ] ;
+tipo_param   = "number" | "bool" | "color" | "text" | "record" | "event" | "image" | "gesture" | "spring" ;
+copia        = Nombre [ "(" [ argumentos ] ")" ] [ "{" { propiedad_de | sentencia } "}" ] ;   (* las sentencias son sus hijos *)
+hijos        = "children" [ "{" { propiedad_de } "}" ] ;                                     (* solo dentro de un componente *)
 argumentos   = argumento { "," argumento } { "," nombre ":" argumento }
              | nombre ":" argumento { "," nombre ":" argumento } ;
 argumento    = expr | color | texto | nombre ;
@@ -138,6 +139,8 @@ color        = "#" hex | nombre | "mix" "(" color "," color "," expr ")" ;
 ## 5. Ficheros, orden y nombres
 
 **Un fichero es una escena o una biblioteca.** Una escena se abre; una biblioteca se importa. `import "ruta.plm"` va antes de `scene` o `library`, y la ruta es relativa **al fichero que importa**. Una biblioteca importada por dos caminos se lee una vez; un círculo es un fallo que dice su camino. Una biblioteca solo declara: `let`, `spring` y `component`. Lo importado se comporta como si estuviera escrito al principio de la escena.
+
+**`library Nombre strict { … }`**: sus componentes solo pueden leer lo que piden por parámetro, lo que ellos declaran, lo de su biblioteca (y lo que esta importe), y los nombres que siempre existen. Leer un hecho, un color o un suceso de la escena sin pedirlo es un fallo al cargar —`«Nosy» es de una biblioteca strict y lee «secret», que es de la escena, sin pedirlo`—: así una biblioteca de otro no depende de cómo se llamen las cosas en tu escena, ni las toca. Sin `strict`, un componente ve todo lo de quien lo usa, que es lo cómodo para las bibliotecas propias.
 
 **El fichero se lee en cuatro vueltas** —declaraciones; `let` y capas; dibujo; reglas—, así que el orden de lo escrito es el que le convenga a quien lee: una regla puede ir antes que la forma que nombra, y un `prop` al final. Dos excepciones: un `let` tiene que ir antes de quien lo usa, y **se pinta en el orden en que se escribe** (y de las zonas, la que se declara después queda encima).
 
@@ -225,10 +228,31 @@ Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sug
 | `record` | una ficha: la de un `for`, o `rows.0` | `r.campo`, `r.index` |
 | `event` | el nombre de un suceso de la escena | `emit nombre(…)` y `on nombre { … }` hablan de **ese** suceso |
 | `image` | el nombre de una imagen | `image nombre { … }` |
+| `bool` | una expresión (`true`, `false`, `count > 3`) | vale en cualquier expresión |
+| `gesture` | el nombre de un gesto | `play nombre` |
+| `spring` | el nombre de un muelle, o `spring(170, 12)` | `~nombre` |
 
 Así un componente de biblioteca no da por hecho que la escena tenga un suceso que se llame de cierta manera: lo pide. Los argumentos van **por posición y luego, si se quiere, por nombre** (`Row(r, choose, height: 40)`); desde el primero con nombre, todos con nombre. Los que tienen valor por defecto se pueden omitir, y van al final. Lo que falte, sobre, se repita o no sea del tipo es un fallo donde se usa, que enseña la firma entera: `a «Row» le falta «chosen» (un suceso): es Row(r: record, chosen: event, tone: color = …)`. El valor por defecto se lee donde se usa el componente, así que `= mint` es el `mint` de esa escena.
 
 Sin tipo (`component Dot(tone)`), el parámetro es lo que parezca el argumento: es como se escribían antes, y sigue valiendo.
+
+**Un hueco para hijos: `children`.** Lo que una copia trae dentro de su bloque —además de propiedades como `show:`— va donde su componente diga `children`:
+
+```
+component Card(title: text) {
+    size: 300, 40 + inside.height            // mide lo que mida lo que le metan
+    body { color: #1b1c1c; box { from: 0, 0; size: 300, 40 + inside.height; corner: 12 } }
+    text "{upper(title)}" { at: 12, 18; anchor: left center; size: 11; color: ink }
+    column inside { at: 12, 32; gap: 4;  children }
+}
+
+Card("Avisos") {
+    text title { size: 14; color: ink }      // el `title` de la escena, no el parámetro de Card
+    repeat i in 0..2 { text "fila {i}" { size: 13; color: ink } }
+}
+```
+
+Dentro de un `row` o `column`, cada hijo ocupa su sitio en el reparto (y un `repeat` o un `for` de fuera se despliega como los de dentro); suelto, `children { move: x, y }` es un grupo. **Los hijos se leen con los nombres de quien los escribió**: un componente ni ve ni pisa lo que le meten, y un parámetro suyo no tapa nada de fuera. Un componente tiene un solo `children`; meterle algo a uno que no lo tiene es un fallo, no un silencio.
 
 Un fallo **dentro** de un componente dice también desde dónde se usó —`(dentro de «Badge», puesto en escena.plm:6)`—, porque a menudo lo que está mal es lo que se le pasó.
 
@@ -414,7 +438,7 @@ Esto es la salida de `pleamar --gramatica`, copiada. No es una segunda lista: so
 
 ```vocabulario
 language: 0.1
-statements: surface permissions model spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture
+statements: surface permissions model spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component children repeat for row column space layer on every blink wave spin follow look gesture posture
 library: let spring component
 properties.surface: size anchor margin level reserve screens keyboard
 properties.permissions: run services
@@ -429,6 +453,7 @@ properties.image: at size opacity tint show
 properties.input: at width size weight color opacity family placeholder selection show
 properties.group: pivot rotate scale move opacity size show
 properties.popup: at size open
+properties.children: move
 properties.layout: at anchor gap padding align fill corner show opacity cursor
 functions: min max abs clamp smooth mix if vel
 text_functions: upper lower
@@ -438,7 +463,7 @@ curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back
 frame: hold emit
 classes: ambient reflex asked state
 field_types: text number bool
-parameter_types: number color text record event image
+parameter_types: number bool color text record event image gesture spring
 springs: lively calm quick slow eyes pose
 units: px % deg ms s
 cursors: default pointer text grab grabbing
@@ -453,4 +478,4 @@ layout.align: start center end
 
 ## 18. Lo que esta versión no tiene
 
-Para no buscarlo aquí: tipos para los hechos (son números), enumerados, fichas dentro de fichas, `import … as`, bibliotecas con lógica, componentes con hueco para hijos, salto de línea en los repartos, horas y plurales en los huecos, y escribir en el campo de una ficha desde una regla. Todo está, con su plan, en [[pleamar · 08 Limitaciones conocidas]].
+Para no buscarlo aquí: tipos para los hechos (son números), enumerados, fichas dentro de fichas, `import … as`, bibliotecas con lógica, salto de línea en los repartos, horas y plurales en los huecos, y escribir en el campo de una ficha desde una regla. Todo está, con su plan, en [[pleamar · 08 Limitaciones conocidas]].

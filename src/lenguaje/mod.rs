@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 /// Una escena puede estar hecha de varios ficheros (`import`), y un fallo tiene
 /// que decir en cuál. Para no cargar cada ficha con un nombre, el número de línea
 /// lleva dentro el del fichero: línea 12 del tercero es 2 000 012.
-const POR_FICHERO: usize = 1_000_000;
+pub(crate) const POR_FICHERO: usize = 1_000_000;
 
 /// La versión del lenguaje que entiende este programa. El primer número cambia
 /// cuando algo escrito deja de valer; el segundo, cuando se añade algo. Un fichero
@@ -60,6 +60,8 @@ struct Lectura {
     ficheros: Vec<(PathBuf, String)>,
     /// Los que se están leyendo ahora mismo, unos dentro de otros: para ver los círculos.
     abiertos: Vec<PathBuf>,
+    /// Qué ficheros son bibliotecas `strict`, por su número.
+    estrictos: Vec<usize>,
 }
 
 impl Lectura {
@@ -101,6 +103,7 @@ impl Lectura {
                 continue;
             }
             self.abiertos.push(destino.clone());
+            let numero = self.ficheros.len();
             let suyas = self.abrir(&destino)?;
             let suyas = self.resolver(&destino, suyas, traido)?;
             self.abiertos.pop();
@@ -111,6 +114,12 @@ impl Lectura {
                 return Err(Fallo::en(b.linea, b.col, "lo que se importa es una biblioteca: `library Nombre { … }`. Una escena no se importa"));
             }
             let Some(arbol::Entrada::Nodo(b)) = suyas.into_iter().next() else { unreachable!() };
+            // `library Menu strict { … }`: sus componentes solo leen lo que piden.
+            match b.cabeza.get(2).map(|f| &f.f) {
+                None => {}
+                Some(F::Id(p)) if p == "strict" && b.cabeza.len() == 3 => self.estrictos.push(numero),
+                Some(_) => return Err(Fallo::en(b.linea, b.cabeza[2].col, "tras el nombre de una biblioteca solo puede ir `strict`")),
+            }
             for d in b.cuerpo.unwrap_or_default() {
                 // Una biblioteca declara; no pinta, ni reacciona, ni tiene frontera con la lógica.
                 let vale = matches!(&d, arbol::Entrada::Nodo(x) if matches!(x.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if vocabulario::DE_BIBLIOTECA.contains(&p.as_str())));
@@ -164,7 +173,7 @@ pub fn leer_fichero(ruta: &str) -> Result<(Escena, Vec<PathBuf>), String> {
             }
         }
         let nombres: Vec<String> = l.ficheros.iter().map(|(r, _)| r.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect();
-        obra::levantar(&resto, &nombres)
+        obra::levantar(&resto, &nombres, &l.estrictos)
     })();
     // Al enseñar un fallo, el fichero principal con la ruta que dio quien lo abrió.
     if let Some(f) = l.ficheros.first_mut() {

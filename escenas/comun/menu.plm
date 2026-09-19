@@ -5,7 +5,8 @@
 
 import "paleta.plm"
 
-library Menu {
+//  `strict`: sus componentes solo leen lo que piden, lo que declaran y lo de la paleta.
+library Menu strict {
     component MenuRow(r: record, chosen: event, tone: color = mint, width: number = 220) {
         size: width, 30 - r.separator * 21
         prop on = 0 ~quick

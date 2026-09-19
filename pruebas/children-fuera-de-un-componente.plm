@@ -1,0 +1,5 @@
+// espera: fallo «`children` solo vale dentro de un componente»
+scene X {
+    surface { size: 100, 100 }
+    children
+}

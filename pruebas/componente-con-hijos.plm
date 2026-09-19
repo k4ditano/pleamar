@@ -1,0 +1,43 @@
+// espera: bien
+language 0.1
+// `children`: lo que una copia trae dentro va donde su componente diga, y se lee
+// con los nombres de quien lo escribió. En un reparto, cada hijo ocupa su sitio.
+// Y los tipos de parámetro que faltaban: bool, gesture y spring.
+scene Children {
+    surface { size: 320, 260 }
+    let ink = #f5f7f5
+    text title = "de fuera"
+    fact open = true
+    pose tilt = 0
+    event poked
+    gesture nod reflex { 120ms out_quad { tilt: 0.2 }; 160ms }
+
+    component Card(title: text, wide: bool = false, bounce: spring = lively, greet: gesture = nod) {
+        size: 300, 40 + inside.height
+        prop lit = 0 ~bounce
+        body { color: #1b1c1c; box hit { from: 0, 0; size: 300, 40 + inside.height; corner: 12 } }
+        text "{upper(title)}" { at: 12, 18; anchor: left center; size: 11; color: ink; opacity: 60% }
+        column inside { at: 12 + wide * 8, 32; gap: 4
+            children
+        }
+        on press hit { lit: 1 ~bounce; play greet }
+    }
+    component Frame {
+        size: 100, 60
+        box { from: 0, 0; size: 100, 60; corner: 8; stroke: 1; color: ink }
+        children { move: 10, 10 }
+    }
+
+    column { at: 10, 10; gap: 8
+        Card("Una") {
+            text title { size: 14; color: ink }               // el `title` de la escena, no el parámetro
+            box dot { size: 20, 20; corner: 10; color: #9ed6bd }
+        }
+        Card("Otra", wide: true, bounce: spring(300, 20)) { show: open
+            repeat i in 0..2 { text "fila {i}" { size: 13; color: ink } }
+        }
+        Frame { ellipse { at: 10, 10; radius: 6; color: #e8c07a } }
+        Card("Vacía")
+    }
+    on press dot { emit poked }
+}

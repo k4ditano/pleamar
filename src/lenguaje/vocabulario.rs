@@ -8,7 +8,7 @@
 pub const SENTENCIAS: &[&str] = &[
     "surface", "permissions", "model", "spring", "prop", "pose", "fact", "event", "text", "image", "measure", "let", "zone",
     "body", "ellipse", "box", "arc", "line", "input", "clip", "group", "popup",
-    "component", "repeat", "for", "row", "column", "space",
+    "component", "children", "repeat", "for", "row", "column", "space",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
 ];
 
@@ -30,6 +30,7 @@ pub const PROPIEDADES: &[(&str, &[&str])] = &[
     ("input", &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "show"]),
     ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show"]),
     ("popup", &["at", "size", "open"]),
+    ("children", &["move"]),
     ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "corner", "show", "opacity", "cursor"]),
 ];
 
@@ -46,7 +47,7 @@ pub const DE_FOTOGRAMA: &[&str] = &["hold", "emit"];
 pub const CLASES: &[&str] = &["ambient", "reflex", "asked", "state"];
 pub const TIPOS: &[&str] = &["text", "number", "bool"];
 /// Lo que un componente puede pedir: `component Row(r: record, chosen: event, tone: color = mint)`.
-pub const TIPOS_DE_PARAMETRO: &[&str] = &["number", "color", "text", "record", "event", "image"];
+pub const TIPOS_DE_PARAMETRO: &[&str] = &["number", "bool", "color", "text", "record", "event", "image", "gesture", "spring"];
 pub const MUELLES: &[&str] = &["lively", "calm", "quick", "slow", "eyes", "pose"];
 pub const UNIDADES: &[&str] = &["px", "%", "deg", "ms", "s"];
 pub const CURSORES: &[&str] = &["default", "pointer", "text", "grab", "grabbing"];

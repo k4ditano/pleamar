@@ -1,0 +1,6 @@
+// espera: fallo «no tiene sitio para lo que se le mete dentro: a su componente le falta un `children`»
+scene X {
+    surface { size: 100, 100 }
+    component Dot { size: 10, 10; ellipse { at: 5, 5; radius: 5; color: #fff } }
+    row { at: 0, 0; Dot { box { size: 4, 4; color: #000 } } }
+}

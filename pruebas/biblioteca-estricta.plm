@@ -1,0 +1,10 @@
+// espera: bien
+language 0.1
+// Un componente de biblioteca `strict` que solo usa lo que pide, lo que declara,
+// lo de su biblioteca (y lo que esta importa) y los nombres que siempre existen.
+import "comun/estricta.plm"
+scene StrictOk {
+    surface { size: 200, 60 }
+    event picked ->
+    row { at: 10, 10; gap: 4; Good(picked); Good(picked, tone: #9ed6bd); Good(tone: #e8c07a, chosen: picked) }
+}
