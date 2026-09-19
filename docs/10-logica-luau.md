@@ -64,6 +64,16 @@ Lo que aún no es un servicio se puede sacar con `spawn` y `run`, pero eso ata e
 
 Al salir, el programa para todo lo que la lógica dejó corriendo; al recargar la lógica, también. Y si lo matan a la fuerza, se va con él igualmente (en Linux se lo pedimos al núcleo).
 
+## Permisos
+
+La caja de arena cierra `io` y `os`; lo que queda abierto al sistema son `run`, `spawn` y los servicios, y **cada escena declara cuáles usa**, en su `.plm`:
+
+```
+permissions { run: "date";  services: "workspaces", "window", "audio" }
+```
+
+Sin declarar, nada. Una orden o un servicio que no esté ahí es un error al momento, que dice qué escribir: `la escena no da permiso para lanzar «sh». Si debe poder, decláralo en el .plm: permissions { run: "sh" }`. Está en la escena y no en el script para que se lea de un vistazo, antes de ejecutar nada; al arrancar se imprime (`lógica · permisos · órdenes: date · servicios: ninguno`), y al recargar la escena se aplican los nuevos. `apps.launch` solo lanza aplicaciones que el servicio `apps` haya contado.
+
 ## La caja de arena
 
 - **Sin `io` ni `os.execute`**: es el modo `sandbox` de Luau. La única puerta al sistema es `run`.

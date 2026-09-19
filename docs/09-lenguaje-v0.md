@@ -30,6 +30,8 @@ Números con unidad: `40`, `40px`, `34%` (= 0.34), `138deg` (a radianes), `320ms
 
 ## Declaraciones
 
+`permissions { run: "date"; services: "audio", "apps" }` — lo que la lógica de la escena puede tocar del sistema. Sin declarar, nada: ver [[pleamar · 10 La lógica en Luau]].
+
 | Sentencia | Qué es |
 | --- | --- |
 | `surface { size: 720, 224; anchor: top; margin: 40; level: top; reserve: 0; screens: "HDMI-A-1" }` | La ventana que pide. `size: full, 44` es todo el ancho del monitor; cuánto es se lee en `screen.width`. `anchor`: top, bottom, left, right, top_left…, center. `level`: background, bottom, top, overlay. `screens: all` o una lista. `keyboard: none | on_demand | exclusive` |
