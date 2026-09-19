@@ -90,6 +90,8 @@ Lo único del programa que sabe qué es Wayland. Una plataforma pone las superfi
 
 Lo que pasa en el sistema llega a la lógica por `plataforma::servicio(nombre, avisar)`: un hilo que escucha y avisa con un `Valor` —un JSON en pequeño: nulo, sí/no, número, texto, lista, mapa— que Luau recibe como tabla. `plataforma::orden(nombre, args)` es el camino de vuelta. Hoy contesta Hyprland, hablado por sus dos sockets con `std` y nada más: uno para preguntar y mandar (`j/workspaces`, `dispatch …`), otro por el que cuenta lo que pasa. Un sistema sin ese servicio dice que no lo tiene.
 
+Además de Hyprland: `plataforma/sistema.rs` (audio, batería y red: un hilo por servicio, que solo avisa si algo cambia) y `plataforma/mpris.rs` (lo que suena, por D-Bus con `zbus`, escuchando señales). Todo lo que se lanza pasa por `plataforma::morir_con_el_padre`: en Linux, `PR_SET_PDEATHSIG`.
+
 ## Superficies (`plataforma/wayland.rs`, `gpu.rs`)
 
 La escena declara la superficie que quiere: tamaño en píxeles **lógicos**, ancla, margen, nivel (fondo, debajo, encima, sobre todo), cuánto sitio reserva, y en qué pantallas (`Todas` o una lista). El hilo de Wayland pone una en cada monitor que toque, las quita cuando el monitor se va y las pone cuando uno llega. Cada una pasa al render como una **lámina** cuando el compositor la configura.
@@ -107,7 +109,7 @@ La repetición de tecla es nuestra (400 ms, luego una cada 33): así es igual en
 
 ## Órdenes desde fuera (`plataforma/mod.rs`)
 
-Un hilo escucha en `$XDG_RUNTIME_DIR/pleamar-ESCENA.sock`; `pleamar --decir ESCENA "emit toggle"` escribe una línea y se va (2 ms). La orden entra al render como `ARender::SucesoDeFuera`, por la misma puerta que los sucesos de la lógica. Es `cfg(unix)`: en Windows será una tubería con nombre.
+Un hilo escucha en `$XDG_RUNTIME_DIR/pleamar-ESCENA.sock`; `pleamar --decir ESCENA "emit toggle"` escribe una línea y se va (2 ms). Una pregunta (`get open`) va al render con un canal de vuelta (`ARender::Pregunta`) y se contesta por el mismo socket. La orden entra al render como `ARender::SucesoDeFuera`, por la misma puerta que los sucesos de la lógica. Es `cfg(unix)`: en Windows será una tubería con nombre.
 
 ## Soltar desde otra aplicación (`plataforma/wayland.rs`)
 

@@ -165,6 +165,8 @@ Efectos: `hecho = expresión` (se evalúa al dispararse), `toggle hecho`, `emit 
 
 Una forma puede llevar `cursor: pointer | text | grab | grabbing`. **Un `row` o `column` con nombre es también una zona** —su caja entera, debajo de las de sus hijos—: así la rueda vale en toda una píldora.
 
+Su tamaño (`list.width`, `list.height`) se puede leer **en cualquier parte del fichero, también antes** de donde se declara: el panel que envuelve a una lista puede perseguir su alto (`follow tall = 84 + list.height`).
+
 > Ojo con lo que se arrastra dentro de un reparto anclado: si algo de dentro cambia de ancho mientras tanto (un «54 %» que pasa a «100 %»), el reparto se recoloca y la zona se mueve debajo del ratón. Dale ancho fijo a lo que cambie (`width: 42; align: right`).
 
 ## Escribir: `input`
@@ -181,13 +183,24 @@ La lógica se entera de cada cambio (`text:query`) y del Intro (`submit:query`);
 
 **El teclado, solo cuando hace falta.** `keyboard: exclusive while open` en la `surface`: mientras `open` es falso la superficie no pide teclado, y el escritorio sigue siendo de quien era.
 
+## Imágenes que elige la lógica
+
+```
+text  pic.$i  = ""                        // la lógica pone aquí «firefox», o una ruta que empiece por /
+image icon.$i = from pic.$i, 24, 24       // y la imagen es la que ese texto diga
+```
+
+Cuando el texto cambia, el taller busca la imagen nueva en su hilo y el render sigue enseñando la anterior hasta que llega. Un texto vacío es ninguna imagen.
+
 ## Órdenes desde fuera
 
 ```
 pleamar --decir lanzador "emit toggle"
 ```
 
-Cada escena en marcha escucha en un socket con su nombre (el del fichero). `emit suceso` o `emit suceso 3` dispara sus reglas como si lo hubiera emitido la lógica. **Un atajo global es esto**: un bind del compositor que ejecuta esa orden. En Hyprland:
+Cada escena en marcha escucha en un socket con su nombre (el del fichero). `emit suceso` o `emit suceso 3` dispara sus reglas como si lo hubiera emitido la lógica. También `fact hecho valor`, `text nombre lo que ponga` (la lógica se entera, como si lo hubiera escrito alguien), `focus campo`, `quit`, y **`get nombre`, que contesta** con lo que valga ese hecho, texto o propiedad: `pleamar --decir lanzador "get open"` → `1`.
+
+**Un atajo global es esto**: un bind del compositor que ejecuta esa orden. En Hyprland:
 
 ```lua
 hl.bind("SUPER + space", hl.dsp.exec_cmd('pleamar --decir lanzador "emit toggle"'))

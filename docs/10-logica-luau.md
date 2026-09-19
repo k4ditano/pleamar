@@ -51,12 +51,18 @@ Un nombre mal escrito es un error al momento, con sugerencia: `la escena no tien
 | `workspaces` | `{ active = 3, list = { { id, name, windows, monitor }, … } }` | Hyprland, por sus sockets (sin lanzar `hyprctl`) |
 | `window` | `{ title, class }` | Hyprland |
 | `sys.call("workspaces.focus", n)` | ir a un escritorio | Hyprland |
+| `audio` | `{ volume = 0.54, muted = false }` | Linux: PipeWire (`wpctl`, y `pactl subscribe` para enterarse) |
+| `sys.call("audio.volume", 0.5)` · `("audio.step", -0.05)` · `("audio.mute")` | ponerlo, moverlo un paso, callarlo (o `("audio.mute", true)`) | |
+| `battery` | `{ present, percent, charging }`; un sobremesa contesta `{ present = false }` | Linux: `/sys/class/power_supply` |
+| `network` | `{ online, kind = "wired" \| "wifi" \| "none", name, strength }` | Linux: la ruta por defecto, `/proc/net/wireless` e `iw` |
+| `media` | `{ playing, title, artist, album, player }`; sin reproductores, `player = ""` | Linux: MPRIS por D-Bus (`zbus`), sin preguntar a cada rato |
+| `sys.call("media.toggle")` · `("media.next")` · `("media.previous")` | al reproductor que se está contando | |
 | `apps` | `{ { name, exec, icon }, … }`, por orden alfabético | Linux: los `.desktop` de `XDG_DATA_DIRS` (sin los ocultos ni los de terminal) |
 | `sys.call("apps.launch", exec)` | lanzar una, suelta del programa | Linux: `setsid -f sh -c` |
 
-Lo que aún no es un servicio se puede sacar con `spawn` y `run` —así lee el volumen `barra.luau`, con `pactl subscribe` y `wpctl`—, pero eso ata el script a Linux: es un apaño hasta que exista el servicio.
+Lo que aún no es un servicio se puede sacar con `spawn` y `run`, pero eso ata el script a un sistema: es un apaño hasta que exista el servicio. `barra.luau` leía así el volumen; ya no llama a nada de Linux.
 
-Al salir, el programa para todo lo que la lógica dejó corriendo; al recargar la lógica, también.
+Al salir, el programa para todo lo que la lógica dejó corriendo; al recargar la lógica, también. Y si lo matan a la fuerza, se va con él igualmente (en Linux se lo pedimos al núcleo).
 
 ## La caja de arena
 
