@@ -58,7 +58,7 @@ El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
 
 | | |
 | --- | --- |
-| `main.rs` | Wayland: una superficie layer-shell por monitor, su escala (también fraccional) y el ratón. Nada más. |
+| `main.rs` | Arranca los tres hilos y le deja el suyo a la plataforma. |
 | `gpu.rs` | El dispositivo, las láminas —una por superficie, cada una a su escala y con su ritmo— y la composición de la lista de dibujo en elementos. |
 | `escena.rs` | El contrato: propiedades, expresiones, instrucciones, comportamientos, zonas. |
 | `render.rs` | Intérprete. Dueño de los muelles y del reloj; quieto, no pinta ni un frame. |
@@ -69,7 +69,8 @@ El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
 | `escenas/isla.rs` | Una isla como la de k4 que suelta una gota. Su lógica no decide nada: dos capas y tres reglas. |
 | `escenas/muestrario.rs` | Degradado y borde, un reloj con tres transformaciones anidadas, una textura girada y fundir un grupo frente a fundir sus piezas. |
 | `escenas/cara.rs` | La cara de Marea: `capa forma` (rec > aviso > contenta > lupa > ojos) y tres de sus gestos, fotograma a fotograma. |
-| `texto.rs` | Texto pintado una vez a un atlas: el papel del «contenido de un plugin». |
+| `texto.rs` | Texto de verdad (`cosmic-text`: formas, líneas, emoji) e imágenes (SVG, PNG, JPEG), en un atlas a la escala del monitor. |
+| `plataforma/` | Lo único que sabe de Wayland. `./portable.sh` comprueba que todo lo demás compila para Windows y macOS. |
 
 La gráfica de abajo es una barra por frame; la franja roja es el tiempo que la
 lógica estuvo bloqueada, y el piloto de la izquierda, su estado ahora.
@@ -107,7 +108,7 @@ falta —con la lista de limitaciones conocidas en `docs/08`— están en `docs/
 
 Una escena se escribe todavía en Rust y se compila con el programa: falta el
 lenguaje que la describa desde un fichero y la recargue en caliente. No hay
-layout —las posiciones son expresiones a mano—, el texto es un mapa de bits fijo
+layout —las posiciones son expresiones a mano—
 y todas las superficies pintan la misma escena. Y los primeros frames tras despertar salen
 sin esperar al vsync, así que el reloj de animación debería ir con el tiempo de
 presentación, no con el de la CPU.

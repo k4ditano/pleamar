@@ -16,6 +16,7 @@ pub struct Opciones {
     pub reducido: bool,
     /// Sin esperar a la pantalla y sin reposo: para medir lo que cuesta pintar.
     pub sin_vsync: bool,
+    pub arranque: Instant,
 }
 
 struct Azar(u64);
@@ -56,6 +57,7 @@ impl Ciclo {
 pub fn hilo(
     instancia: wgpu::Instance,
     rx: Receiver<ARender>,
+    tipografo_en_camino: std::thread::JoinHandle<crate::texto::Tipografo>,
     a_logica: Sender<Evento>,
     logica_bloqueada: Arc<AtomicBool>,
     op: Opciones,
@@ -63,6 +65,13 @@ pub fn hilo(
     let mut gpu: Option<Gpu> = None;
     let mut laminas: Vec<Lamina> = Vec::new();
     let mut dibujo = Dibujo::default();
+    // Leer las fuentes del sistema tarda medio segundo: se hace en otro hilo
+    // desde que arranca el programa, y aquí solo se recoge cuando hace falta.
+    let mut tipografo_en_camino = Some(tipografo_en_camino);
+    let mut tipografo: Option<crate::texto::Tipografo> = None;
+    let mut imagenes_por_cargar = false;
+    let mut primer_frame = true;
+    let mut textos: Vec<String> = Vec::new();
     let mut uniformes = [0f32; N_UNIFORMES];
     let mut tam = (720.0f32, 224.0f32);
     let mut region: Vec<[i32; 4]> = vec![[i32::MIN; 4]];
@@ -153,9 +162,8 @@ pub fn hilo(
                     gesto = None;
                     pendientes.clear();
                     tam = (nueva.superficie.ancho as f32, nueva.superficie.alto as f32 + if op.hud { ALTO_INSTRUMENTOS } else { 0.0 });
-                    if let (Some(g), Some(atlas)) = (&mut gpu, &nueva.atlas) {
-                        g.atlas(atlas);
-                    }
+                    textos = nueva.textos.iter().map(|t| t.1.clone()).collect();
+                    imagenes_por_cargar = true;
                     println!(
                         "render · escena: {} propiedades, {} instrucciones, {} hechos, {} capas, {} gestos, {} reglas, {} zonas",
                         nueva.props.len(), nueva.instrs.len(), nueva.hechos.len(), nueva.capas.len(),
@@ -164,13 +172,7 @@ pub fn hilo(
                     escena = nueva;
                 }
                 ARender::Lamina(n) => {
-                    let g = gpu.get_or_insert_with(|| {
-                        let mut g = Gpu::nueva(&instancia, &n.superficie);
-                        if let Some(atlas) = &escena.atlas {
-                            g.atlas(atlas);
-                        }
-                        g
-                    });
+                    let g = gpu.get_or_insert_with(|| Gpu::nueva(&instancia, &n.superficie));
                     println!("render · lámina {} en {} · escala {} · {:.0} Hz", n.id, n.nombre, n.escala, n.mhz as f32 / 1000.0);
                     laminas.push(g.lamina(*n, tam));
                     repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
@@ -195,6 +197,10 @@ pub fn hilo(
                 ARender::Orden(Orden::Animar(t)) => pendientes.push((Instant::now() + t.retraso, t)),
                 ARender::Orden(Orden::Impulso { prop, velocidad }) => props[prop.0 as usize].v += velocidad,
                 ARender::Orden(Orden::Bloquear(d)) => bloquear = Some(d),
+                ARender::Texto(nombre, valor) => match escena.textos.iter().position(|t| t.0 == nombre) {
+                    Some(i) => textos[i] = valor,
+                    None => eprintln!("render · no conozco el texto «{nombre}»"),
+                },
                 ARender::Hecho(nombre, v) => match escena.hechos.iter().position(|h| h.0 == nombre) {
                     Some(i) => hechos[i] = v,
                     None => eprintln!("render · no conozco el hecho «{nombre}»"),
@@ -542,7 +548,17 @@ pub fn hilo(
             continue;
         };
         let c = Ctx { props: &props, hechos: &hechos };
-        dibujo.componer(&escena.instrs, c, tam, op.hud);
+        // El texto y las imágenes se pintan a la escala de la lámina más fina; las
+        // demás lo ven reducido, que se nota mucho menos que ampliado.
+        let tipografo = tipografo.get_or_insert_with(|| tipografo_en_camino.take().unwrap().join().expect("el tipógrafo no arrancó"));
+        let fina = laminas.iter().map(|l| l.escala).fold(1.0f32, f32::max);
+        if tipografo.poner_escala(fina) || imagenes_por_cargar {
+            tipografo.vaciar();
+            tipografo.cargar_imagenes(&escena.imagenes);
+            imagenes_por_cargar = false;
+        }
+        dibujo.componer(&escena.instrs, c, &textos, tipografo, tam, op.hud);
+        g.subir_atlas(tipografo);
         g.subir(&dibujo);
 
         // Por dónde entra el ratón: las zonas activas, y nada más. Lo demás de
@@ -572,6 +588,9 @@ pub fn hilo(
         }
         if pintadas == 0 {
             std::thread::sleep(Duration::from_millis(8));
+        } else if primer_frame {
+            primer_frame = false;
+            println!("render · primer frame a los {} ms de arrancar", op.arranque.elapsed().as_millis());
         }
 
         // ── 4. medir ────────────────────────────────────────────

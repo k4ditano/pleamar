@@ -21,7 +21,7 @@ struct Forma {
 };
 
 struct Elemento {
-    cab: vec4<f32>,       // tipo, primera forma (o nº de capa), nº de formas, alfa
+    cab: vec4<f32>,       // tipo, primera forma (o nº de capa), nº de formas (o «teñido»), alfa
     caja: vec4<f32>,      // x0, y0, x1, y1
     color0: vec4<f32>,    // r, g, b, filo
     color1: vec4<f32>,    // r, g, b, degradado (0 no, 1 lineal)
@@ -192,7 +192,10 @@ fn fs(e: Salida) -> @location(0) vec4<f32> {
         let q = local;
         let uv01 = (q - el.destino.xy) / max(el.destino.zw, vec2<f32>(1.0));
         if (uv01.x < 0.0 || uv01.x > 1.0 || uv01.y < 0.0 || uv01.y > 1.0) { discard; }
-        return textureSampleLevel(atlas, muestreo, mix(el.uv.xy, el.uv.zw, uv01), 0.0) * alfa;
+        let t = textureSampleLevel(atlas, muestreo, mix(el.uv.xy, el.uv.zw, uv01), 0.0);
+        // Teñido: el trozo es una máscara —una letra, un icono simbólico— y el color lo pone el elemento.
+        if (el.cab.z > 0.5) { return vec4<f32>(el.color0.rgb * t.a, t.a) * alfa; }
+        return t * alfa;
     }
 
     let primera = u32(el.cab.y);

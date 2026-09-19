@@ -3,7 +3,6 @@
 
 use crate::escena::*;
 use crate::logica::{Contexto, Guion};
-use crate::texto::{fuente, Lienzo};
 
 const REPOSO_X: f32 = 360.0;
 const ABIERTA_X: f32 = 140.0;
@@ -17,6 +16,7 @@ const ANCLA_Y: f32 = 70.0;
 #[derive(Default)]
 pub struct Marea {
     abierta: bool,
+    cuantos: usize,
 }
 
 impl Guion for Marea {
@@ -87,11 +87,23 @@ impl Guion for Marea {
             color: [mezcla(0.62, 0.74, boton), mezcla(0.84, 0.93, boton), mezcla(0.74, 0.84, boton)],
             alfa: visible.clone(),
         });
-        e.pintar(Instr::Textura {
-            destino: (panel_x.clone(), origen_y.clone(), PANEL_W.into(), PANEL_H.into()),
-            uv: [0.0, 0.0, 1.0, 1.0],
-            alfa: visible,
-        });
+        // El texto es texto: lo cambia la lógica cuando llega otro aviso, y se
+        // pinta nítido a la escala de cada monitor.
+        let blanco = color(0.96, 0.97, 0.96);
+        let app = e.texto_vivo("aviso.app", "CALENDARIO");
+        let cuando = e.texto_vivo("aviso.cuando", "Ahora");
+        let titulo = e.texto_vivo("aviso.título", "Reunión en 5 min");
+        let detalle = e.texto_vivo("aviso.detalle", "Revisión de diseño · 18:00");
+        let escribe = |e: &mut Escena, c: Contenido, x: f32, y: f32, ancla: (f32, f32), ancho: Option<f32>, estilo: Estilo, alfa: f32| {
+            e.pintar(Instr::Texto { contenido: c, en: (panel_x.clone() + x, origen_y.clone() + y), ancla, ancho: ancho.map(Into::into), estilo, alfa: alfa.into() });
+        };
+        escribe(&mut e, Contenido::Vivo(app), 26.0, 33.0, (0.0, 0.5), None, Estilo::de(12.5, blanco.clone()), 0.62);
+        escribe(&mut e, Contenido::Vivo(cuando), 380.0, 33.0, (1.0, 0.5), None, Estilo::de(13.5, blanco.clone()), 0.55);
+        // Una sola línea: si el título no cabe, puntos suspensivos.
+        escribe(&mut e, Contenido::Vivo(titulo), 26.0, 71.0, (0.0, 0.5), Some(354.0), Estilo::de(20.0, blanco.clone()).peso(500).lineas(1), 1.0);
+        escribe(&mut e, Contenido::Vivo(detalle), 26.0, 99.0, (0.0, 0.5), Some(354.0), Estilo::de(14.5, blanco.clone()).lineas(1), 0.6);
+        escribe(&mut e, Contenido::Fijo("Descartar".into()), 110.0, 151.0, (0.5, 0.5), None, Estilo::de(15.0, blanco.clone()).peso(500), 0.95);
+        escribe(&mut e, Contenido::Fijo("Ver evento".into()), 296.0, 151.0, (0.5, 0.5), None, Estilo::de(15.0, color(0.07, 0.12, 0.10)).peso(500), 1.0);
         e.pintar(Instr::Opacidad(None));
 
         // Los ojos: dos píldoras recortadas a la cara.
@@ -182,7 +194,6 @@ impl Guion for Marea {
         e.regla(Pulsa(z_ver), vec![Efecto::Hecho(abierta, 0.0), Efecto::Impulso(orbe_y, -620.0), Efecto::Suceso(ver_evento)]);
         e.regla(Quieto { durante: ms(14_000), mientras: abierta.e().no() }, vec![Efecto::Hecho(dormida, 1.0)]);
 
-        e.atlas = Some(tarjeta());
         e
     }
 
@@ -195,28 +206,23 @@ impl Guion for Marea {
             //  Sin ratón, la demo hace de aviso que llega y se va.
             Evento::Demo => {
                 self.abierta = !self.abierta;
+                if self.abierta {
+                    //  Cada vez llega un aviso distinto: la lógica cambia el texto
+                    //  y nada más. El tercero no cabe, a propósito.
+                    const AVISOS: [[&str; 3]; 3] = [
+                        ["CALENDARIO", "Reunión en 5 min", "Revisión de diseño · 18:00"],
+                        ["MENSAJES", "Lucía: ¿bajas a por café? ☕", "Hace un momento"],
+                        ["ACTUALIZACIONES", "Hay 214 paquetes esperando a que alguien se decida a instalarlos", "yay · 1,2 GB"],
+                    ];
+                    let a = AVISOS[self.cuantos % AVISOS.len()];
+                    self.cuantos += 1;
+                    c.texto("aviso.app", a[0]);
+                    c.texto("aviso.título", a[1]);
+                    c.texto("aviso.detalle", a[2]);
+                }
                 c.hecho("abierta", self.abierta);
             }
             _ => {}
         }
     }
-}
-
-fn tarjeta() -> Lienzo {
-    let normal = fuente("Inter");
-    let negrita = fuente("Inter:medium");
-    let mut l = Lienzo::nuevo(PANEL_W as usize, PANEL_H as usize);
-    let blanco = [0.96, 0.97, 0.96];
-    let tinta = [0.07, 0.12, 0.10];
-
-    l.escribir(&normal, "CALENDARIO", 12.5, 26.0, 38.0, blanco, 0.62, 0.7);
-    let w = Lienzo::medir(&normal, "Ahora", 13.5, 0.0);
-    l.escribir(&normal, "Ahora", 13.5, PANEL_W - 26.0 - w, 38.0, blanco, 0.55, 0.0);
-    l.escribir(&negrita, "Reunión en 5 min", 20.0, 26.0, 78.0, blanco, 1.0, 0.0);
-    l.escribir(&normal, "Revisión de diseño · 18:00", 14.5, 26.0, 104.0, blanco, 0.6, 0.0);
-    let w = Lienzo::medir(&negrita, "Descartar", 15.0, 0.0);
-    l.escribir(&negrita, "Descartar", 15.0, 110.0 - w / 2.0, 156.5, blanco, 0.95, 0.0);
-    let w = Lienzo::medir(&negrita, "Ver evento", 15.0, 0.0);
-    l.escribir(&negrita, "Ver evento", 15.0, 296.0 - w / 2.0, 156.5, tinta, 1.0, 0.0);
-    l
 }

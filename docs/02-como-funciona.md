@@ -1,12 +1,12 @@
 # Cómo funciona hoy
 
-Lo que ya corre en `~/Proyectos/pleamar`. Rust, `wgpu` 30 (Vulkan), `smithay-client-toolkit` 0.21 (layer-shell), `fontdue` para el texto.
+Lo que ya corre en `~/Proyectos/pleamar`. Rust, `wgpu` 30, `cosmic-text` para el texto, `resvg` e `image` para las imágenes; y solo en Linux, `smithay-client-toolkit` 0.21 (layer-shell).
 
 ## Tres hilos
 
 | Hilo | Hace | No hace |
 | --- | --- | --- |
-| **Wayland** (`main.rs`) | Una superficie layer-shell por monitor (y por los que se enchufen), su escala, y el ratón | Nada más |
+| **Plataforma** (`plataforma/wayland.rs`) | Una superficie layer-shell por monitor (y por los que se enchufen), su escala, y el ratón | Nada más |
 | **Lógica** (`logica.rs`) | Corre un `Guion`: recibe eventos con nombre, cuenta hechos y sucesos, pide gestos | No anima. No sabe de coordenadas. Se bloquea a propósito para el ensayo |
 | **Render** (`render.rs`) | Dueño de los muelles y del reloj. Evalúa, pinta y avisa | No sabe qué está pintando |
 
@@ -70,7 +70,21 @@ Se pinta con **una sola llamada** instanciada: un quad por elemento, en orden, c
 
 Ojo con lo que dice esta tabla: **el intérprete viejo no iba tan mal como se temía** a este tamaño de superficie; 600 formas seguían cabiendo de sobra en un frame. Donde se habría roto es a pantalla completa (9,6 veces más píxeles) o en una gráfica integrada. El nuevo, además, deja de tener tope.
 
-## Superficies (`main.rs`, `gpu.rs`)
+## Texto e imágenes (`texto.rs`)
+
+Todo lo que acaba siendo un trozo de atlas. Tres crates de Rust puro que existen en los tres sistemas: `cosmic-text`, `image` y `resvg`.
+
+- **`Instr::Texto`**: contenido fijo o **vivo** (un texto con nombre que la lógica cambia con `c.texto("aviso.título", …)`), un punto y un `ancla` —qué parte del texto cae sobre él: (0.5, 0.5) lo centra—, un ancho opcional para partir en líneas, y un `Estilo` (familia, tamaño, peso, color, interlínea, alineado, máximo de líneas con puntos suspensivos).
+- El **tipógrafo** da forma al texto —ligaduras, derecha a izquierda, fuentes de reserva, emoji en color— y guarda la maqueta: mientras no cambien texto, estilo ni ancho, no se repite. Cada glifo se pinta una vez, **a la escala de la lámina más fina**, en un atlas de 2048² que comparte con las imágenes. Una letra es una máscara que el shader tiñe; un emoji trae su color.
+- Cada glifo es un elemento más: se recorta, se transforma y se funde como todo. El origen del texto se redondea a píxeles de verdad para que no salga blando.
+- **`Instr::Imagen`**: una ruta o un icono por nombre (`Fuente::Icono("firefox")`; encontrarlo es cosa de la plataforma). Los SVG se pintan al tamaño exacto por la escala; con `tinte`, la forma se pinta de un color: lo que quiere un icono simbólico.
+- Las fuentes del sistema se leen en otro hilo desde que arranca el programa. Primer frame, a los ~170 ms.
+
+## La frontera de plataforma (`src/plataforma/`)
+
+Lo único del programa que sabe qué es Wayland. Una plataforma pone las superficies que pide una escena y se las entrega al render como láminas; le cuenta el ratón, la escala y los monitores que van y vienen; le da una `Ventana` con un método (`region_de_entrada`); y sabe encontrar un icono por su nombre. Hoy solo hay `wayland.rs`. En cualquier otro sistema el núcleo compila y dice que aún no sabe poner ventanas. **`./portable.sh` lo comprueba contra Linux, Windows y macOS**, y es la guarda de que nada de un sistema se cuele fuera de aquí.
+
+## Superficies (`plataforma/wayland.rs`, `gpu.rs`)
 
 La escena declara la superficie que quiere: tamaño en píxeles **lógicos**, ancla, margen, nivel (fondo, debajo, encima, sobre todo), cuánto sitio reserva, y en qué pantallas (`Todas` o una lista). El hilo de Wayland pone una en cada monitor que toque, las quita cuando el monitor se va y las pone cuando uno llega. Cada una pasa al render como una **lámina** cuando el compositor la configura.
 
@@ -105,6 +119,5 @@ Sale en `HDMI-A-1`. La gráfica de abajo es una barra por frame; la franja roja,
 - Un grupo con opacidad dentro de otro no tiene capa propia: multiplica. Y si hay más de cuatro fundiéndose a la vez, los que sobran también multiplican.
 - Con escala distinta en cada eje, el suavizado del borde es aproximado.
 - El degradado y la luz viven en el espacio del grupo, no en el de la forma: si la forma gira *por sí misma* (`.girada`), el degradado no gira con ella.
-- El texto es un mapa de bits fijo.
 - Los primeros frames tras despertar no esperan al vsync: el reloj de animación debería ir con el tiempo de presentación.
 - Un frame de cada ~400 se cae a 33 ms. Sin investigar.

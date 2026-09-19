@@ -80,6 +80,11 @@ pub struct SucesoId(pub u16);
 pub struct ZonaId(pub u16);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GestoId(pub u16);
+/// Un texto que la lógica puede cambiar: un hecho, pero de letras.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextoId(pub u16);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImagenId(pub u16);
 
 /// Con qué se evalúa una expresión: lo que se mueve y lo que es verdad.
 #[derive(Clone, Copy)]
@@ -309,6 +314,67 @@ impl Transformacion {
     }
 }
 
+// ── texto e imágenes ────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub enum Contenido {
+    Fijo(String),
+    /// Lo que valga ahora mismo un texto vivo: lo cambia la lógica.
+    Vivo(TextoId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Alineado {
+    Izquierda,
+    Centro,
+    Derecha,
+}
+
+#[derive(Clone, Debug)]
+pub struct Estilo {
+    /// `None` es la sans del sistema, sea cual sea el sistema.
+    pub familia: Option<&'static str>,
+    pub px: f32,
+    /// 400 normal, 500 medio, 700 negrita.
+    pub peso: u16,
+    pub color: Color,
+    /// Alto de línea, en veces el tamaño.
+    pub interlinea: f32,
+    pub alineado: Alineado,
+    /// A partir de estas líneas, puntos suspensivos.
+    pub max_lineas: Option<usize>,
+}
+
+impl Estilo {
+    pub fn de(px: f32, color: Color) -> Self {
+        Estilo { familia: None, px, peso: 400, color, interlinea: 1.3, alineado: Alineado::Izquierda, max_lineas: None }
+    }
+    pub fn peso(mut self, p: u16) -> Self {
+        self.peso = p;
+        self
+    }
+    pub fn alineado(mut self, a: Alineado) -> Self {
+        self.alineado = a;
+        self
+    }
+    pub fn lineas(mut self, n: usize) -> Self {
+        self.max_lineas = Some(n);
+        self
+    }
+    pub fn familia(mut self, f: &'static str) -> Self {
+        self.familia = Some(f);
+        self
+    }
+}
+
+/// De dónde sale una imagen.
+#[derive(Clone, Debug)]
+pub enum Fuente {
+    Ruta(std::path::PathBuf),
+    /// Un icono por su nombre («firefox»). Dónde encontrarlo lo sabe la plataforma.
+    Icono(String),
+}
+
 pub fn color(r: f32, g: f32, b: f32) -> Color {
     [r.into(), g.into(), b.into()]
 }
@@ -336,8 +402,13 @@ pub enum Instr {
     Opacidad(Option<Expr>),
     /// Una forma suelta, de color plano.
     Plano { forma: Forma, color: Color, alfa: Expr },
-    /// Un trozo del atlas de la escena, colocado en pantalla.
-    Textura { destino: (Expr, Expr, Expr, Expr), uv: [f32; 4], alfa: Expr },
+    /// Texto. `en` es el punto de referencia y `ancla` qué parte del texto cae
+    /// sobre él: (0, 0) la esquina de arriba a la izquierda, (0.5, 0.5) el
+    /// centro. Con `ancho` se parte en líneas; sin él, es una sola.
+    Texto { contenido: Contenido, en: Punto, ancla: (f32, f32), ancho: Option<Expr>, estilo: Estilo, alfa: Expr },
+    /// Una imagen o un icono. Con `tinte`, su forma se pinta de ese color: lo
+    /// que quiere un icono simbólico.
+    Imagen { imagen: ImagenId, destino: (Expr, Expr, Expr, Expr), alfa: Expr, tinte: Option<Color> },
 }
 
 // ── lo que el render hace solo ──────────────────────────────────
@@ -572,19 +643,16 @@ pub fn ms(n: u64) -> Duration {
     Duration::from_millis(n)
 }
 
-pub struct Lienzo {
-    pub ancho: usize,
-    pub alto: usize,
-    pub rgba: Vec<u8>,
-}
-
 #[derive(Default)]
 pub struct Escena {
     pub props: Vec<(&'static str, f32, Muelle)>,
     pub instrs: Vec<Instr>,
     pub comportamientos: Vec<Comportamiento>,
     pub zonas: Vec<Zona>,
-    pub atlas: Option<Lienzo>,
+    /// Nombre y valor inicial de cada texto vivo.
+    pub textos: Vec<(&'static str, String)>,
+    /// Cada imagen, y a qué tamaño lógico se pinta como mucho.
+    pub imagenes: Vec<(Fuente, (u32, u32))>,
     pub hechos: Vec<(&'static str, f32)>,
     /// Nombre, y si además de a la escena le llega a la lógica.
     pub sucesos: Vec<(&'static str, bool)>,
@@ -616,6 +684,14 @@ impl Escena {
         let p = self.prop_con(nombre, reposo, Muelle::POSE);
         self.pose.push(p);
         p
+    }
+    pub fn texto_vivo(&mut self, nombre: &'static str, inicial: &str) -> TextoId {
+        self.textos.push((nombre, inicial.to_owned()));
+        TextoId(self.textos.len() as u16 - 1)
+    }
+    pub fn imagen(&mut self, fuente: Fuente, ancho: u32, alto: u32) -> ImagenId {
+        self.imagenes.push((fuente, (ancho, alto)));
+        ImagenId(self.imagenes.len() as u16 - 1)
     }
     pub fn hecho(&mut self, nombre: &'static str, inicial: f32) -> HechoId {
         self.hechos.push((nombre, inicial));
@@ -700,6 +776,7 @@ pub enum ARender {
     Orden(Orden),
     /// La frontera: la lógica cuenta lo que pasa, y nada más.
     Hecho(&'static str, f32),
+    Texto(&'static str, String),
     Suceso(&'static str),
     Gesto(&'static str),
     Puntero(Option<(f32, f32)>),

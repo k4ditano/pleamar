@@ -4,7 +4,6 @@
 
 use crate::escena::*;
 use crate::logica::{Contexto, Guion};
-use crate::texto::{fuente, Lienzo};
 use std::f32::consts::PI;
 
 #[derive(Default)]
@@ -26,7 +25,7 @@ impl Guion for Muestrario {
 
         // Un fondo oscuro para que todo se lea sobre cualquier escritorio.
         e.pintar(Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 8.0), difusa: 24.0, alfa: 0.3 }) });
-        e.pintar(Instr::Forma { forma: Forma::Caja { centro: (360.0.into(), 108.0.into()), mitad: (350.0.into(), 98.0.into()), radio: 22.0.into() }, fusion: 0.0.into() });
+        e.pintar(Instr::Forma { forma: Forma::Caja { centro: (360.0.into(), 165.0.into()), mitad: (350.0.into(), 155.0.into()), radio: 22.0.into() }, fusion: 0.0.into() });
         e.pintar(Instr::Relleno { pintura: tinta.clone().into(), alfa: 0.94.into(), filo: 0.04, luz: None, borde: None });
 
         // 1 · degradado y borde, en una caja que gira sobre sí misma.
@@ -74,7 +73,7 @@ impl Guion for Muestrario {
         //     caja y textura no fueran de la mano, se vería.
         let rotulo = (430.0, 108.0);
         e.pintar(Instr::Transformar(Some(Transformacion::en((rotulo.0.into(), rotulo.1.into())).giro(vaiven.e()))));
-        e.pintar(Instr::Textura { destino: ((rotulo.0 - 60.0).into(), (rotulo.1 - 16.0).into(), 120.0.into(), 32.0.into()), uv: [0.0, 0.0, 1.0, 1.0], alfa: 1.0.into() });
+        e.pintar(Instr::Texto { contenido: Contenido::Fijo("pleamar".into()), en: (rotulo.0.into(), rotulo.1.into()), ancla: (0.5, 0.5), ancho: None, estilo: Estilo::de(22.0, blanco.clone()).peso(500), alfa: 1.0.into() });
         e.pintar(Instr::Plano {
             forma: Forma::Caja { centro: (rotulo.0.into(), rotulo.1.into()), mitad: (64.0.into(), 20.0.into()), radio: 8.0.into() }.trazo(1.5),
             color: blanco.clone(),
@@ -108,11 +107,27 @@ impl Guion for Muestrario {
         );
         let _ = z;
 
-        let normal = fuente("Inter:medium");
-        let mut l = Lienzo::nuevo(120, 32);
-        let w = Lienzo::medir(&normal, "pleamar", 22.0, 0.0);
-        l.escribir(&normal, "pleamar", 22.0, 60.0 - w / 2.0, 23.0, [0.96, 0.97, 0.96], 1.0, 0.0);
-        e.atlas = Some(l);
+        // 5 · texto de verdad: se parte en líneas, corta con puntos suspensivos,
+        //     mezcla escrituras y emoji, y se alinea.
+        let gris = color(0.62, 0.65, 0.64);
+        let parrafo = "Texto con forma: ligaduras fi ffl, árabe مرحبا بالعالم, japonés こんにちは y emoji 🌊🎉🦀. Esta frase es larga a propósito, para que no quepa en tres líneas y tenga que acabar en puntos suspensivos.";
+        e.pintar(Instr::Texto { contenido: Contenido::Fijo(parrafo.into()), en: (30.0.into(), 222.0.into()), ancla: (0.0, 0.0), ancho: Some(330.0.into()), estilo: Estilo::de(13.5, blanco.clone()).lineas(3), alfa: 1.0.into() });
+        for (k, (a, t)) in [(Alineado::Izquierda, "a la izquierda"), (Alineado::Centro, "al centro"), (Alineado::Derecha, "a la derecha")].into_iter().enumerate() {
+            e.pintar(Instr::Texto { contenido: Contenido::Fijo(t.into()), en: (390.0.into(), (222.0 + k as f32 * 20.0).into()), ancla: (0.0, 0.0), ancho: Some(150.0.into()), estilo: Estilo::de(13.0, gris.clone()).alineado(a), alfa: 1.0.into() });
+        }
+        e.pintar(Instr::Plano { forma: Forma::Caja { centro: (465.0.into(), 252.0.into()), mitad: (77.0.into(), 32.0.into()), radio: 6.0.into() }.trazo(1.0), color: gris.clone(), alfa: 0.35.into() });
+
+        // 6 · imágenes: un SVG, un PNG, y un icono simbólico teñido.
+        let svg = e.imagen(Fuente::Icono("firefox".into()), 48, 48);
+        let png = e.imagen(Fuente::Ruta("/usr/share/icons/hicolor/256x256/apps/firefox.png".into()), 48, 48);
+        let simbolo = e.imagen(Fuente::Icono("audio-volume-high-symbolic".into()), 40, 40);
+        e.pintar(Instr::Imagen { imagen: svg, destino: (565.0.into(), 226.0.into(), 48.0.into(), 48.0.into()), alfa: 1.0.into(), tinte: None });
+        e.pintar(Instr::Imagen { imagen: png, destino: (620.0.into(), 226.0.into(), 48.0.into(), 48.0.into()), alfa: 1.0.into(), tinte: None });
+        e.pintar(Instr::Transformar(Some(Transformacion::en((585.0.into(), 292.0.into())).giro(vaiven.e()))));
+        e.pintar(Instr::Imagen { imagen: simbolo, destino: (565.0.into(), 272.0.into(), 40.0.into(), 40.0.into()), alfa: 1.0.into(), tinte: Some(color(0.62, 0.84, 0.74)) });
+        e.pintar(Instr::Transformar(None));
+
+        e.superficie = Superficie { alto: 330, ..Default::default() };
         e
     }
     fn evento(&mut self, _: Evento, _: &mut Contexto) {}

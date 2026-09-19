@@ -3,6 +3,7 @@
 
 use crate::escena::*;
 use crate::plataforma::Ventana;
+use crate::texto::{Tipografo, LADO_DEL_ATLAS};
 use std::ops::Range;
 
 const POR_FORMA: usize = 20;
@@ -59,6 +60,22 @@ impl Dibujo {
         k
     }
 
+    /// Un trozo del atlas —un glifo, una imagen— colocado en pantalla. Con
+    /// `tinte`, su alfa es una máscara que se pinta de ese color.
+    fn trozo(&mut self, d: [f32; 4], uv: [f32; 4], alfa: f32, tinte: Option<[f32; 3]>, afin: Afin, recortes: &[(usize, [f32; 4])]) {
+        let caja = afin.caja([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
+        self.elemento(1.0, [caja[0] - 1.0, caja[1] - 1.0, caja[2] + 1.0, caja[3] + 1.0], recortes, |e| {
+            afin.codificar(&mut e[44..52]);
+            e[3] = alfa;
+            if let Some(rgb) = tinte {
+                e[2] = 1.0;
+                e[8..11].copy_from_slice(&rgb);
+            }
+            e[36..40].copy_from_slice(&d);
+            e[40..44].copy_from_slice(&uv);
+        });
+    }
+
     /// Un elemento solo existe si su caja, recortada, toca la pantalla.
     fn elemento(&mut self, tipo: f32, caja: [f32; 4], recortes: &[(usize, [f32; 4])], rellenar: impl FnOnce(&mut [f32])) {
         let mut c = [caja[0].max(0.0), caja[1].max(0.0), caja[2].min(self.tam.0), caja[3].min(self.tam.1)];
@@ -79,7 +96,7 @@ impl Dibujo {
         rellenar(e);
     }
 
-    pub fn componer(&mut self, instrs: &[Instr], c: Ctx, tam: (f32, f32), hud: bool) {
+    pub fn componer(&mut self, instrs: &[Instr], c: Ctx, textos: &[String], tip: &mut Tipografo, tam: (f32, f32), hud: bool) {
         self.tam = tam;
         self.formas.clear();
         self.elementos.clear();
@@ -95,6 +112,7 @@ impl Dibujo {
             p
         };
         let color = |col: &Color| [col[0].evaluar(c), col[1].evaluar(c), col[2].evaluar(c)];
+        let tip_escala = tip.escala();
 
         for i in instrs {
             if self.formas.len() / POR_FORMA >= MAX_FORMAS - 8 {
@@ -207,20 +225,35 @@ impl Dibujo {
                         e[8..11].copy_from_slice(&rgb);
                     });
                 }
-                Instr::Textura { destino, uv, alfa } => {
+                Instr::Imagen { imagen, destino, alfa, tinte } => {
                     let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
+                    let Some(hueco) = tip.imagen(imagen.0 as usize) else { continue };
                     if a <= 0.001 {
                         continue;
                     }
                     let d = [destino.0.evaluar(c), destino.1.evaluar(c), destino.2.evaluar(c), destino.3.evaluar(c)];
-                    // Girada o no, su caja es la de sus cuatro esquinas transformadas.
-                    let caja = afin.caja([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
-                    self.elemento(1.0, [caja[0] - 1.0, caja[1] - 1.0, caja[2] + 1.0, caja[3] + 1.0], &recortes, |e| {
-                        afin.codificar(&mut e[44..52]);
-                        e[3] = a;
-                        e[36..40].copy_from_slice(&d);
-                        e[40..44].copy_from_slice(uv);
-                    });
+                    let rgb = tinte.as_ref().map(&color);
+                    self.trozo(d, hueco.uv(), a, rgb, afin, &recortes);
+                }
+                Instr::Texto { contenido, en, ancla, ancho, estilo, alfa } => {
+                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
+                    if a <= 0.001 {
+                        continue;
+                    }
+                    let texto = match contenido {
+                        Contenido::Fijo(t) => t.as_str(),
+                        Contenido::Vivo(id) => textos.get(id.0 as usize).map_or("", String::as_str),
+                    };
+                    let rgb = color(&estilo.color);
+                    let m = tip.maquetar(texto, estilo, ancho.as_ref().map(|w| w.evaluar(c)));
+                    // A píxeles de verdad: un texto a medio píxel sale blando.
+                    let s = tip_escala;
+                    let x0 = ((en.0.evaluar(c) - m.tam.0 * ancla.0) * s).round() / s;
+                    let y0 = ((en.1.evaluar(c) - m.tam.1 * ancla.1) * s).round() / s;
+                    for g in m.glifos.clone() {
+                        let d = [x0 + g.rect[0], y0 + g.rect[1], g.rect[2], g.rect[3]];
+                        self.trozo(d, g.uv, a, if g.en_color { None } else { Some(rgb) }, afin, &recortes);
+                    }
                 }
                 Instr::Recorte(Some((forma, margen))) => {
                     let p = aplanar(forma, &giros).encoger(*margen);
@@ -298,7 +331,7 @@ pub struct Gpu {
     tuberia: wgpu::RenderPipeline,
     bufer_formas: wgpu::Buffer,
     bufer_elementos: wgpu::Buffer,
-    muestreo: wgpu::Sampler,
+    atlas: wgpu::Texture,
     grupo_escena: wgpu::BindGroup,
     grupo_sin_capas: wgpu::BindGroup,
 }
@@ -368,23 +401,10 @@ impl Gpu {
             multiview_mask: None,
             cache: None,
         });
-        let mut gpu = Gpu {
-            grupo_escena: Self::grupo_de_escena(&dispositivo, &cola, &tuberia, &bufer_formas, &bufer_elementos, &muestreo, &Lienzo { ancho: 1, alto: 1, rgba: vec![0; 4] }),
-            grupo_sin_capas: Self::capas_de(&dispositivo, &tuberia, formato, 1, 1).1,
-            adaptador, dispositivo, cola, formato, alfa, sin_bloqueo, tuberia, bufer_formas, bufer_elementos, muestreo,
-        };
-        gpu.grupo_sin_capas = Self::capas_de(&gpu.dispositivo, &gpu.tuberia, formato, 1, 1).1;
-        gpu
-    }
-
-    fn grupo_de_escena(
-        dispositivo: &wgpu::Device, cola: &wgpu::Queue, tuberia: &wgpu::RenderPipeline,
-        formas: &wgpu::Buffer, elementos: &wgpu::Buffer, muestreo: &wgpu::Sampler, atlas: &Lienzo,
-    ) -> wgpu::BindGroup {
-        let tam = wgpu::Extent3d { width: atlas.ancho as u32, height: atlas.alto as u32, depth_or_array_layers: 1 };
-        let textura = dispositivo.create_texture(&wgpu::TextureDescriptor {
+        // Un solo atlas para glifos e imágenes. 2048² en RGBA son 16 MB.
+        let atlas = dispositivo.create_texture(&wgpu::TextureDescriptor {
             label: Some("atlas"),
-            size: tam,
+            size: wgpu::Extent3d { width: LADO_DEL_ATLAS, height: LADO_DEL_ATLAS, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -392,23 +412,31 @@ impl Gpu {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        cola.write_texture(
-            wgpu::TexelCopyTextureInfo { texture: &textura, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            &atlas.rgba,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * tam.width), rows_per_image: None },
-            tam,
-        );
-        let vista = textura.create_view(&Default::default());
-        dispositivo.create_bind_group(&wgpu::BindGroupDescriptor {
+        let grupo_escena = dispositivo.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &tuberia.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: formas.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: elementos.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&vista) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(muestreo) },
+                wgpu::BindGroupEntry { binding: 0, resource: bufer_formas.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: bufer_elementos.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&atlas.create_view(&Default::default())) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&muestreo) },
             ],
-        })
+        });
+        let grupo_sin_capas = Self::capas_de(&dispositivo, &tuberia, formato, 1, 1).1;
+        Gpu { adaptador, dispositivo, cola, formato, alfa, sin_bloqueo, tuberia, bufer_formas, bufer_elementos, atlas, grupo_escena, grupo_sin_capas }
+    }
+
+    /// Sube al atlas lo que el tipógrafo haya pintado desde la última vez.
+    pub fn subir_atlas(&self, tip: &mut Tipografo) {
+        tip.vaciado = false; // lo viejo queda ahí, pero ya nadie apunta a ello
+        for (h, rgba) in tip.por_subir.drain(..) {
+            self.cola.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: &self.atlas, mip_level: 0, origin: wgpu::Origin3d { x: h.x, y: h.y, z: 0 }, aspect: wgpu::TextureAspect::All },
+                &rgba,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * h.ancho), rows_per_image: None },
+                wgpu::Extent3d { width: h.ancho, height: h.alto, depth_or_array_layers: 1 },
+            );
+        }
     }
 
     /// Las capas donde se pintan aparte los grupos con opacidad. Mientras se
@@ -441,10 +469,6 @@ impl Gpu {
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&todas) }],
         });
         (cada, grupo)
-    }
-
-    pub fn atlas(&mut self, atlas: &Lienzo) {
-        self.grupo_escena = Self::grupo_de_escena(&self.dispositivo, &self.cola, &self.tuberia, &self.bufer_formas, &self.bufer_elementos, &self.muestreo, atlas);
     }
 
     pub fn lamina(&self, n: NuevaLamina, tam: (f32, f32)) -> Lamina {

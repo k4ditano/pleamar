@@ -4,7 +4,6 @@
 
 use crate::escena::*;
 use crate::logica::{Contexto, Guion};
-use crate::texto::{fuente, Lienzo};
 
 const CX: f32 = 360.0;
 const ARRIBA: f32 = 24.0;
@@ -14,6 +13,7 @@ const ABIERTA: (f32, f32) = (430.0, 92.0);
 #[derive(Default)]
 pub struct Isla {
     paso: bool,
+    segundos: u32,
 }
 
 impl Guion for Isla {
@@ -48,16 +48,25 @@ impl Guion for Isla {
 
         e.pintar(Instr::Recorte(Some((isla.clone(), 1.0))));
         let t = detalle.e().acotar(0.0, 1.0);
-        e.pintar(Instr::Textura {
-            destino: (mezcla(CX - 40.0, CX - ABIERTA.0 * 0.5 + 18.0, t.clone()), mezcla(ARRIBA + 4.0, ARRIBA + 8.0, t.clone()), 80.0.into(), 28.0.into()),
-            uv: [0.0, 0.0, 80.0 / 430.0, 28.0 / 120.0],
-            alfa: 1.0.into(),
+        let blanco = color(0.96, 0.97, 0.96);
+        let hora = e.texto_vivo("hora", "--:--");
+        let tiempo = e.texto_vivo("tiempo", "0:00 / 4:43");
+        // La hora viaja del centro a su esquina cuando la isla crece.
+        e.pintar(Instr::Texto {
+            contenido: Contenido::Vivo(hora),
+            en: (mezcla(CX, CX - ABIERTA.0 * 0.5 + 84.0, t.clone()), mezcla(ARRIBA + 18.0, ARRIBA + 24.0, t.clone())),
+            ancla: (0.5, 0.5),
+            ancho: None,
+            estilo: Estilo::de(15.0, blanco.clone()).peso(600),
+            alfa: 0.95.into(),
         });
-        e.pintar(Instr::Textura {
-            destino: ((CX - ABIERTA.0 * 0.5).into(), ARRIBA.into(), ABIERTA.0.into(), ABIERTA.1.into()),
-            uv: [0.0, 28.0 / 120.0, 1.0, 1.0],
-            alfa: t.clone(),
-        });
+        // Y a su lado, el icono de quien suena. Encontrarlo es cosa de la plataforma.
+        let icono = e.imagen(Fuente::Icono("firefox".into()), 28, 28);
+        e.pintar(Instr::Imagen { imagen: icono, destino: ((CX - ABIERTA.0 * 0.5 + 22.0).into(), (ARRIBA + 10.0).into(), 28.0.into(), 28.0.into()), alfa: t.clone(), tinte: None });
+        let izquierda = CX - ABIERTA.0 * 0.5;
+        e.pintar(Instr::Texto { contenido: Contenido::Fijo("Tycho — Awake".into()), en: ((izquierda + 26.0).into(), (ARRIBA + 58.0).into()), ancla: (0.0, 0.5), ancho: Some(250.0.into()), estilo: Estilo::de(16.0, blanco.clone()).peso(500).lineas(1), alfa: t.clone() });
+        e.pintar(Instr::Texto { contenido: Contenido::Fijo("Reproduciendo".into()), en: ((izquierda + ABIERTA.0 - 26.0).into(), (ARRIBA + 24.0).into()), ancla: (1.0, 0.5), ancho: None, estilo: Estilo::de(12.5, blanco.clone()), alfa: t.clone() * 0.55 });
+        e.pintar(Instr::Texto { contenido: Contenido::Vivo(tiempo), en: ((izquierda + ABIERTA.0 - 26.0).into(), (ARRIBA + 76.0).into()), ancla: (1.0, 0.5), ancho: None, estilo: Estilo::de(12.5, blanco), alfa: t.clone() * 0.6 });
         e.pintar(Instr::Plano {
             forma: Forma::Caja { centro: ((CX - 60.0).into(), (ARRIBA + 76.0).into()), mitad: (130.0.into(), 1.5.into()), radio: 1.5.into() },
             color: color(0.62, 0.84, 0.74),
@@ -93,12 +102,19 @@ impl Guion for Isla {
         e.regla(Disparador::Pulsa(z), vec![Efecto::Alternar(suelta)]);
 
         e.superficie = Superficie { alto: 140, ..Default::default() };
-        e.atlas = Some(textos());
         e
     }
 
     fn evento(&mut self, e: Evento, c: &mut Contexto) {
         match e {
+            //  Un reloj: cada segundo la lógica dice qué hora es, y nada más.
+            Evento::Alarma("inicio") | Evento::Alarma("segundo") => {
+                let ahora = chrono::Local::now();
+                c.texto("hora", ahora.format("%H:%M").to_string());
+                self.segundos += 1;
+                c.texto("tiempo", format!("{}:{:02} / 4:43", (134 + self.segundos) / 60, (134 + self.segundos) % 60));
+                c.alarma("segundo", 1000);
+            }
             Evento::Capa("gota", _) => c.trabajar(),
             // Sin ratón no hay zona que la abra: la demo cuenta los hechos ella.
             Evento::Demo => {
@@ -109,26 +125,4 @@ impl Guion for Isla {
             _ => {}
         }
     }
-}
-
-fn textos() -> Lienzo {
-    let normal = fuente("Inter");
-    let negrita = fuente("Inter:medium");
-    let mut l = Lienzo::nuevo(430, 120);
-    let blanco = [0.96, 0.97, 0.96];
-    let hora = std::process::Command::new("date")
-        .arg("+%H:%M")
-        .output()
-        .ok()
-        .and_then(|s| String::from_utf8(s.stdout).ok())
-        .unwrap_or_else(|| "21:37".into());
-    let w = Lienzo::medir(&negrita, hora.trim(), 15.0, 0.0);
-    l.escribir(&negrita, hora.trim(), 15.0, 40.0 - w / 2.0, 19.5, blanco, 0.95, 0.0);
-    // El detalle, que empieza en la fila 28 del atlas.
-    l.escribir(&negrita, "Tycho — Awake", 16.0, 26.0, 28.0 + 52.0, blanco, 1.0, 0.0);
-    let w = Lienzo::medir(&normal, "2:14 / 4:43", 12.5, 0.0);
-    l.escribir(&normal, "2:14 / 4:43", 12.5, 430.0 - 26.0 - w, 28.0 + 80.0, blanco, 0.6, 0.0);
-    let w = Lienzo::medir(&normal, "Reproduciendo", 12.5, 0.0);
-    l.escribir(&normal, "Reproduciendo", 12.5, 430.0 - 26.0 - w, 28.0 + 27.0, blanco, 0.55, 0.0);
-    l
 }

@@ -335,3 +335,31 @@ impl ProvidesRegistryState for Estado {
 }
 
 smithay_client_toolkit::delegate_dispatch2!(Estado);
+
+/// Un icono por su nombre, a la manera de freedesktop pero sin leer los
+/// `index.theme`: se prueba en los temas de siempre, de lo vectorial a lo
+/// pequeño. Basta para iconos de aplicaciones.
+pub fn icono(nombre: &str) -> Option<std::path::PathBuf> {
+    let casa = std::env::var("HOME").unwrap_or_default();
+    let bases = [format!("{casa}/.local/share/icons"), format!("{casa}/.icons"), "/usr/share/icons".into()];
+    let temas = ["hicolor", "Papirus", "Papirus-Dark", "Adwaita", "breeze", "breeze-dark"];
+    let tallas = ["scalable", "512x512", "256x256", "128x128", "96x96", "64x64", "48x48", "32x32", "symbolic"];
+    let clases = ["apps", "devices", "places", "status", "actions", "categories", "mimetypes"];
+    for base in &bases {
+        for tema in temas {
+            for talla in tallas {
+                for clase in clases {
+                    for ext in ["svg", "png"] {
+                        // Hay temas que ordenan por talla/clase y otros por clase/talla.
+                        for ruta in [format!("{base}/{tema}/{talla}/{clase}/{nombre}.{ext}"), format!("{base}/{tema}/{clase}/{talla}/{nombre}.{ext}")] {
+                            if std::path::Path::new(&ruta).is_file() {
+                                return Some(ruta.into());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ["svg", "png"].iter().map(|e| std::path::PathBuf::from(format!("/usr/share/pixmaps/{nombre}.{e}"))).find(|p| p.is_file())
+}

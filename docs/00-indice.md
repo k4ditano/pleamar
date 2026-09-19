@@ -24,6 +24,8 @@
 - ✅ **Se eligió la dirección del lenguaje:** árbol (A) + lo declarativo de (B), Luau solo para la lógica.
 - ✅ **Se probó contra la Marea real.** Cabe, con tres piezas que el boceto no tenía: hechos y sucesos, capas, gestos.
 - ✅ **Capas, gestos, hechos, sucesos y reglas en el runtime** (todavía escritos en Rust). Probado con la cara de Marea: el disco rojo aguanta buscar y confirmar mientras graba; al dejar de grabar, la lupa sale sola. Y Marea se abre, realza su botón y se cierra con la lógica bloqueada 5 s.
+- ✅ **Frontera de plataforma** (`src/plataforma/`): todo lo de Wayland vive detrás, y `./portable.sh` comprueba que el núcleo compila para Linux, Windows y macOS. Pasa.
+- ✅ **Texto de verdad e imágenes**: `cosmic-text` (ligaduras, árabe, japonés, emoji, líneas, puntos suspensivos, alineado), glifos a la escala del monitor, **textos vivos** que cambia la lógica, SVG/PNG/JPEG, iconos por nombre y teñido. Marea y la isla ya no usan mapas de bits.
 - ⬜ Parser.
 - ✅ **Renderer por elementos**: un quad por elemento con su caja. 600 formas cuestan 0,42 ms por frame frente a 3,66 ms del intérprete por píxel; 2000, 0,57 ms. Con él llegaron **aro/trazo, arco, segmento, giro** (propio y heredado), **degradado lineal, borde**, recortes anidados (hasta cuatro) y fundido real entre elementos. Y después, cerrando sus limitaciones: **transformaciones afines que se componen** (giro, escala, traslación), **opacidad de grupo** con capa intermedia, caja exacta para texturas giradas y zonas de ratón bajo transformaciones. Todo a la vista en `--escena muestrario`.
 - ✅ **Superficies de verdad**: una por monitor —y por los que se enchufen después—, escala fraccional (probada a 2 y a 1,5 en un monitor virtual), y una región de entrada que sigue a las zonas: lo transparente deja pasar el clic. La escena declara su superficie (tamaño, ancla, nivel, margen, reserva).
@@ -31,4 +33,4 @@
 
 ## Siguiente paso
 
-El punto 3 de [[pleamar · 07 Qué falta para igualar a Quickshell]]: **texto dinámico** —glifos con forma, atlas en la GPU a la escala de cada lámina, ajuste de línea—, e **imágenes e iconos**. Es la pieza más grande que queda y la primera de [[pleamar · 08 Limitaciones conocidas]].
+El punto 4 de [[pleamar · 07 Qué falta para igualar a Quickshell]]: **el parser** —palabras clave en inglés—, recarga en caliente, componentes, `repeat` y layout. Antes, dos cosas de [[pleamar · 08 Limitaciones conocidas]] que el layout necesita: poder **medir un texto** desde una expresión (T2) y sacar del hilo de render el trabajo de dar forma al texto (T1).

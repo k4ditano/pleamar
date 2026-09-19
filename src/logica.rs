@@ -44,6 +44,11 @@ impl Contexto {
         let _ = self.tx.send(ARender::Hecho(nombre, valor as u8 as f32));
     }
 
+    /// …cambiar lo que dice un texto…
+    pub fn texto(&self, nombre: &'static str, valor: impl Into<String>) {
+        let _ = self.tx.send(ARender::Texto(nombre, valor.into()));
+    }
+
     /// …lo que acaba de pasar…
     pub fn suceso(&self, nombre: &'static str) {
         let _ = self.tx.send(ARender::Suceso(nombre));

@@ -9,8 +9,12 @@
 //!  · contarle al render dónde está el ratón y cuándo pulsa;
 //!  · decirle al sistema por dónde entra el ratón (`Ventana::region_de_entrada`),
 //!    para que lo transparente deje pasar el clic.
+//!
+//! Y una cuarta que no es de ventanas: encontrar un icono por su nombre.
 
+#[cfg(not(target_os = "linux"))]
 use crate::escena::{ARender, Superficie};
+#[cfg(not(target_os = "linux"))]
 use std::sync::mpsc::Sender;
 
 /// Lo que el render le pide a una ventana del sistema.
@@ -32,6 +36,10 @@ pub fn atender(_: Superficie, _: u32, _: wgpu::Instance, _: Sender<ARender>) {
     std::process::exit(1);
 }
 
+/// Dónde está el fichero de un icono, por su nombre.
 #[cfg(target_os = "linux")]
-#[allow(dead_code)]
-fn _firma(_: Superficie, _: Sender<ARender>) {}
+pub use wayland::icono;
+#[cfg(not(target_os = "linux"))]
+pub fn icono(_: &str) -> Option<std::path::PathBuf> {
+    None
+}

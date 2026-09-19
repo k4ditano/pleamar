@@ -31,8 +31,8 @@ Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
 | Trazados libres (`Shape`, SVG) | ⬜ |
 | Giro, escala y traslación de un grupo | ✅ afines que se componen; el ratón acierta bajo ellas |
 | Opacidad de grupo, recortes anidados | ✅ capa intermedia (hasta 4 a la vez); recortes anidados (hasta 4) |
-| **Texto dinámico**: fuentes, ajuste de línea, elipsis, emoji, RTL | ⬜ mapa de bits fijo, pintado una vez |
-| Imágenes (PNG/JPG/SVG), iconos del tema, GIF | ⬜ |
+| **Texto dinámico**: fuentes, ajuste de línea, elipsis, emoji, RTL | ✅ `cosmic-text`; falta texto rico y edición |
+| Imágenes (PNG/JPG/SVG), iconos del tema, GIF | 🟡 PNG, JPEG, SVG e iconos por nombre; sin GIF ni búsqueda de tema de verdad |
 | Desenfoque, máscaras, `MultiEffect` | ⬜ |
 | `ShaderEffect` (shader propio) | ⬜ |
 | `Canvas` imperativo | ⬜ |
@@ -85,7 +85,7 @@ El shader recorre **toda** la lista de dibujo en **cada** píxel. Con 12 instruc
 
 Buena noticia: capas, gestos y hechos **no dependen de esto**. Solo producen valores de propiedades; les da igual quién pinte.
 
-### 2. El texto es la pieza más grande
+### 2. El texto es la pieza más grande — ✅ lo básico, hecho el 19 sep
 
 Texto de verdad es: dar forma a los glifos (ligaduras, árabe, emoji en color), fuentes de reserva, ajuste de línea, elipsis, y un atlas de glifos en la GPU que se va llenando. En Rust existe (`cosmic-text` o `parley`, con un atlas para `wgpu`), así que no se parte de cero. **La entrada de texto con IME es otro proyecto encima.**
 
