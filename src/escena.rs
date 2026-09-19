@@ -407,6 +407,9 @@ pub enum Fuente {
     Ruta(std::path::PathBuf),
     /// Un icono por su nombre («firefox»). Dónde encontrarlo lo sabe la plataforma.
     Icono(String),
+    /// Lo que diga un texto vivo: el nombre de un icono, o una ruta si empieza
+    /// por `/`. Es como la lógica elige una imagen: cambiando ese texto.
+    Viva(TextoId),
 }
 
 pub fn color(r: f32, g: f32, b: f32) -> Color {
@@ -462,6 +465,9 @@ pub enum Comportamiento {
     /// La propiedad persigue a una expresión con su muelle. Es lo que en el
     /// lenguaje será `width: label.width + 24 ~lively`.
     Sigue { prop: PropId, a: Expr },
+    /// prop = expresión, sin muelle. Para que algo que se calcula al final del
+    /// dibujo —lo que ocupa un reparto— se pueda leer desde el principio.
+    Es { prop: PropId, a: Expr },
     /// prop += por_segundo · dt, sin fin: una aguja que da vueltas.
     Avance { prop: PropId, por_segundo: Expr },
     /// Dos propiedades que tiran hacia el puntero, con su propio muelle.
@@ -901,6 +907,11 @@ pub enum ARender {
     FocoTeclado(bool),
     /// Poner el cursor de texto en un campo, o quitarlo de donde esté.
     Enfocar(Option<&'static str>),
+    /// Cómo repite las teclas este usuario: a los cuántos ms empieza y cada cuántos
+    /// sigue. `None`: las tiene sin repetición. Lo dice el sistema; si calla, 400 y 33.
+    Repeticion(Option<(u32, u32)>),
+    /// Desde fuera preguntan cuánto vale un hecho, un texto o una propiedad.
+    Pregunta(&'static str, std::sync::mpsc::Sender<String>),
     /// Han soltado algo encima, arrastrado desde otra aplicación: (tipo, contenido).
     Soltado(String, String),
     Salir,

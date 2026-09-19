@@ -14,6 +14,7 @@ local function filter()
     end
     for i = 1, 7 do
         text["hit." .. (i - 1)] = shown[i] and shown[i].name or ""
+        text["pic." .. (i - 1)] = shown[i] and shown[i].icon or ""
     end
     fact.count = #shown
     fact.sel = 0

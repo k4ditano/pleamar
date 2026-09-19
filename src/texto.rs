@@ -235,6 +235,8 @@ impl Tipografo {
                 let ruta = match fuente {
                     Fuente::Ruta(r) => Some(r.clone()),
                     Fuente::Icono(nombre) => crate::plataforma::icono(nombre),
+                    // Se pide cuando se sepa qué dice el texto: `imagen_viva`.
+                    Fuente::Viva(_) => return None,
                 };
                 let hueco = ruta.as_ref().and_then(|r| pintar_imagen(r, px)).and_then(|rgba| {
                     let hueco = self.estantes.pedir(px.0, px.1)?;
@@ -248,6 +250,16 @@ impl Tipografo {
             })
             .collect()
     }
+
+    /// Una imagen que ha pedido un dato: un icono por su nombre, o una ruta.
+    fn cargar_viva(&mut self, nombre: &str, (w, h): (u32, u32)) -> Option<Hueco> {
+        let px = (((w as f32) * self.escala).round().max(1.0) as u32, ((h as f32) * self.escala).round().max(1.0) as u32);
+        let ruta = if nombre.starts_with('/') { Some(std::path::PathBuf::from(nombre)) } else { crate::plataforma::icono(nombre) };
+        let rgba = pintar_imagen(&ruta?, px)?;
+        let hueco = self.estantes.pedir(px.0, px.1)?;
+        self.por_subir.push((hueco, rgba));
+        Some(hueco)
+    }
 }
 
 // ── el taller y su mostrador ────────────────────────────────────
@@ -255,6 +267,7 @@ impl Tipografo {
 enum Encargo {
     Maqueta(Clave, u32),
     Imagenes(Vec<(Fuente, (u32, u32))>, u32),
+    Viva(String, (u32, u32), u32),
     /// Atlas nuevo, a esta escala. Todo lo de generaciones anteriores se tira.
     Vaciar(f32),
 }
@@ -263,6 +276,7 @@ enum Encargo {
 pub enum Entrega {
     Maqueta { clave: Clave, maqueta: Arc<Maqueta>, generacion: u32 },
     Imagenes { huecos: Vec<Option<Hueco>>, generacion: u32 },
+    Viva { nombre: String, tam: (u32, u32), hueco: Option<Hueco>, generacion: u32 },
 }
 
 pub struct Paquete {
@@ -279,6 +293,13 @@ pub struct Textos {
     /// ve mientras llega la nueva, en vez de un hueco.
     ultima: HashMap<usize, Arc<Maqueta>>,
     imagenes: Vec<Option<Hueco>>,
+    /// De dónde sale cada imagen de la escena, para saber cuáles dependen de un texto.
+    fuentes: Vec<(Fuente, (u32, u32))>,
+    /// Las que han pedido los datos, por nombre y tamaño. `None`: se buscó y no existe.
+    vivas: HashMap<(String, (u32, u32)), Option<Hueco>>,
+    vivas_pedidas: HashSet<(String, (u32, u32))>,
+    /// Lo último que enseñó cada imagen viva, mientras llega lo nuevo.
+    ultima_viva: HashMap<usize, Hueco>,
     pub por_subir: Vec<(Hueco, Vec<u8>)>,
     generacion: u32,
     escala: f32,
@@ -304,6 +325,10 @@ impl Textos {
                             Entrega::Maqueta { clave, maqueta, generacion }
                         }
                         Encargo::Imagenes(lista, generacion) => Entrega::Imagenes { huecos: t.cargar_imagenes(&lista), generacion },
+                        Encargo::Viva(nombre, tam, generacion) => {
+                            let hueco = t.cargar_viva(&nombre, tam);
+                            Entrega::Viva { nombre, tam, hueco, generacion }
+                        }
                     };
                     let por_subir = std::mem::take(&mut t.por_subir);
                     // Por el canal de siempre, que además despierta al render si dormía.
@@ -313,7 +338,7 @@ impl Textos {
                 }
             })
             .unwrap();
-        Textos { al_taller, maquetas: HashMap::new(), pedidas: HashSet::new(), ultima: HashMap::new(), imagenes: Vec::new(), por_subir: Vec::new(), generacion: 0, escala: 1.0 }
+        Textos { al_taller, maquetas: HashMap::new(), pedidas: HashSet::new(), ultima: HashMap::new(), imagenes: Vec::new(), fuentes: Vec::new(), vivas: HashMap::new(), vivas_pedidas: HashSet::new(), ultima_viva: HashMap::new(), por_subir: Vec::new(), generacion: 0, escala: 1.0 }
     }
 
     pub fn escala(&self) -> f32 {
@@ -329,6 +354,10 @@ impl Textos {
         self.pedidas.clear();
         self.ultima.clear();
         self.imagenes.clear();
+        self.fuentes = imagenes.to_vec();
+        self.vivas.clear();
+        self.vivas_pedidas.clear();
+        self.ultima_viva.clear();
         self.por_subir.clear();
         let _ = self.al_taller.send(Encargo::Vaciar(escala));
         if !imagenes.is_empty() {
@@ -338,7 +367,7 @@ impl Textos {
 
     pub fn recibir(&mut self, p: Paquete) {
         let generacion = match &p.entrega {
-            Entrega::Maqueta { generacion, .. } | Entrega::Imagenes { generacion, .. } => *generacion,
+            Entrega::Maqueta { generacion, .. } | Entrega::Imagenes { generacion, .. } | Entrega::Viva { generacion, .. } => *generacion,
         };
         if generacion != self.generacion {
             return; // de un atlas que ya no existe
@@ -353,6 +382,10 @@ impl Textos {
                 self.maquetas.insert(clave, maqueta);
             }
             Entrega::Imagenes { huecos, .. } => self.imagenes = huecos,
+            Entrega::Viva { nombre, tam, hueco, .. } => {
+                self.vivas_pedidas.remove(&(nombre.clone(), tam));
+                self.vivas.insert((nombre, tam), hueco);
+            }
         }
     }
 
@@ -369,8 +402,27 @@ impl Textos {
         self.ultima.get(&sitio).cloned()
     }
 
-    pub fn imagen(&self, k: usize) -> Option<Hueco> {
-        self.imagenes.get(k).copied().flatten()
+    /// La imagen número `k` de la escena. Si sale de un texto vivo, la que ese
+    /// texto diga ahora; mientras llega, la que había. Un texto vacío es ninguna.
+    pub fn imagen(&mut self, k: usize, textos: &[String]) -> Option<Hueco> {
+        let Some((Fuente::Viva(t), tam)) = self.fuentes.get(k) else {
+            return self.imagenes.get(k).copied().flatten();
+        };
+        let nombre = textos.get(t.0 as usize).filter(|n| !n.is_empty())?;
+        let clave = (nombre.clone(), *tam);
+        match self.vivas.get(&clave) {
+            Some(Some(hueco)) => {
+                self.ultima_viva.insert(k, *hueco);
+                Some(*hueco)
+            }
+            Some(None) => None,
+            None => {
+                if self.vivas_pedidas.insert(clave.clone()) {
+                    let _ = self.al_taller.send(Encargo::Viva(clave.0, clave.1, self.generacion));
+                }
+                self.ultima_viva.get(&k).copied()
+            }
+        }
     }
 }
 

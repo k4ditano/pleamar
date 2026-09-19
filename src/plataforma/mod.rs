@@ -110,8 +110,8 @@ pub fn morir_con_el_padre(orden: &mut std::process::Command) {
 ///
 /// En Linux y macOS, un socket de Unix. En Windows será una tubería con nombre.
 #[cfg(unix)]
-pub fn escuchar_ordenes(escena: &str, recibir: Box<dyn Fn(String) + Send>) {
-    use std::io::{BufRead, BufReader};
+pub fn escuchar_ordenes(escena: &str, recibir: Box<dyn Fn(String) -> Option<String> + Send>) {
+    use std::io::{BufRead, BufReader, Write};
     let Some(ruta) = ruta_de_ordenes(escena) else { return };
     let _ = std::fs::create_dir_all(ruta.parent().unwrap());
     let _ = std::fs::remove_file(&ruta);
@@ -119,9 +119,13 @@ pub fn escuchar_ordenes(escena: &str, recibir: Box<dyn Fn(String) + Send>) {
     std::thread::Builder::new()
         .name("órdenes".into())
         .spawn(move || {
-            for c in escucha.incoming().map_while(Result::ok) {
-                for linea in BufReader::new(c).lines().map_while(Result::ok) {
-                    recibir(linea);
+            for mut c in escucha.incoming().map_while(Result::ok) {
+                let Ok(lectura) = c.try_clone() else { continue };
+                for linea in BufReader::new(lectura).lines().map_while(Result::ok) {
+                    // Una pregunta (`get open`) se contesta por donde vino.
+                    if let Some(respuesta) = recibir(linea) {
+                        let _ = writeln!(c, "{respuesta}");
+                    }
                 }
             }
         })
@@ -151,11 +155,20 @@ pub fn decir(escena: Option<&str>, orden: &str) -> Result<(), String> {
         }
     };
     let mut s = std::os::unix::net::UnixStream::connect(&ruta).map_err(|e| format!("{}: {e}", ruta.display()))?;
-    writeln!(s, "{orden}").map_err(|e| e.to_string())
+    writeln!(s, "{orden}").map_err(|e| e.to_string())?;
+    // Ya está dicho todo: si era una pregunta, ahora llega lo que contesten.
+    let _ = s.shutdown(std::net::Shutdown::Write);
+    let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+    let mut respuesta = String::new();
+    let _ = std::io::Read::read_to_string(&mut s, &mut respuesta);
+    if !respuesta.is_empty() {
+        print!("{respuesta}");
+    }
+    Ok(())
 }
 
 #[cfg(not(unix))]
-pub fn escuchar_ordenes(_: &str, _: Box<dyn Fn(String) + Send>) {}
+pub fn escuchar_ordenes(_: &str, _: Box<dyn Fn(String) -> Option<String> + Send>) {}
 #[cfg(not(unix))]
 pub fn decir(_: Option<&str>, _: &str) -> Result<(), String> {
     Err("este sistema no tiene todavía por dónde recibir órdenes: falta la tubería con nombre".into())

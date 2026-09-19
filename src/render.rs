@@ -68,6 +68,7 @@ pub fn hilo(
     let mut atlas_por_rehacer = false;
     let mut primer_frame = true;
     let mut textos: Vec<String> = Vec::new();
+    let mut repeticion: Option<(u32, u32)> = Some((400, 33));
     let mut uniformes = [0f32; N_UNIFORMES];
     let mut tam = (720.0f32, 224.0f32);
     let mut region: Vec<[i32; 4]> = vec![[i32::MIN; 4]];
@@ -232,6 +233,19 @@ pub fn hilo(
                     Some(i) => hechos[i] = v,
                     None => eprintln!("render · no conozco el hecho «{nombre}»"),
                 },
+                ARender::Pregunta(nombre, a_quien) => {
+                    let numero = |v: f32| if v.fract() == 0.0 { format!("{}", v as i64) } else { format!("{v}") };
+                    let r = if let Some(i) = escena.hechos.iter().position(|h| h.0 == nombre) {
+                        numero(hechos[i])
+                    } else if let Some(i) = escena.textos.iter().position(|t| t.0 == nombre) {
+                        textos.get(i).cloned().unwrap_or_default()
+                    } else if let Some(i) = escena.props.iter().position(|p| p.0 == nombre) {
+                        numero(props[i].x)
+                    } else {
+                        format!("? no conozco «{nombre}»")
+                    };
+                    let _ = a_quien.send(r);
+                }
                 ARender::Suceso(nombre) => match escena.sucesos.iter().position(|s| s.0 == nombre) {
                     Some(i) => sucesos.push((i, true, None)),
                     None => eprintln!("render · no conozco el suceso «{nombre}»"),
@@ -256,10 +270,11 @@ pub fn hilo(
                     rueda += d;
                     ultima_actividad = Instant::now();
                 }
+                ARender::Repeticion(r) => repeticion = r,
                 ARender::Tecla(nombre, escribe, mods) => {
                     ultima_actividad = Instant::now();
-                    // Si se queda pulsada, se repite: primero a los 400 ms, luego a 30 por segundo.
-                    repite = Some((nombre.clone(), escribe.clone(), mods, Instant::now() + Duration::from_millis(400)));
+                    // Si se queda pulsada, se repite, como este usuario lo tenga puesto.
+                    repite = repeticion.map(|(espera, _)| (nombre.clone(), escribe.clone(), mods, Instant::now() + Duration::from_millis(espera as u64)));
                     pulsaciones.push((nombre, escribe, mods));
                 }
                 ARender::TeclaSuelta(nombre) => {
@@ -283,7 +298,7 @@ pub fn hilo(
         if let Some((nombre, escribe, mods, cuando)) = &mut repite {
             if Instant::now() >= *cuando {
                 pulsaciones.push((nombre.clone(), escribe.clone(), *mods));
-                *cuando = Instant::now() + Duration::from_millis(33);
+                *cuando = Instant::now() + Duration::from_millis(repeticion.map_or(33, |r| r.1) as u64);
             }
         }
         let mut enviados: Vec<usize> = Vec::new();
@@ -690,6 +705,12 @@ pub fn hilo(
                 Comportamiento::Sigue { prop, a } => {
                     let v = a.evaluar(Ctx { props: &props, hechos: &hechos });
                     props[prop.0 as usize].objetivo = v;
+                }
+                Comportamiento::Es { prop, a } => {
+                    let v = a.evaluar(Ctx { props: &props, hechos: &hechos });
+                    let p = &mut props[prop.0 as usize];
+                    vivo |= (p.x - v).abs() > 1e-3;
+                    p.fijar(v);
                 }
                 Comportamiento::Avance { prop, por_segundo } => {
                     let v = por_segundo.evaluar(Ctx { props: &props, hechos: &hechos });

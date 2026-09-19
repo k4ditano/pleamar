@@ -18,7 +18,7 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
-        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
+        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers, RepeatInfo},
         pointer::{cursor_shape::CursorShapeManager, PointerEvent, PointerEventKind, PointerHandler},
         Capability, SeatHandler, SeatState,
     },
@@ -439,6 +439,17 @@ impl KeyboardHandler for Estado {
     fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, e: KeyEvent) {
         let escribe = e.utf8.clone().filter(|t| !t.chars().any(char::is_control));
         let _ = self.a_render.send(ARender::Tecla(nombre_de(&e), escribe, self.mods));
+    }
+    fn update_repeat_info(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, info: RepeatInfo) {
+        let r = match info {
+            RepeatInfo::Repeat { rate, delay } => Some((delay, (1000 / rate.get()).max(1))),
+            RepeatInfo::Disable => None,
+        };
+        match r {
+            Some((espera, cada)) => println!("teclado · repite a los {espera} ms, y luego cada {cada} ms"),
+            None => println!("teclado · sin repetición"),
+        }
+        let _ = self.a_render.send(ARender::Repeticion(r));
     }
     fn repeat_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
     fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, e: KeyEvent) {

@@ -22,17 +22,20 @@ scene Launcher {
     fact count = 0                        // cuántos resultados hay, hasta 7
     fact sel   = 0                        // cuál está elegido
     text query = ""
-    repeat i in 0..7 { text hit.$i = "" }
+    repeat i in 0..7 {
+        text hit.$i = ""
+        text pic.$i = ""                  // el nombre de su icono: lo pone la lógica…
+        image icon.$i = from pic.$i, 24, 24   // …y la imagen es la que ese texto diga
+    }
     event toggle                          // viene de fuera
     event launch ->                       // `emit launch(2)`: lanza el tercero
 
     // ── abrir y cerrar ───────────────────────────────────────────
     prop seen  = 0 ~quick
     prop scale = 0.96 ~lively
-    //  El alto del panel persigue a lo que ocupe la lista. (No se puede leer
-    //  `list.height` aquí: el panel se pinta antes que ella.)
-    prop tall = 74 ~quick
-    follow tall = 82 + count * 42
+    //  El alto del panel persigue a lo que ocupe la lista, que se declara más abajo.
+    prop tall = 84 ~quick
+    follow tall = 84 + list.height
     layer panel ~quick {
         shown while open { seen: 1 ~quick;  scale: 1 ~lively }
         gone             { seen: 0 ~quick;  scale: 0.96 ~quick }
@@ -68,7 +71,8 @@ scene Launcher {
 
         box hit { from: 0, 0; size: 536, 40; corner: 12; color: mint; opacity: on * 16%; cursor: pointer }
         box { from: 0, 10; size: 3, 20; corner: 1.5; color: mint; opacity: on }
-        text hit.$i { at: 18, 20; anchor: left center; size: 15.5; width: 500; lines: 1; color: ink; opacity: 62% + on * 38% }
+        image icon.$i { at: 14, 8; size: 24, 24 }
+        text hit.$i { at: 50, 20; anchor: left center; size: 15.5; width: 468; lines: 1; color: ink; opacity: 62% + on * 38% }
 
         on enter hit { sel = i }
         on press hit { emit launch(i) }

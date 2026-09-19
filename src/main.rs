@@ -27,7 +27,7 @@ const AYUDA: &str = "pleamar [opciones]
                       escritas en Rust: marea (por defecto), isla, cara, muestrario, enjambre
   --comprobar FICHERO lee una escena, dice si está bien y sale
   --decir [ESCENA] ORDEN   le dice algo a una escena en marcha y sale. Órdenes:
-                      «emit suceso [n]», «fact hecho valor», «text nombre lo que ponga», «focus campo», «quit»
+                      «emit suceso [n]», «fact hecho valor», «text nombre lo que ponga», «focus campo», «get nombre» (contesta), «quit»
   --pantalla NOMBRES  «todas», o monitores separados por comas (por defecto, lo que pida la escena).
                       Un nombre repetido da dos superficies en el mismo monitor.
   --bloqueo MS        lo que se bloquea la lógica tras cada decisión (600)
@@ -148,6 +148,7 @@ fn main() {
     if std::path::Path::new(&a.escena).is_file() {
         escenas::de_fichero::vigilar(a.escena.clone(), a_render.clone(), a_logica.clone());
     }
+    let a_logica_para_ordenes = a_logica.clone();
     let render = {
         let bloqueada = bloqueada.clone();
         let op = render::Opciones { hud: a.hud, ingenuo: a.ingenuo, reducido: a.reducido, sin_vsync: a.sin_vsync, arranque };
@@ -170,19 +171,37 @@ fn main() {
     // ejecuta un atajo global del compositor— entra como si lo dijera la lógica.
     {
         let nombre = std::path::Path::new(&a.escena).file_stem().map_or(a.escena.clone(), |n| n.to_string_lossy().into_owned());
-        let tx = Mutex::new(a_render.clone());
+        let tx = Mutex::new((a_render.clone(), a_logica_para_ordenes));
         plataforma::escuchar_ordenes(&nombre, Box::new(move |linea| {
-            let tx = tx.lock().unwrap();
+            let guardia = tx.lock().unwrap();
+            let (tx, a_logica) = &*guardia;
             let mut p = linea.trim().splitn(3, ' ');
             let (que, quien, resto) = (p.next().unwrap_or(""), p.next().unwrap_or(""), p.next().unwrap_or(""));
+            if que == "get" {
+                let (pregunta, respuesta) = std::sync::mpsc::channel();
+                let _ = tx.send(ARender::Pregunta(escena::internar(quien), pregunta));
+                return Some(respuesta.recv_timeout(std::time::Duration::from_secs(1)).unwrap_or_else(|_| "? el render no contesta".into()));
+            }
             let _ = match que {
                 "emit" => tx.send(ARender::SucesoDeFuera(escena::internar(quien), resto.parse().ok())),
-                "fact" => tx.send(ARender::Hecho(escena::internar(quien), match resto { "true" => 1.0, "false" => 0.0, n => n.parse().unwrap_or(0.0) })),
-                "text" => tx.send(ARender::Texto(escena::internar(quien), resto.to_owned())),
+                // Lo que se pone desde fuera, la lógica tiene que saberlo: no lo ha puesto ella.
+                "fact" => {
+                    let v = match resto { "true" => 1.0, "false" => 0.0, n => n.parse().unwrap_or(0.0) };
+                    let _ = a_logica.send(Evento::Hecho(escena::internar(quien), v));
+                    tx.send(ARender::Hecho(escena::internar(quien), v))
+                }
+                "text" => {
+                    let _ = a_logica.send(Evento::Texto(escena::internar(quien), resto.to_owned()));
+                    tx.send(ARender::Texto(escena::internar(quien), resto.to_owned()))
+                }
                 "focus" => tx.send(ARender::Enfocar(Some(escena::internar(quien)))),
                 "quit" => salir(),
-                _ => return eprintln!("órdenes · no entiendo «{linea}»"),
+                _ => {
+                    eprintln!("órdenes · no entiendo «{linea}»");
+                    return Some(format!("? no entiendo «{}»: emit, fact, text, focus, get, quit", linea.trim()));
+                }
             };
+            None
         }));
     }
     if let Some(guion) = a.raton.clone() {

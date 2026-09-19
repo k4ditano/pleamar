@@ -190,6 +190,28 @@ pub fn levantar(arbol: &[Entrada]) -> Result<Escena, Vec<Fallo>> {
     let Some(cuerpo) = escena.cuerpo.as_ref() else {
         return Err(vec![Fallo::en(escena.linea, escena.col, "a la escena le falta su bloque `{ … }`")]);
     };
+    // Lo que ocupa un reparto con nombre se sabe al acabar de dibujarlo, pero se
+    // puede querer leer antes (el panel que envuelve a su lista): sus medidas
+    // se declaran ya, como propiedades, y el reparto las rellena al final.
+    fn adelantar<'a>(o: &mut Obra<'a>, entradas: &'a [Entrada]) {
+        for e in entradas {
+            let Entrada::Nodo(n) = e else { continue };
+            let palabra = |k: usize| match n.cabeza.get(k).map(|f| &f.f) { Some(F::Id(p)) => Some(p.as_str()), _ => None };
+            match palabra(0) {
+                Some("component" | "repeat") => continue,
+                Some("row" | "column") => if let Some(nombre) = palabra(1) {
+                    for parte in ["width", "height"] {
+                        let entero = format!("{nombre}.{parte}");
+                        let p = o.e.prop_con(fijo(&entero), 0.0, Muelle::VIVO);
+                        o.props.insert(entero, p);
+                    }
+                },
+                _ => {}
+            }
+            adelantar(o, n.cuerpo.as_deref().unwrap_or(&[]));
+        }
+    }
+    adelantar(&mut o, cuerpo);
     // Cuatro vueltas: declaraciones; nombres y capas; dibujo; reglas.
     for vuelta in 0..3 {
         let de_esta: Vec<&Entrada> = cuerpo.iter().filter(|e| vuelta_de(e) == vuelta).collect();
@@ -718,7 +740,20 @@ impl<'a> Obra<'a> {
                 "image" if matches!(c.f.get(2).map(|x| &x.f), Some(F::Sim("="))) => {
                     let nombre = self.declarar(&c.id("un nombre para la imagen")?);
                     c.exige_sim("=")?;
-                    let fuente = if c.palabra("icon") { Fuente::Icono(c.cadena()?) } else if c.palabra("file") { Fuente::Ruta(c.cadena()?.into()) } else { return c.fallo("una imagen es `icon \"nombre\"` o `file \"ruta\"`") };
+                    let fuente = if c.palabra("icon") {
+                        Fuente::Icono(c.cadena()?)
+                    } else if c.palabra("file") {
+                        Fuente::Ruta(c.cadena()?.into())
+                    } else if c.palabra("from") {
+                        // La que diga un texto vivo: así elige la lógica una imagen.
+                        let t = self.global(&c.id("el nombre de un texto")?);
+                        match self.textos.get(&t) {
+                            Some(t) => Fuente::Viva(*t),
+                            None => return self.desconocido(&c, "ningún texto", &t, self.textos.keys().collect()),
+                        }
+                    } else {
+                        return c.fallo("una imagen es `icon \"nombre\"`, `file \"ruta\"` o `from un_texto`");
+                    };
                     c.exige_sim(",")?;
                     let w = c.num()?;
                     c.exige_sim(",")?;
@@ -1636,6 +1671,12 @@ impl<'a> Obra<'a> {
             };
             destino.insert(format!("{nombre}.width"), tam.0.clone());
             destino.insert(format!("{nombre}.height"), tam.1.clone());
+            // Quien lo leyó antes de este punto leyó la propiedad adelantada: aquí se rellena.
+            for (parte, a) in [("width", &tam.0), ("height", &tam.1)] {
+                if let Some(prop) = self.props.get(&format!("{nombre}.{parte}")).copied() {
+                    self.e.comportamientos.push(Comportamiento::Es { prop, a: a.clone() });
+                }
+            }
         }
         self.ultimo_tam = Some(tam);
         Ok(())

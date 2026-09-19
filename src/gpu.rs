@@ -252,7 +252,7 @@ impl Dibujo {
                 }
                 Instr::Imagen { imagen, destino, alfa, tinte } => {
                     let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
-                    let Some(hueco) = tip.imagen(imagen.0 as usize) else { continue };
+                    let Some(hueco) = tip.imagen(imagen.0 as usize, textos) else { continue };
                     if a <= 0.001 {
                         continue;
                     }
