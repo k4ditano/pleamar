@@ -91,7 +91,6 @@ impl Contexto {
 
 pub fn hilo(mut guion: Box<dyn Guion>, rx: Receiver<Evento>, tx: Sender<ARender>, bloqueada: Arc<AtomicBool>, op: Opciones) {
     let demo = op.demo;
-    let _ = tx.send(ARender::Escena(guion.escena()));
     let mut c = Contexto { tx, bloqueada, op, alarmas: Vec::new() };
     let mut siguiente_demo = Instant::now() + Duration::from_millis(1200);
     guion.evento(Evento::Alarma("inicio"), &mut c);

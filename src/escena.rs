@@ -13,9 +13,58 @@
 use std::ops::{Add, Div, Mul, Sub};
 use std::time::Duration;
 
-pub const ANCHO: u32 = 720;
-pub const ALTO: u32 = 300;
-pub const MAX_INSTR: usize = 1024;
+// ── dónde vive la escena ────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Ancla {
+    Arriba,
+    Abajo,
+    Izquierda,
+    Derecha,
+    ArribaIzquierda,
+    ArribaDerecha,
+    AbajoIzquierda,
+    AbajoDerecha,
+    Centro,
+}
+
+/// En qué capa del escritorio: detrás de las ventanas o delante.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Nivel {
+    Fondo,
+    Debajo,
+    Encima,
+    SobreTodo,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Pantallas {
+    /// Una superficie en cada monitor, y en los que se enchufen después.
+    Todas,
+    /// Solo en estos. Un nombre repetido da dos superficies en el mismo.
+    Estas(Vec<String>),
+}
+
+/// La superficie que pide una escena. El tamaño es en píxeles lógicos: en un
+/// monitor a escala 2 se pinta con el doble de píxeles de verdad.
+#[derive(Clone, Debug)]
+pub struct Superficie {
+    pub ancho: u32,
+    pub alto: u32,
+    pub ancla: Ancla,
+    /// Arriba, derecha, abajo, izquierda.
+    pub margen: [i32; 4],
+    pub nivel: Nivel,
+    /// Cuánto sitio le reserva el compositor: las ventanas no lo pisan.
+    pub reserva: i32,
+    pub pantallas: Pantallas,
+}
+
+impl Default for Superficie {
+    fn default() -> Self {
+        Superficie { ancho: 720, alto: 224, ancla: Ancla::Arriba, margen: [40, 0, 0, 0], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Estas(vec!["HDMI-A-1".into()]) }
+    }
+}
 
 // ── propiedades y expresiones ───────────────────────────────────
 
@@ -330,6 +379,13 @@ pub struct Zona {
 }
 
 impl Zona {
+    /// La caja que la contiene, para decirle al compositor por dónde entra el ratón.
+    pub fn caja(&self, c: Ctx) -> Option<[f32; 4]> {
+        let mut p = self.forma.aplanar(c);
+        p.afin = self.bajo.iter().fold(Afin::IDENTIDAD, |a, t| a.por(t.afin(c)));
+        p.caja()
+    }
+
     pub fn contiene(&self, c: Ctx, x: f32, y: f32) -> bool {
         let mut p = self.forma.aplanar(c);
         p.afin = self.bajo.iter().fold(Afin::IDENTIDAD, |a, t| a.por(t.afin(c)));
@@ -539,6 +595,7 @@ pub struct Escena {
     /// Gestos que se repiten solos mientras algo sea verdad.
     pub posturas: Vec<(GestoId, Expr)>,
     pub reglas: Vec<Regla>,
+    pub superficie: Superficie,
 }
 
 impl Escena {
@@ -635,6 +692,11 @@ pub enum Orden {
 
 pub enum ARender {
     Escena(Escena),
+    /// Una superficie más donde pintar: un monitor que ya estaba o que acaban
+    /// de enchufar.
+    Lamina(Box<crate::gpu::NuevaLamina>),
+    LaminaFuera(u32),
+    Escala(u32, f32),
     Orden(Orden),
     /// La frontera: la lógica cuenta lo que pasa, y nada más.
     Hecho(&'static str, f32),

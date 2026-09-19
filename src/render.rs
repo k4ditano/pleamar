@@ -3,6 +3,7 @@
 //! de pintar del todo.
 
 use crate::escena::*;
+use crate::gpu::{Dibujo, Gpu, Lamina, ALTO_INSTRUMENTOS, N_UNIFORMES};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
@@ -54,175 +55,18 @@ impl Ciclo {
 
 pub fn hilo(
     instancia: wgpu::Instance,
-    superficie: wgpu::Surface<'static>,
+    compositor: smithay_client_toolkit::compositor::CompositorState,
     rx: Receiver<ARender>,
     a_logica: Sender<Evento>,
     logica_bloqueada: Arc<AtomicBool>,
     op: Opciones,
 ) {
-    let adaptador = pollster::block_on(instancia.request_adapter(&wgpu::RequestAdapterOptions {
-        compatible_surface: Some(&superficie),
-        power_preference: wgpu::PowerPreference::LowPower,
-        ..Default::default()
-    }))
-    .expect("no hay adaptador gráfico");
-    let (dispositivo, cola) =
-        pollster::block_on(adaptador.request_device(&wgpu::DeviceDescriptor::default()))
-            .expect("no hay dispositivo");
-
-    let caps = superficie.get_capabilities(&adaptador);
-    // Sin sRGB: el compositor mezcla los bytes tal cual, y el alfa
-    // premultiplicado solo cuadra si nadie los recodifica por el camino.
-    let formato = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
-    let alfa = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
-        wgpu::CompositeAlphaMode::PreMultiplied
-    } else {
-        eprintln!("aviso: sin alfa premultiplicado ({:?}); el fondo saldrá opaco", caps.alpha_modes);
-        wgpu::CompositeAlphaMode::Auto
-    };
-    let info = adaptador.get_info();
-    println!("render · {} ({:?}) · {:?} · {:?}", info.name, info.backend, formato, alfa);
-
-    superficie.configure(
-        &dispositivo,
-        &wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: formato,
-            view_formats: vec![],
-            alpha_mode: alfa,
-            width: ANCHO,
-            height: ALTO,
-            desired_maximum_frame_latency: 1,
-            present_mode: if op.sin_vsync {
-                *caps.present_modes.iter().find(|m| matches!(m, wgpu::PresentMode::Immediate | wgpu::PresentMode::Mailbox)).unwrap_or(&wgpu::PresentMode::Fifo)
-            } else {
-                wgpu::PresentMode::Fifo
-            },
-            color_space: wgpu::SurfaceColorSpace::Auto,
-        },
-    );
-
-    let mut uniformes = [0f32; 8 + 120];
-    let bufer = dispositivo.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("uniformes"),
-        size: std::mem::size_of_val(&uniformes) as u64,
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let almacen = |etiqueta, floats: usize| {
-        dispositivo.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(etiqueta),
-            size: (floats * 4) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
-    };
-    let bufer_formas = almacen("formas", MAX_FORMAS * POR_FORMA);
-    let bufer_elementos = almacen("elementos", MAX_ELEMENTOS * POR_ELEMENTO);
+    let mut gpu: Option<Gpu> = None;
+    let mut laminas: Vec<Lamina> = Vec::new();
     let mut dibujo = Dibujo::default();
-    let muestreo = dispositivo.create_sampler(&wgpu::SamplerDescriptor {
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        ..Default::default()
-    });
-
-    let modulo = dispositivo.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("forma"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("forma.wgsl").into()),
-    });
-    let tuberia = dispositivo.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("intérprete"),
-        layout: None,
-        vertex: wgpu::VertexState {
-            module: &modulo,
-            entry_point: Some("vs"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &modulo,
-            entry_point: Some("fs"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: formato,
-                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        multiview_mask: None,
-        cache: None,
-    });
-    // Las capas donde se pintan aparte los grupos con opacidad. Mientras se
-    // pinta EN una no se puede leer de ellas, así que ese rato se enlaza una
-    // de mentira.
-    let capas_de = |ancho: u32, alto: u32| {
-        let t = dispositivo.create_texture(&wgpu::TextureDescriptor {
-            label: Some("capas"),
-            size: wgpu::Extent3d { width: ancho, height: alto, depth_or_array_layers: MAX_CAPAS as u32 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: formato,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let todas = t.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
-        let cada: Vec<wgpu::TextureView> = (0..MAX_CAPAS as u32)
-            .map(|k| {
-                t.create_view(&wgpu::TextureViewDescriptor {
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_array_layer: k,
-                    array_layer_count: Some(1),
-                    ..Default::default()
-                })
-            })
-            .collect();
-        let grupo = dispositivo.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &tuberia.get_bind_group_layout(1),
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&todas) }],
-        });
-        (cada, grupo)
-    };
-    let (vistas_de_capa, grupo_capas) = capas_de(ANCHO, ALTO);
-    let (_, grupo_sin_capas) = capas_de(1, 1);
-
-    // El atlas cambia con la escena, y con él el grupo de enlaces.
-    let enlazar = |atlas: &Lienzo| {
-        let tam = wgpu::Extent3d { width: atlas.ancho as u32, height: atlas.alto as u32, depth_or_array_layers: 1 };
-        let textura = dispositivo.create_texture(&wgpu::TextureDescriptor {
-            label: Some("atlas"),
-            size: tam,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        cola.write_texture(
-            wgpu::TexelCopyTextureInfo { texture: &textura, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            &atlas.rgba,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * tam.width), rows_per_image: None },
-            tam,
-        );
-        let vista = textura.create_view(&Default::default());
-        dispositivo.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &tuberia.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: bufer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: bufer_formas.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: bufer_elementos.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&vista) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&muestreo) },
-            ],
-        })
-    };
-    let mut grupo = enlazar(&Lienzo { ancho: 1, alto: 1, rgba: vec![0; 4] });
+    let mut uniformes = [0f32; N_UNIFORMES];
+    let mut tam = (720.0f32, 224.0f32);
+    let mut region: Vec<[i32; 4]> = vec![[i32::MIN; 4]];
 
     // ── estado ───────────────────────────────────────────────────
     let mut escena = Escena::default();
@@ -309,8 +153,9 @@ pub fn hilo(
                         .collect();
                     gesto = None;
                     pendientes.clear();
-                    if let Some(atlas) = &nueva.atlas {
-                        grupo = enlazar(atlas);
+                    tam = (nueva.superficie.ancho as f32, nueva.superficie.alto as f32 + if op.hud { ALTO_INSTRUMENTOS } else { 0.0 });
+                    if let (Some(g), Some(atlas)) = (&mut gpu, &nueva.atlas) {
+                        g.atlas(atlas);
                     }
                     println!(
                         "render · escena: {} propiedades, {} instrucciones, {} hechos, {} capas, {} gestos, {} reglas, {} zonas",
@@ -318,6 +163,35 @@ pub fn hilo(
                         nueva.gestos.len(), nueva.reglas.len(), nueva.zonas.len()
                     );
                     escena = nueva;
+                }
+                ARender::Lamina(n) => {
+                    let g = gpu.get_or_insert_with(|| {
+                        let mut g = Gpu::nueva(&instancia, &n.superficie);
+                        if let Some(atlas) = &escena.atlas {
+                            g.atlas(atlas);
+                        }
+                        g
+                    });
+                    println!("render · lámina {} en {} · escala {} · {:.0} Hz", n.id, n.nombre, n.escala, n.mhz as f32 / 1000.0);
+                    laminas.push(g.lamina(*n, tam));
+                    repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
+                    region = vec![[i32::MIN; 4]];
+                }
+                ARender::LaminaFuera(id) => {
+                    laminas.retain(|l| l.id != id);
+                    println!("render · lámina {id} fuera; quedan {}", laminas.len());
+                    if let Some(g) = &gpu {
+                        repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
+                    }
+                }
+                ARender::Escala(id, e) => {
+                    if let (Some(g), Some(l)) = (&gpu, laminas.iter_mut().find(|l| l.id == id)) {
+                        if (l.escala - e).abs() > 0.001 {
+                            println!("render · lámina {id}: escala {} → {e}", l.escala);
+                            l.escala = e;
+                            g.configurar(l, tam);
+                        }
+                    }
                 }
                 ARender::Orden(Orden::Animar(t)) => pendientes.push((Instant::now() + t.retraso, t)),
                 ARender::Orden(Orden::Impulso { prop, velocidad }) => props[prop.0 as usize].v += velocidad,
@@ -663,61 +537,43 @@ pub fn hilo(
 
         // ── 3. pintar ───────────────────────────────────────────
         let bloqueada = logica_bloqueada.load(Ordering::Relaxed);
-        dibujo.componer(&escena.instrs, Ctx { props: &props, hechos: &hechos }, op.hud);
-        cola.write_buffer(&bufer_formas, 0, bytemuck::cast_slice(&dibujo.formas));
-        cola.write_buffer(&bufer_elementos, 0, bytemuck::cast_slice(&dibujo.elementos));
-        let cabecera = [
-            ANCHO as f32, ALTO as f32, t_total, 0.0,
-            if op.hud { 1.0 } else { 0.0 }, periodo_ms, if bloqueada { 1.0 } else { 0.0 }, 0.0,
-        ];
-        uniformes[..8].copy_from_slice(&cabecera);
-        uniformes[8..].copy_from_slice(&historial);
-        cola.write_buffer(&bufer, 0, bytemuck::cast_slice(&uniformes));
+        let Some(g) = &gpu else {
+            // Aún no hay dónde: el tiempo corre igual, pero sin prisa.
+            std::thread::sleep(Duration::from_millis(8));
+            continue;
+        };
+        let c = Ctx { props: &props, hechos: &hechos };
+        dibujo.componer(&escena.instrs, c, tam, op.hud);
+        g.subir(&dibujo);
 
-        let marco = match superficie.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            otro => {
-                eprintln!("render · sin textura este frame: {otro:?}");
-                std::thread::sleep(Duration::from_millis(8));
-                continue;
+        // Por dónde entra el ratón: las zonas activas, y nada más. Lo demás de
+        // la superficie es transparente también para el clic.
+        let cajas: Vec<[i32; 4]> = escena
+            .zonas
+            .iter()
+            .filter(|z| z.activa.es_verdad(c))
+            .filter_map(|z| z.caja(c))
+            .map(|b| [(b[0] - 3.0).floor() as i32, (b[1] - 3.0).floor() as i32, (b[2] + 3.0).ceil() as i32, (b[3] + 3.0).ceil() as i32])
+            .collect();
+        let cambia_la_region = cajas != region;
+        if cambia_la_region {
+            for l in &laminas {
+                l.region_de_entrada(&compositor, &cajas);
             }
-        };
-        let vista = marco.texture.create_view(&Default::default());
-        let mut codificador = dispositivo.create_command_encoder(&Default::default());
-        let pase_a = |codificador: &mut wgpu::CommandEncoder, destino: &wgpu::TextureView, capas: &wgpu::BindGroup, tramos: &[std::ops::Range<u32>]| {
-            let mut pase = codificador.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: destino,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pase.set_pipeline(&tuberia);
-            pase.set_bind_group(0, &grupo, &[]);
-            pase.set_bind_group(1, capas, &[]);
-            for t in tramos.iter().filter(|t| !t.is_empty()) {
-                pase.draw(0..6, t.clone());
-            }
-        };
-        // Primero los grupos con opacidad, cada uno a su capa…
-        let mut principal: Vec<std::ops::Range<u32>> = Vec::new();
-        let mut desde = 0u32;
-        for (tramo, capa) in &dibujo.apartes {
-            pase_a(&mut codificador, &vistas_de_capa[*capa], &grupo_sin_capas, std::slice::from_ref(tramo));
-            principal.push(desde..tramo.start);
-            desde = tramo.end;
+            region = cajas;
         }
-        principal.push(desde..dibujo.n_elementos() as u32);
-        // …y luego todo lo demás, con las capas ya hechas entre medias.
-        pase_a(&mut codificador, &vista, &grupo_capas, &principal);
-        cola.submit(Some(codificador.finish()));
-        cola.present(marco);
+
+        uniformes[..8].copy_from_slice(&[tam.0, tam.1, t_total, 1.0, if op.hud { 1.0 } else { 0.0 }, periodo_ms, if bloqueada { 1.0 } else { 0.0 }, 0.0]);
+        uniformes[8..].copy_from_slice(&historial);
+        // La que marca el ritmo va la última: es la que espera a la pantalla.
+        laminas.sort_by_key(|l| l.marca_el_ritmo);
+        let mut pintadas = 0;
+        for l in &mut laminas {
+            pintadas += g.pintar(l, &dibujo, &uniformes) as u32;
+        }
+        if pintadas == 0 {
+            std::thread::sleep(Duration::from_millis(8));
+        }
 
         // ── 4. medir ────────────────────────────────────────────
         let ms = dt * 1000.0;
@@ -744,13 +600,27 @@ pub fn hilo(
         if op.sin_vsync && ciclo.dts.len() >= 600 {
             ciclo.cerrar();
         }
-        if !op.sin_vsync && !vivo && !bloqueada && props.iter().all(Animada::quieta) {
+        if !op.sin_vsync && !vivo && !bloqueada && !cambia_la_region && props.iter().all(Animada::quieta) {
             for a in &mut props {
                 a.posar();
             }
             ciclo.cerrar();
             proxima_cita = citas.iter().min().copied();
             en_reposo = true;
+        }
+    }
+}
+
+/// Una sola lámina espera a su pantalla —la del monitor más rápido— y las demás
+/// presentan sin bloquear. Si esperasen todas, un monitor a 60 Hz frenaría a
+/// otro a 165.
+fn repartir_el_ritmo(g: &Gpu, laminas: &mut [Lamina], tam: (f32, f32), sin_vsync: bool) {
+    let rapida = laminas.iter().max_by_key(|l| l.mhz).map(|l| l.id);
+    for l in laminas.iter_mut() {
+        let marca = !sin_vsync && Some(l.id) == rapida;
+        if l.marca_el_ritmo != marca {
+            l.marca_el_ritmo = marca;
+            g.configurar(l, tam);
         }
     }
 }
@@ -824,248 +694,3 @@ impl Reproduccion {
     }
 }
 
-const POR_FORMA: usize = 20;
-const POR_ELEMENTO: usize = 52;
-/// Cuántos grupos con opacidad pueden estar fundiéndose en el mismo frame.
-const MAX_CAPAS: usize = 4;
-const MAX_FORMAS: usize = 4096;
-const MAX_ELEMENTOS: usize = 2048;
-
-/// La lista de dibujo convertida en lo que pinta la GPU: formas evaluadas y
-/// elementos con su caja. Se recompone cada frame; son unos pocos cientos de
-/// números.
-#[derive(Default)]
-struct Dibujo {
-    formas: Vec<f32>,
-    elementos: Vec<f32>,
-    /// Grupos que se pintan aparte: qué elementos, y en qué capa.
-    apartes: Vec<(std::ops::Range<u32>, usize)>,
-}
-
-/// Un grupo con opacidad, mientras se va llenando.
-enum GrupoOpaco {
-    /// No hace falta capa: opaco del todo, o no quedan capas. Se multiplica y ya.
-    Multiplica(f32),
-    /// Invisible: nada de dentro se emite.
-    Oculto,
-    Capa { alfa: f32, indice: usize, primer_elemento: usize },
-}
-
-struct CuerpoAbierto {
-    primera: usize,
-    n: usize,
-    caja: Option<[f32; 4]>,
-    holgura: f32,
-    sombra: Option<Sombra>,
-}
-
-fn unir(a: Option<[f32; 4]>, b: [f32; 4]) -> [f32; 4] {
-    a.map_or(b, |a| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
-}
-
-impl Dibujo {
-    fn n_elementos(&self) -> usize {
-        self.elementos.len() / POR_ELEMENTO
-    }
-
-    fn forma(&mut self, p: crate::formas::Plana, fusion: f32) -> usize {
-        let k = self.formas.len() / POR_FORMA;
-        self.formas.resize(self.formas.len() + POR_FORMA, 0.0);
-        p.codificar(fusion, &mut self.formas[k * POR_FORMA..]);
-        k
-    }
-
-    /// Un elemento solo existe si su caja, recortada, toca la pantalla.
-    fn elemento(&mut self, tipo: f32, caja: [f32; 4], recortes: &[(usize, [f32; 4])], rellenar: impl FnOnce(&mut [f32])) {
-        let mut c = [caja[0].max(0.0), caja[1].max(0.0), caja[2].min(ANCHO as f32), caja[3].min(ALTO as f32)];
-        for (_, r) in recortes {
-            c = [c[0].max(r[0]), c[1].max(r[1]), c[2].min(r[2]), c[3].min(r[3])];
-        }
-        if c[2] <= c[0] || c[3] <= c[1] || self.n_elementos() >= MAX_ELEMENTOS {
-            return;
-        }
-        let k = self.elementos.len();
-        self.elementos.resize(k + POR_ELEMENTO, 0.0);
-        let e = &mut self.elementos[k..];
-        e[0] = tipo;
-        e[4..8].copy_from_slice(&c);
-        for j in 0..4 {
-            e[32 + j] = recortes.get(j).map_or(-1.0, |r| r.0 as f32);
-        }
-        rellenar(e);
-    }
-
-    fn componer(&mut self, instrs: &[Instr], c: Ctx, hud: bool) {
-        self.formas.clear();
-        self.elementos.clear();
-        self.apartes.clear();
-        let mut recortes: Vec<(usize, [f32; 4])> = Vec::new();
-        // Cada entrada es ya el producto de todas las de encima.
-        let mut giros: Vec<Afin> = Vec::new();
-        let mut opacos: Vec<GrupoOpaco> = Vec::new();
-        let mut cuerpo: Option<CuerpoAbierto> = None;
-        let aplanar = |f: &Forma, giros: &[Afin]| {
-            let mut p = f.aplanar(c);
-            p.afin = giros.last().copied().unwrap_or(Afin::IDENTIDAD);
-            p
-        };
-        let color = |col: &Color| [col[0].evaluar(c), col[1].evaluar(c), col[2].evaluar(c)];
-
-        for i in instrs {
-            if self.formas.len() / POR_FORMA >= MAX_FORMAS - 8 {
-                break;
-            }
-            let oculto = opacos.iter().any(|g| matches!(g, GrupoOpaco::Oculto));
-            // Lo que multiplica a cada elemento: los grupos que no tienen capa propia.
-            let veces: f32 = opacos.iter().map(|g| if let GrupoOpaco::Multiplica(a) = g { *a } else { 1.0 }).product();
-            let afin = giros.last().copied().unwrap_or(Afin::IDENTIDAD);
-            match i {
-                Instr::Opacidad(Some(a)) => {
-                    let a = a.evaluar(c).clamp(0.0, 1.0);
-                    let dentro_de_capa = opacos.iter().any(|g| matches!(g, GrupoOpaco::Capa { .. }));
-                    opacos.push(if a <= 0.001 {
-                        GrupoOpaco::Oculto
-                    } else if a >= 0.999 || dentro_de_capa || self.apartes.len() >= MAX_CAPAS {
-                        GrupoOpaco::Multiplica(a)
-                    } else {
-                        GrupoOpaco::Capa { alfa: a, indice: self.apartes.len(), primer_elemento: self.n_elementos() }
-                    });
-                    if let Some(GrupoOpaco::Capa { indice, primer_elemento, .. }) = opacos.last() {
-                        self.apartes.push((*primer_elemento as u32..*primer_elemento as u32, *indice));
-                    }
-                }
-                Instr::Opacidad(None) => {
-                    if let Some(GrupoOpaco::Capa { alfa, indice, primer_elemento }) = opacos.pop() {
-                        let fin = self.n_elementos();
-                        self.apartes[indice].0 = primer_elemento as u32..fin as u32;
-                        // La caja del grupo es la unión de las de dentro.
-                        let caja = (primer_elemento..fin).fold(None, |u, k| {
-                            let e = &self.elementos[k * POR_ELEMENTO + 4..k * POR_ELEMENTO + 8];
-                            Some(unir(u, [e[0], e[1], e[2], e[3]]))
-                        });
-                        if let Some(caja) = caja {
-                            self.elemento(2.0, caja, &[], |e| {
-                                e[1] = indice as f32;
-                                e[3] = alfa * veces;
-                            });
-                        }
-                    }
-                }
-                _ if oculto => {}
-                Instr::Grupo { sombra } => {
-                    cuerpo = Some(CuerpoAbierto { primera: self.formas.len() / POR_FORMA, n: 0, caja: None, holgura: 0.0, sombra: sombra.clone() })
-                }
-                Instr::Forma { forma, fusion } => {
-                    let p = aplanar(forma, &giros);
-                    let k = fusion.evaluar(c).max(0.0);
-                    let caja = p.caja();
-                    self.forma(p, k);
-                    if let Some(g) = &mut cuerpo {
-                        g.n += 1;
-                        g.holgura = g.holgura.max(k * 0.5);
-                        if let Some(b) = caja {
-                            g.caja = Some(unir(g.caja, b));
-                        }
-                    }
-                }
-                Instr::Relleno { pintura, alfa, filo, luz, borde } => {
-                    let Some(g) = cuerpo.take() else { continue };
-                    let Some(mut caja) = g.caja else { continue };
-                    let h = g.holgura + 2.0;
-                    caja = [caja[0] - h, caja[1] - h, caja[2] + h, caja[3] + h];
-                    if let Some(s) = &g.sombra {
-                        let d = s.difusa + 2.0;
-                        caja = unir(Some(caja), [caja[0] + s.desplazada.0 - d, caja[1] + s.desplazada.1 - d, caja[2] + s.desplazada.0 + d, caja[3] + s.desplazada.1 + d]);
-                    }
-                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
-                    self.elemento(0.0, caja, &recortes, |e| {
-                        afin.codificar(&mut e[44..52]);
-                        e[1] = g.primera as f32;
-                        e[2] = g.n as f32;
-                        e[3] = a;
-                        match pintura {
-                            Pintura::Color(col) => e[8..11].copy_from_slice(&color(col)),
-                            Pintura::Lineal { de, a, c0, c1 } => {
-                                e[8..11].copy_from_slice(&color(c0));
-                                e[12..15].copy_from_slice(&color(c1));
-                                e[15] = 1.0;
-                                e[16..20].copy_from_slice(&[de.0.evaluar(c), de.1.evaluar(c), a.0.evaluar(c), a.1.evaluar(c)]);
-                            }
-                        }
-                        e[11] = *filo;
-                        if let Some(l) = luz {
-                            e[20..23].copy_from_slice(&[l.cantidad, l.desde_y.evaluar(c), l.alto]);
-                        }
-                        if let Some((grosor, col)) = borde {
-                            e[23] = grosor.evaluar(c).max(0.0);
-                            e[24..27].copy_from_slice(&color(col));
-                        }
-                        if let Some(s) = &g.sombra {
-                            e[28..32].copy_from_slice(&[s.desplazada.0, s.desplazada.1, s.difusa, s.alfa]);
-                        }
-                    });
-                }
-                Instr::Plano { forma, color: col, alfa } => {
-                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
-                    if a <= 0.001 {
-                        continue; // lo invisible no ocupa ni un quad
-                    }
-                    let p = aplanar(forma, &giros);
-                    let Some(b) = p.caja() else { continue };
-                    let k = self.forma(p, 0.0);
-                    let rgb = color(col);
-                    self.elemento(0.0, [b[0] - 2.0, b[1] - 2.0, b[2] + 2.0, b[3] + 2.0], &recortes, |e| {
-                        afin.codificar(&mut e[44..52]);
-                        e[1] = k as f32;
-                        e[2] = 1.0;
-                        e[3] = a;
-                        e[8..11].copy_from_slice(&rgb);
-                    });
-                }
-                Instr::Textura { destino, uv, alfa } => {
-                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
-                    if a <= 0.001 {
-                        continue;
-                    }
-                    let d = [destino.0.evaluar(c), destino.1.evaluar(c), destino.2.evaluar(c), destino.3.evaluar(c)];
-                    // Girada o no, su caja es la de sus cuatro esquinas transformadas.
-                    let caja = afin.caja([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
-                    self.elemento(1.0, [caja[0] - 1.0, caja[1] - 1.0, caja[2] + 1.0, caja[3] + 1.0], &recortes, |e| {
-                        afin.codificar(&mut e[44..52]);
-                        e[3] = a;
-                        e[36..40].copy_from_slice(&d);
-                        e[40..44].copy_from_slice(uv);
-                    });
-                }
-                Instr::Recorte(Some((forma, margen))) => {
-                    let p = aplanar(forma, &giros).encoger(*margen);
-                    let caja = p.caja().unwrap_or([0.0; 4]);
-                    let k = self.forma(p, 0.0);
-                    if recortes.len() < 4 {
-                        recortes.push((k, [caja[0] - 1.0, caja[1] - 1.0, caja[2] + 1.0, caja[3] + 1.0]));
-                    }
-                }
-                Instr::Recorte(None) => {
-                    recortes.pop();
-                }
-                Instr::Transformar(Some(t)) => {
-                    let propia = t.afin(c);
-                    giros.push(afin.por(propia));
-                }
-                Instr::Transformar(None) => {
-                    giros.pop();
-                }
-            }
-        }
-        if hud {
-            self.elemento(9.0, [0.0, 190.0, ANCHO as f32, ALTO as f32], &[], |e| Afin::IDENTIDAD.codificar(&mut e[44..52]));
-        }
-        // Un almacén vacío no se puede enlazar ni escribir.
-        if self.formas.is_empty() {
-            self.formas.resize(POR_FORMA, 0.0);
-        }
-        if self.elementos.is_empty() {
-            self.elementos.resize(POR_ELEMENTO, 0.0);
-        }
-    }
-}

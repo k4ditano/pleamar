@@ -161,7 +161,9 @@ impl Guion for Marea {
                 mitad: (((R * 2.0 + HUECO + PANEL_W) * 0.5 + 18.0).into(), (PANEL_H * 0.5 + 18.0).into()),
                 radio: 24.0.into(),
             },
-            1.0,
+            //  Solo mientras hay tarjeta. Cerrada, esa zona está vacía, y el
+            //  clic tiene que pasar a lo que haya debajo.
+            abierta.e().o(panel_w.e().mayor(1.0)),
         );
         let z_orbe = e.zona("orbe", Forma::circulo((orbe_x.e(), orbe_y.e()), R + 8.0), 1.0);
         let z_descartar = e.zona("descartar", caja_en(110.0, 151.0, 84.0.into(), 23.0.into()), contenido);

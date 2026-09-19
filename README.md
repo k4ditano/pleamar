@@ -20,7 +20,8 @@ cargo build --release
 ./target/release/pleamar --ingenuo       # lo mismo con la lógica en el hilo que pinta
 ```
 
-Sale en `HDMI-A-1` (`--pantalla` para otra). `--bloqueo MS` cambia lo que se
+Sale en `HDMI-A-1`. `--pantalla todas` la pone en cada monitor —y en los que se
+enchufen después—; `--pantalla A,B` en los que digas. `--bloqueo MS` cambia lo que se
 atasca la lógica tras cada decisión; por defecto 600 ms de espera activa.
 `--raton "360,90@500 pulsa@3200 fuera@4500"` mueve un ratón de mentira y cuenta
 cada evento que le llega a la lógica: sirve para ensayar sin tocar el de verdad.
@@ -57,7 +58,8 @@ El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
 
 | | |
 | --- | --- |
-| `main.rs` | Wayland: la superficie layer-shell y el ratón. Nada más. |
+| `main.rs` | Wayland: una superficie layer-shell por monitor, su escala (también fraccional) y el ratón. Nada más. |
+| `gpu.rs` | El dispositivo, las láminas —una por superficie, cada una a su escala y con su ritmo— y la composición de la lista de dibujo en elementos. |
 | `escena.rs` | El contrato: propiedades, expresiones, instrucciones, comportamientos, zonas. |
 | `render.rs` | Intérprete. Dueño de los muelles y del reloj; quieto, no pinta ni un frame. |
 | `forma.wgsl` | Un quad por elemento: cada píxel solo ejecuta las formas del elemento que lo cubre. |
@@ -99,13 +101,13 @@ bloqueo, 17 ms), y el realce del botón responde con la lógica congelada.
 ## Documentación
 
 El diseño, el borrador del lenguaje, la prueba contra la Marea real y lo que
-falta están en `docs/` (y, al día, en Edinot: `Proyectos/pleamar`).
+falta —con la lista de limitaciones conocidas en `docs/08`— están en `docs/` (y, al día, en Edinot: `Proyectos/pleamar`).
 
 ## Lo que no es
 
 Una escena se escribe todavía en Rust y se compila con el programa: falta el
 lenguaje que la describa desde un fichero y la recargue en caliente. No hay
 layout —las posiciones son expresiones a mano—, el texto es un mapa de bits fijo
-y una sola superficie fija en un monitor. Y los primeros frames tras despertar salen
+y todas las superficies pintan la misma escena. Y los primeros frames tras despertar salen
 sin esperar al vsync, así que el reloj de animación debería ir con el tiempo de
 presentación, no con el de la CPU.

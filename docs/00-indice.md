@@ -15,6 +15,7 @@
 | [[pleamar · 05 Decisiones y preguntas abiertas]] | Lo decidido, con su porqué, y lo que falta por decidir |
 | [[pleamar · 06 Bocetos A-B-C]] | Las tres sintaxis que se compararon. Histórico. |
 | [[pleamar · 07 Qué falta para igualar a Quickshell]] | El inventario honesto, por tramos, y el orden de trabajo |
+| [[pleamar · 08 Limitaciones conocidas]] | Todo lo que está a medias, con su gravedad, para ir tachándolo |
 
 ## Estado (19 sep 2026)
 
@@ -25,8 +26,9 @@
 - ✅ **Capas, gestos, hechos, sucesos y reglas en el runtime** (todavía escritos en Rust). Probado con la cara de Marea: el disco rojo aguanta buscar y confirmar mientras graba; al dejar de grabar, la lupa sale sola. Y Marea se abre, realza su botón y se cierra con la lógica bloqueada 5 s.
 - ⬜ Parser.
 - ✅ **Renderer por elementos**: un quad por elemento con su caja. 600 formas cuestan 0,42 ms por frame frente a 3,66 ms del intérprete por píxel; 2000, 0,57 ms. Con él llegaron **aro/trazo, arco, segmento, giro** (propio y heredado), **degradado lineal, borde**, recortes anidados (hasta cuatro) y fundido real entre elementos. Y después, cerrando sus limitaciones: **transformaciones afines que se componen** (giro, escala, traslación), **opacidad de grupo** con capa intermedia, caja exacta para texturas giradas y zonas de ratón bajo transformaciones. Todo a la vista en `--escena muestrario`.
-- ⬜ Superficies de verdad, más primitivas, texto dinámico, componentes, layout, servicios: ver la nota 07.
+- ✅ **Superficies de verdad**: una por monitor —y por los que se enchufen después—, escala fraccional (probada a 2 y a 1,5 en un monitor virtual), y una región de entrada que sigue a las zonas: lo transparente deja pasar el clic. La escena declara su superficie (tamaño, ancla, nivel, margen, reserva).
+- ⬜ más primitivas, texto dinámico, componentes, layout, servicios: ver la nota 07.
 
 ## Siguiente paso
 
-Lo que queda del punto 2 de [[pleamar · 07 Qué falta para igualar a Quickshell]]: **superficies de verdad** —una por monitor, monitores que van y vienen, escala HiDPI y fraccional, tamaño según el contenido y región de entrada que siga a las formas—. Después, el punto 3: **texto dinámico**, imágenes e iconos.
+El punto 3 de [[pleamar · 07 Qué falta para igualar a Quickshell]]: **texto dinámico** —glifos con forma, atlas en la GPU a la escala de cada lámina, ajuste de línea—, e **imágenes e iconos**. Es la pieza más grande que queda y la primera de [[pleamar · 08 Limitaciones conocidas]].

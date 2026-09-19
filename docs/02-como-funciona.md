@@ -6,7 +6,7 @@ Lo que ya corre en `~/Proyectos/pleamar`. Rust, `wgpu` 30 (Vulkan), `smithay-cli
 
 | Hilo | Hace | No hace |
 | --- | --- | --- |
-| **Wayland** (`main.rs`) | La superficie layer-shell y el ratón | Nada más |
+| **Wayland** (`main.rs`) | Una superficie layer-shell por monitor (y por los que se enchufen), su escala, y el ratón | Nada más |
 | **Lógica** (`logica.rs`) | Corre un `Guion`: recibe eventos con nombre, cuenta hechos y sucesos, pide gestos | No anima. No sabe de coordenadas. Se bloquea a propósito para el ensayo |
 | **Render** (`render.rs`) | Dueño de los muelles y del reloj. Evalúa, pinta y avisa | No sabe qué está pintando |
 
@@ -70,6 +70,15 @@ Se pinta con **una sola llamada** instanciada: un quad por elemento, en orden, c
 
 Ojo con lo que dice esta tabla: **el intérprete viejo no iba tan mal como se temía** a este tamaño de superficie; 600 formas seguían cabiendo de sobra en un frame. Donde se habría roto es a pantalla completa (9,6 veces más píxeles) o en una gráfica integrada. El nuevo, además, deja de tener tope.
 
+## Superficies (`main.rs`, `gpu.rs`)
+
+La escena declara la superficie que quiere: tamaño en píxeles **lógicos**, ancla, margen, nivel (fondo, debajo, encima, sobre todo), cuánto sitio reserva, y en qué pantallas (`Todas` o una lista). El hilo de Wayland pone una en cada monitor que toque, las quita cuando el monitor se va y las pone cuando uno llega. Cada una pasa al render como una **lámina** cuando el compositor la configura.
+
+- **Escala.** Con `wp_fractional_scale` y `wp_viewporter`: el tamaño lógico no cambia, y la lámina se pinta con `tamaño × escala` píxeles de verdad. El shader divide la posición por la escala y suaviza los bordes en píxeles de verdad, así que a escala 2 nada sale blando —salvo el texto, que es un mapa de bits—. Sin esos protocolos, cae a la escala entera de toda la vida.
+- **Ritmo.** Solo una lámina —la del monitor más rápido— espera a la pantalla; las demás presentan sin bloquear. Si esperasen todas, un monitor a 60 Hz frenaría a otro a 165.
+- **Región de entrada.** Cada frame en que cambian, las cajas de las zonas activas se le dan al compositor como región de entrada, justo antes de presentar: lo demás de la superficie, aunque sea suya, deja pasar el clic.
+- La GPU (dispositivo, tubería, almacenes) se crea con la primera lámina que llega.
+
 ## Reposo
 
 Si ninguna propiedad se mueve y ningún comportamiento está vivo, el render no pinta: espera un mensaje, un retraso que venza o el próximo parpadeo. Cero frames.
@@ -90,6 +99,7 @@ Sale en `HDMI-A-1`. La gráfica de abajo es una barra por frame; la franja roja,
 
 ## Deudas conocidas
 
+- Todas están en [[pleamar · 08 Limitaciones conocidas]]. Las que más pesan:
 - Las escenas se escriben en Rust y se compilan con el programa.
 - Sin layout.
 - Un grupo con opacidad dentro de otro no tiene capa propia: multiplica. Y si hay más de cuatro fundiéndose a la vez, los que sobran también multiplican.

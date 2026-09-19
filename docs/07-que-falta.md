@@ -10,11 +10,11 @@ Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
 
 | Quickshell | pleamar |
 | --- | --- |
-| `PanelWindow`: anclas, márgenes, zona exclusiva, capa, foco | 🟡 una sola superficie fija de 720×300, arriba |
-| Una ventana por monitor (`Variants`), monitores que van y vienen | ⬜ un monitor, elegido al arrancar |
-| Escala HiDPI y fraccional | ⬜ asume escala 1 |
+| `PanelWindow`: anclas, márgenes, zona exclusiva, capa, foco | ✅ la escena declara tamaño, ancla, margen, nivel y reserva; sin foco de teclado |
+| Una ventana por monitor (`Variants`), monitores que van y vienen | 🟡 una por monitor y en caliente; todas pintan la misma escena, sin instancia por monitor |
+| Escala HiDPI y fraccional | ✅ probada a 2 y a 1,5 |
 | Redimensionar la superficie según el contenido | ⬜ |
-| Región de entrada dinámica (clic a través de lo transparente) | 🟡 fija, puesta a mano |
+| Región de entrada dinámica (clic a través de lo transparente) | ✅ sigue a las zonas activas (por cajas) |
 | `FloatingWindow`, `PopupWindow` (menús anclados) | ⬜ |
 | `WlSessionLock` (pantalla de bloqueo) + PAM | ⬜ |
 | Varias ventanas por configuración | ⬜ |

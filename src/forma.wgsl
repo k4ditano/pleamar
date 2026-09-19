@@ -7,7 +7,7 @@
 // distancias con signo y alfa premultiplicado.
 
 struct U {
-    cab: vec4<f32>,    // ancho, alto, tiempo, -
+    cab: vec4<f32>,    // ancho y alto lógicos, tiempo, escala (píxeles de verdad por píxel lógico)
     hud: vec4<f32>,    // -, periodo en ms, lógica bloqueada, -
     tiempos: array<vec4<f32>, 30>,
 };
@@ -48,11 +48,13 @@ const INSTRUMENTOS: u32 = 9u;
 
 const LEJOS: f32 = 1e6;
 
-@group(0) @binding(0) var<uniform> u: U;
-@group(0) @binding(1) var<storage, read> formas: array<Forma>;
-@group(0) @binding(2) var<storage, read> elementos: array<Elemento>;
-@group(0) @binding(3) var atlas: texture_2d<f32>;
-@group(0) @binding(4) var muestreo: sampler;
+// 0 · la escena, igual para todas las superficies.
+@group(0) @binding(0) var<storage, read> formas: array<Forma>;
+@group(0) @binding(1) var<storage, read> elementos: array<Elemento>;
+@group(0) @binding(2) var atlas: texture_2d<f32>;
+@group(0) @binding(3) var muestreo: sampler;
+// 2 · lo de cada superficie: su tamaño y su escala.
+@group(2) @binding(0) var<uniform> u: U;
 // Los grupos con opacidad se pintan aparte, aquí, y se funden de una vez.
 @group(1) @binding(0) var capas: texture_2d_array<f32>;
 
@@ -131,7 +133,12 @@ fn distancia(k: u32, punto: vec2<f32>) -> f32 {
     return d * f.t1.z;
 }
 
-fn cubre(d: f32) -> f32 { return 1.0 - smoothstep(-0.75, 0.75, d); }
+// El borde se suaviza en tres cuartos de píxel DE VERDAD: a escala 2, la mitad
+// de ancho en píxeles lógicos, o todo saldría borroso.
+fn cubre(d: f32) -> f32 {
+    let m = 0.75 / u.cab.w;
+    return 1.0 - smoothstep(-m, m, d);
+}
 
 fn sobre(abajo: vec4<f32>, color: vec3<f32>, a: f32) -> vec4<f32> {
     return vec4<f32>(color * a, a) + abajo * (1.0 - a);
@@ -139,7 +146,7 @@ fn sobre(abajo: vec4<f32>, color: vec3<f32>, a: f32) -> vec4<f32> {
 
 fn instrumentos(p: vec2<f32>) -> vec4<f32> {
     var c = vec4<f32>(0.0);
-    let hp = p - vec2<f32>(60.0, 232.0);
+    let hp = p - vec2<f32>(60.0, u.cab.y - 68.0);
     let fondo = caja(hp - vec2<f32>(286.0, 30.0), vec2<f32>(334.0, 38.0), 12.0);
     c = sobre(c, vec3<f32>(0.05, 0.055, 0.055), 0.78 * cubre(fondo));
     if (hp.x >= 0.0 && hp.x < 600.0 && hp.y >= 0.0 && hp.y <= 60.0) {
@@ -155,14 +162,15 @@ fn instrumentos(p: vec2<f32>) -> vec4<f32> {
         let linea = 60.0 - u.hud.y * 2.0;
         c = sobre(c, vec3<f32>(1.0), 0.25 * step(abs(hp.y - linea), 0.5));
     }
-    let piloto = length(p - vec2<f32>(38.0, 262.0)) - 5.0;
+    let piloto = length(p - vec2<f32>(38.0, u.cab.y - 38.0)) - 5.0;
     let tono_piloto = mix(vec3<f32>(0.62, 0.84, 0.74), vec3<f32>(0.95, 0.3, 0.26), u.hud.z);
     return sobre(c, tono_piloto, cubre(piloto));
 }
 
 @fragment
 fn fs(e: Salida) -> @location(0) vec4<f32> {
-    let p = e.pos.xy;
+    // La posición llega en píxeles de verdad; la escena piensa en lógicos.
+    let p = e.pos.xy / u.cab.w;
     let el = elementos[e.elemento];
     let tipo = u32(el.cab.x);
     if (tipo == INSTRUMENTOS) { return instrumentos(p); }
@@ -177,7 +185,7 @@ fn fs(e: Salida) -> @location(0) vec4<f32> {
 
     var c = vec4<f32>(0.0);
     if (tipo == CAPA) {
-        return textureLoad(capas, vec2<i32>(p), i32(el.cab.y), 0) * alfa;
+        return textureLoad(capas, vec2<i32>(e.pos.xy), i32(el.cab.y), 0) * alfa;
     }
     let local = a_local(p, el.t0, el.t1);
     if (tipo == TEXTURA) {

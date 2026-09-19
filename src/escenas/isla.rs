@@ -92,6 +92,7 @@ impl Guion for Isla {
         e.regla(Disparador::Sale(z), vec![Efecto::Hecho(encima, 0.0)]);
         e.regla(Disparador::Pulsa(z), vec![Efecto::Alternar(suelta)]);
 
+        e.superficie = Superficie { alto: 140, ..Default::default() };
         e.atlas = Some(textos());
         e
     }
