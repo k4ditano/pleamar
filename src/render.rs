@@ -88,6 +88,11 @@ pub fn hilo(
     // Lo que se está arrastrando: qué zona, y dónde estaba el ratón al pulsar.
     let mut arrastre: Option<(usize, (f32, f32), Instant)> = None;
     let mut cursor_puesto = Cursor::Normal;
+    let mut teclado_pedido = false;
+    // El campo donde se está escribiendo, y la tecla que se ha quedado pulsada.
+    let mut edicion: Option<Edicion> = None;
+    let mut repite: Option<(String, Option<String>, Mods, Instant)> = None;
+    let mut ultima_tecla = Instant::now();
     let mut ultimo_puntero: Option<(f32, f32)> = None;
     let mut ultima_actividad = Instant::now();
     let mut azar = Azar(0x9E3779B97F4A7C15);
@@ -108,6 +113,9 @@ pub fn hilo(
         let mut botones: Vec<(u8, bool)> = Vec::new();
         let mut rueda = 0.0f32;
         let mut teclas: Vec<String> = Vec::new();
+        let mut pulsaciones: Vec<(String, Option<String>, Mods)> = Vec::new();
+        let mut cambios_de_foco: Vec<bool> = Vec::new();
+        let mut soltados: Vec<(String, String)> = Vec::new();
         // (cuál, si viene de la lógica)
         let mut sucesos: Vec<(usize, bool, Option<f32>)> = sucesos_tardios.drain(..).map(|s| (s.0 as usize, false, None)).collect();
         let mut gestos_pedidos: Vec<usize> = Vec::new();
@@ -228,6 +236,10 @@ pub fn hilo(
                     Some(i) => sucesos.push((i, true, None)),
                     None => eprintln!("render · no conozco el suceso «{nombre}»"),
                 },
+                ARender::SucesoDeFuera(nombre, carga) => match escena.sucesos.iter().position(|s| s.0 == nombre) {
+                    Some(i) => sucesos.push((i, false, carga)),
+                    None => eprintln!("render · no conozco el suceso «{nombre}»"),
+                },
                 ARender::Gesto(nombre) => match escena.gestos.iter().position(|g| g.nombre == nombre) {
                     Some(i) => gestos_pedidos.push(i),
                     None => eprintln!("render · no conozco el gesto «{nombre}»"),
@@ -244,17 +256,83 @@ pub fn hilo(
                     rueda += d;
                     ultima_actividad = Instant::now();
                 }
-                ARender::Tecla(nombre, escribe) => {
+                ARender::Tecla(nombre, escribe, mods) => {
                     ultima_actividad = Instant::now();
-                    let _ = a_logica.send(Evento::Tecla(nombre.clone(), escribe));
-                    teclas.push(nombre);
+                    // Si se queda pulsada, se repite: primero a los 400 ms, luego a 30 por segundo.
+                    repite = Some((nombre.clone(), escribe.clone(), mods, Instant::now() + Duration::from_millis(400)));
+                    pulsaciones.push((nombre, escribe, mods));
                 }
+                ARender::TeclaSuelta(nombre) => {
+                    if repite.as_ref().is_some_and(|r| r.0 == nombre) {
+                        repite = None;
+                    }
+                }
+                ARender::FocoTeclado(si) => cambios_de_foco.push(si),
+                ARender::Enfocar(nombre) => {
+                    edicion = nombre.and_then(|n| escena.textos.iter().position(|t| t.0 == n)).map(|k| Edicion { campo: k, cursor: textos[k].len(), ancla: textos[k].len() });
+                    ultima_tecla = Instant::now();
+                }
+                ARender::Soltado(tipo, datos) => soltados.push((tipo, datos)),
                 ARender::Salir => {
                     ciclo.cerrar();
                     return;
                 }
             }
         }
+        // La tecla que sigue pulsada vuelve a contar.
+        if let Some((nombre, escribe, mods, cuando)) = &mut repite {
+            if Instant::now() >= *cuando {
+                pulsaciones.push((nombre.clone(), escribe.clone(), *mods));
+                *cuando = Instant::now() + Duration::from_millis(33);
+            }
+        }
+        let mut enviados: Vec<usize> = Vec::new();
+        for (nombre, escribe, mods) in pulsaciones {
+            // Primero el campo: lo que sea escribir es suyo. Lo demás —Escape, un
+            // atajo— sigue hacia las reglas y hacia la lógica.
+            if let Some(ed) = &mut edicion {
+                let k = ed.campo;
+                match ed.tecla(&mut textos[k], &nombre, escribe.as_deref(), mods) {
+                    Tecleo::Cambio => {
+                        ultima_tecla = Instant::now();
+                        let _ = a_logica.send(Evento::Texto(escena.textos[k].0, textos[k].clone()));
+                        continue;
+                    }
+                    Tecleo::Movio => {
+                        ultima_tecla = Instant::now();
+                        continue;
+                    }
+                    Tecleo::Envio => {
+                        enviados.push(k);
+                        let _ = a_logica.send(Evento::Envia(escena.textos[k].0, textos[k].clone()));
+                        continue;
+                    }
+                    Tecleo::NoEsMio => {}
+                }
+            }
+            let mut combo = String::new();
+            for (si, prefijo) in [(mods.ctrl, "Ctrl+"), (mods.alt, "Alt+"), (mods.logo, "Super+")] {
+                if si {
+                    combo.push_str(prefijo);
+                }
+            }
+            combo.push_str(&nombre);
+            let _ = a_logica.send(Evento::Tecla(combo.clone(), escribe));
+            teclas.push(combo);
+        }
+        for si in &cambios_de_foco {
+            let _ = a_logica.send(Evento::Foco(*si));
+            if *si {
+                // Al ganar el teclado, si hay dónde escribir y nadie lo tiene, el primero.
+                if edicion.is_none() {
+                    edicion = escena.instrs.iter().find_map(|i| if let Instr::Campo { texto, .. } = i { Some(texto.0 as usize) } else { None }).map(|k| Edicion { campo: k, cursor: textos[k].len(), ancla: textos[k].len() });
+                }
+            } else {
+                edicion = None;
+                repite = None;
+            }
+        }
+
         if let Some(d) = bloquear {
             // Modo ingenuo: el trabajo de la lógica ocurre aquí, en el hilo
             // que pinta. Es lo que pasa en QtQuick con un handler pesado.
@@ -271,6 +349,7 @@ pub fn hilo(
         ultimo = ahora;
         let t_total = (ahora - inicio).as_secs_f32();
         let mut efectos: Vec<Efecto> = Vec::new();
+        let mut cambio_de_teclado = false;
         let mut citas: Vec<Instant> = Vec::new();
 
         // Zonas: quién tiene el ratón encima.
@@ -294,6 +373,15 @@ pub fn hilo(
                 (0, true) => {
                     pulsada = encima;
                     if let (Some(k), Some(p)) = (encima, puntero) {
+                        // Pulsar un campo lo enfoca, con el cursor donde cayó el clic.
+                        let id = escena.zonas[k].id;
+                        if let Some(puesto) = dibujo.campos.iter().find(|c| c.zona == id) {
+                            let local = escena.zonas[k].a_local(Ctx { props: &props, hechos: &hechos }, p.0, p.1);
+                            let b = puesto.maqueta.as_ref().map_or(0, |m| m.byte_en(local.0 - puesto.x0 + puesto.corrido));
+                            let b = b.min(textos[puesto.texto].len());
+                            edicion = Some(Edicion { campo: puesto.texto, cursor: b, ancla: b });
+                            ultima_tecla = ahora;
+                        }
                         arrastre = Some((k, p, ahora));
                         let _ = a_logica.send(Evento::Pulsa(escena.zonas[k].id));
                     }
@@ -344,6 +432,25 @@ pub fn hilo(
             }
         }
 
+        for (tipo, datos) in &soltados {
+            if let Some(k) = encima {
+                let _ = a_logica.send(Evento::Recibido(escena.zonas[k].id, tipo.clone(), datos.clone()));
+            }
+        }
+
+        // El teclado, solo mientras la escena lo quiera: un lanzador cerrado no
+        // puede quedarse con él.
+        if let Some(cuando) = &escena.teclado_mientras {
+            let quiere = cuando.es_verdad(Ctx { props: &props, hechos: &hechos });
+            if quiere != teclado_pedido {
+                teclado_pedido = quiere;
+                for l in &laminas {
+                    l.teclado(if quiere { escena.superficie.teclado } else { Teclado::Nunca });
+                }
+                cambio_de_teclado = true;
+            }
+        }
+
         // El cursor, el de la zona que tenga encima.
         let quiere = arrastre.map(|a| a.0).or(encima).and_then(|k| escena.zonas.get(k)).map_or(Cursor::Normal, |z| z.cursor);
         if quiere != cursor_puesto {
@@ -370,6 +477,10 @@ pub fn hilo(
                         e.esperar(puesta, *durante, ahora, &mut citas)
                     }
                     Disparador::Tecla(t) => teclas.iter().any(|x| x == t),
+                    Disparador::Envia(t) => enviados.contains(&(t.0 as usize)),
+                    Disparador::GanaFoco => cambios_de_foco.contains(&true),
+                    Disparador::PierdeFoco => cambios_de_foco.contains(&false),
+                    Disparador::Recibe(z) => !soltados.is_empty() && dentro[z.0 as usize],
                     Disparador::Encima { zona, durante } => {
                         e.esperar(dentro[zona.0 as usize], *durante, ahora, &mut citas)
                     }
@@ -440,6 +551,10 @@ pub fn hilo(
                     }
                     Efecto::Impulso(p, v) => props[p.0 as usize].v += v,
                     Efecto::Gesto(g) => gestos_pedidos.push(g.0 as usize),
+                    Efecto::Enfocar(t) => {
+                        edicion = t.map(|t| t.0 as usize).map(|k| Edicion { campo: k, cursor: textos[k].len(), ancla: textos[k].len() });
+                        ultima_tecla = ahora;
+                    }
                 }
             }
             for (s, de_la_logica, carga) in std::mem::take(&mut sucesos) {
@@ -673,7 +788,17 @@ pub fn hilo(
         }
         // Se compone aunque aún no haya dónde pintar: así el taller va haciendo
         // los textos y las imágenes mientras la GPU y las ventanas arrancan.
-        dibujo.componer(&escena.instrs, c, &textos, &mut letras, tam, op.hud);
+        // El cursor de texto parpadea: medio segundo sí, medio no, y siempre sí justo
+        // después de teclear. Entre parpadeos no hace falta pintar.
+        let vista = edicion.as_ref().map(|e| {
+            let t = (ahora - ultima_tecla).as_secs_f32();
+            citas.push(ahora + Duration::from_secs_f32(0.53 - t % 0.53 + 0.001));
+            crate::gpu::VistaDeCampo { texto: e.campo, cursor: e.cursor, ancla: e.ancla, se_ve: (t % 1.06) < 0.53 }
+        });
+        if let Some((_, _, _, cuando)) = &repite {
+            citas.push(*cuando);
+        }
+        dibujo.componer(&escena.instrs, c, &textos, &mut letras, vista, tam, op.hud);
         let Some(g) = &gpu else {
             // Aún no hay dónde: el tiempo corre igual, pero sin prisa.
             std::thread::sleep(Duration::from_millis(8));
@@ -754,7 +879,7 @@ pub fn hilo(
         if op.sin_vsync && ciclo.dts.len() >= 600 {
             ciclo.cerrar();
         }
-        if !op.sin_vsync && !vivo && !bloqueada && !cambia_la_region && !cambio_de_medida && props.iter().all(Animada::quieta) {
+        if !op.sin_vsync && !vivo && !bloqueada && !cambia_la_region && !cambio_de_medida && !cambio_de_teclado && props.iter().all(Animada::quieta) {
             for a in &mut props {
                 a.posar();
             }
@@ -775,6 +900,106 @@ fn repartir_el_ritmo(g: &Gpu, laminas: &mut [Lamina], tam: (f32, f32), sin_vsync
         if l.marca_el_ritmo != marca {
             l.marca_el_ritmo = marca;
             g.configurar(l, tam);
+        }
+    }
+}
+
+/// El campo donde se escribe: qué texto, dónde está el cursor y desde dónde se
+/// seleccionó. En bytes, siempre en el borde de una letra.
+struct Edicion {
+    campo: usize,
+    cursor: usize,
+    ancla: usize,
+}
+
+enum Tecleo {
+    Cambio,
+    Movio,
+    Envio,
+    NoEsMio,
+}
+
+impl Edicion {
+    fn seleccion(&self) -> (usize, usize) {
+        (self.cursor.min(self.ancla), self.cursor.max(self.ancla))
+    }
+
+    fn borrar_seleccion(&mut self, t: &mut String) -> bool {
+        let (a, b) = self.seleccion();
+        t.replace_range(a..b, "");
+        self.cursor = a;
+        self.ancla = a;
+        b > a
+    }
+
+    fn tecla(&mut self, t: &mut String, nombre: &str, escribe: Option<&str>, m: Mods) -> Tecleo {
+        self.cursor = self.cursor.min(t.len());
+        self.ancla = self.ancla.min(t.len());
+        let antes = |t: &str, b: usize| t[..b].char_indices().next_back().map_or(0, |c| c.0);
+        let despues = |t: &str, b: usize| t[b..].chars().next().map_or(t.len(), |c| b + c.len_utf8());
+        let mover = |yo: &mut Self, a: usize| {
+            yo.cursor = a;
+            if !m.mayus {
+                yo.ancla = a;
+            }
+            Tecleo::Movio
+        };
+        match nombre {
+            "a" if m.ctrl => {
+                self.ancla = 0;
+                self.cursor = t.len();
+                Tecleo::Movio
+            }
+            "c" | "x" if m.ctrl => {
+                let (a, b) = self.seleccion();
+                if b > a {
+                    crate::plataforma::portapapeles_escribir(&t[a..b]);
+                }
+                if nombre == "x" && self.borrar_seleccion(t) { Tecleo::Cambio } else { Tecleo::Movio }
+            }
+            "v" if m.ctrl => {
+                let Some(pegado) = crate::plataforma::portapapeles_leer() else { return Tecleo::Movio };
+                // Un campo es de una línea: lo que venga con saltos, sin ellos.
+                let pegado: String = pegado.chars().filter(|c| !c.is_control()).collect();
+                self.borrar_seleccion(t);
+                t.insert_str(self.cursor, &pegado);
+                self.cursor += pegado.len();
+                self.ancla = self.cursor;
+                Tecleo::Cambio
+            }
+            "BackSpace" | "Delete" => {
+                if !self.borrar_seleccion(t) {
+                    let (a, b) = if nombre == "BackSpace" { (antes(t, self.cursor), self.cursor) } else { (self.cursor, despues(t, self.cursor)) };
+                    t.replace_range(a..b, "");
+                    self.cursor = a;
+                    self.ancla = a;
+                }
+                Tecleo::Cambio
+            }
+            "Left" => {
+                let a = antes(t, self.cursor);
+                mover(self, a)
+            }
+            "Right" => {
+                let a = despues(t, self.cursor);
+                mover(self, a)
+            }
+            "Home" => mover(self, 0),
+            "End" => {
+                let a = t.len();
+                mover(self, a)
+            }
+            "Return" | "KP_Enter" => Tecleo::Envio,
+            _ => match escribe {
+                Some(letras) if !m.ctrl && !m.alt && !m.logo => {
+                    self.borrar_seleccion(t);
+                    t.insert_str(self.cursor, letras);
+                    self.cursor += letras.len();
+                    self.ancla = self.cursor;
+                    Tecleo::Cambio
+                }
+                _ => Tecleo::NoEsMio,
+            },
         }
     }
 }

@@ -148,6 +148,9 @@ impl GuionLuau {
     fn preparar(&self) -> mlua::Result<Lua> {
         let lua = Lua::new();
         lua.set_memory_limit(MEMORIA)?;
+        // En la caja de arena, Luau da por hecho que los globales no cambian y lee
+        // `fact.open` UNA vez, al cargar el script. Estos sí cambian: hay que decírselo.
+        lua.set_compiler(mlua::chunk::Compiler::new().set_mutable_globals(["fact", "text", "sys"]));
         let g = lua.globals();
 
         // Un manejador que no acaba no puede quedarse con el hilo para siempre.
@@ -194,6 +197,9 @@ impl GuionLuau {
 
         let tx = self.tx.clone();
         g.set("emit", lua.create_function(move |_, n: String| Ok(tx.send(ARender::Suceso(internar(&n))).is_ok()))?)?;
+        // focus("query") pone el cursor de texto en un campo; focus() lo quita.
+        let tx = self.tx.clone();
+        g.set("focus", lua.create_function(move |_, n: Option<String>| Ok(tx.send(ARender::Enfocar(n.map(|n| internar(&n)))).is_ok()))?)?;
         let tx = self.tx.clone();
         g.set("play", lua.create_function(move |_, n: String| Ok(tx.send(ARender::Gesto(internar(&n))).is_ok()))?)?;
 
@@ -363,6 +369,13 @@ impl GuionLuau {
         self.c.lock().unwrap().limite = None;
     }
 
+    fn avisar_con(&self, que: &str, texto: String) {
+        let quienes: Vec<Function> = self.c.lock().unwrap().manejadores.get(que).cloned().unwrap_or_default();
+        for f in quienes {
+            self.llamar(&f, texto.clone());
+        }
+    }
+
     fn avisar(&self, que: &str, arg: Value) {
         let quienes: Vec<Function> = self.c.lock().unwrap().manejadores.get(que).cloned().unwrap_or_default();
         for f in quienes {
@@ -395,6 +408,18 @@ impl Guion for GuionLuau {
             Evento::Pulsa(z) => self.avisar(&format!("press:{z}"), Value::Nil),
             Evento::Suelta(z) => self.avisar(&format!("release:{z}"), Value::Nil),
             Evento::Rueda(z, d) => self.avisar(&format!("scroll:{z}"), numero(d)),
+            // Lo que se escribe en un campo: la lógica lo sabe tecla a tecla, y no ha
+            // tenido que hacer nada para que se vea.
+            Evento::Texto(n, valor) => {
+                self.c.lock().unwrap().textos.insert(n.to_owned(), valor.clone());
+                self.avisar_con(&format!("text:{n}"), valor);
+            }
+            Evento::Envia(n, valor) => self.avisar_con(&format!("submit:{n}"), valor),
+            Evento::Foco(si) => self.avisar(if si { "focus" } else { "blur" }, Value::Nil),
+            Evento::Recibido(zona, tipo, datos) => {
+                let quienes = self.c.lock().unwrap().manejadores.get(&format!("drop:{zona}")).cloned().unwrap_or_default();
+                quienes.iter().for_each(|f| self.llamar(f, (datos.clone(), tipo.clone())));
+            }
             Evento::Tecla(nombre, escribe) => {
                 let Some(lua) = &self.lua else { return };
                 let quienes = self.c.lock().unwrap().manejadores.get("key").cloned().unwrap_or_default();

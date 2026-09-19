@@ -76,6 +76,8 @@ pub struct Superficie {
     pub reserva: i32,
     pub pantallas: Pantallas,
     pub teclado: Teclado,
+    /// El teclado solo se pide mientras se cumpla `Escena::teclado_mientras`.
+    pub teclado_mientras: bool,
     /// Mientras ninguna regla use el botón derecho, cierra el programa.
     pub derecho_cierra: bool,
 }
@@ -92,7 +94,7 @@ pub enum Teclado {
 
 impl Default for Superficie {
     fn default() -> Self {
-        Superficie { ancho: 720, alto: 224, ancla: Ancla::Arriba, margen: [40, 0, 0, 0], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Estas(vec!["HDMI-A-1".into()]), teclado: Teclado::Nunca, derecho_cierra: true }
+        Superficie { ancho: 720, alto: 224, ancla: Ancla::Arriba, margen: [40, 0, 0, 0], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Estas(vec!["HDMI-A-1".into()]), teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
     }
 }
 
@@ -440,6 +442,10 @@ pub enum Instr {
     /// `mide`, si se da, son dos propiedades donde el render deja lo que ocupa
     /// el texto: con ellas una caja puede crecer con su rótulo.
     Texto { contenido: Contenido, en: Punto, ancla: (f32, f32), ancho: Option<Expr>, estilo: Estilo, alfa: Expr, mide: Option<(PropId, PropId)> },
+    /// Un campo donde escribir. Edita un texto vivo; el cursor, la selección y el
+    /// eco de cada tecla los lleva el render, sin esperar a la lógica. `zona` es
+    /// el nombre de la zona que lo enfoca al pulsarla.
+    Campo { texto: TextoId, zona: &'static str, en: Punto, ancho: Expr, estilo: Estilo, alfa: Expr, marcador: String, seleccion: Color },
     /// Una imagen o un icono. Con `tinte`, su forma se pinta de ese color: lo
     /// que quiere un icono simbólico.
     Imagen { imagen: ImagenId, destino: (Expr, Expr, Expr, Expr), alfa: Expr, tinte: Option<Color> },
@@ -473,6 +479,15 @@ pub struct Transicion {
 
 pub fn ir(prop: PropId, a: impl Into<Expr>, muelle: Muelle, retraso_ms: u64) -> Transicion {
     Transicion { prop, a: a.into(), muelle, retraso: Duration::from_millis(retraso_ms) }
+}
+
+/// Las teclas que acompañan a otra.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Mods {
+    pub ctrl: bool,
+    pub alt: bool,
+    pub mayus: bool,
+    pub logo: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -680,8 +695,15 @@ pub enum Disparador {
     Arrastra(ZonaId),
     /// Lleva este rato pulsada.
     Mantiene { zona: ZonaId, durante: Duration },
-    /// Una tecla, por su nombre: `Escape`, `Return`, `a`.
+    /// Una tecla, por su nombre: `Escape`, `Return`, `a`, `Ctrl+k`.
     Tecla(String),
+    /// Se ha pulsado Intro en un campo.
+    Envia(TextoId),
+    /// La superficie gana o pierde el teclado: perderlo es que han pulsado fuera.
+    GanaFoco,
+    PierdeFoco,
+    /// Han soltado encima algo arrastrado desde otra aplicación.
+    Recibe(ZonaId),
     /// El ratón lleva este rato encima.
     Encima { zona: ZonaId, durante: Duration },
     /// Ha estado encima y lleva este rato fuera.
@@ -705,6 +727,8 @@ pub enum Efecto {
     Suceso(SucesoId, Option<Expr>),
     Impulso(PropId, f32),
     Gesto(GestoId),
+    /// Poner el cursor de texto en un campo, o quitarlo.
+    Enfocar(Option<TextoId>),
 }
 
 /// Todo lo que hay aquí lo ejecuta el render, esté la lógica como esté.
@@ -739,6 +763,8 @@ pub struct Escena {
     pub posturas: Vec<(GestoId, Expr)>,
     pub reglas: Vec<Regla>,
     pub superficie: Superficie,
+    /// `keyboard: exclusive while open`: cuándo quiere el teclado.
+    pub teclado_mientras: Option<Expr>,
 }
 
 impl Escena {
@@ -860,14 +886,23 @@ pub enum ARender {
     Hecho(&'static str, f32),
     Texto(&'static str, String),
     Suceso(&'static str),
+    /// Un suceso que viene de fuera del programa: lo oyen la escena y la lógica.
+    SucesoDeFuera(&'static str, Option<f32>),
     Gesto(&'static str),
     Puntero(Option<(f32, f32)>),
     /// 0 es el izquierdo, 1 el derecho, 2 el del medio.
     Boton(u8, bool),
     /// Muescas de rueda: positivo, hacia arriba.
     Rueda(f32),
-    /// El nombre de la tecla y lo que escribe, si escribe algo.
-    Tecla(String, Option<String>),
+    /// El nombre de la tecla, lo que escribe si escribe algo, y con qué iba pulsada.
+    Tecla(String, Option<String>, Mods),
+    TeclaSuelta(String),
+    /// La superficie ha ganado o perdido el teclado.
+    FocoTeclado(bool),
+    /// Poner el cursor de texto en un campo, o quitarlo de donde esté.
+    Enfocar(Option<&'static str>),
+    /// Han soltado algo encima, arrastrado desde otra aplicación: (tipo, contenido).
+    Soltado(String, String),
     Salir,
 }
 
@@ -879,6 +914,13 @@ pub enum Evento {
     Suelta(&'static str),
     Rueda(&'static str, f32),
     Tecla(String, Option<String>),
+    /// Lo que pone ahora un campo, tecla a tecla.
+    Texto(&'static str, String),
+    /// Intro en un campo.
+    Envia(&'static str, String),
+    Foco(bool),
+    /// Algo soltado sobre una zona: (zona, tipo, contenido).
+    Recibido(&'static str, String, String),
     Alarma(&'static str),
     /// Un suceso de la escena que sale hacia la lógica, con su carga si la trae.
     Suceso(&'static str, Option<f32>),

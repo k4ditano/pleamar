@@ -19,13 +19,15 @@ mod texto;
 use escena::*;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::channel;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const AYUDA: &str = "pleamar [opciones]
   --escena NOMBRE     un fichero de escena (.plm), que se recarga solo al guardarlo; o una de las
                       escritas en Rust: marea (por defecto), isla, cara, muestrario, enjambre
   --comprobar FICHERO lee una escena, dice si está bien y sale
+  --decir [ESCENA] ORDEN   le dice algo a una escena en marcha y sale. Órdenes:
+                      «emit suceso [n]», «fact hecho valor», «text nombre lo que ponga», «focus campo», «quit»
   --pantalla NOMBRES  «todas», o monitores separados por comas (por defecto, lo que pida la escena).
                       Un nombre repetido da dos superficies en el mismo monitor.
   --bloqueo MS        lo que se bloquea la lógica tras cada decisión (600)
@@ -60,6 +62,20 @@ fn args() -> Args {
         let mut valor = || it.next().unwrap_or_else(|| { eprintln!("{AYUDA}"); std::process::exit(2) });
         match op.as_str() {
             "--escena" => a.escena = valor(),
+            "--decir" => {
+                let (a1, a2) = (valor(), it.next());
+                let r = match &a2 {
+                    Some(orden) => plataforma::decir(Some(&a1), orden),
+                    None => plataforma::decir(None, &a1),
+                };
+                std::process::exit(match r {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        1
+                    }
+                });
+            }
             "--comprobar" => {
                 let ruta = valor();
                 std::process::exit(match escenas::de_fichero::leer(&ruta) {
@@ -150,6 +166,25 @@ fn main() {
             .unwrap();
     }
 
+    // Lo que se le diga desde fuera —`pleamar --decir "emit toggle"`, que es lo que
+    // ejecuta un atajo global del compositor— entra como si lo dijera la lógica.
+    {
+        let nombre = std::path::Path::new(&a.escena).file_stem().map_or(a.escena.clone(), |n| n.to_string_lossy().into_owned());
+        let tx = Mutex::new(a_render.clone());
+        plataforma::escuchar_ordenes(&nombre, Box::new(move |linea| {
+            let tx = tx.lock().unwrap();
+            let mut p = linea.trim().splitn(3, ' ');
+            let (que, quien, resto) = (p.next().unwrap_or(""), p.next().unwrap_or(""), p.next().unwrap_or(""));
+            let _ = match que {
+                "emit" => tx.send(ARender::SucesoDeFuera(escena::internar(quien), resto.parse().ok())),
+                "fact" => tx.send(ARender::Hecho(escena::internar(quien), match resto { "true" => 1.0, "false" => 0.0, n => n.parse().unwrap_or(0.0) })),
+                "text" => tx.send(ARender::Texto(escena::internar(quien), resto.to_owned())),
+                "focus" => tx.send(ARender::Enfocar(Some(escena::internar(quien)))),
+                "quit" => salir(),
+                _ => return eprintln!("órdenes · no entiendo «{linea}»"),
+            };
+        }));
+    }
     if let Some(guion) = a.raton.clone() {
         // Para ensayar las zonas sin quitarle el ratón a nadie.
         let tx = a_render.clone();
@@ -167,7 +202,35 @@ fn main() {
                     "baja" => tx.send(ARender::Boton(0, true)),
                     "sube" => tx.send(ARender::Boton(0, false)),
                     "derecho" => tx.send(ARender::Boton(1, true)).and_then(|_| tx.send(ARender::Boton(1, false))),
-                    t if t.starts_with("tecla:") => tx.send(ARender::Tecla(t[6..].to_owned(), None)),
+                    // `tecla:Escape`, `tecla:Ctrl+a`: bajar y subir.
+                    t if t.starts_with("tecla:") => {
+                        let mut m = Mods::default();
+                        let mut nombre = &t[6..];
+                        for (prefijo, pone) in [("Ctrl+", 0), ("Alt+", 1), ("Shift+", 2), ("Super+", 3)] {
+                            if let Some(resto) = nombre.strip_prefix(prefijo) {
+                                nombre = resto;
+                                match pone {
+                                    0 => m.ctrl = true,
+                                    1 => m.alt = true,
+                                    2 => m.mayus = true,
+                                    _ => m.logo = true,
+                                }
+                            }
+                        }
+                        tx.send(ARender::Tecla(nombre.to_owned(), None, m)).and_then(|_| tx.send(ARender::TeclaSuelta(nombre.to_owned())))
+                    }
+                    // `escribe:hola`: letra a letra, como un teclado. Un `_` es un espacio.
+                    t if t.starts_with("escribe:") => {
+                        for ch in t[8..].chars() {
+                            let ch = if ch == '_' { ' ' } else { ch };
+                            let _ = tx.send(ARender::Tecla(ch.to_string(), Some(ch.to_string()), Mods::default()));
+                            let _ = tx.send(ARender::TeclaSuelta(ch.to_string()));
+                        }
+                        Ok(())
+                    }
+                    "foco+" => tx.send(ARender::FocoTeclado(true)),
+                    "foco-" => tx.send(ARender::FocoTeclado(false)),
+                    t if t.starts_with("suelta:") => tx.send(ARender::Soltado("text/plain".into(), t[7..].to_owned())),
                     "rueda+" => tx.send(ARender::Rueda(1.0)),
                     "rueda-" => tx.send(ARender::Rueda(-1.0)),
                     "fuera" => tx.send(ARender::Puntero(None)),

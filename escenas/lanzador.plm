@@ -1,0 +1,85 @@
+// Un lanzador: un campo donde escribir y una lista que se filtra según
+// escribes. Se abre desde fuera —un atajo de Hyprland que ejecute
+// `pleamar --decir lanzador "emit toggle"`— y se cierra con Escape, al lanzar
+// algo, o al pulsar en cualquier otro sitio.
+
+scene Launcher {
+    surface {
+        size: 600, 440
+        anchor: center
+        level: overlay
+        screens: "HDMI-A-1"
+        //  El teclado, entero, pero solo mientras está abierto: cerrado no existe.
+        keyboard: exclusive while open
+    }
+
+    let ink  = #f5f7f5
+    let mint = #9ed6bd
+    let coal = #151616
+
+    // ── la frontera ──────────────────────────────────────────────
+    fact open  = false
+    fact count = 0                        // cuántos resultados hay, hasta 7
+    fact sel   = 0                        // cuál está elegido
+    text query = ""
+    repeat i in 0..7 { text hit.$i = "" }
+    event toggle                          // viene de fuera
+    event launch ->                       // `emit launch(2)`: lanza el tercero
+
+    // ── abrir y cerrar ───────────────────────────────────────────
+    prop seen  = 0 ~quick
+    prop scale = 0.96 ~lively
+    //  El alto del panel persigue a lo que ocupe la lista. (No se puede leer
+    //  `list.height` aquí: el panel se pinta antes que ella.)
+    prop tall = 74 ~quick
+    follow tall = 82 + count * 42
+    layer panel ~quick {
+        shown while open { seen: 1 ~quick;  scale: 1 ~lively }
+        gone             { seen: 0 ~quick;  scale: 0.96 ~quick }
+    }
+
+    //  Cerrado, ni una zona: el clic pasa a lo de debajo.
+    zone box whole { at: 300, 220; size: 560, 400; active: open }
+
+    group {
+        pivot: 300, 60
+        scale: scale
+        opacity: seen
+
+        body {
+            color: coal; rim: 4%; shadow: 0, 18, 50, 45%
+            box { from: 20, 20; size: 560, tall; corner: 22 }
+        }
+
+        input query { at: 48, 44; width: 504; size: 20; color: ink; placeholder: "Busca una aplicación…"; selection: #2f5f52 }
+        box { from: 40, 86; size: 520, 1; color: ink; opacity: 10% }
+
+        column list ~quick {
+            at: 32, 94
+            gap: 2
+            repeat i in 0..7 { Row(i) { show: count > i } }
+        }
+    }
+
+    component Row(i) {
+        size: 536, 40
+        prop on = 0 ~quick
+        follow on = if(sel > i - 0.5 and sel < i + 0.5, 1, 0)
+
+        box hit { from: 0, 0; size: 536, 40; corner: 12; color: mint; opacity: on * 16%; cursor: pointer }
+        box { from: 0, 10; size: 3, 20; corner: 1.5; color: mint; opacity: on }
+        text hit.$i { at: 18, 20; anchor: left center; size: 15.5; width: 500; lines: 1; color: ink; opacity: 62% + on * 38% }
+
+        on enter hit { sel = i }
+        on press hit { emit launch(i) }
+    }
+
+    // ── teclas ───────────────────────────────────────────────────
+    //  Lo que es escribir se lo queda el campo; lo demás llega aquí.
+    on toggle          { toggle open; focus query }
+    on key Escape      { open = false }
+    on blur            { open = false }              // han pulsado en otro sitio
+    on key Down        { sel = min(sel + 1, max(count - 1, 0)) }
+    on key Up          { sel = max(sel - 1, 0) }
+    on submit query    { emit launch(sel) }
+}

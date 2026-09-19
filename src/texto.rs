@@ -44,6 +44,21 @@ pub struct GlifoPuesto {
 pub struct Maqueta {
     pub glifos: Vec<GlifoPuesto>,
     pub tam: (f32, f32),
+    /// Dónde cae el cursor de texto antes de cada letra: (byte, x). Solo de la
+    /// primera línea: es lo que necesita un campo donde escribir.
+    pub cursores: Vec<(usize, f32)>,
+}
+
+impl Maqueta {
+    /// La x del cursor delante del byte `b`.
+    pub fn x_de(&self, b: usize) -> f32 {
+        self.cursores.iter().rev().find(|(k, _)| *k <= b).or(self.cursores.first()).map_or(0.0, |c| c.1)
+    }
+
+    /// El byte más cercano a una x: dónde cae un clic.
+    pub fn byte_en(&self, x: f32) -> usize {
+        self.cursores.iter().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(0, |c| c.0)
+    }
 }
 
 /// Todo lo que decide cómo queda un texto. Dos textos con la misma clave son
@@ -154,7 +169,13 @@ impl Tipografo {
         let mut glifos = Vec::new();
         let (mut w, mut h) = (0f32, 0f32);
         let mut lleno = false;
+        let mut cursores: Vec<(usize, f32)> = Vec::new();
         for run in buffer.layout_runs() {
+            if run.line_i == 0 && cursores.is_empty() {
+                cursores = run.glyphs.iter().map(|g| (g.start, g.x)).collect();
+                cursores.push((c.texto.len(), run.line_w));
+                cursores.sort_by_key(|k| k.0);
+            }
             w = w.max(run.line_w);
             h = h.max(run.line_top + run.line_height);
             for g in run.glyphs {
@@ -169,7 +190,10 @@ impl Tipografo {
             eprintln!("texto  · el atlas de {LADO_DEL_ATLAS}² está lleno: algunos glifos no se pintan");
         }
         // Sin ancho fijo, el alineado es respecto a lo que mida el propio texto.
-        Maqueta { glifos, tam: (ancho.unwrap_or(w), h) }
+        if cursores.is_empty() {
+            cursores.push((0, 0.0));
+        }
+        Maqueta { glifos, tam: (ancho.unwrap_or(w), h), cursores }
     }
 
     fn glifo(&mut self, clave: CacheKey, lleno: &mut bool) -> Option<(Hueco, i32, i32, bool)> {

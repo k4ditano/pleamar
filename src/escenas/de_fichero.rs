@@ -39,6 +39,9 @@ impl Guion for DeFichero {
             // Sin ratón, `--demo` dispara el suceso «demo»: la escena dirá qué hace con él.
             Evento::Demo => c.suceso("demo"),
             Evento::Capa(_, _) => c.trabajar(),
+            Evento::Texto(n, v) => println!("lógica · «{n}» dice ahora: {v:?}"),
+            Evento::Envia(n, v) => println!("lógica · intro en «{n}»: {v:?}"),
+            Evento::Recibido(z, tipo, d) => println!("lógica · han soltado en «{z}» un {tipo}: {d:?}"),
             Evento::Suceso(s, None) => println!("lógica · ha pasado «{s}»"),
             Evento::Suceso(s, Some(v)) => println!("lógica · ha pasado «{s}», con {v:.2}"),
             _ => {}

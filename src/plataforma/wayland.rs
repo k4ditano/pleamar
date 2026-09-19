@@ -5,6 +5,12 @@ use super::Ventana;
 use crate::escena::*;
 use crate::gpu;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
+use smithay_client_toolkit::data_device_manager::{
+    data_device::{DataDevice, DataDeviceData, DataDeviceHandler},
+    data_offer::{DataOfferHandler, DragOffer},
+    data_source::DataSourceHandler,
+    DataDeviceManagerState, WritePipe,
+};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, Region},
     delegate_registry,
@@ -32,6 +38,7 @@ use smithay_client_toolkit::reexports::protocols::wp::fractional_scale::v1::clie
     wp_fractional_scale_v1::{self, WpFractionalScaleV1},
 };
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
+use wayland_client::protocol::wl_data_device_manager::DndAction;
 use wayland_client::{
     globals::registry_queue_init,
     protocol::{wl_output, wl_pointer, wl_seat, wl_surface},
@@ -47,6 +54,15 @@ struct VentanaWayland {
     /// de serie de la última vez que entró: los dos los pone el hilo de Wayland.
     cursores: Arc<Mutex<Option<WpCursorShapeDeviceV1>>>,
     serie: Arc<AtomicU32>,
+    capa: LayerSurface,
+}
+
+fn interactividad(t: Teclado) -> KeyboardInteractivity {
+    match t {
+        Teclado::Nunca => KeyboardInteractivity::None,
+        Teclado::AlPulsar => KeyboardInteractivity::OnDemand,
+        Teclado::Siempre => KeyboardInteractivity::Exclusive,
+    }
 }
 
 impl Ventana for VentanaWayland {
@@ -58,6 +74,11 @@ impl Ventana for VentanaWayland {
             // Se aplica con el siguiente frame que se presente.
             self.wl.set_input_region(Some(region.wl_region()));
         }
+    }
+
+    /// Vale con el siguiente frame que se presente, como la región de entrada.
+    fn teclado(&self, t: Teclado) {
+        self.capa.set_keyboard_interactivity(interactividad(t));
     }
 
     fn cursor(&self, c: Cursor) {
@@ -107,6 +128,10 @@ struct Estado {
     formas_de_cursor: Option<CursorShapeManager>,
     cursores: Arc<Mutex<Option<WpCursorShapeDeviceV1>>>,
     serie: Arc<AtomicU32>,
+    mods: Mods,
+    /// Para recibir lo que se arrastre desde otra aplicación.
+    arrastres: Option<DataDeviceManagerState>,
+    dispositivo_de_datos: Option<DataDevice>,
     salir: bool,
     a_render: Sender<ARender>,
 }
@@ -172,11 +197,8 @@ impl Estado {
             capa.set_margin(m[0] + k as i32 * (alto as i32 + 12), m[1], m[2], m[3]);
             capa.set_size(p.ancho, alto);
             capa.set_exclusive_zone(p.reserva);
-            capa.set_keyboard_interactivity(match p.teclado {
-                Teclado::Nunca => KeyboardInteractivity::None,
-                Teclado::AlPulsar => KeyboardInteractivity::OnDemand,
-                Teclado::Siempre => KeyboardInteractivity::Exclusive,
-            });
+            // Si el teclado depende de algo (`exclusive while open`), se nace sin él.
+            capa.set_keyboard_interactivity(interactividad(if p.teclado_mientras { Teclado::Nunca } else { p.teclado }));
             let id = self.siguiente_id;
             self.siguiente_id += 1;
             // Con ventanilla, el tamaño lógico es fijo y los píxeles de verdad los
@@ -235,6 +257,9 @@ pub fn atender(pide: Superficie, alto_extra: u32, instancia: wgpu::Instance, a_r
         formas_de_cursor: CursorShapeManager::bind(&globales, &qh).ok(),
         cursores: Arc::default(),
         serie: Arc::default(),
+        mods: Mods::default(),
+        arrastres: DataDeviceManagerState::bind(&globales, &qh).ok(),
+        dispositivo_de_datos: None,
         salir: false,
         a_render,
     };
@@ -278,7 +303,7 @@ impl LayerShellHandler for Estado {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: p.id,
                 superficie,
-                ventana: Box::new(VentanaWayland { wl: p.capa.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone() }),
+                ventana: Box::new(VentanaWayland { wl: p.capa.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: p.capa.clone() }),
                 escala: p.escala,
                 tam,
                 mhz,
@@ -338,19 +363,90 @@ impl PointerHandler for Estado {
     }
 }
 
+/// Lo que sabemos recibir, por orden de preferencia: ficheros, y si no, texto.
+const TIPOS: [&str; 3] = ["text/uri-list", "text/plain;charset=utf-8", "text/plain"];
+
+fn oferta(d: &wayland_client::protocol::wl_data_device::WlDataDevice) -> Option<DragOffer> {
+    d.data::<DataDeviceData>()?.drag_offer()
+}
+
+/// Arrastrar desde otra aplicación. Mientras dura, el compositor no manda el
+/// ratón por el camino de siempre: llega por aquí, y se reenvía igual.
+impl DataDeviceHandler for Estado {
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, d: &wayland_client::protocol::wl_data_device::WlDataDevice, x: f64, y: f64, _: &wl_surface::WlSurface) {
+        if let Some(o) = oferta(d) {
+            let tipo = o.with_mime_types(|t| TIPOS.iter().find(|q| t.iter().any(|x| x == *q)).map(|q| q.to_string()));
+            o.accept_mime_type(o.serial, tipo);
+            o.set_actions(DndAction::Copy, DndAction::Copy);
+        }
+        let _ = self.a_render.send(ARender::Puntero(Some((x as f32, y as f32))));
+    }
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_device::WlDataDevice) {
+        let _ = self.a_render.send(ARender::Puntero(None));
+    }
+    fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_device::WlDataDevice, x: f64, y: f64) {
+        let _ = self.a_render.send(ARender::Puntero(Some((x as f32, y as f32))));
+    }
+    fn selection(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_device::WlDataDevice) {}
+    fn drop_performed(&mut self, conn: &Connection, _: &QueueHandle<Self>, d: &wayland_client::protocol::wl_data_device::WlDataDevice) {
+        let Some(o) = oferta(d) else { return };
+        let Some(tipo) = o.with_mime_types(|t| TIPOS.iter().find(|q| t.iter().any(|x| x == *q)).map(|q| q.to_string())) else { return };
+        let Ok(mut tubo) = o.receive(tipo.clone()) else { return };
+        let _ = conn.flush();
+        // Leer el tubo puede tardar lo que tarde quien escribe: en otro hilo.
+        let tx = self.a_render.clone();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut datos = String::new();
+            let _ = tubo.read_to_string(&mut datos);
+            o.finish();
+            o.destroy();
+            let _ = tx.send(ARender::Soltado(tipo, datos.trim_end().to_owned()));
+        });
+    }
+}
+
+impl DataOfferHandler for Estado {
+    fn source_actions(&mut self, _: &Connection, _: &QueueHandle<Self>, o: &mut DragOffer, _: DndAction) {
+        o.set_actions(DndAction::Copy, DndAction::Copy);
+    }
+    fn selected_action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &mut DragOffer, _: DndAction) {}
+}
+
+/// No se arrastra nada HACIA fuera todavía; el rasgo hay que cumplirlo igual.
+impl DataSourceHandler for Estado {
+    fn accept_mime(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_source::WlDataSource, _: Option<String>) {}
+    fn send_request(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_source::WlDataSource, _: String, _: WritePipe) {}
+    fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_source::WlDataSource) {}
+    fn dnd_dropped(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_source::WlDataSource) {}
+    fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_source::WlDataSource) {}
+    fn action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_source::WlDataSource, _: DndAction) {}
+}
+
+fn nombre_de(e: &KeyEvent) -> String {
+    // Como la llama xkb: `Escape`, `Return`, `BackSpace`, `a`.
+    e.keysym.name().map(|n| n.trim_start_matches("XK_").to_owned()).unwrap_or_else(|| format!("{:#x}", e.keysym.raw()))
+}
+
 impl KeyboardHandler for Estado {
-    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[Keysym]) {}
-    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {}
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[Keysym]) {
+        let _ = self.a_render.send(ARender::FocoTeclado(true));
+    }
+    /// Perder el teclado es, casi siempre, que han pulsado en otro sitio.
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {
+        let _ = self.a_render.send(ARender::FocoTeclado(false));
+    }
     fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, e: KeyEvent) {
-        // El nombre de la tecla, como lo llama xkb: `Escape`, `Return`, `a`.
-        let nombre = e.keysym.name().map(|n| n.trim_start_matches("XK_").to_owned()).unwrap_or_else(|| format!("{:#x}", e.keysym.raw()));
-        let _ = self.a_render.send(ARender::Tecla(nombre, e.utf8.filter(|t| !t.chars().any(char::is_control))));
+        let escribe = e.utf8.clone().filter(|t| !t.chars().any(char::is_control));
+        let _ = self.a_render.send(ARender::Tecla(nombre_de(&e), escribe, self.mods));
     }
-    fn repeat_key(&mut self, c: &Connection, qh: &QueueHandle<Self>, k: &wayland_client::protocol::wl_keyboard::WlKeyboard, s: u32, e: KeyEvent) {
-        self.press_key(c, qh, k, s, e);
+    fn repeat_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
+    fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, e: KeyEvent) {
+        let _ = self.a_render.send(ARender::TeclaSuelta(nombre_de(&e)));
     }
-    fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
-    fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, _: Modifiers, _: RawModifiers, _: u32) {}
+    fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, m: Modifiers, _: RawModifiers, _: u32) {
+        self.mods = Mods { ctrl: m.ctrl, alt: m.alt, mayus: m.shift, logo: m.logo };
+    }
 }
 
 impl SeatHandler for Estado {
@@ -364,6 +460,9 @@ impl SeatHandler for Estado {
             if let (Some(p), Some(m)) = (&self.puntero, &self.formas_de_cursor) {
                 *self.cursores.lock().unwrap() = Some(m.get_shape_device(p, qh));
             }
+        }
+        if self.dispositivo_de_datos.is_none() {
+            self.dispositivo_de_datos = self.arrastres.as_ref().map(|m| m.get_data_device(qh, &asiento));
         }
         if c == Capability::Keyboard && self.teclado.is_none() && self.pide.teclado != Teclado::Nunca {
             self.teclado = self.asientos.get_keyboard(qh, &asiento, None).ok();

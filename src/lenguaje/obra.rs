@@ -121,6 +121,8 @@ struct Entorno {
     colores: HashMap<String, Color>,
     cadenas: HashMap<String, String>,
     alias: HashMap<String, String>,
+    /// De esos nombres, los que tienen partes: `label.width` es de la medida `label`.
+    con_partes: std::collections::HashSet<String>,
     sufijo: String,
 }
 
@@ -156,6 +158,7 @@ struct Obra<'a> {
     ultimo_tam: Option<(Expr, Expr)>,
     /// La medida que un layout le impone al texto que va a pintar.
     medida_impuesta: Option<(PropId, PropId)>,
+    teclado_pendiente: Option<(&'a [Ficha], (usize, usize))>,
     /// Las transformaciones bajo las que se está pintando: una zona las hereda.
     bajo: Vec<Transformacion>,
 }
@@ -172,7 +175,7 @@ pub fn levantar(arbol: &[Entrada]) -> Result<Escena, Vec<Fallo>> {
         muelles: [("lively", Muelle::VIVO), ("calm", Muelle::SERENO), ("quick", Muelle::RAPIDO), ("slow", Muelle::LENTO), ("eyes", Muelle::OJOS), ("pose", Muelle::POSE)]
             .into_iter().map(|(n, m)| (n.to_owned(), m)).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
-        entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None,
+        entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
@@ -201,6 +204,14 @@ pub fn levantar(arbol: &[Entrada]) -> Result<Escena, Vec<Fallo>> {
             if o.fallos.len() < 8 {
                 o.fallos.push(f);
             }
+        }
+    }
+    if let Some((fichas, (l, col))) = o.teclado_pendiente.take() {
+        o.entornos.clear();
+        let mut c = Cur::de(fichas, l, col);
+        match o.expr(&mut c) {
+            Ok(e) => o.e.teclado_mientras = Some(e),
+            Err(f) => o.fallos.push(f),
         }
     }
     // Hasta que llegue la de verdad, la que pide el fichero.
@@ -245,6 +256,10 @@ impl<'a> Obra<'a> {
             .join(".")
     }
 
+    fn interpolar_en(&self, n: &str) -> String {
+        self.interpolar(n)
+    }
+
     /// Cómo se llama de verdad un nombre visto desde aquí dentro: lo que declaró
     /// esta copia de un componente lleva su sufijo. Vale para el nombre entero o
     /// para su principio: `label.width` es de la medida `label`.
@@ -253,7 +268,9 @@ impl<'a> Obra<'a> {
         for e in self.entornos.iter().rev() {
             let mut hasta = n.len();
             loop {
-                if let Some(g) = e.alias.get(&n[..hasta]) {
+                // El nombre entero vale siempre; su principio, solo si es de algo con
+                // partes. Si no, una zona `hit` se comería al texto `hit.3`.
+                if let Some(g) = e.alias.get(&n[..hasta]).filter(|_| hasta == n.len() || e.con_partes.contains(&n[..hasta])) {
                     return format!("{g}{}", &n[hasta..]);
                 }
                 match n[..hasta].rfind('.') {
@@ -709,7 +726,12 @@ impl<'a> Obra<'a> {
                     self.imagenes.insert(nombre, i);
                 }
                 "measure" => {
-                    let nombre = self.declarar(&c.id("un nombre para la medida")?);
+                    let local = c.id("un nombre para la medida")?;
+                    let nombre = self.declarar(&local);
+                    let parte = self.interpolar_en(&local);
+                    if let Some(e) = self.entornos.last_mut() {
+                        e.con_partes.insert(parte);
+                    }
                     let (w, h) = self.e.medida(fijo(&nombre));
                     self.props.insert(format!("{nombre}.width"), w);
                     self.props.insert(format!("{nombre}.height"), h);
@@ -757,6 +779,7 @@ impl<'a> Obra<'a> {
                 }
                 "text" => self.texto(n)?,
                 "image" => self.imagen(n)?,
+                "input" => self.campo(n)?,
                 "clip" => {
                     let margen = if c.palabra("inset") { c.num()? } else { 0.0 };
                     let desde = c.i;
@@ -778,7 +801,7 @@ impl<'a> Obra<'a> {
                 "blink" | "wave" | "spin" | "follow" | "look" => self.comportamiento(&palabra, &mut c)?,
                 "gesture" | "posture" => self.gesto(n, &palabra, &mut c)?,
                 otra => {
-                    let validas: Vec<String> = ["surface", "prop", "pose", "fact", "event", "text", "image", "measure", "let", "spring", "body", "ellipse", "box", "arc", "line", "zone", "clip", "group", "row", "column", "repeat", "component", "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture"].iter().map(|s| s.to_string()).collect();
+                    let validas: Vec<String> = ["surface", "prop", "pose", "fact", "event", "text", "image", "measure", "let", "spring", "body", "ellipse", "box", "arc", "line", "input", "zone", "clip", "group", "row", "column", "repeat", "component", "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture"].iter().map(|s| s.to_string()).collect();
                     let pista = parecido(otra, validas.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
                     return Err(Fallo::en(n.linea, n.col, format!("no sé qué es «{otra}».{pista}")));
                 }
@@ -1023,6 +1046,65 @@ impl<'a> Obra<'a> {
         Ok(())
     }
 
+    /// `input query { at: x, y; width: 300; size: 16; placeholder: "Buscar…" }`: un
+    /// campo donde escribir, que edita el texto vivo de ese nombre.
+    fn campo(&mut self, n: &Nodo) -> R<()> {
+        let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
+        let local = c.id("el nombre del texto que edita")?;
+        let nombre = self.global(&local);
+        let Some(texto) = self.textos.get(&nombre).copied() else {
+            return self.desconocido(&c, "ningún texto", &nombre, self.textos.keys().collect());
+        };
+        let mut p = self.propiedades(n, &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "show"])?;
+        let en_hueco = std::mem::take(&mut self.en_hueco);
+        let en = match p.get_mut("at") {
+            Some(c) => self.punto(c)?,
+            None if en_hueco => (0.0.into(), 0.0.into()),
+            None => return Err(Fallo::en(n.linea, n.col, "a este campo le falta «at»")),
+        };
+        let ancho = match p.get_mut("width") {
+            Some(c) => self.expr(c)?,
+            None => return Err(Fallo::en(n.linea, n.col, "a este campo le falta «width»")),
+        };
+        let mut estilo = Estilo::de(15.0, color(1.0, 1.0, 1.0));
+        if let Some(c) = p.get_mut("size") {
+            estilo.px = c.num()?;
+        }
+        if let Some(c) = p.get_mut("weight") {
+            estilo.peso = c.num()? as u16;
+        }
+        if let Some(c) = p.get_mut("family") {
+            estilo.familia = Some(fijo(&c.cadena()?));
+        }
+        if let Some(c) = p.get_mut("color") {
+            estilo.color = self.color(c)?;
+        }
+        let marcador = match p.get_mut("placeholder") {
+            Some(c) => c.cadena()?,
+            None => String::new(),
+        };
+        let seleccion = match p.get_mut("selection") {
+            Some(c) => self.color(c)?,
+            None => color(0.25, 0.42, 0.62),
+        };
+        let alfa = match p.get_mut("opacity") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(1.0),
+        };
+        let alto = estilo.px * estilo.interlinea;
+        // Su zona: pulsarlo lo enfoca, y encima el cursor es el de escribir.
+        // Se llama como el texto: `on drop query`, `on enter query`.
+        let zona = self.declarar(&local);
+        self.candidatas.push(Candidata {
+            nombre: zona.clone(),
+            forma: Forma::Caja { centro: (en.0.clone() + ancho.clone() * 0.5, en.1.clone() + alto * 0.5), mitad: (ancho.clone() * 0.5, (alto * 0.5 + 3.0).into()), radio: 0.0.into() },
+            activa: None, bajo: self.bajo.clone(), forzada: true, cursor: Cursor::Texto,
+        });
+        self.ultimo_tam = Some((ancho.clone(), alto.into()));
+        self.e.pintar(Instr::Campo { texto, zona: fijo(&zona), en, ancho, estilo, alfa, marcador, seleccion });
+        Ok(())
+    }
+
     fn imagen(&mut self, n: &Nodo) -> R<()> {
         let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
         let nombre = self.global(&c.id("el nombre de una imagen")?);
@@ -1051,7 +1133,7 @@ impl<'a> Obra<'a> {
         Ok(())
     }
 
-    fn superficie(&mut self, n: &Nodo) -> R<()> {
+    fn superficie(&mut self, n: &'a Nodo) -> R<()> {
         let mut p = self.propiedades(n, &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard"])?;
         let s = &mut self.e.superficie;
         if let Some(c) = p.get_mut("size") {
@@ -1098,6 +1180,12 @@ impl<'a> Obra<'a> {
                 "exclusive" => Teclado::Siempre,
                 _ => return c.fallo("el teclado se pide con none, on_demand (al pulsar) o exclusive (todo para ella)"),
             };
+            // `keyboard: exclusive while open`: solo mientras eso sea verdad.
+            // La condición se lee al final: puede nombrar un hecho declarado más abajo.
+            if c.palabra("while") {
+                s.teclado_mientras = true;
+                self.teclado_pendiente = Some((&c.f[c.i..], c.pos()));
+            }
         }
         if let Some(c) = p.get_mut("reserve") {
             s.reserva = c.num()? as i32;
@@ -1531,8 +1619,11 @@ impl<'a> Obra<'a> {
         // Con nombre, su tamaño se puede usar más abajo (`bar.width`), y su caja
         // entera es una zona si alguna regla la nombra. Va debajo de las de sus
         // hijos: la rueda sobre el reparto no le quita el clic a lo de dentro.
-        if let Some(nombre) = nombre {
-            let nombre = self.declarar(&nombre);
+        if let Some(local) = nombre {
+            let nombre = self.declarar(&local);
+            if let Some(e) = self.entornos.last_mut() {
+                e.con_partes.insert(local.clone());
+            }
             let mut bajo = self.bajo.clone();
             if let Instr::Transformar(Some(t)) = &self.e.instrs[instr_base] {
                 bajo.push(t.clone());
@@ -1613,7 +1704,7 @@ impl<'a> Obra<'a> {
             let b = if c.sim("..") { c.dur()?.as_secs_f32() } else { a };
             Disparador::Cada { entre: (a, b), mientras: mientras(self, c)? }
         } else {
-            let que = c.id("qué tiene que pasar: press, release, scroll, drag, hold, key, enter, leave, hover, away, idle, o un suceso")?;
+            let que = c.id("qué tiene que pasar: press, release, scroll, drag, hold, key, submit, focus, blur, drop, enter, leave, hover, away, idle, o un suceso")?;
             match que.as_str() {
                 // `on press orb`, o con otro botón: `on press right orb`.
                 "press" => {
@@ -1634,7 +1725,24 @@ impl<'a> Obra<'a> {
                     c.exige_palabra("for")?;
                     Disparador::Mantiene { zona, durante: c.dur()? }
                 }
-                "key" => Disparador::Tecla(c.id("el nombre de una tecla: Escape, Return, a…")?),
+                // `on key Escape`, `on key Ctrl+k`: el nombre puede llevar un `+`.
+                "key" => {
+                    let mut nombre = c.id("el nombre de una tecla: Escape, Return, a, Ctrl+k…")?;
+                    while c.sim("+") {
+                        nombre = format!("{nombre}+{}", c.id("la tecla")?);
+                    }
+                    Disparador::Tecla(nombre)
+                }
+                "submit" => {
+                    let n = self.global(&c.id("el nombre del campo")?);
+                    match self.textos.get(&n) {
+                        Some(t) => Disparador::Envia(*t),
+                        None => return self.desconocido(c, "ningún texto", &n, self.textos.keys().collect()),
+                    }
+                }
+                "focus" => Disparador::GanaFoco,
+                "blur" => Disparador::PierdeFoco,
+                "drop" => Disparador::Recibe(self.zona(c)?),
                 "enter" => Disparador::Entra(self.zona(c)?),
                 "leave" => Disparador::Sale(self.zona(c)?),
                 "hover" | "away" => {
@@ -1664,6 +1772,14 @@ impl<'a> Obra<'a> {
                     let p = c.id("un efecto")?;
                     efectos.push(match p.as_str() {
                         "toggle" => Efecto::Alternar(self.hecho(&mut c)?),
+                        "blur" => Efecto::Enfocar(None),
+                        "focus" => {
+                            let n = self.global(&c.id("el nombre del campo")?);
+                            match self.textos.get(&n) {
+                                Some(t) => Efecto::Enfocar(Some(*t)),
+                                None => return self.desconocido(&c, "ningún texto", &n, self.textos.keys().collect()),
+                            }
+                        }
                         // `emit opened` o, con carga, `emit opened(i)`.
                         "emit" => {
                             let s = self.suceso(&mut c)?;

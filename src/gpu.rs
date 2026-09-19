@@ -25,8 +25,29 @@ pub struct Dibujo {
     tam: (f32, f32),
     /// Lo que han medido los textos que lo pidieron: propiedad y valor.
     pub medidas: Vec<(PropId, f32)>,
+    /// Los campos de texto, como quedaron: para saber dónde cae un clic.
+    pub campos: Vec<CampoPuesto>,
     /// Grupos que se pintan aparte: qué elementos, y en qué capa.
     pub apartes: Vec<(Range<u32>, usize)>,
+}
+
+/// El campo donde se está escribiendo, visto desde quien pinta.
+#[derive(Clone, Copy)]
+pub struct VistaDeCampo {
+    pub texto: usize,
+    pub cursor: usize,
+    pub ancla: usize,
+    /// El cursor parpadea.
+    pub se_ve: bool,
+}
+
+pub struct CampoPuesto {
+    pub texto: usize,
+    pub zona: &'static str,
+    pub maqueta: Option<std::sync::Arc<crate::texto::Maqueta>>,
+    /// Dónde empieza el texto, y cuánto se ha corrido para que el cursor se vea.
+    pub x0: f32,
+    pub corrido: f32,
 }
 
 /// Un grupo con opacidad, mientras se va llenando.
@@ -98,8 +119,9 @@ impl Dibujo {
         rellenar(e);
     }
 
-    pub fn componer(&mut self, instrs: &[Instr], c: Ctx, textos: &[String], tip: &mut Textos, tam: (f32, f32), hud: bool) {
+    pub fn componer(&mut self, instrs: &[Instr], c: Ctx, textos: &[String], tip: &mut Textos, campo: Option<VistaDeCampo>, tam: (f32, f32), hud: bool) {
         self.medidas.clear();
+        self.campos.clear();
         self.tam = tam;
         self.formas.clear();
         self.elementos.clear();
@@ -237,6 +259,65 @@ impl Dibujo {
                     let d = [destino.0.evaluar(c), destino.1.evaluar(c), destino.2.evaluar(c), destino.3.evaluar(c)];
                     let rgb = tinte.as_ref().map(&color);
                     self.trozo(d, hueco.uv(), a, rgb, afin, &recortes);
+                }
+                Instr::Campo { texto, zona, en, ancho, estilo, alfa, marcador, seleccion } => {
+                    let k = texto.0 as usize;
+                    let valor = textos.get(k).map_or("", String::as_str);
+                    let vacio = valor.is_empty();
+                    // Vacío, enseña lo que se espera de él, más tenue.
+                    let m = tip.maqueta(sitio, Clave::de(if vacio { marcador } else { valor }, estilo, None));
+                    let (x0, y0, w) = (en.0.evaluar(c), en.1.evaluar(c), ancho.evaluar(c));
+                    let h = estilo.px * estilo.interlinea;
+                    let mio = campo.filter(|v| v.texto == k);
+                    let x_de = |b: usize| if vacio { 0.0 } else { m.as_ref().map_or(0.0, |m| m.x_de(b)) };
+                    // Si el cursor se sale por la derecha, el texto se corre.
+                    let corrido = mio.map_or(0.0, |v| (x_de(v.cursor) - w + 6.0).max(0.0));
+                    self.campos.push(CampoPuesto { texto: k, zona, maqueta: if vacio { None } else { m.clone() }, x0, corrido });
+                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
+                    if a <= 0.001 {
+                        continue;
+                    }
+                    // Recortado a su caja: lo que no cabe, no se ve.
+                    let mut caja = crate::formas::Plana { tipo: 1, cx: x0 + w * 0.5, cy: y0 + h * 0.5, mx: w * 0.5, my: h * 0.5 + 2.0, radio: 0.0, giro: 0.0, ex: 1.0, ey: 1.0, trazo: 0.0, afin };
+                    let limite = caja.caja().unwrap_or([0.0; 4]);
+                    let kf = self.forma(caja, 0.0);
+                    recortes.push((kf, limite));
+                    let rgb = color(&estilo.color);
+                    if let Some(v) = mio {
+                        let (s0, s1) = (x_de(v.cursor.min(v.ancla)), x_de(v.cursor.max(v.ancla)));
+                        if s1 > s0 {
+                            caja = crate::formas::Plana { cx: x0 - corrido + (s0 + s1) * 0.5, mx: (s1 - s0) * 0.5, my: h * 0.5, ..caja };
+                            let (kf, b) = (self.forma(caja, 0.0), caja.caja().unwrap_or([0.0; 4]));
+                            let sel = color(seleccion);
+                            self.elemento(0.0, b, &recortes, |e| {
+                                afin.codificar(&mut e[44..52]);
+                                e[1] = kf as f32;
+                                e[2] = 1.0;
+                                e[3] = a;
+                                e[8..11].copy_from_slice(&sel);
+                            });
+                        }
+                    }
+                    if let Some(m) = &m {
+                        let s = tip_escala;
+                        let (tx, ty) = (((x0 - corrido) * s).round() / s, (y0 * s).round() / s);
+                        for g in &m.glifos {
+                            let d = [tx + g.rect[0], ty + g.rect[1], g.rect[2], g.rect[3]];
+                            self.trozo(d, g.uv, if vacio { a * 0.4 } else { a }, if g.en_color { None } else { Some(rgb) }, afin, &recortes);
+                        }
+                    }
+                    if let Some(v) = mio.filter(|v| v.se_ve) {
+                        caja = crate::formas::Plana { cx: x0 - corrido + x_de(v.cursor) + 0.5, mx: 0.8, my: h * 0.5 - 1.0, ..caja };
+                        let (kf, b) = (self.forma(caja, 0.0), caja.caja().unwrap_or([0.0; 4]));
+                        self.elemento(0.0, [b[0] - 1.0, b[1], b[2] + 1.0, b[3]], &recortes, |e| {
+                            afin.codificar(&mut e[44..52]);
+                            e[1] = kf as f32;
+                            e[2] = 1.0;
+                            e[3] = a;
+                            e[8..11].copy_from_slice(&rgb);
+                        });
+                    }
+                    recortes.pop();
                 }
                 Instr::Texto { contenido, en, ancla, ancho, estilo, alfa, mide } => {
                     let numero;
@@ -605,6 +686,10 @@ impl Lamina {
 
     pub fn cursor(&self, c: Cursor) {
         self.ventana.cursor(c);
+    }
+
+    pub fn teclado(&self, t: Teclado) {
+        self.ventana.teclado(t);
     }
 }
 
