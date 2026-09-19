@@ -26,7 +26,7 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | B1 | **Solo hay dos servicios, y solo de Hyprland**: `workspaces` y `window`. El volumen de `barra.luau` sale de `pactl` y `wpctl`, que ata ese script a Linux | 🔴 | `audio`, `media`, `battery`, `network`, `notifications` y `tray` como servicios en `plataforma/`, con el mismo nombre y la misma tabla en todos los sistemas: PipeWire / WASAPI / CoreAudio, MPRIS / SMTC / MediaRemote. Otros compositores de Linux: `ext-workspace` y `wlr-foreign-toplevel` |
 | B2 | `ws.active` es el escritorio con foco en todo el sistema, no el del monitor donde está la barra | 🟡 | Una instancia de escena por monitor (S2), con un hecho `screen.name` que la lógica pueda leer |
 | B3 | `size: full` usa el ancho del **primer** monitor para todas las superficies | 🟡 | Lo mismo: S2 |
-| B4 | **Sin probar**: pulsar un escritorio (`sys.call("workspaces.focus", n)`) y `reserve` distinto de 0. Probarlo Claude le habría movido el escritorio o las ventanas a Abel | 🟡 | Que lo pruebe Abel: pulsar un número de la barra, y subir `reserve` a 44 |
+| B4 | **Sin probar**: `reserve` distinto de 0 (que las ventanas le dejen sitio a la barra). Y al recargar en caliente no se aplica: hay que relanzarla (G7) | ⚪ | Que lo pruebe Abel subiendo `reserve` a 50; y reconfigurar la superficie al recargar |
 | B5 | Si al programa lo matan con una señal, lo que dejó corriendo (`pactl subscribe`) queda huérfano. Al salir por las buenas sí se para | 🟡 | En `plataforma/`: `PR_SET_PDEATHSIG` en Linux, un Job Object en Windows; y atender `SIGTERM` para salir por las buenas |
 | B6 | La barra tarda ~420 ms en su primer frame, frente a ~170 de Marea | ⚪ | Medir qué: probablemente los 27 textos y el icono, que el taller hace en serie |
 | B7 | No se puede cambiar el volumen desde la barra: falta la rueda (S6) | 🟡 | S6 |
@@ -141,3 +141,4 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | 2026-09-19 | Un reparto no se podía centrar ni pegar a la derecha sin saber lo que mide → `anchor:` |
 | 2026-09-19 | Una superficie tenía un ancho fijo → `size: full, 44` y `screen.width` |
 | 2026-09-19 | Lo que la lógica dejaba corriendo sobrevivía al programa (un `pactl subscribe` huérfano) → se para al salir y al recargar |
+| 2026-09-19 | **B4 (casi)** · Probado por Abel con su ratón y sus teclas: pulsar un escritorio lleva a él, el volumen y el silencio se reflejan al momento, el título sigue a la ventana, y el clic atraviesa lo transparente de la barra (que era también lo que quedaba por ver de la región de entrada) |
