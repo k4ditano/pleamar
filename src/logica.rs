@@ -32,10 +32,26 @@ pub struct Contexto {
     alarmas: Vec<(Instant, &'static str)>,
 }
 
+#[allow(dead_code)] // animar e impulso siguen ahí para guiones que aún manden intenciones sueltas
 impl Contexto {
     pub fn animar(&self, prop: PropId, a: f32, muelle: Muelle, retraso_ms: u64) {
         let t = Transicion { prop, a, muelle, retraso: Duration::from_millis(retraso_ms) };
         let _ = self.tx.send(ARender::Orden(Orden::Animar(t)));
+    }
+
+    /// La frontera con la escena: contar lo que es verdad…
+    pub fn hecho(&self, nombre: &'static str, valor: bool) {
+        let _ = self.tx.send(ARender::Hecho(nombre, valor as u8 as f32));
+    }
+
+    /// …lo que acaba de pasar…
+    pub fn suceso(&self, nombre: &'static str) {
+        let _ = self.tx.send(ARender::Suceso(nombre));
+    }
+
+    /// …y pedir un gesto, que la escena concederá o no según su clase.
+    pub fn gesto(&self, nombre: &'static str) {
+        let _ = self.tx.send(ARender::Gesto(nombre));
     }
 
     pub fn impulso(&self, prop: PropId, velocidad: f32) {
@@ -78,6 +94,7 @@ pub fn hilo(mut guion: Box<dyn Guion>, rx: Receiver<Evento>, tx: Sender<ARender>
     let _ = tx.send(ARender::Escena(guion.escena()));
     let mut c = Contexto { tx, bloqueada, op, alarmas: Vec::new() };
     let mut siguiente_demo = Instant::now() + Duration::from_millis(1200);
+    guion.evento(Evento::Alarma("inicio"), &mut c);
 
     loop {
         let mut hasta = Instant::now() + Duration::from_secs(3600);

@@ -14,6 +14,7 @@ aviso que le nace del costado.
 cargo build --release
 ./target/release/pleamar                 # pasa el ratón por la bolita; botón derecho la cierra
 ./target/release/pleamar --escena isla   # otra escena, el mismo render
+./target/release/pleamar --escena cara   # la cara de Marea: capas, gestos y su guion
 ./target/release/pleamar --demo          # abre y cierra sola
 ./target/release/pleamar --ingenuo       # lo mismo con la lógica en el hilo que pinta
 ```
@@ -35,6 +36,17 @@ El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
 - **Instrucciones de dibujo**, en orden: `Grupo`, `Forma` (elipse o caja, fundida
   con lo anterior por un mínimo suave), `Relleno`, `Recorte`, `Plano`, `Textura`.
   El shader es un intérprete de esa lista; no hay nada de Marea en él.
+- **Hechos y sucesos**: la única frontera con la lógica. Ella cuenta lo que pasa
+  (`grabando = sí`, `confirmado`); no toca formas, poses ni temporizadores.
+- **Capas**: un hueco que muchos reclaman, en orden de prioridad. Gana la primera
+  reclamación que se cumple; cuando deja de cumplirse se ve la siguiente, sola.
+  Una reclamación puede fijar propiedades con su muelle y su retraso: eso es una
+  coreografía, y lo que en otros sitios se llama estado.
+- **Gestos**: fotogramas con curva sobre las propiedades de pose, con clase
+  (`Estado > Pedido > Reflejo > Postura > Ambiente`): uno solo corta a otro de
+  su clase o inferior.
+- **Reglas** que ejecuta el render: `Encima{320 ms}`, `Fuera{420 ms}`, `Pulsa`,
+  `Quieto{14 s}`… → poner un hecho, alternarlo, emitir, impulsar, pedir un gesto.
 - **Comportamientos** que el render lleva solo: `Parpadeo`, `Onda`, `Mirada`.
 - **Zonas** sensibles al ratón. Lo que declaran en `al_entrar` y `al_salir` lo
   ejecuta el render en el acto —el `:hover` de CSS—, y a la lógica le llega un
@@ -49,7 +61,8 @@ El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
 | `forma.wgsl` | El mismo intérprete, por píxel: distancias con signo y alfa premultiplicado. |
 | `logica.rs` | Donde corre un `Guion`: recibe eventos, declara transiciones y alarmas, y se bloquea a propósito. |
 | `escenas/marea.rs` | La bolita y su tarjeta: 12 propiedades, 12 instrucciones, 4 zonas. |
-| `escenas/isla.rs` | Una isla como la de k4 que suelta una gota. Crecer con el ratón es pura declaración. |
+| `escenas/isla.rs` | Una isla como la de k4 que suelta una gota. Su lógica no decide nada: dos capas y tres reglas. |
+| `escenas/cara.rs` | La cara de Marea: `capa forma` (rec > aviso > contenta > lupa > ojos) y tres de sus gestos, fotograma a fotograma. |
 | `texto.rs` | Texto pintado una vez a un atlas: el papel del «contenido de un plugin». |
 
 La gráfica de abajo es una barra por frame; la franja roja es el tiempo que la
@@ -71,8 +84,18 @@ rectángulos. Casi todo lo de pleamar es el driver de Vulkan de NVIDIA: el suelo
 de abrir un contexto de GPU existe, y un renderer por CPU para lo estático
 sería la forma de bajarlo.
 
+Con capas y reglas, Marea se abre, realza su botón y se cierra **con la lógica
+bloqueada cinco segundos** (`--bloqueo 5000 --raton …`): la lógica se entera
+después. Y en `--escena cara`, buscar y confirmar mientras graba no le quitan el
+disco rojo; al dejar de grabar, la lupa sale sola.
+
 Con la escena como datos los números no cambian (38–39 frames durante el
 bloqueo, 17 ms), y el realce del botón responde con la lógica congelada.
+
+## Documentación
+
+El diseño, el borrador del lenguaje, la prueba contra la Marea real y lo que
+falta están en `docs/` (y, al día, en Edinot: `Proyectos/pleamar`).
 
 ## Lo que no es
 

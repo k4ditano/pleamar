@@ -38,7 +38,7 @@ use wayland_client::{
 };
 
 const AYUDA: &str = "pleamar [opciones]
-  --escena NOMBRE     marea (por defecto) o isla
+  --escena NOMBRE     marea (por defecto), isla o cara
   --pantalla NOMBRE   monitor donde aparecer (por defecto HDMI-A-1)
   --bloqueo MS        lo que se bloquea la lógica tras cada decisión (600)
   --ingenuo           la lógica bloquea el hilo que pinta, como en QtQuick
@@ -47,6 +47,7 @@ const AYUDA: &str = "pleamar [opciones]
   --segundos N        salir sola al cabo de N segundos
   --margen PX         margen superior (40)
   --sin-hud           sin la gráfica de frames
+  --movimiento-reducido  los muelles se posan y los gestos enseñan su cara quieta
 Botón derecho sobre ella para cerrarla.";
 
 struct Args {
@@ -59,10 +60,11 @@ struct Args {
     segundos: Option<u64>,
     margen: i32,
     hud: bool,
+    reducido: bool,
 }
 
 fn args() -> Args {
-    let mut a = Args { escena: "marea".into(), pantalla: "HDMI-A-1".into(), bloqueo: 600, ingenuo: false, demo: false, raton: None, segundos: None, margen: 40, hud: true };
+    let mut a = Args { escena: "marea".into(), pantalla: "HDMI-A-1".into(), bloqueo: 600, ingenuo: false, demo: false, raton: None, segundos: None, margen: 40, hud: true, reducido: false };
     let mut it = std::env::args().skip(1);
     while let Some(op) = it.next() {
         let mut valor = || it.next().unwrap_or_else(|| { eprintln!("{AYUDA}"); std::process::exit(2) });
@@ -76,6 +78,7 @@ fn args() -> Args {
             "--ingenuo" => a.ingenuo = true,
             "--demo" => a.demo = true,
             "--sin-hud" => a.hud = false,
+            "--movimiento-reducido" => a.reducido = true,
             _ => { eprintln!("{AYUDA}"); std::process::exit(2) }
         }
     }
@@ -164,6 +167,7 @@ fn main() {
     let guion: Box<dyn logica::Guion> = match a.escena.as_str() {
         "marea" => Box::<escenas::marea::Marea>::default(),
         "isla" => Box::<escenas::isla::Isla>::default(),
+        "cara" => Box::<escenas::cara::Cara>::default(),
         otra => {
             eprintln!("no conozco la escena «{otra}»\n{AYUDA}");
             std::process::exit(2)
@@ -176,7 +180,7 @@ fn main() {
     );
     let render = {
         let bloqueada = bloqueada.clone();
-        let op = render::Opciones { hud: a.hud, ingenuo: a.ingenuo };
+        let op = render::Opciones { hud: a.hud, ingenuo: a.ingenuo, reducido: a.reducido };
         std::thread::Builder::new()
             .name("render".into())
             .spawn(move || render::hilo(instancia, superficie, de_render, a_logica, bloqueada, op))

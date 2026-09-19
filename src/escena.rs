@@ -8,6 +8,8 @@
 //! La lógica nunca manda valores: manda *intenciones* («esta propiedad va a 406
 //! con este muelle, dentro de 60 ms»).
 
+#![allow(dead_code)] // el contrato va por delante de las escenas que lo usan
+
 use std::ops::{Add, Div, Mul, Sub};
 use std::time::Duration;
 
@@ -19,6 +21,23 @@ pub const MAX_INSTR: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PropId(pub u16);
+/// Algo que la lógica (o una regla) dice que es verdad. Un número; sí y no son 1 y 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HechoId(pub u16);
+/// Algo que ocurre en un instante.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SucesoId(pub u16);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZonaId(pub u16);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GestoId(pub u16);
+
+/// Con qué se evalúa una expresión: lo que se mueve y lo que es verdad.
+#[derive(Clone, Copy)]
+pub struct Ctx<'a> {
+    pub props: &'a [Animada],
+    pub hechos: &'a [f32],
+}
 
 /// Una expresión pura sobre las propiedades. Como no tiene efectos, el render
 /// puede evaluarla cuando quiera y donde quiera: es lo que sería un binding.
@@ -26,6 +45,7 @@ pub struct PropId(pub u16);
 pub enum Expr {
     K(f32),
     P(PropId),
+    H(HechoId),
     /// La velocidad de una propiedad: el render la conoce, la lógica no.
     Vel(PropId),
     Suma(Box<Expr>, Box<Expr>),
@@ -37,27 +57,52 @@ pub enum Expr {
     Abs(Box<Expr>),
     /// smoothstep(a, b, x)
     Suave(f32, f32, Box<Expr>),
+    // Condiciones: verdad es > 0.5, y devuelven 1 o 0.
+    Mayor(Box<Expr>, Box<Expr>),
+    Y(Box<Expr>, Box<Expr>),
+    O(Box<Expr>, Box<Expr>),
+    No(Box<Expr>),
 }
 
 impl Expr {
-    pub fn evaluar(&self, props: &[Animada]) -> f32 {
+    pub fn evaluar(&self, c: Ctx) -> f32 {
         use Expr::*;
         match self {
             K(v) => *v,
-            P(p) => props[p.0 as usize].x,
-            Vel(p) => props[p.0 as usize].v,
-            Suma(a, b) => a.evaluar(props) + b.evaluar(props),
-            Resta(a, b) => a.evaluar(props) - b.evaluar(props),
-            Por(a, b) => a.evaluar(props) * b.evaluar(props),
-            Entre(a, b) => a.evaluar(props) / b.evaluar(props),
-            Min(a, b) => a.evaluar(props).min(b.evaluar(props)),
-            Max(a, b) => a.evaluar(props).max(b.evaluar(props)),
-            Abs(a) => a.evaluar(props).abs(),
+            P(p) => c.props[p.0 as usize].x,
+            H(h) => c.hechos[h.0 as usize],
+            Vel(p) => c.props[p.0 as usize].v,
+            Suma(a, b) => a.evaluar(c) + b.evaluar(c),
+            Resta(a, b) => a.evaluar(c) - b.evaluar(c),
+            Por(a, b) => a.evaluar(c) * b.evaluar(c),
+            Entre(a, b) => a.evaluar(c) / b.evaluar(c),
+            Min(a, b) => a.evaluar(c).min(b.evaluar(c)),
+            Max(a, b) => a.evaluar(c).max(b.evaluar(c)),
+            Abs(a) => a.evaluar(c).abs(),
             Suave(a, b, x) => {
-                let t = ((x.evaluar(props) - a) / (b - a)).clamp(0.0, 1.0);
+                let t = ((x.evaluar(c) - a) / (b - a)).clamp(0.0, 1.0);
                 t * t * (3.0 - 2.0 * t)
             }
+            Mayor(a, b) => (a.evaluar(c) > b.evaluar(c)) as u8 as f32,
+            Y(a, b) => (a.evaluar(c) > 0.5 && b.evaluar(c) > 0.5) as u8 as f32,
+            O(a, b) => (a.evaluar(c) > 0.5 || b.evaluar(c) > 0.5) as u8 as f32,
+            No(a) => (a.evaluar(c) <= 0.5) as u8 as f32,
         }
+    }
+    pub fn es_verdad(&self, c: Ctx) -> bool {
+        self.evaluar(c) > 0.5
+    }
+    pub fn mayor(self, o: impl Into<Expr>) -> Expr {
+        Expr::Mayor(Box::new(self), Box::new(o.into()))
+    }
+    pub fn y(self, o: impl Into<Expr>) -> Expr {
+        Expr::Y(Box::new(self), Box::new(o.into()))
+    }
+    pub fn o(self, o: impl Into<Expr>) -> Expr {
+        Expr::O(Box::new(self), Box::new(o.into()))
+    }
+    pub fn no(self) -> Expr {
+        Expr::No(Box::new(self))
     }
     pub fn min(self, o: impl Into<Expr>) -> Expr {
         Expr::Min(Box::new(self), Box::new(o.into()))
@@ -87,6 +132,16 @@ impl PropId {
     }
     pub fn vel(self) -> Expr {
         Expr::Vel(self)
+    }
+}
+impl HechoId {
+    pub fn e(self) -> Expr {
+        Expr::H(self)
+    }
+}
+impl From<HechoId> for Expr {
+    fn from(h: HechoId) -> Expr {
+        Expr::H(h)
     }
 }
 impl From<f32> for Expr {
@@ -152,21 +207,21 @@ impl Forma {
 
     /// La misma distancia que calcula el shader, para saber si el ratón está
     /// dentro sin preguntarle a la GPU.
-    pub fn distancia(&self, props: &[Animada], x: f32, y: f32) -> f32 {
+    pub fn distancia(&self, c: Ctx, x: f32, y: f32) -> f32 {
         match self {
             Forma::Elipse { centro, radio, escala } => {
-                let (ex, ey) = (escala.0.evaluar(props), escala.1.evaluar(props));
-                let (qx, qy) = ((x - centro.0.evaluar(props)) / ex, (y - centro.1.evaluar(props)) / ey);
-                (qx.hypot(qy) - radio.evaluar(props)) * ex.min(ey)
+                let (ex, ey) = (escala.0.evaluar(c), escala.1.evaluar(c));
+                let (qx, qy) = ((x - centro.0.evaluar(c)) / ex, (y - centro.1.evaluar(c)) / ey);
+                (qx.hypot(qy) - radio.evaluar(c)) * ex.min(ey)
             }
             Forma::Caja { centro, mitad, radio } => {
-                let (mx, my) = (mitad.0.evaluar(props), mitad.1.evaluar(props));
+                let (mx, my) = (mitad.0.evaluar(c), mitad.1.evaluar(c));
                 if mx < 0.5 || my < 0.5 {
                     return f32::MAX;
                 }
-                let r = radio.evaluar(props);
-                let qx = (x - centro.0.evaluar(props)).abs() - mx + r;
-                let qy = (y - centro.1.evaluar(props)).abs() - my + r;
+                let r = radio.evaluar(c);
+                let qx = (x - centro.0.evaluar(c)).abs() - mx + r;
+                let qy = (y - centro.1.evaluar(c)).abs() - my + r;
                 qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r
             }
         }
@@ -232,16 +287,196 @@ pub struct Transicion {
     pub retraso: Duration,
 }
 
-/// Una región sensible. Lo declarado en `al_entrar` y `al_salir` lo ejecuta el
-/// render en el acto, esté la lógica como esté —es el `:hover` de CSS—; además
-/// avisa a la lógica por nombre, que ya no sabe de coordenadas.
+pub fn ir(prop: PropId, a: f32, muelle: Muelle, retraso_ms: u64) -> Transicion {
+    Transicion { prop, a, muelle, retraso: Duration::from_millis(retraso_ms) }
+}
+
+/// Una región sensible: una forma con nombre. El render hace el hit-test con
+/// la misma fórmula con la que pinta.
 #[derive(Clone, Debug)]
 pub struct Zona {
     pub id: &'static str,
     pub forma: Forma,
     pub activa: Expr,
-    pub al_entrar: Vec<Transicion>,
-    pub al_salir: Vec<Transicion>,
+}
+
+// ── capas: quién gana ───────────────────────────────────────────
+
+/// Cuándo se cumple una reclamación.
+#[derive(Clone, Debug)]
+pub enum Cuando {
+    Siempre,
+    Mientras(Expr),
+    /// Durante un rato después de cualquiera de estos sucesos.
+    Tras { sucesos: Vec<SucesoId>, dura: Duration },
+    /// Desde uno de estos sucesos hasta uno de aquellos.
+    DesdeHasta { desde: Vec<SucesoId>, hasta: Vec<SucesoId> },
+}
+
+#[derive(Clone, Debug)]
+pub struct Reclamacion {
+    pub nombre: &'static str,
+    pub cuando: Cuando,
+    /// Lo que fija al ganar: es lo que el boceto B llamaba «estado».
+    pub fija: Vec<Transicion>,
+}
+
+impl Reclamacion {
+    pub fn mientras(nombre: &'static str, c: impl Into<Expr>) -> Self {
+        Reclamacion { nombre, cuando: Cuando::Mientras(c.into()), fija: vec![] }
+    }
+    pub fn tras(nombre: &'static str, sucesos: &[SucesoId], ms: u64) -> Self {
+        Reclamacion { nombre, cuando: Cuando::Tras { sucesos: sucesos.to_vec(), dura: Duration::from_millis(ms) }, fija: vec![] }
+    }
+    pub fn desde_hasta(nombre: &'static str, desde: &[SucesoId], hasta: &[SucesoId]) -> Self {
+        Reclamacion { nombre, cuando: Cuando::DesdeHasta { desde: desde.to_vec(), hasta: hasta.to_vec() }, fija: vec![] }
+    }
+    pub fn por_defecto(nombre: &'static str) -> Self {
+        Reclamacion { nombre, cuando: Cuando::Siempre, fija: vec![] }
+    }
+    pub fn fija(mut self, t: Vec<Transicion>) -> Self {
+        self.fija = t;
+        self
+    }
+}
+
+/// Un hueco que muchos reclaman. Gana la primera reclamación que se cumple;
+/// cuando deja de cumplirse se ve la siguiente, sola. Nadie «apaga» nada.
+#[derive(Clone, Debug)]
+pub struct Capa {
+    pub nombre: &'static str,
+    pub muelle: Muelle,
+    pub reclamaciones: Vec<Reclamacion>,
+    /// Una propiedad por reclamación, que va a 1 cuando gana y a 0 cuando no:
+    /// con ella se funde un dibujo en otro.
+    pub presencias: Vec<PropId>,
+}
+
+/// Lo que devuelve `Escena::capa`, para pintar según quién gane.
+pub struct CapaRef {
+    pub presencias: Vec<PropId>,
+}
+impl CapaRef {
+    pub fn presencia(&self, i: usize) -> PropId {
+        self.presencias[i]
+    }
+}
+
+// ── gestos: líneas de tiempo ────────────────────────────────────
+
+#[derive(Clone, Copy, Debug)]
+pub enum Curva {
+    Lineal,
+    InQuad,
+    OutQuad,
+    InCubic,
+    OutCubic,
+    InOutSine,
+    OutBack,
+}
+
+impl Curva {
+    pub fn aplicar(self, t: f32) -> f32 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            Curva::Lineal => t,
+            Curva::InQuad => t * t,
+            Curva::OutQuad => 1.0 - (1.0 - t) * (1.0 - t),
+            Curva::InCubic => t * t * t,
+            Curva::OutCubic => 1.0 - (1.0 - t).powi(3),
+            Curva::InOutSine => 0.5 - 0.5 * (std::f32::consts::PI * t).cos(),
+            Curva::OutBack => {
+                let (c1, u) = (1.70158, t - 1.0);
+                1.0 + (c1 + 1.0) * u * u * u + c1 * u * u
+            }
+        }
+    }
+}
+
+/// Quién puede interrumpir a quién: un gesto solo corta a otro de su clase o
+/// inferior. Un reflejo no le quita la cara a algo que se pidió.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Clase {
+    Ambiente,
+    Postura,
+    Reflejo,
+    Pedido,
+    Estado,
+}
+
+#[derive(Clone, Debug)]
+pub struct Fotograma {
+    pub ms: u32,
+    pub aguanta: u32,
+    pub curva: Curva,
+    /// Lo que no se nombra vuelve a su pose base.
+    pub valores: Vec<(PropId, f32)>,
+    pub emite: Option<SucesoId>,
+}
+
+pub fn foto(ms: u32, curva: Curva) -> Fotograma {
+    Fotograma { ms, aguanta: 0, curva, valores: vec![], emite: None }
+}
+impl Fotograma {
+    pub fn con(mut self, p: PropId, v: f32) -> Self {
+        self.valores.push((p, v));
+        self
+    }
+    pub fn aguanta(mut self, ms: u32) -> Self {
+        self.aguanta = ms;
+        self
+    }
+    pub fn emite(mut self, s: SucesoId) -> Self {
+        self.emite = Some(s);
+        self
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Gesto {
+    pub nombre: &'static str,
+    pub clase: Clase,
+    pub fotogramas: Vec<Fotograma>,
+}
+
+// ── reglas: qué hace cambiar las cosas ──────────────────────────
+
+#[derive(Clone, Debug)]
+pub enum Disparador {
+    Entra(ZonaId),
+    Sale(ZonaId),
+    Pulsa(ZonaId),
+    /// El ratón lleva este rato encima.
+    Encima { zona: ZonaId, durante: Duration },
+    /// Ha estado encima y lleva este rato fuera.
+    Fuera { zona: ZonaId, durante: Duration },
+    /// Nadie ha tocado el ratón en este rato, mientras se cumpla la condición.
+    Quieto { durante: Duration, mientras: Expr },
+    /// De vez en cuando, con azar, mientras se cumpla la condición.
+    Cada { entre: (f32, f32), mientras: Expr },
+    Al(SucesoId),
+}
+
+#[derive(Clone, Debug)]
+pub enum Efecto {
+    Animar(Transicion),
+    Hecho(HechoId, f32),
+    /// De sí a no y de no a sí.
+    Alternar(HechoId),
+    Suceso(SucesoId),
+    Impulso(PropId, f32),
+    Gesto(GestoId),
+}
+
+/// Todo lo que hay aquí lo ejecuta el render, esté la lógica como esté.
+#[derive(Clone, Debug)]
+pub struct Regla {
+    pub cuando: Disparador,
+    pub efectos: Vec<Efecto>,
+}
+
+pub fn ms(n: u64) -> Duration {
+    Duration::from_millis(n)
 }
 
 pub struct Lienzo {
@@ -257,6 +492,16 @@ pub struct Escena {
     pub comportamientos: Vec<Comportamiento>,
     pub zonas: Vec<Zona>,
     pub atlas: Option<Lienzo>,
+    pub hechos: Vec<(&'static str, f32)>,
+    /// Nombre, y si además de a la escena le llega a la lógica.
+    pub sucesos: Vec<(&'static str, bool)>,
+    pub capas: Vec<Capa>,
+    pub gestos: Vec<Gesto>,
+    /// Las propiedades que forman la pose: las que un gesto lleva de la mano.
+    pub pose: Vec<PropId>,
+    /// Gestos que se repiten solos mientras algo sea verdad.
+    pub posturas: Vec<(GestoId, Expr)>,
+    pub reglas: Vec<Regla>,
 }
 
 impl Escena {
@@ -271,6 +516,55 @@ impl Escena {
     }
     pub fn pintar(&mut self, i: Instr) {
         self.instrs.push(i);
+    }
+    /// Una propiedad de la pose, con su valor de reposo.
+    pub fn prop_de_pose(&mut self, nombre: &'static str, reposo: f32) -> PropId {
+        let p = self.prop_con(nombre, reposo, Muelle::POSE);
+        self.pose.push(p);
+        p
+    }
+    pub fn hecho(&mut self, nombre: &'static str, inicial: f32) -> HechoId {
+        self.hechos.push((nombre, inicial));
+        HechoId(self.hechos.len() as u16 - 1)
+    }
+    /// Un suceso interno: lo oyen las capas y las reglas.
+    pub fn suceso(&mut self, nombre: &'static str) -> SucesoId {
+        self.sucesos.push((nombre, false));
+        SucesoId(self.sucesos.len() as u16 - 1)
+    }
+    /// Un suceso que además sale hacia la lógica.
+    pub fn suceso_que_sale(&mut self, nombre: &'static str) -> SucesoId {
+        self.sucesos.push((nombre, true));
+        SucesoId(self.sucesos.len() as u16 - 1)
+    }
+    pub fn zona(&mut self, id: &'static str, forma: Forma, activa: impl Into<Expr>) -> ZonaId {
+        self.zonas.push(Zona { id, forma, activa: activa.into() });
+        ZonaId(self.zonas.len() as u16 - 1)
+    }
+    /// Las reclamaciones van de más a menos prioridad; la última debería ser
+    /// `por_defecto`.
+    pub fn capa(&mut self, nombre: &'static str, muelle: Muelle, reclamaciones: Vec<Reclamacion>) -> CapaRef {
+        let presencias: Vec<PropId> = reclamaciones
+            .iter()
+            .map(|r| {
+                // El nombre vive lo que el programa: una fuga pequeña y una sola vez por escena.
+                let n: &'static str = Box::leak(format!("capa.{nombre}.{}", r.nombre).into_boxed_str());
+                self.props.push((n, 0.0, muelle));
+                PropId(self.props.len() as u16 - 1)
+            })
+            .collect();
+        self.capas.push(Capa { nombre, muelle, reclamaciones, presencias: presencias.clone() });
+        CapaRef { presencias }
+    }
+    pub fn gesto(&mut self, nombre: &'static str, clase: Clase, fotogramas: Vec<Fotograma>) -> GestoId {
+        self.gestos.push(Gesto { nombre, clase, fotogramas });
+        GestoId(self.gestos.len() as u16 - 1)
+    }
+    pub fn postura(&mut self, gesto: GestoId, mientras: impl Into<Expr>) {
+        self.posturas.push((gesto, mientras.into()));
+    }
+    pub fn regla(&mut self, cuando: Disparador, efectos: Vec<Efecto>) {
+        self.reglas.push(Regla { cuando, efectos });
     }
 }
 
@@ -288,6 +582,7 @@ impl Muelle {
     pub const RAPIDO: Muelle = Muelle { rigidez: 420.0, freno: 40.0 };
     pub const LENTO: Muelle = Muelle { rigidez: 28.0, freno: 11.0 };
     pub const OJOS: Muelle = Muelle { rigidez: 190.0, freno: 24.0 };
+    pub const POSE: Muelle = Muelle { rigidez: 260.0, freno: 28.0 };
 }
 
 pub enum Orden {
@@ -301,6 +596,10 @@ pub enum Orden {
 pub enum ARender {
     Escena(Escena),
     Orden(Orden),
+    /// La frontera: la lógica cuenta lo que pasa, y nada más.
+    Hecho(&'static str, f32),
+    Suceso(&'static str),
+    Gesto(&'static str),
     Puntero(Option<(f32, f32)>),
     Pulsar,
     Salir,
@@ -312,6 +611,11 @@ pub enum Evento {
     Sale(&'static str),
     Pulsa(&'static str),
     Alarma(&'static str),
+    Suceso(&'static str),
+    /// Una capa ha cambiado de manos: (capa, quién gana ahora).
+    Capa(&'static str, &'static str),
+    /// Se pidió un gesto y había uno de más clase puesto.
+    GestoRechazado(&'static str),
     /// El modo sin ratón: «haz lo siguiente que harías».
     Demo,
 }

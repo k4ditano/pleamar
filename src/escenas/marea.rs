@@ -16,21 +16,7 @@ const ANCLA_Y: f32 = 70.0;
 
 #[derive(Default)]
 pub struct Marea {
-    p: Option<Props>,
     abierta: bool,
-    dormida: bool,
-}
-
-#[derive(Clone, Copy)]
-struct Props {
-    orbe_x: PropId,
-    orbe_y: PropId,
-    panel_w: PropId,
-    panel_h: PropId,
-    fusion: PropId,
-    contenido: PropId,
-    sueno: PropId,
-    boton: PropId,
 }
 
 impl Guion for Marea {
@@ -130,114 +116,80 @@ impl Guion for Marea {
             },
         ];
 
-        let rapida = |prop, a| Transicion { prop, a, muelle: Muelle::RAPIDO, retraso: Default::default() };
-        let abierta = contenido.e();
-        e.zonas = vec![
-            Zona {
-                id: "conjunto",
-                forma: Forma::Caja {
-                    centro: ((ABIERTA_X + (HUECO + PANEL_W) * 0.5).into(), (ORBE_Y - ANCLA_Y + PANEL_H * 0.5).into()),
-                    mitad: (((R * 2.0 + HUECO + PANEL_W) * 0.5 + 18.0).into(), (PANEL_H * 0.5 + 18.0).into()),
-                    radio: 24.0.into(),
-                },
-                activa: 1.0.into(),
-                al_entrar: vec![],
-                al_salir: vec![],
+        // ── la frontera, las capas y las reglas ──────────────────
+        let abierta = e.hecho("abierta", 0.0);
+        let dormida = e.hecho("dormida", 0.0);
+        let ver_evento = e.suceso_que_sale("ver-evento");
+
+        //  Abrir y cerrar son dos reclamaciones de la misma capa, cada una con
+        //  su coreografía. Quien ponga `abierta` a sí —una regla del ratón o la
+        //  lógica porque ha llegado un aviso— no sabe nada de muelles.
+        e.capa("tarjeta", Muelle::SERENO, vec![
+            Reclamacion::mientras("abierta", abierta).fija(vec![
+                ir(fusion, 96.0, Muelle::RAPIDO, 0),
+                ir(orbe_x, ABIERTA_X, Muelle::VIVO, 0),
+                ir(panel_w, PANEL_W, Muelle::SERENO, 70),
+                ir(panel_h, PANEL_H, Muelle::SERENO, 110),
+                ir(contenido, 1.0, Muelle::SERENO, 300),
+                ir(fusion, 0.0, Muelle::SERENO, 560),
+            ]),
+            Reclamacion::por_defecto("reposo").fija(vec![
+                ir(boton, 0.0, Muelle::RAPIDO, 0),
+                ir(contenido, 0.0, Muelle::RAPIDO, 0),
+                ir(fusion, 96.0, Muelle::RAPIDO, 0),
+                ir(panel_h, 0.0, Muelle::SERENO, 90),
+                ir(panel_w, 0.0, Muelle::SERENO, 90),
+                ir(orbe_x, REPOSO_X, Muelle::VIVO, 150),
+                ir(fusion, 0.0, Muelle::SERENO, 700),
+            ]),
+        ]);
+        e.capa("sueño", Muelle::LENTO, vec![
+            Reclamacion::mientras("dormida", dormida.e().y(abierta.e().no())).fija(vec![ir(sueno, 1.0, Muelle::LENTO, 0)]),
+            Reclamacion::por_defecto("despierta").fija(vec![ir(sueno, 0.0, Muelle::VIVO, 0)]),
+        ]);
+
+        let conjunto = e.zona(
+            "conjunto",
+            Forma::Caja {
+                centro: ((ABIERTA_X + (HUECO + PANEL_W) * 0.5).into(), (ORBE_Y - ANCLA_Y + PANEL_H * 0.5).into()),
+                mitad: (((R * 2.0 + HUECO + PANEL_W) * 0.5 + 18.0).into(), (PANEL_H * 0.5 + 18.0).into()),
+                radio: 24.0.into(),
             },
-            Zona { id: "orbe", forma: Forma::circulo((orbe_x.e(), orbe_y.e()), R + 8.0), activa: 1.0.into(), al_entrar: vec![], al_salir: vec![] },
-            Zona {
-                id: "descartar",
-                forma: caja_en(110.0, 151.0, 84.0.into(), 23.0.into()),
-                activa: abierta.clone(),
-                al_entrar: vec![],
-                al_salir: vec![],
-            },
-            // El realce del botón no pasa por la lógica: lo ejecuta el render.
-            Zona { id: "ver", forma: ver, activa: abierta, al_entrar: vec![rapida(boton, 1.0)], al_salir: vec![rapida(boton, 0.0)] },
-        ];
+            1.0,
+        );
+        let z_orbe = e.zona("orbe", Forma::circulo((orbe_x.e(), orbe_y.e()), R + 8.0), 1.0);
+        let z_descartar = e.zona("descartar", caja_en(110.0, 151.0, 84.0.into(), 23.0.into()), contenido);
+        let z_ver = e.zona("ver", ver, contenido);
+
+        //  Todo esto lo ejecuta el render. Con la lógica muerta, Marea se abre,
+        //  se cierra, se duerme y realza su botón igual.
+        use Disparador::*;
+        e.regla(Entra(z_orbe), vec![Efecto::Hecho(dormida, 0.0)]);
+        e.regla(Encima { zona: z_orbe, durante: ms(320) }, vec![Efecto::Hecho(abierta, 1.0)]);
+        e.regla(Pulsa(z_orbe), vec![Efecto::Alternar(abierta)]);
+        e.regla(Fuera { zona: conjunto, durante: ms(420) }, vec![Efecto::Hecho(abierta, 0.0)]);
+        e.regla(Entra(z_ver), vec![Efecto::Animar(ir(boton, 1.0, Muelle::RAPIDO, 0))]);
+        e.regla(Sale(z_ver), vec![Efecto::Animar(ir(boton, 0.0, Muelle::RAPIDO, 0))]);
+        e.regla(Pulsa(z_descartar), vec![Efecto::Hecho(abierta, 0.0)]);
+        e.regla(Pulsa(z_ver), vec![Efecto::Hecho(abierta, 0.0), Efecto::Impulso(orbe_y, -620.0), Efecto::Suceso(ver_evento)]);
+        e.regla(Quieto { durante: ms(14_000), mientras: abierta.e().no() }, vec![Efecto::Hecho(dormida, 1.0)]);
 
         e.atlas = Some(tarjeta());
-        self.p = Some(Props { orbe_x, orbe_y, panel_w, panel_h, fusion, contenido, sueno, boton });
         e
     }
 
     fn evento(&mut self, e: Evento, c: &mut Contexto) {
-        if !matches!(e, Evento::Alarma(_)) {
-            c.alarma("dormir", 14_000);
-        }
         match e {
-            Evento::Entra("orbe") => {
-                self.despertar(c);
-                if !self.abierta {
-                    c.alarma("abrir", 320);
-                }
-            }
-            Evento::Sale("orbe") => c.cancelar("abrir"),
-            Evento::Entra("conjunto") => c.cancelar("cerrar"),
-            Evento::Sale("conjunto") if self.abierta => c.alarma("cerrar", 420),
-            Evento::Pulsa("orbe") | Evento::Demo => {
-                if self.abierta {
-                    self.cerrar(c, matches!(e, Evento::Demo));
-                } else {
-                    self.abrir(c);
-                }
-            }
-            Evento::Pulsa("ver") => self.cerrar(c, true),
-            Evento::Pulsa("descartar") | Evento::Alarma("cerrar") => self.cerrar(c, false),
-            Evento::Alarma("abrir") => self.abrir(c),
-            Evento::Alarma("dormir") if !self.abierta && !self.dormida => {
-                self.dormida = true;
-                c.animar(self.p.unwrap().sueno, 1.0, Muelle::LENTO, 0);
+            //  Lo único que le queda a la lógica: enterarse y hacer SU trabajo
+            //  —montar el contenido, abrir el calendario—, que puede tardar.
+            Evento::Capa("tarjeta", _) => c.trabajar(),
+            Evento::Suceso("ver-evento") => println!("lógica · alguien quiere ver el evento"),
+            //  Sin ratón, la demo hace de aviso que llega y se va.
+            Evento::Demo => {
+                self.abierta = !self.abierta;
+                c.hecho("abierta", self.abierta);
             }
             _ => {}
-        }
-    }
-}
-
-impl Marea {
-    fn abrir(&mut self, c: &mut Contexto) {
-        if self.abierta {
-            return;
-        }
-        self.abierta = true;
-        c.cancelar("abrir");
-        self.despertar(c);
-        let p = self.p.unwrap();
-        // Toda la coreografía, declarada de una vez y con sus retrasos. A
-        // partir de aquí este hilo puede desaparecer: nadie le va a esperar.
-        c.animar(p.fusion, 96.0, Muelle::RAPIDO, 0);
-        c.animar(p.orbe_x, ABIERTA_X, Muelle::VIVO, 0);
-        c.animar(p.panel_w, PANEL_W, Muelle::SERENO, 70);
-        c.animar(p.panel_h, PANEL_H, Muelle::SERENO, 110);
-        c.animar(p.contenido, 1.0, Muelle::SERENO, 300);
-        c.animar(p.fusion, 0.0, Muelle::SERENO, 560);
-        c.trabajar();
-    }
-
-    fn cerrar(&mut self, c: &mut Contexto, alegre: bool) {
-        if !self.abierta {
-            return;
-        }
-        self.abierta = false;
-        c.cancelar("cerrar");
-        let p = self.p.unwrap();
-        if alegre {
-            c.impulso(p.orbe_y, -620.0);
-        }
-        c.animar(p.boton, 0.0, Muelle::RAPIDO, 0);
-        c.animar(p.contenido, 0.0, Muelle::RAPIDO, 0);
-        c.animar(p.fusion, 96.0, Muelle::RAPIDO, 0);
-        c.animar(p.panel_h, 0.0, Muelle::SERENO, 90);
-        c.animar(p.panel_w, 0.0, Muelle::SERENO, 90);
-        c.animar(p.orbe_x, REPOSO_X, Muelle::VIVO, 150);
-        c.animar(p.fusion, 0.0, Muelle::SERENO, 700);
-        c.trabajar();
-    }
-
-    fn despertar(&mut self, c: &mut Contexto) {
-        if self.dormida {
-            self.dormida = false;
-            c.animar(self.p.unwrap().sueno, 0.0, Muelle::VIVO, 0);
         }
     }
 }
