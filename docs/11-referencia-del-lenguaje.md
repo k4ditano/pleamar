@@ -75,12 +75,14 @@ recorte      = "clip" [ "inset" numero ] forma ;
 grupo        = "group" "{" { propiedad_de | sentencia } "}" ;
 emergente    = "popup" nombre "{" { propiedad_de | sentencia } "}" ;
 
-estructura   = componente | copia | hijos | repeat | for | reparto | espacio ;
+estructura   = componente | copia | hijos | bloque_hueco | repeat | for | reparto | espacio | separador ;
 componente   = "component" nombre [ "(" [ parametro { "," parametro } ] ")" ] "{" { propiedad_de | sentencia } "}" ;
 parametro    = nombre [ ":" tipo_param ] [ "=" argumento ] ;
 tipo_param   = "number" | "bool" | "color" | "text" | "record" | "event" | "image" | "gesture" | "spring" ;
 copia        = Nombre [ "(" [ argumentos ] ")" ] [ "{" { propiedad_de | sentencia } "}" ] ;   (* las sentencias son sus hijos *)
-hijos        = "children" [ "{" { propiedad_de } "}" ] ;                                     (* solo dentro de un componente *)
+hijos        = "children" [ nombre ] [ "{" { propiedad_de } "}" ] ;                          (* solo dentro de un componente *)
+bloque_hueco = nombre "{" { sentencia } "}" ;                                                (* en una copia: lo que va al hueco de ese nombre *)
+separador    = "between" "{" dibujo | estructura "}" ;                                       (* solo dentro de un reparto; una sola cosa *)
 argumentos   = argumento { "," argumento } { "," nombre ":" argumento }
              | nombre ":" argumento { "," nombre ":" argumento } ;
 argumento    = expr | color | texto | nombre ;
@@ -183,7 +185,7 @@ De menos a más fuerza: `or` · `and` · `not` · `< > <= >= == !=` (no se encad
 | `if(cond, a, b)` | |
 | `vel(prop)` | la velocidad de un muelle, que solo el render conoce |
 
-Vale como nombre: un `let`, un `prop`, un `fact`, una medida (`label.width`), lo que ocupa un reparto con nombre (`list.width`, `list.height`: se puede leer también antes de donde se declara), el campo numérico de una ficha (`r.depth`, `r.index`, `rows.count`), y la presencia de una reclamación (`shape.rec`: 1 mientras gana).
+Vale como nombre: un `let`, un `prop`, un `fact`, una medida (`label.width`), lo que ocupa un reparto con nombre y cuántos hijos tiene a la vista (`list.width`, `list.height`, `list.count`: se pueden leer también antes de donde se declara), el campo numérico de una ficha (`r.depth`, `r.index`, `rows.count`), y la presencia de una reclamación (`shape.rec`: 1 mientras gana).
 
 ## 8. Dibujo
 
@@ -213,6 +215,8 @@ Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sug
 ## 9. Repartos
 
 `row` y `column` colocan a sus hijos uno detrás de otro: el sitio de cada uno es una expresión, así que si uno crece o desaparece, los demás se mueven. Con `~muelle` en la cabecera, viajan a su sitio en vez de saltar. Cada hijo tiene que saber cuánto ocupa: una forma con `size` o `radius`, un texto (se mide solo), una imagen, un `group` o un componente con `size:`, otro reparto, o `space n`. `show: expr` en un hijo decide si está: ocupa y se ve, o ni lo uno ni lo otro.
+
+`between { box { size: 272, 1; color: ink } }` pone eso **entre cada dos hijos que estén**: si uno desaparece, su raya también, y nunca queda una al principio ni al final. Lleva dentro una sola cosa (varias, en un `group` con `size:`). Un reparto con nombre publica, además de `lista.width` y `lista.height`, **`lista.count`**: cuántos hijos están ahora mismo. Los tres se pueden leer también antes de donde se declara.
 
 ## 10. Componentes, `repeat`, `for`
 
@@ -252,7 +256,17 @@ Card("Avisos") {
 }
 ```
 
-Dentro de un `row` o `column`, cada hijo ocupa su sitio en el reparto (y un `repeat` o un `for` de fuera se despliega como los de dentro); suelto, `children { move: x, y }` es un grupo. **Los hijos se leen con los nombres de quien los escribió**: un componente ni ve ni pisa lo que le meten, y un parámetro suyo no tapa nada de fuera. Un componente tiene un solo `children`; meterle algo a uno que no lo tiene es un fallo, no un silencio.
+Dentro de un `row` o `column`, cada hijo ocupa su sitio en el reparto (y un `repeat` o un `for` de fuera se despliega como los de dentro); suelto, `children { move: x, y }` es un grupo. **Los hijos se leen con los nombres de quien los escribió**: un componente ni ve ni pisa lo que le meten, y un parámetro suyo no tapa nada de fuera. **Varios huecos, con nombre.** Un componente tiene como mucho un `children` sin nombre y los que quiera con él: `children header`, `children footer`. En la copia, un bloque con ese nombre es lo que va a ese hueco, y lo demás va al que no lo tiene:
+
+```
+Panel {
+    header { text "Avisos" { … } }
+    for n in notes { text n.title { … } }        // al `children` sin nombre
+    footer { box ok { … };  box no { … } }
+}
+```
+
+Un hueco que no existe es un fallo que dice cuáles hay (`«Panel» no tiene ningún hueco «heder»: tiene header, footer. ¿Querías decir «header»?`), y meterle algo a un componente sin `children` también: no un silencio.
 
 Un fallo **dentro** de un componente dice también desde dónde se usó —`(dentro de «Badge», puesto en escena.plm:6)`—, porque a menudo lo que está mal es lo que se le pasó.
 
@@ -438,7 +452,7 @@ Esto es la salida de `pleamar --gramatica`, copiada. No es una segunda lista: so
 
 ```vocabulario
 language: 0.1
-statements: surface permissions model spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component children repeat for row column space layer on every blink wave spin follow look gesture posture
+statements: surface permissions model spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
 library: let spring component
 properties.surface: size anchor margin level reserve screens keyboard
 properties.permissions: run services

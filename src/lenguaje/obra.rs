@@ -32,6 +32,11 @@ impl<'a> Cur<'a> {
         Cur { f, i: 0, fin }
     }
     fn mira(&self) -> Option<&'a F> {
+        // Lo último que se ha mirado es casi siempre el nombre que se va a resolver: así
+        // quien resuelve nombres sabe dónde está sin que cada llamada tenga que decírselo.
+        if let Some(f) = self.f.get(self.i) {
+            MIRANDO.with(|m| m.set((f.linea, f.col)));
+        }
         self.f.get(self.i).map(|x| &x.f)
     }
     fn pos(&self) -> (usize, usize) {
@@ -113,6 +118,11 @@ impl<'a> Cur<'a> {
     }
 }
 
+thread_local! {
+    // Dónde está la última ficha que se ha mirado: (línea, columna).
+    static MIRANDO: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
 /// Una forma con nombre: será zona si alguna regla la nombra, si se declaró
 /// con `zone` o si lleva `active`.
 struct Candidata {
@@ -157,8 +167,17 @@ struct Entorno {
 struct Componente<'a> {
     /// De una biblioteca `strict`.
     estricta: bool,
+    /// Los huecos para hijos que tiene: `children` («») y `children header`.
+    huecos: Vec<String>,
     parametros: Vec<Parametro>,
     nodo: &'a Nodo,
+}
+
+/// Lo que una copia trae para los huecos de su componente, y el ámbito de quien lo escribió.
+struct HijosDeCopia<'a> {
+    fuera: Vec<Entorno>,
+    /// Por hueco («» es el que no tiene nombre): lo que va dentro, y si ya se ha puesto.
+    huecos: Vec<(String, Vec<&'a Entrada>, bool)>,
 }
 
 /// Lo que un componente pide a quien lo usa. Con tipo, quien lo usa se entera al
@@ -179,11 +198,11 @@ struct Obra<'a> {
     estrictos: &'a [usize],
     /// Lo que cada copia en curso trae para el `children` de su componente: los
     /// nodos, el ámbito de quien los escribió, y si ya se han puesto.
-    hijos_de_copia: Vec<(&'a [Entrada], Vec<Entorno>, bool)>,
+    hijos_de_copia: Vec<HijosDeCopia<'a>>,
     /// Lo que declaran las bibliotecas: un componente `strict` puede leerlo.
     de_biblioteca: std::collections::HashSet<String>,
     /// Lo que un componente `strict` ha leído de la escena sin pedirlo: (componente, nombre).
-    sin_pedir: std::cell::RefCell<Vec<(String, String)>>,
+    sin_pedir: std::cell::RefCell<Vec<(String, String, (usize, usize))>>,
     sin_vigilar: std::cell::Cell<bool>,
     props: HashMap<String, PropId>,
     hechos: HashMap<String, HechoId>,
@@ -281,8 +300,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], estrictos: &'a
     o.e.hechos[0].1 = if w > 0.0 { w } else { 1920.0 };
     o.e.hechos[1].1 = h;
     // Lo que un componente de biblioteca `strict` leyó de la escena sin pedirlo.
-    for (componente, nombre) in o.sin_pedir.take() {
-        let donde = o.componentes.get(&componente).map_or((1, 1), |k| (k.nodo.linea, k.nodo.col));
+    for (componente, nombre, donde) in o.sin_pedir.take() {
         o.entornos.clear();
         o.anotar(Fallo::en(donde.0, donde.1, format!("«{componente}» es de una biblioteca `strict` y lee «{nombre}», que es de la escena, sin pedirlo. Que lo reciba como parámetro, o que lo declare su biblioteca")));
     }
@@ -372,8 +390,8 @@ impl<'a> Obra<'a> {
         if !de_siempre && !suyo {
             let componente = e.copia.as_ref().unwrap().0.clone();
             let mut v = self.sin_pedir.borrow_mut();
-            if !v.iter().any(|(c, n)| *c == componente && n == nombre) {
-                v.push((componente, nombre.to_owned()));
+            if !v.iter().any(|(c, n, _)| *c == componente && n == nombre) {
+                v.push((componente, nombre.to_owned(), MIRANDO.with(|m| m.get())));
             }
         }
     }
@@ -977,6 +995,7 @@ impl<'a> Obra<'a> {
                 "group" => self.grupo_con_propiedades(n, n.cuerpo.as_deref().unwrap_or(&[]))?,
                 "popup" => self.emergente(n, &mut c)?,
                 "children" => self.hijos_de_fuera(n)?,
+                "between" => return Err(Fallo::en(n.linea, n.col, "`between` solo vale dentro de un `row` o un `column`: es lo que va entre cada dos hijos")),
                 "component" => self.declarar_componente(n, &mut c)?,
                 "repeat" => self.repetir(n, &mut c)?,
                 "for" => self.para(n, &mut c)?,
@@ -1065,7 +1084,7 @@ impl<'a> Obra<'a> {
                     if let Some(e) = self.entornos.last_mut() {
                         e.con_partes.insert(local.to_owned());
                     }
-                    for parte in ["width", "height"] {
+                    for parte in ["width", "height", "count"] {
                         let entero = format!("{nombre}.{parte}");
                         if !self.props.contains_key(&entero) {
                             let p = self.e.prop_con(fijo(&entero), 0.0, Muelle::VIVO);
@@ -1079,17 +1098,27 @@ impl<'a> Obra<'a> {
         }
     }
 
+    /// Lo que la copia en curso trae para el hueco que nombra este `children`, y el ámbito
+    /// de quien lo escribió. Un hueco se pone una vez.
+    fn coger_hueco(&mut self, n: &Nodo) -> R<(Vec<&'a Entrada>, Vec<Entorno>)> {
+        let cual = match n.cabeza.get(1).map(|f| &f.f) {
+            Some(F::Id(p)) => p.clone(),
+            None => String::new(),
+            Some(_) => return Err(Fallo::en(n.linea, n.col, "tras `children` solo puede ir el nombre del hueco: `children header`")),
+        };
+        let Some(copia) = self.hijos_de_copia.last_mut() else {
+            return Err(Fallo::en(n.linea, n.col, "`children` solo vale dentro de un componente: es donde va lo que cada copia traiga dentro"));
+        };
+        let h = copia.huecos.iter_mut().find(|h| h.0 == cual).expect("los huecos se apuntaron al declarar el componente");
+        h.2 = true;
+        Ok((h.1.clone(), copia.fuera.clone()))
+    }
+
     /// `children { move: 12, 40 }`, dentro de un componente: aquí va lo que cada copia
     /// traiga en su bloque. Es un grupo, y lo de dentro se lee con los nombres de
     /// quien lo escribió: un componente no ve —ni pisa— lo que le meten.
     fn hijos_de_fuera(&mut self, n: &'a Nodo) -> R<()> {
-        let Some((hijos, fuera, puestos)) = self.hijos_de_copia.last_mut() else {
-            return Err(Fallo::en(n.linea, n.col, "`children` solo vale dentro de un componente: es donde va lo que cada copia traiga dentro"));
-        };
-        if std::mem::replace(puestos, true) {
-            return Err(Fallo::en(n.linea, n.col, "un componente tiene un solo `children`"));
-        }
-        let (hijos, fuera) = (*hijos, fuera.clone());
+        let (hijos, fuera) = self.coger_hueco(n)?;
         let mut p = self.propiedades(n, voz::propiedades("children"))?;
         let mueve = match p.get_mut("move") {
             Some(c) => Some(self.punto(c)?),
@@ -1103,7 +1132,7 @@ impl<'a> Obra<'a> {
         // Mientras se leen, el componente no está: sus parámetros no tapan nada de fuera.
         let dentro = std::mem::replace(&mut self.entornos, fuera);
         let pendientes = std::mem::take(&mut self.hijos_de_copia);
-        self.grupo(hijos.iter());
+        self.grupo(hijos.into_iter());
         self.hijos_de_copia = pendientes;
         self.entornos = dentro;
         if mueve.is_some() {
@@ -1684,6 +1713,7 @@ impl<'a> Obra<'a> {
 
     /// `orb.x: 140 ~lively after 70ms`
     fn transicion(&self, nombre: &str, valor: &[Ficha], linea: usize, col: usize) -> R<Transicion> {
+        MIRANDO.with(|m| m.set((linea, col)));
         let nombre = &self.global(nombre);
         let Some(prop) = self.props.get(nombre).copied() else {
             let pista = parecido(nombre, self.props.keys()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
@@ -1752,7 +1782,25 @@ impl<'a> Obra<'a> {
         if n.cuerpo.is_none() {
             return Err(Fallo::en(n.linea, n.col, "a este componente le falta su bloque `{ … }`"));
         }
-        self.componentes.insert(nombre, Componente { estricta, parametros, nodo: n });
+        // Qué huecos tiene: se necesita saber al usarlo, para repartir lo que traiga la copia.
+        fn huecos_de(entradas: &[Entrada], en: &mut Vec<String>) {
+            for e in entradas {
+                let Entrada::Nodo(x) = e else { continue };
+                let palabra = |k: usize| match x.cabeza.get(k).map(|f| &f.f) { Some(F::Id(p)) => Some(p.clone()), _ => None };
+                match palabra(0).as_deref() {
+                    Some("children") => en.push(palabra(1).unwrap_or_default()),
+                    Some("component") => {}
+                    _ => huecos_de(x.cuerpo.as_deref().unwrap_or(&[]), en),
+                }
+            }
+        }
+        let mut huecos = Vec::new();
+        huecos_de(n.cuerpo.as_deref().unwrap_or(&[]), &mut huecos);
+        if let Some(repetido) = huecos.iter().enumerate().find(|(k, h)| huecos[..*k].contains(h)).map(|(_, h)| h.clone()) {
+            let cual = if repetido.is_empty() { "un solo `children` sin nombre".to_owned() } else { format!("un solo hueco «{repetido}»") };
+            return Err(Fallo::en(n.linea, n.col, format!("un componente tiene {cual}: ponle nombre al otro (`children footer`)")));
+        }
+        self.componentes.insert(nombre, Componente { estricta, huecos, parametros, nodo: n });
         Ok(())
     }
 
@@ -1972,9 +2020,36 @@ impl<'a> Obra<'a> {
         let desde = self.reglas.len();
         // Lo que la copia trae dentro de su bloque va donde el componente diga `children`,
         // y se lee con los nombres de aquí fuera.
-        let hijos: &'a [Entrada] = n.cuerpo.as_deref().unwrap_or(&[]);
-        let trae_hijos = hijos.iter().any(|e| matches!(e, Entrada::Nodo(_)));
-        self.hijos_de_copia.push((hijos, self.entornos.clone(), false));
+        let huecos_que_hay = self.componentes[&nombre].huecos.clone();
+        let mut huecos: Vec<(String, Vec<&'a Entrada>, bool)> = huecos_que_hay.iter().map(|h| (h.clone(), Vec::new(), false)).collect();
+        let mut sin_sitio = None;
+        for e in n.cuerpo.as_deref().unwrap_or(&[]) {
+            let Entrada::Nodo(x) = e else { continue };
+            // `header { … }`: un bloque con el nombre de un hueco es lo que va en ese hueco.
+            let bloque = match (x.cabeza.as_slice(), &x.cuerpo) {
+                ([Ficha { f: F::Id(p), .. }], Some(_)) if !voz::SENTENCIAS.contains(&p.as_str()) && !self.componentes.contains_key(p) => Some(p.clone()),
+                _ => None,
+            };
+            match bloque {
+                Some(p) => match huecos.iter_mut().find(|h| h.0 == p) {
+                    Some(h) => h.1.extend(x.cuerpo.as_deref().unwrap_or(&[]).iter()),
+                    None => {
+                        let con_nombre: Vec<String> = huecos_que_hay.iter().filter(|h| !h.is_empty()).cloned().collect();
+                        let pista = parecido(&p, con_nombre.iter()).map_or(String::new(), |q| format!(" ¿Querías decir «{q}»?"));
+                        let tiene = if con_nombre.is_empty() { "no tiene huecos con nombre".to_owned() } else { format!("tiene {}", con_nombre.join(", ")) };
+                        return Err(Fallo::en(x.linea, x.col, format!("«{nombre}» no tiene ningún hueco «{p}»: {tiene}.{pista}")));
+                    }
+                },
+                None => match huecos.iter_mut().find(|h| h.0.is_empty()) {
+                    Some(h) => h.1.push(e),
+                    None => sin_sitio = sin_sitio.or(Some((x.linea, x.col))),
+                },
+            }
+        }
+        if let Some((l, col)) = sin_sitio {
+            return Err(Fallo::en(l, col, format!("«{nombre}» no tiene sitio para lo que se le mete dentro: a su componente le falta un `children`")));
+        }
+        self.hijos_de_copia.push(HijosDeCopia { fuera: self.entornos.clone(), huecos });
         self.entornos.push(env);
         self.adelantar_medidas(cuerpo);
         // Cuánto ocupa lo dice el propio componente: `size: 300, 44`. Si falla, el ámbito
@@ -1996,10 +2071,7 @@ impl<'a> Obra<'a> {
             r = self.grupo_con_propiedades(n, cuerpo);
         }
         self.cerrar_ambito(desde);
-        let (_, _, puestos) = self.hijos_de_copia.pop().unwrap();
-        if r.is_ok() && trae_hijos && !puestos {
-            return Err(Fallo::en(n.linea, n.col, format!("«{nombre}» no tiene sitio para lo que se le mete dentro: a su componente le falta un `children`")));
-        }
+        self.hijos_de_copia.pop();
         let _ = en_hueco;
         if tam.is_some() {
             self.ultimo_tam = tam;
@@ -2128,7 +2200,7 @@ impl<'a> Obra<'a> {
 
         // Los hijos, con los `repeat` ya desplegados.
         let mut hijos: Vec<(&'a Nodo, Vec<Entorno>)> = Vec::new();
-        self.desplegar(n.cuerpo.as_deref().unwrap_or(&[]), &mut Vec::new(), &mut hijos)?;
+        self.desplegar(n.cuerpo.as_deref().unwrap_or(&[]).iter().collect(), &mut Vec::new(), &mut hijos)?;
 
         struct Puesto {
             instr: usize,
@@ -2138,7 +2210,25 @@ impl<'a> Obra<'a> {
         }
         let nivel = self.bajo.len();
         let mut puestos: Vec<Puesto> = Vec::new();
-        for (hijo, entornos) in hijos {
+        // `between { … }`: lo que va entre cada dos hijos que estén. Tiene que llevar una sola cosa.
+        let mut separador: Option<&'a Nodo> = None;
+        for e in n.cuerpo.as_deref().unwrap_or(&[]) {
+            let Entrada::Nodo(x) = e else { continue };
+            if !matches!(x.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "between") {
+                continue;
+            }
+            let dentro: Vec<&'a Nodo> = x.cuerpo.as_deref().unwrap_or(&[]).iter().filter_map(|e| if let Entrada::Nodo(y) = e { Some(y) } else { None }).collect();
+            match (dentro.as_slice(), separador, x.cabeza.len()) {
+                ([una], None, 1) => separador = Some(*una),
+                (_, Some(_), _) => return Err(Fallo::en(x.linea, x.col, "un reparto tiene un solo `between`")),
+                _ => return Err(Fallo::en(x.linea, x.col, "`between` lleva dentro una sola cosa, que es lo que se repite: `between { box { size: 200, 1; color: ink } }`. Si son varias, en un `group` con `size:`")),
+            }
+        }
+        // Los hijos van saliendo de una cola: tras cada uno (menos el primero) se cuela su separador,
+        // que se ve si ese hijo está y alguno de los de antes también.
+        let mut cola: std::collections::VecDeque<(&'a Nodo, Vec<Entorno>, Option<Expr>)> = hijos.into_iter().map(|(h, e)| (h, e, None)).collect();
+        let mut presencias: Vec<Expr> = Vec::new();
+        while let Some((hijo, entornos, forzada)) = cola.pop_front() {
             let marca = self.reglas.len();
             // Un hijo que viene de fuera del componente se lee con el ámbito de quien lo escribió.
             let de_fuera = entornos.first().and_then(|e| e.ambito_de_fuera.clone());
@@ -2170,6 +2260,9 @@ impl<'a> Obra<'a> {
                 if let Some(v) = &e.visible {
                     visible = if matches!(visible, Expr::K(k) if k == 1.0) { v.clone() } else { visible * v.clone() };
                 }
+            }
+            if let Some(f) = &forzada {
+                visible = f.clone();
             }
             // Lo que decide si está, sin muelles: es lo que apaga sus zonas.
             let esta = (!matches!(visible, Expr::K(_))).then(|| visible.clone());
@@ -2215,13 +2308,29 @@ impl<'a> Obra<'a> {
             let Some(tam) = self.ultimo_tam.take() else {
                 return Err(Fallo::en(hijo.linea, hijo.col, "no sé cuánto ocupa esto dentro de un reparto: mételo en un `group` con `size: ancho, alto`"));
             };
-            if let Some(esta) = esta {
+            if let Some(esta) = &esta {
                 for c in &mut self.candidatas[desde..] {
                     c.visible = Some(match c.visible.take() { Some(v) => v * esta.clone(), None => esta.clone() });
                 }
             }
-            puestos.push(Puesto { instr, candidatas: desde..self.candidatas.len(), tam, visible });
+            let puesto = Puesto { instr, candidatas: desde..self.candidatas.len(), tam, visible };
+            match forzada {
+                // Un separador se pinta después de su hijo, pero su sitio es justo antes.
+                Some(_) => puestos.insert(puestos.len() - 1, puesto),
+                None => {
+                    let presencia = esta.unwrap_or(Expr::K(1.0));
+                    if let (Some(sep), Some(antes)) = (separador, presencias.iter().cloned().reduce(|a, b| a + b)) {
+                        self.copias += 1;
+                        let env = Entorno { sufijo: format!("#between{}", self.copias), ..Default::default() };
+                        cola.push_front((sep, vec![env], Some(presencia.clone() * antes.min(Expr::K(1.0)))));
+                    }
+                    presencias.push(presencia);
+                    puestos.push(puesto);
+                }
+            }
         }
+        // Cuántos hijos están ahora mismo: `list.count`.
+        let cuantos = presencias.into_iter().reduce(|a, b| a + b).unwrap_or(Expr::K(0.0));
 
         // Lo que ocupa cada uno a lo largo, y lo más que ocupa cualquiera a lo ancho.
         let largo = |p: &Puesto| if fila { p.tam.0.clone() } else { p.tam.1.clone() };
@@ -2293,8 +2402,9 @@ impl<'a> Obra<'a> {
             };
             destino.insert(format!("{nombre}.width"), tam.0.clone());
             destino.insert(format!("{nombre}.height"), tam.1.clone());
+            destino.insert(format!("{nombre}.count"), cuantos.clone());
             // Quien lo leyó antes de este punto leyó la propiedad adelantada: aquí se rellena.
-            for (parte, a) in [("width", &tam.0), ("height", &tam.1)] {
+            for (parte, a) in [("width", &tam.0), ("height", &tam.1), ("count", &cuantos)] {
                 if let Some(prop) = self.props.get(&format!("{nombre}.{parte}")).copied() {
                     self.e.comportamientos.push(Comportamiento::Es { prop, a: a.clone() });
                 }
@@ -2305,7 +2415,7 @@ impl<'a> Obra<'a> {
     }
 
     /// Los hijos de un reparto, con cada `repeat` desplegado en sus vueltas.
-    fn desplegar(&mut self, entradas: &'a [Entrada], ambito: &mut Vec<Entorno>, hijos: &mut Vec<(&'a Nodo, Vec<Entorno>)>) -> R<()> {
+    fn desplegar(&mut self, entradas: Vec<&'a Entrada>, ambito: &mut Vec<Entorno>, hijos: &mut Vec<(&'a Nodo, Vec<Entorno>)>) -> R<()> {
         for e in entradas {
             let Entrada::Nodo(n) = e else { continue };
             if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "repeat") {
@@ -2318,19 +2428,15 @@ impl<'a> Obra<'a> {
                     let mut env = Entorno { sufijo: format!("#{var}{v}"), ..Default::default() };
                     env.exprs.insert(var.clone(), Expr::K(v as f32));
                     ambito.push(env);
-                    self.desplegar(n.cuerpo.as_deref().unwrap_or(&[]), ambito, hijos)?;
+                    self.desplegar(n.cuerpo.as_deref().unwrap_or(&[]).iter().collect(), ambito, hijos)?;
                     ambito.pop();
                 }
+            } else if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "between") {
+                // No es un hijo: es lo que va entre ellos. Lo coloca el reparto.
             } else if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "children") {
-                let Some((de_fuera, fuera, puestos)) = self.hijos_de_copia.last_mut() else {
-                    return Err(Fallo::en(n.linea, n.col, "`children` solo vale dentro de un componente: es donde va lo que cada copia traiga dentro"));
-                };
-                if std::mem::replace(puestos, true) {
-                    return Err(Fallo::en(n.linea, n.col, "un componente tiene un solo `children`"));
-                }
+                let (de_fuera, fuera) = self.coger_hueco(n)?;
                 // Cada uno ocupa su sitio en el reparto, y se lee con los nombres de quien lo
                 // escribió. Un `repeat` o un `for` de fuera se despliega como los de dentro.
-                let (de_fuera, fuera) = (*de_fuera, fuera.clone());
                 let mut ambito_de_fuera = vec![Entorno { ambito_de_fuera: Some(fuera.clone()), ..Default::default() }];
                 let dentro = std::mem::replace(&mut self.entornos, fuera);
                 let r = self.desplegar(de_fuera, &mut ambito_de_fuera, hijos);
@@ -2341,7 +2447,7 @@ impl<'a> Obra<'a> {
                 let (var, modelo, caben) = self.cabeza_de_for(&mut c)?;
                 for k in 0..caben {
                     ambito.push(self.vuelta_de_for(&var, &modelo, k));
-                    self.desplegar(n.cuerpo.as_deref().unwrap_or(&[]), ambito, hijos)?;
+                    self.desplegar(n.cuerpo.as_deref().unwrap_or(&[]).iter().collect(), ambito, hijos)?;
                     ambito.pop();
                 }
             } else {

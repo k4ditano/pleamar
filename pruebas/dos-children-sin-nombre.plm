@@ -1,0 +1,5 @@
+// espera: fallo «un componente tiene un solo `children` sin nombre»
+scene X {
+    surface { size: 100, 100 }
+    component Two { size: 10, 10; row { at: 0, 0; children }; row { at: 0, 5; children } }
+}

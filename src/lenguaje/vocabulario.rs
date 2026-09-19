@@ -8,7 +8,7 @@
 pub const SENTENCIAS: &[&str] = &[
     "surface", "permissions", "model", "spring", "prop", "pose", "fact", "event", "text", "image", "measure", "let", "zone",
     "body", "ellipse", "box", "arc", "line", "input", "clip", "group", "popup",
-    "component", "children", "repeat", "for", "row", "column", "space",
+    "component", "children", "repeat", "for", "row", "column", "space", "between",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
 ];
 
