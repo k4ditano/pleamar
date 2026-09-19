@@ -323,7 +323,7 @@ pub enum Contenido {
     Vivo(TextoId),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Alineado {
     Izquierda,
     Centro,
@@ -405,7 +405,9 @@ pub enum Instr {
     /// Texto. `en` es el punto de referencia y `ancla` qué parte del texto cae
     /// sobre él: (0, 0) la esquina de arriba a la izquierda, (0.5, 0.5) el
     /// centro. Con `ancho` se parte en líneas; sin él, es una sola.
-    Texto { contenido: Contenido, en: Punto, ancla: (f32, f32), ancho: Option<Expr>, estilo: Estilo, alfa: Expr },
+    /// `mide`, si se da, son dos propiedades donde el render deja lo que ocupa
+    /// el texto: con ellas una caja puede crecer con su rótulo.
+    Texto { contenido: Contenido, en: Punto, ancla: (f32, f32), ancho: Option<Expr>, estilo: Estilo, alfa: Expr, mide: Option<(PropId, PropId)> },
     /// Una imagen o un icono. Con `tinte`, su forma se pinta de ese color: lo
     /// que quiere un icono simbólico.
     Imagen { imagen: ImagenId, destino: (Expr, Expr, Expr, Expr), alfa: Expr, tinte: Option<Color> },
@@ -419,6 +421,9 @@ pub enum Comportamiento {
     Parpadeo { prop: PropId, cada: (f32, f32), dura: f32 },
     /// prop = amplitud · sin(frecuencia · t). Con amplitud 0 no cuesta nada.
     Onda { prop: PropId, frecuencia: f32, amplitud: Expr },
+    /// La propiedad persigue a una expresión con su muelle. Es lo que en el
+    /// lenguaje será `width: label.width + 24 ~lively`.
+    Sigue { prop: PropId, a: Expr },
     /// prop += por_segundo · dt, sin fin: una aguja que da vueltas.
     Avance { prop: PropId, por_segundo: Expr },
     /// Dos propiedades que tiran hacia el puntero, con su propio muelle.
@@ -685,6 +690,12 @@ impl Escena {
         self.pose.push(p);
         p
     }
+    /// Dos propiedades de solo lectura —ancho y alto— que el render rellena con
+    /// lo que mida un texto.
+    pub fn medida(&mut self, nombre: &'static str) -> (PropId, PropId) {
+        let n = |sufijo: &str| -> &'static str { Box::leak(format!("{nombre}.{sufijo}").into_boxed_str()) };
+        (self.prop(n("ancho"), 0.0), self.prop(n("alto"), 0.0))
+    }
     pub fn texto_vivo(&mut self, nombre: &'static str, inicial: &str) -> TextoId {
         self.textos.push((nombre, inicial.to_owned()));
         TextoId(self.textos.len() as u16 - 1)
@@ -772,6 +783,8 @@ pub enum ARender {
     /// de enchufar.
     Lamina(Box<crate::gpu::NuevaLamina>),
     LaminaFuera(u32),
+    /// El taller ha terminado algo: una maqueta, unas imágenes.
+    Taller(Box<crate::texto::Paquete>),
     Escala(u32, f32),
     Orden(Orden),
     /// La frontera: la lógica cuenta lo que pasa, y nada más.

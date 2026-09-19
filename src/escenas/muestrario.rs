@@ -7,7 +7,7 @@ use crate::logica::{Contexto, Guion};
 use std::f32::consts::PI;
 
 #[derive(Default)]
-pub struct Muestrario;
+pub struct Muestrario(usize);
 
 impl Guion for Muestrario {
     fn escena(&mut self) -> Escena {
@@ -25,7 +25,7 @@ impl Guion for Muestrario {
 
         // Un fondo oscuro para que todo se lea sobre cualquier escritorio.
         e.pintar(Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 8.0), difusa: 24.0, alfa: 0.3 }) });
-        e.pintar(Instr::Forma { forma: Forma::Caja { centro: (360.0.into(), 165.0.into()), mitad: (350.0.into(), 155.0.into()), radio: 22.0.into() }, fusion: 0.0.into() });
+        e.pintar(Instr::Forma { forma: Forma::Caja { centro: (360.0.into(), 186.0.into()), mitad: (350.0.into(), 176.0.into()), radio: 22.0.into() }, fusion: 0.0.into() });
         e.pintar(Instr::Relleno { pintura: tinta.clone().into(), alfa: 0.94.into(), filo: 0.04, luz: None, borde: None });
 
         // 1 · degradado y borde, en una caja que gira sobre sí misma.
@@ -73,7 +73,7 @@ impl Guion for Muestrario {
         //     caja y textura no fueran de la mano, se vería.
         let rotulo = (430.0, 108.0);
         e.pintar(Instr::Transformar(Some(Transformacion::en((rotulo.0.into(), rotulo.1.into())).giro(vaiven.e()))));
-        e.pintar(Instr::Texto { contenido: Contenido::Fijo("pleamar".into()), en: (rotulo.0.into(), rotulo.1.into()), ancla: (0.5, 0.5), ancho: None, estilo: Estilo::de(22.0, blanco.clone()).peso(500), alfa: 1.0.into() });
+        e.pintar(Instr::Texto { contenido: Contenido::Fijo("pleamar".into()), en: (rotulo.0.into(), rotulo.1.into()), ancla: (0.5, 0.5), ancho: None, estilo: Estilo::de(22.0, blanco.clone()).peso(500), alfa: 1.0.into(), mide: None });
         e.pintar(Instr::Plano {
             forma: Forma::Caja { centro: (rotulo.0.into(), rotulo.1.into()), mitad: (64.0.into(), 20.0.into()), radio: 8.0.into() }.trazo(1.5),
             color: blanco.clone(),
@@ -111,9 +111,9 @@ impl Guion for Muestrario {
         //     mezcla escrituras y emoji, y se alinea.
         let gris = color(0.62, 0.65, 0.64);
         let parrafo = "Texto con forma: ligaduras fi ffl, árabe مرحبا بالعالم, japonés こんにちは y emoji 🌊🎉🦀. Esta frase es larga a propósito, para que no quepa en tres líneas y tenga que acabar en puntos suspensivos.";
-        e.pintar(Instr::Texto { contenido: Contenido::Fijo(parrafo.into()), en: (30.0.into(), 222.0.into()), ancla: (0.0, 0.0), ancho: Some(330.0.into()), estilo: Estilo::de(13.5, blanco.clone()).lineas(3), alfa: 1.0.into() });
+        e.pintar(Instr::Texto { contenido: Contenido::Fijo(parrafo.into()), en: (30.0.into(), 222.0.into()), ancla: (0.0, 0.0), ancho: Some(330.0.into()), estilo: Estilo::de(13.5, blanco.clone()).lineas(3), alfa: 1.0.into(), mide: None });
         for (k, (a, t)) in [(Alineado::Izquierda, "a la izquierda"), (Alineado::Centro, "al centro"), (Alineado::Derecha, "a la derecha")].into_iter().enumerate() {
-            e.pintar(Instr::Texto { contenido: Contenido::Fijo(t.into()), en: (390.0.into(), (222.0 + k as f32 * 20.0).into()), ancla: (0.0, 0.0), ancho: Some(150.0.into()), estilo: Estilo::de(13.0, gris.clone()).alineado(a), alfa: 1.0.into() });
+            e.pintar(Instr::Texto { contenido: Contenido::Fijo(t.into()), en: (390.0.into(), (222.0 + k as f32 * 20.0).into()), ancla: (0.0, 0.0), ancho: Some(150.0.into()), estilo: Estilo::de(13.0, gris.clone()).alineado(a), alfa: 1.0.into(), mide: None });
         }
         e.pintar(Instr::Plano { forma: Forma::Caja { centro: (465.0.into(), 252.0.into()), mitad: (77.0.into(), 32.0.into()), radio: 6.0.into() }.trazo(1.0), color: gris.clone(), alfa: 0.35.into() });
 
@@ -127,8 +127,27 @@ impl Guion for Muestrario {
         e.pintar(Instr::Imagen { imagen: simbolo, destino: (565.0.into(), 272.0.into(), 40.0.into(), 40.0.into()), alfa: 1.0.into(), tinte: Some(color(0.62, 0.84, 0.74)) });
         e.pintar(Instr::Transformar(None));
 
-        e.superficie = Superficie { alto: 330, ..Default::default() };
+        // 7 · una caja que crece con su rótulo. El render mide el texto y deja la
+        //     medida en dos propiedades; el ancho de la caja las persigue con un
+        //     muelle. La lógica solo cambia lo que pone.
+        let etiqueta = e.texto_vivo("etiqueta", "Hola");
+        let (rot_w, rot_h) = e.medida("etiqueta");
+        let caja_w = e.prop_con("etiqueta.caja", 60.0, Muelle::VIVO);
+        e.comportamientos.push(Comportamiento::Sigue { prop: caja_w, a: rot_w + 32.0 });
+        e.pintar(Instr::Grupo { sombra: None });
+        e.pintar(Instr::Forma { forma: Forma::Caja { centro: (360.0.into(), 326.0.into()), mitad: (caja_w * 0.5, rot_h * 0.5 + 7.0), radio: 16.0.into() }, fusion: 0.0.into() });
+        e.pintar(Instr::Relleno { pintura: color(0.62, 0.84, 0.74).into(), alfa: 1.0.into(), filo: 0.0, luz: None, borde: None });
+        e.pintar(Instr::Texto { contenido: Contenido::Vivo(etiqueta), en: (360.0.into(), 326.0.into()), ancla: (0.5, 0.5), ancho: None, estilo: Estilo::de(15.0, color(0.07, 0.12, 0.10)).peso(500), alfa: 1.0.into(), mide: Some((rot_w, rot_h)) });
+
+        e.superficie = Superficie { alto: 372, ..Default::default() };
         e
     }
-    fn evento(&mut self, _: Evento, _: &mut Contexto) {}
+    fn evento(&mut self, e: Evento, c: &mut Contexto) {
+        if matches!(e, Evento::Alarma("inicio") | Evento::Alarma("etiqueta")) {
+            const ROTULOS: [&str; 5] = ["Hola", "Una etiqueta bastante más larga", "🌊 pleamar", "Ok", "Medir texto desde una expresión"];
+            c.texto("etiqueta", ROTULOS[self.0 % ROTULOS.len()]);
+            self.0 += 1;
+            c.alarma("etiqueta", 1400);
+        }
+    }
 }

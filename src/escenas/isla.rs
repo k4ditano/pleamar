@@ -58,15 +58,14 @@ impl Guion for Isla {
             ancla: (0.5, 0.5),
             ancho: None,
             estilo: Estilo::de(15.0, blanco.clone()).peso(600),
-            alfa: 0.95.into(),
-        });
+            alfa: 0.95.into(), mide: None });
         // Y a su lado, el icono de quien suena. Encontrarlo es cosa de la plataforma.
         let icono = e.imagen(Fuente::Icono("firefox".into()), 28, 28);
         e.pintar(Instr::Imagen { imagen: icono, destino: ((CX - ABIERTA.0 * 0.5 + 22.0).into(), (ARRIBA + 10.0).into(), 28.0.into(), 28.0.into()), alfa: t.clone(), tinte: None });
         let izquierda = CX - ABIERTA.0 * 0.5;
-        e.pintar(Instr::Texto { contenido: Contenido::Fijo("Tycho — Awake".into()), en: ((izquierda + 26.0).into(), (ARRIBA + 58.0).into()), ancla: (0.0, 0.5), ancho: Some(250.0.into()), estilo: Estilo::de(16.0, blanco.clone()).peso(500).lineas(1), alfa: t.clone() });
-        e.pintar(Instr::Texto { contenido: Contenido::Fijo("Reproduciendo".into()), en: ((izquierda + ABIERTA.0 - 26.0).into(), (ARRIBA + 24.0).into()), ancla: (1.0, 0.5), ancho: None, estilo: Estilo::de(12.5, blanco.clone()), alfa: t.clone() * 0.55 });
-        e.pintar(Instr::Texto { contenido: Contenido::Vivo(tiempo), en: ((izquierda + ABIERTA.0 - 26.0).into(), (ARRIBA + 76.0).into()), ancla: (1.0, 0.5), ancho: None, estilo: Estilo::de(12.5, blanco), alfa: t.clone() * 0.6 });
+        e.pintar(Instr::Texto { contenido: Contenido::Fijo("Tycho — Awake".into()), en: ((izquierda + 26.0).into(), (ARRIBA + 58.0).into()), ancla: (0.0, 0.5), ancho: Some(250.0.into()), estilo: Estilo::de(16.0, blanco.clone()).peso(500).lineas(1), alfa: t.clone(), mide: None });
+        e.pintar(Instr::Texto { contenido: Contenido::Fijo("Reproduciendo".into()), en: ((izquierda + ABIERTA.0 - 26.0).into(), (ARRIBA + 24.0).into()), ancla: (1.0, 0.5), ancho: None, estilo: Estilo::de(12.5, blanco.clone()), alfa: t.clone() * 0.55, mide: None });
+        e.pintar(Instr::Texto { contenido: Contenido::Vivo(tiempo), en: ((izquierda + ABIERTA.0 - 26.0).into(), (ARRIBA + 76.0).into()), ancla: (1.0, 0.5), ancho: None, estilo: Estilo::de(12.5, blanco), alfa: t.clone() * 0.6, mide: None });
         e.pintar(Instr::Plano {
             forma: Forma::Caja { centro: ((CX - 60.0).into(), (ARRIBA + 76.0).into()), mitad: (130.0.into(), 1.5.into()), radio: 1.5.into() },
             color: color(0.62, 0.84, 0.74),

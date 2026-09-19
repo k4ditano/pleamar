@@ -78,7 +78,9 @@ Todo lo que acaba siendo un trozo de atlas. Tres crates de Rust puro que existen
 - El **tipógrafo** da forma al texto —ligaduras, derecha a izquierda, fuentes de reserva, emoji en color— y guarda la maqueta: mientras no cambien texto, estilo ni ancho, no se repite. Cada glifo se pinta una vez, **a la escala de la lámina más fina**, en un atlas de 2048² que comparte con las imágenes. Una letra es una máscara que el shader tiñe; un emoji trae su color.
 - Cada glifo es un elemento más: se recorta, se transforma y se funde como todo. El origen del texto se redondea a píxeles de verdad para que no salga blando.
 - **`Instr::Imagen`**: una ruta o un icono por nombre (`Fuente::Icono("firefox")`; encontrarlo es cosa de la plataforma). Los SVG se pintan al tamaño exacto por la escala; con `tinte`, la forma se pinta de un color: lo que quiere un icono simbólico.
-- Las fuentes del sistema se leen en otro hilo desde que arranca el programa. Primer frame, a los ~170 ms.
+- **El taller.** Dar forma, pintar glifos y decodificar imágenes ocurre en su propio hilo, que además es quien lee las fuentes del sistema al arrancar. El render **pide y no espera**: mientras llega una maqueta enseña la última que hubo en ese sitio, y lo que ya está en la escena se encarga antes de que exista la ventana. Primer frame a los ~170 ms, y ninguno lento después.
+- **Medir.** Un `Texto` con `mide` deja su ancho y su alto en dos propiedades de solo lectura. Con `Comportamiento::Sigue` —una propiedad que persigue a una expresión con su muelle— una caja crece con su rótulo.
+- Hay un chivato permanente: cualquier frame que pase de 2,4 periodos sale por consola con su hora.
 
 ## La frontera de plataforma (`src/plataforma/`)
 

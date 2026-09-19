@@ -3,7 +3,7 @@
 
 use crate::escena::*;
 use crate::plataforma::Ventana;
-use crate::texto::{Tipografo, LADO_DEL_ATLAS};
+use crate::texto::{Clave, Hueco, Textos, LADO_DEL_ATLAS};
 use std::ops::Range;
 
 const POR_FORMA: usize = 20;
@@ -23,6 +23,8 @@ pub struct Dibujo {
     pub formas: Vec<f32>,
     pub elementos: Vec<f32>,
     tam: (f32, f32),
+    /// Lo que han medido los textos que lo pidieron: propiedad y valor.
+    pub medidas: Vec<(PropId, f32)>,
     /// Grupos que se pintan aparte: qué elementos, y en qué capa.
     pub apartes: Vec<(Range<u32>, usize)>,
 }
@@ -96,7 +98,8 @@ impl Dibujo {
         rellenar(e);
     }
 
-    pub fn componer(&mut self, instrs: &[Instr], c: Ctx, textos: &[String], tip: &mut Tipografo, tam: (f32, f32), hud: bool) {
+    pub fn componer(&mut self, instrs: &[Instr], c: Ctx, textos: &[String], tip: &mut Textos, tam: (f32, f32), hud: bool) {
+        self.medidas.clear();
         self.tam = tam;
         self.formas.clear();
         self.elementos.clear();
@@ -114,7 +117,7 @@ impl Dibujo {
         let color = |col: &Color| [col[0].evaluar(c), col[1].evaluar(c), col[2].evaluar(c)];
         let tip_escala = tip.escala();
 
-        for i in instrs {
+        for (sitio, i) in instrs.iter().enumerate() {
             if self.formas.len() / POR_FORMA >= MAX_FORMAS - 8 {
                 break;
             }
@@ -235,22 +238,28 @@ impl Dibujo {
                     let rgb = tinte.as_ref().map(&color);
                     self.trozo(d, hueco.uv(), a, rgb, afin, &recortes);
                 }
-                Instr::Texto { contenido, en, ancla, ancho, estilo, alfa } => {
-                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
-                    if a <= 0.001 {
-                        continue;
-                    }
+                Instr::Texto { contenido, en, ancla, ancho, estilo, alfa, mide } => {
                     let texto = match contenido {
                         Contenido::Fijo(t) => t.as_str(),
                         Contenido::Vivo(id) => textos.get(id.0 as usize).map_or("", String::as_str),
                     };
+                    // Se encarga aunque no se vea: cuando aparezca, que ya esté.
+                    let clave = Clave::de(texto, estilo, ancho.as_ref().map(|w| w.evaluar(c)));
+                    let Some(m) = tip.maqueta(sitio, clave) else { continue };
+                    if let Some((w, h)) = mide {
+                        self.medidas.push((*w, m.tam.0));
+                        self.medidas.push((*h, m.tam.1));
+                    }
+                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
+                    if a <= 0.001 {
+                        continue;
+                    }
                     let rgb = color(&estilo.color);
-                    let m = tip.maquetar(texto, estilo, ancho.as_ref().map(|w| w.evaluar(c)));
                     // A píxeles de verdad: un texto a medio píxel sale blando.
                     let s = tip_escala;
                     let x0 = ((en.0.evaluar(c) - m.tam.0 * ancla.0) * s).round() / s;
                     let y0 = ((en.1.evaluar(c) - m.tam.1 * ancla.1) * s).round() / s;
-                    for g in m.glifos.clone() {
+                    for g in &m.glifos {
                         let d = [x0 + g.rect[0], y0 + g.rect[1], g.rect[2], g.rect[3]];
                         self.trozo(d, g.uv, a, if g.en_color { None } else { Some(rgb) }, afin, &recortes);
                     }
@@ -426,10 +435,9 @@ impl Gpu {
         Gpu { adaptador, dispositivo, cola, formato, alfa, sin_bloqueo, tuberia, bufer_formas, bufer_elementos, atlas, grupo_escena, grupo_sin_capas }
     }
 
-    /// Sube al atlas lo que el tipógrafo haya pintado desde la última vez.
-    pub fn subir_atlas(&self, tip: &mut Tipografo) {
-        tip.vaciado = false; // lo viejo queda ahí, pero ya nadie apunta a ello
-        for (h, rgba) in tip.por_subir.drain(..) {
+    /// Sube al atlas lo que el taller haya pintado desde la última vez.
+    pub fn subir_atlas(&self, por_subir: &mut Vec<(Hueco, Vec<u8>)>) {
+        for (h, rgba) in por_subir.drain(..) {
             self.cola.write_texture(
                 wgpu::TexelCopyTextureInfo { texture: &self.atlas, mip_level: 0, origin: wgpu::Origin3d { x: h.x, y: h.y, z: 0 }, aspect: wgpu::TextureAspect::All },
                 &rgba,

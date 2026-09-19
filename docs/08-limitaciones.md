@@ -23,15 +23,14 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 
 | # | Limitación | Gravedad | Cómo se arregla |
 | --- | --- | --- | --- |
-| T1 | **Dar forma al texto, pintar glifos y decodificar imágenes ocurre en el hilo de render.** La primera vez que aparece un texto grande hay un tirón: en el muestrario (150 glifos y 3 imágenes en frío) un frame de 245 ms | 🟡 | Un hilo «taller»: el render le pide la maqueta y pinta lo que tuviera hasta que llega. Y precalentar al cargar la escena lo que ya se sabe que va a salir |
-| T2 | No se puede medir un texto desde una expresión: un botón no puede crecer con su rótulo | 🔴 | Propiedades de solo lectura que pone el render (`rótulo.ancho`, `rótulo.alto`). Es requisito del layout (punto 4) |
+| T12 | Un texto que aparece **por primera vez** no se ve hasta que el taller lo entrega (uno o dos frames); uno que *cambia* enseña el anterior mientras tanto. Y lo que mide un texto llega a las expresiones un frame después | ⚪ | Lo que ya está en la escena al cargarla se encarga antes de que exista la ventana. Para lo demás: componer dos veces el frame en que cambia una medida |
 | T3 | Un solo atlas de 2048² en RGBA: 16 MB de VRAM aunque esté casi vacío. Si se llena, los glifos nuevos no se pintan (avisa por consola) y no se recicla nada | 🟡 | Empezar en 512² y crecer; desalojar por estantes lo que lleve más sin usarse; las máscaras de glifo en un atlas de un canal, que ocupa la cuarta parte |
 | T4 | Los glifos se pintan a la escala de la lámina **más fina**; las demás los ven reducidos. Con un monitor a 2 y otro a 1, en el de 1 el texto sale una pizca blando | ⚪ | Un atlas por escala, y que cada lámina tenga sus propios `uv`: pide una tabla de elementos por lámina en vez de una común |
 | T5 | Texto bajo una transformación que escala se remuestrea (ampliado, sale blando), y girado no cae en píxeles enteros | ⚪ | Pintar a `escala × factor` de la transformación cuando lleve quieta unos frames |
 | T6 | Sin texto rico (negrita o color a mitad de párrafo), ni espaciado entre letras, ni subrayado, ni selección ni edición | 🟡 | `cosmic-text` ya tiene tramos con atributos: exponer `Contenido::Rico`. La edición es otro proyecto (IME incluido) |
 | T7 | Al partir líneas queda un espacio al principio de la línea nueva | ⚪ | Mirar cómo trata `cosmic-text` el espacio final con `Wrap::WordOrGlyph`; si no tiene ajuste, recortarlo al colocar los glifos |
 | T8 | La lógica pone cadenas; la escena no sabe formatear un número (`"{volumen} %"`) | 🟡 | `Contenido::Formato` con expresiones dentro. Llegará con el lenguaje |
-| T9 | Las imágenes se cargan de golpe al cargar la escena, a un tamaño máximo que declara la escena. Sin carga en segundo plano, sin URL, sin GIF, sin «nueve parches». Al cambiar la escala se repintan todas | 🟡 | El mismo hilo «taller» de T1; caché en disco de los SVG ya pintados |
+| T9 | Las imágenes tienen un tamaño máximo que declara la escena. Sin URL, sin GIF, sin «nueve parches». Al cambiar la escala se repintan todas | 🟡 | Caché en disco de los SVG ya pintados; tamaño según el destino en vez de declarado |
 | T10 | La búsqueda de iconos no lee los `index.theme` ni sabe cuál es tu tema: prueba en los de siempre y se queda con el primero | 🟡 | La búsqueda de freedesktop de verdad (tema actual, herencia, tallas). Vive en `plataforma/` |
 | T11 | Solo degradado lineal; sin radial, sin desenfoque, sin máscaras | 🟡 | El radial son diez líneas de shader. El desenfoque pide otra pasada por capa: la infraestructura de las capas de opacidad ya vale |
 
@@ -90,3 +89,5 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | 2026-09-19 | **P2** · Sin imágenes ni iconos → SVG (`resvg`), PNG y JPEG (`image`), iconos por nombre y teñido para los simbólicos |
 | 2026-09-19 | Wayland estaba por todo `main.rs` y dentro del render → `src/plataforma/`, con `./portable.sh` de guarda |
 | 2026-09-19 | Las fuentes se buscaban con `fc-match`, que solo existe en Linux → `fontdb`, leídas en otro hilo desde el arranque |
+| 2026-09-19 | **T1** · Dar forma al texto y decodificar imágenes costaba frames (245 ms en frío) → un hilo «taller»; el render pide, no espera, y enseña lo que tenía. Ni un frame lento después del primero |
+| 2026-09-19 | **T2** · No se podía medir un texto desde una expresión → `mide`: dos propiedades que rellena el render; con `Sigue`, una caja persigue a su rótulo con un muelle |

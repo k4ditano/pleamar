@@ -95,7 +95,7 @@ impl Guion for Marea {
         let titulo = e.texto_vivo("aviso.título", "Reunión en 5 min");
         let detalle = e.texto_vivo("aviso.detalle", "Revisión de diseño · 18:00");
         let escribe = |e: &mut Escena, c: Contenido, x: f32, y: f32, ancla: (f32, f32), ancho: Option<f32>, estilo: Estilo, alfa: f32| {
-            e.pintar(Instr::Texto { contenido: c, en: (panel_x.clone() + x, origen_y.clone() + y), ancla, ancho: ancho.map(Into::into), estilo, alfa: alfa.into() });
+            e.pintar(Instr::Texto { contenido: c, en: (panel_x.clone() + x, origen_y.clone() + y), ancla, ancho: ancho.map(Into::into), estilo, alfa: alfa.into(), mide: None });
         };
         escribe(&mut e, Contenido::Vivo(app), 26.0, 33.0, (0.0, 0.5), None, Estilo::de(12.5, blanco.clone()), 0.62);
         escribe(&mut e, Contenido::Vivo(cuando), 380.0, 33.0, (1.0, 0.5), None, Estilo::de(13.5, blanco.clone()), 0.55);

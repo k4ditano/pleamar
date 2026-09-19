@@ -7,7 +7,10 @@
 //! Linux, Windows y macOS; lo único que depende del sistema es encontrar un
 //! icono por su nombre, y eso lo contesta la plataforma.
 
-use crate::escena::{Alineado, Estilo, Fuente};
+use crate::escena::{ARender, Alineado, Estilo, Fuente};
+use std::collections::HashSet;
+use std::sync::mpsc::{channel, Sender};
+use std::sync::Arc;
 use cosmic_text::{Align, Attrs, Buffer, CacheKey, Ellipsize, EllipsizeHeightLimit, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent, Weight, Wrap};
 use std::collections::HashMap;
 
@@ -43,16 +46,27 @@ pub struct Maqueta {
     pub tam: (f32, f32),
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
-struct Clave {
+/// Todo lo que decide cómo queda un texto. Dos textos con la misma clave son
+/// la misma maqueta, y con ella basta para hacerla: es lo que viaja al taller.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct Clave {
     texto: String,
     familia: Option<&'static str>,
     px: u32,
     peso: u16,
     interlinea: u32,
     ancho: Option<u32>,
-    alineado: u8,
+    alineado: Alineado,
     max_lineas: Option<usize>,
+}
+
+impl Clave {
+    pub fn de(texto: &str, e: &Estilo, ancho: Option<f32>) -> Clave {
+        Clave {
+            texto: texto.to_owned(), familia: e.familia, px: e.px.to_bits(), peso: e.peso, interlinea: e.interlinea.to_bits(),
+            ancho: ancho.map(|a| a.round().max(1.0) as u32), alineado: e.alineado, max_lineas: e.max_lineas,
+        }
+    }
 }
 
 /// Reparte el atlas por estantes: filas de la altura de lo primero que cayó en ellas.
@@ -89,86 +103,51 @@ impl Estantes {
     }
 }
 
-pub struct Tipografo {
+/// Quien da forma y pinta. Vive en su propio hilo —el taller—: leer las fuentes
+/// del sistema, dar forma a un párrafo o decodificar un PNG pueden tardar, y
+/// nada de eso puede costarle un frame al render.
+struct Tipografo {
     fuentes: FontSystem,
     swash: SwashCache,
     estantes: Estantes,
     glifos: HashMap<CacheKey, Option<(Hueco, i32, i32, bool)>>,
-    maquetas: HashMap<Clave, Maqueta>,
-    imagenes: Vec<Option<Hueco>>,
-    /// Lo pintado desde la última vez que se subió a la GPU: dónde y qué (RGBA premultiplicado).
-    pub por_subir: Vec<(Hueco, Vec<u8>)>,
+    /// Lo pintado desde la última entrega: dónde y qué (RGBA premultiplicado).
+    por_subir: Vec<(Hueco, Vec<u8>)>,
     /// A cuántos píxeles de verdad por píxel lógico se pinta: la de la lámina más fina.
     escala: f32,
-    /// El atlas se ha vaciado: lo que hubiera en la GPU ya no vale.
-    pub vaciado: bool,
 }
 
 impl Tipografo {
-    pub fn nuevo() -> Self {
+    fn nuevo() -> Self {
         let t0 = std::time::Instant::now();
         let fuentes = FontSystem::new();
         println!("texto  · {} fuentes del sistema en {} ms", fuentes.db().len(), t0.elapsed().as_millis());
-        Tipografo {
-            fuentes, swash: SwashCache::new(), estantes: Estantes::nuevo(), glifos: HashMap::new(), maquetas: HashMap::new(),
-            imagenes: Vec::new(), por_subir: Vec::new(), escala: 1.0, vaciado: false,
-        }
+        Tipografo { fuentes, swash: SwashCache::new(), estantes: Estantes::nuevo(), glifos: HashMap::new(), por_subir: Vec::new(), escala: 1.0 }
     }
 
-    pub fn escala(&self) -> f32 {
-        self.escala
-    }
-
-    /// Al cambiar la escala más fina todo lo pintado deja de valer.
-    pub fn poner_escala(&mut self, escala: f32) -> bool {
-        if (escala - self.escala).abs() < 0.001 {
-            return false;
-        }
+    /// Al cambiar la escala, todo lo pintado deja de valer.
+    fn vaciar(&mut self, escala: f32) {
         self.escala = escala;
-        self.vaciar();
-        true
-    }
-
-    pub fn vaciar(&mut self) {
         self.estantes = Estantes::nuevo();
         self.glifos.clear();
-        self.maquetas.clear();
-        self.imagenes.clear();
         self.por_subir.clear();
-        self.vaciado = true;
     }
 
-    /// Da forma a un texto y coloca sus glifos. Se guarda: mientras no cambien
-    /// el texto, el estilo ni el ancho, no se vuelve a hacer.
-    pub fn maquetar(&mut self, texto: &str, e: &Estilo, ancho: Option<f32>) -> &Maqueta {
-        let clave = Clave {
-            texto: texto.to_owned(), familia: e.familia, px: e.px.to_bits(), peso: e.peso, interlinea: e.interlinea.to_bits(),
-            ancho: ancho.map(|a| a.round() as u32), alineado: e.alineado as u8, max_lineas: e.max_lineas,
-        };
-        if !self.maquetas.contains_key(&clave) {
-            if self.maquetas.len() > 512 {
-                self.maquetas.clear();
-            }
-            let m = self.maquetar_de_verdad(texto, e, ancho);
-            self.maquetas.insert(clave.clone(), m);
-        }
-        &self.maquetas[&clave]
-    }
-
-    fn maquetar_de_verdad(&mut self, texto: &str, e: &Estilo, ancho: Option<f32>) -> Maqueta {
-        let mut buffer = Buffer::new(&mut self.fuentes, Metrics::new(e.px, e.px * e.interlinea));
+    fn maquetar(&mut self, c: &Clave) -> Maqueta {
+        let (px, interlinea, ancho) = (f32::from_bits(c.px), f32::from_bits(c.interlinea), c.ancho.map(|a| a as f32));
+        let mut buffer = Buffer::new(&mut self.fuentes, Metrics::new(px, px * interlinea));
         buffer.set_wrap(if ancho.is_some() { Wrap::WordOrGlyph } else { Wrap::None });
-        if let Some(n) = e.max_lineas {
+        if let Some(n) = c.max_lineas {
             buffer.set_ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(n)));
         }
         buffer.set_size(ancho, None);
-        let attrs = Attrs::new().family(e.familia.map_or(Family::SansSerif, Family::Name)).weight(Weight(e.peso));
-        let alineado = match e.alineado {
+        let attrs = Attrs::new().family(c.familia.map_or(Family::SansSerif, Family::Name)).weight(Weight(c.peso));
+        let alineado = match c.alineado {
             Alineado::Izquierda => Align::Left,
             Alineado::Centro => Align::Center,
             Alineado::Derecha => Align::Right,
         };
-        buffer.set_text(texto, &attrs, Shaping::Advanced, Some(alineado));
+        buffer.set_text(&c.texto, &attrs, Shaping::Advanced, Some(alineado));
         buffer.shape_until_scroll(&mut self.fuentes, false);
 
         let s = self.escala;
@@ -222,26 +201,148 @@ impl Tipografo {
         pintado
     }
 
-    /// Carga las imágenes de una escena al atlas, al tamaño lógico que pidan por
-    /// la escala. Un SVG se pinta a ese tamaño exacto; un PNG se reduce si sobra.
-    pub fn cargar_imagenes(&mut self, imagenes: &[(Fuente, (u32, u32))]) {
+    /// Las imágenes de una escena, al tamaño lógico que pidan por la escala. Un
+    /// SVG se pinta a ese tamaño exacto; un PNG se reduce si sobra.
+    fn cargar_imagenes(&mut self, imagenes: &[(Fuente, (u32, u32))]) -> Vec<Option<Hueco>> {
+        imagenes
+            .iter()
+            .map(|(fuente, (w, h))| {
+                let px = (((*w as f32) * self.escala).round().max(1.0) as u32, ((*h as f32) * self.escala).round().max(1.0) as u32);
+                let ruta = match fuente {
+                    Fuente::Ruta(r) => Some(r.clone()),
+                    Fuente::Icono(nombre) => crate::plataforma::icono(nombre),
+                };
+                let hueco = ruta.as_ref().and_then(|r| pintar_imagen(r, px)).and_then(|rgba| {
+                    let hueco = self.estantes.pedir(px.0, px.1)?;
+                    self.por_subir.push((hueco, rgba));
+                    Some(hueco)
+                });
+                if hueco.is_none() {
+                    eprintln!("imagen · no puedo cargar {fuente:?}");
+                }
+                hueco
+            })
+            .collect()
+    }
+}
+
+// ── el taller y su mostrador ────────────────────────────────────
+
+enum Encargo {
+    Maqueta(Clave, u32),
+    Imagenes(Vec<(Fuente, (u32, u32))>, u32),
+    /// Atlas nuevo, a esta escala. Todo lo de generaciones anteriores se tira.
+    Vaciar(f32),
+}
+
+/// Lo que el taller devuelve, con lo que haya pintado por el camino.
+pub enum Entrega {
+    Maqueta { clave: Clave, maqueta: Arc<Maqueta>, generacion: u32 },
+    Imagenes { huecos: Vec<Option<Hueco>>, generacion: u32 },
+}
+
+pub struct Paquete {
+    pub entrega: Entrega,
+    pub por_subir: Vec<(Hueco, Vec<u8>)>,
+}
+
+/// El lado del render: pide, no espera, y mientras tanto enseña lo que tenía.
+pub struct Textos {
+    al_taller: Sender<Encargo>,
+    maquetas: HashMap<Clave, Arc<Maqueta>>,
+    pedidas: HashSet<Clave>,
+    /// La última maqueta que se enseñó en cada sitio de la escena: es lo que se
+    /// ve mientras llega la nueva, en vez de un hueco.
+    ultima: HashMap<usize, Arc<Maqueta>>,
+    imagenes: Vec<Option<Hueco>>,
+    pub por_subir: Vec<(Hueco, Vec<u8>)>,
+    generacion: u32,
+    escala: f32,
+}
+
+impl Textos {
+    /// Arranca el taller. Lo primero que hace es leer las fuentes del sistema,
+    /// así que conviene llamarlo cuanto antes.
+    pub fn abrir(al_render: Sender<ARender>) -> Textos {
+        let (al_taller, encargos) = channel::<Encargo>();
+        std::thread::Builder::new()
+            .name("taller".into())
+            .spawn(move || {
+                let mut t = Tipografo::nuevo();
+                for encargo in encargos {
+                    let entrega = match encargo {
+                        Encargo::Vaciar(escala) => {
+                            t.vaciar(escala);
+                            continue;
+                        }
+                        Encargo::Maqueta(clave, generacion) => {
+                            let maqueta = Arc::new(t.maquetar(&clave));
+                            Entrega::Maqueta { clave, maqueta, generacion }
+                        }
+                        Encargo::Imagenes(lista, generacion) => Entrega::Imagenes { huecos: t.cargar_imagenes(&lista), generacion },
+                    };
+                    let por_subir = std::mem::take(&mut t.por_subir);
+                    // Por el canal de siempre, que además despierta al render si dormía.
+                    if al_render.send(ARender::Taller(Box::new(Paquete { entrega, por_subir }))).is_err() {
+                        return;
+                    }
+                }
+            })
+            .unwrap();
+        Textos { al_taller, maquetas: HashMap::new(), pedidas: HashSet::new(), ultima: HashMap::new(), imagenes: Vec::new(), por_subir: Vec::new(), generacion: 0, escala: 1.0 }
+    }
+
+    pub fn escala(&self) -> f32 {
+        self.escala
+    }
+
+    /// Escena nueva o escala nueva: atlas nuevo. Lo anterior deja de valer, y
+    /// con ello lo que se estuviera enseñando.
+    pub fn empezar_de_cero(&mut self, escala: f32, imagenes: &[(Fuente, (u32, u32))]) {
+        self.generacion += 1;
+        self.escala = escala;
+        self.maquetas.clear();
+        self.pedidas.clear();
+        self.ultima.clear();
         self.imagenes.clear();
-        for (fuente, (w, h)) in imagenes {
-            let px = (((*w as f32) * self.escala).round().max(1.0) as u32, ((*h as f32) * self.escala).round().max(1.0) as u32);
-            let ruta = match fuente {
-                Fuente::Ruta(r) => Some(r.clone()),
-                Fuente::Icono(nombre) => crate::plataforma::icono(nombre),
-            };
-            let hueco = ruta.as_ref().and_then(|r| pintar_imagen(r, px)).and_then(|rgba| {
-                let hueco = self.estantes.pedir(px.0, px.1)?;
-                self.por_subir.push((hueco, rgba));
-                Some(hueco)
-            });
-            if hueco.is_none() {
-                eprintln!("imagen · no puedo cargar {fuente:?}");
-            }
-            self.imagenes.push(hueco);
+        self.por_subir.clear();
+        let _ = self.al_taller.send(Encargo::Vaciar(escala));
+        if !imagenes.is_empty() {
+            let _ = self.al_taller.send(Encargo::Imagenes(imagenes.to_vec(), self.generacion));
         }
+    }
+
+    pub fn recibir(&mut self, p: Paquete) {
+        let generacion = match &p.entrega {
+            Entrega::Maqueta { generacion, .. } | Entrega::Imagenes { generacion, .. } => *generacion,
+        };
+        if generacion != self.generacion {
+            return; // de un atlas que ya no existe
+        }
+        self.por_subir.extend(p.por_subir);
+        match p.entrega {
+            Entrega::Maqueta { clave, maqueta, .. } => {
+                self.pedidas.remove(&clave);
+                if self.maquetas.len() > 512 {
+                    self.maquetas.clear();
+                }
+                self.maquetas.insert(clave, maqueta);
+            }
+            Entrega::Imagenes { huecos, .. } => self.imagenes = huecos,
+        }
+    }
+
+    /// La maqueta de un texto, si ya está; si no, se encarga y se devuelve la
+    /// última que se vio en ese sitio. `sitio` es la posición en la lista de dibujo.
+    pub fn maqueta(&mut self, sitio: usize, clave: Clave) -> Option<Arc<Maqueta>> {
+        if let Some(m) = self.maquetas.get(&clave) {
+            self.ultima.insert(sitio, m.clone());
+            return Some(m.clone());
+        }
+        if self.pedidas.insert(clave.clone()) {
+            let _ = self.al_taller.send(Encargo::Maqueta(clave, self.generacion));
+        }
+        self.ultima.get(&sitio).cloned()
     }
 
     pub fn imagen(&self, k: usize) -> Option<Hueco> {

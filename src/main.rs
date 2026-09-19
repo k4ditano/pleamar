@@ -73,8 +73,6 @@ fn args() -> Args {
 
 fn main() {
     let arranque = std::time::Instant::now();
-    // Lo más lento del arranque es leer las fuentes del sistema. Que vaya yendo.
-    let tipografo = std::thread::Builder::new().name("fuentes".into()).spawn(texto::Tipografo::nuevo).unwrap();
     let a = args();
     let bloqueada = Arc::new(AtomicBool::new(false));
     let mut guion: Box<dyn logica::Guion> = match a.escena.as_str() {
@@ -99,6 +97,9 @@ fn main() {
     }
 
     let (a_render, de_render) = channel();
+    // El taller de texto e imágenes. Lo primero que hace es leer las fuentes del
+    // sistema, que es lo más lento del arranque: que vaya yendo.
+    let letras = texto::Textos::abrir(a_render.clone());
     let (a_logica, de_logica) = channel();
     let instancia = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, ..wgpu::InstanceDescriptor::new_without_display_handle() });
     let pide = escena.superficie.clone();
@@ -115,7 +116,7 @@ fn main() {
         let instancia = instancia.clone();
         std::thread::Builder::new()
             .name("render".into())
-            .spawn(move || render::hilo(instancia, de_render, tipografo, a_logica, bloqueada, op))
+            .spawn(move || render::hilo(instancia, de_render, letras, a_logica, bloqueada, op))
             .unwrap()
     };
     {

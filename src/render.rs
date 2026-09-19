@@ -57,7 +57,7 @@ impl Ciclo {
 pub fn hilo(
     instancia: wgpu::Instance,
     rx: Receiver<ARender>,
-    tipografo_en_camino: std::thread::JoinHandle<crate::texto::Tipografo>,
+    mut letras: crate::texto::Textos,
     a_logica: Sender<Evento>,
     logica_bloqueada: Arc<AtomicBool>,
     op: Opciones,
@@ -65,11 +65,7 @@ pub fn hilo(
     let mut gpu: Option<Gpu> = None;
     let mut laminas: Vec<Lamina> = Vec::new();
     let mut dibujo = Dibujo::default();
-    // Leer las fuentes del sistema tarda medio segundo: se hace en otro hilo
-    // desde que arranca el programa, y aquí solo se recoge cuando hace falta.
-    let mut tipografo_en_camino = Some(tipografo_en_camino);
-    let mut tipografo: Option<crate::texto::Tipografo> = None;
-    let mut imagenes_por_cargar = false;
+    let mut atlas_por_rehacer = false;
     let mut primer_frame = true;
     let mut textos: Vec<String> = Vec::new();
     let mut uniformes = [0f32; N_UNIFORMES];
@@ -163,7 +159,7 @@ pub fn hilo(
                     pendientes.clear();
                     tam = (nueva.superficie.ancho as f32, nueva.superficie.alto as f32 + if op.hud { ALTO_INSTRUMENTOS } else { 0.0 });
                     textos = nueva.textos.iter().map(|t| t.1.clone()).collect();
-                    imagenes_por_cargar = true;
+                    atlas_por_rehacer = true;
                     println!(
                         "render · escena: {} propiedades, {} instrucciones, {} hechos, {} capas, {} gestos, {} reglas, {} zonas",
                         nueva.props.len(), nueva.instrs.len(), nueva.hechos.len(), nueva.capas.len(),
@@ -185,6 +181,7 @@ pub fn hilo(
                         repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
                     }
                 }
+                ARender::Taller(p) => letras.recibir(*p),
                 ARender::Escala(id, e) => {
                     if let (Some(g), Some(l)) = (&gpu, laminas.iter_mut().find(|l| l.id == id)) {
                         if (l.escala - e).abs() > 0.001 {
@@ -455,6 +452,10 @@ pub fn hilo(
                     props[prop.0 as usize].fijar(a * (t_total * frecuencia).sin());
                     vivo |= a.abs() > 0.01;
                 }
+                Comportamiento::Sigue { prop, a } => {
+                    let v = a.evaluar(Ctx { props: &props, hechos: &hechos });
+                    props[prop.0 as usize].objetivo = v;
+                }
                 Comportamiento::Avance { prop, por_segundo } => {
                     let v = por_segundo.evaluar(Ctx { props: &props, hechos: &hechos });
                     let a = &mut props[prop.0 as usize];
@@ -542,23 +543,23 @@ pub fn hilo(
 
         // ── 3. pintar ───────────────────────────────────────────
         let bloqueada = logica_bloqueada.load(Ordering::Relaxed);
+        let c = Ctx { props: &props, hechos: &hechos };
+        // El texto y las imágenes se pintan a la escala de la lámina más fina; las
+        // demás lo ven reducido, que se nota mucho menos que ampliado.
+        let fina = laminas.iter().map(|l| l.escala).fold(1.0f32, f32::max);
+        if atlas_por_rehacer || (fina - letras.escala()).abs() > 0.001 {
+            letras.empezar_de_cero(fina, &escena.imagenes);
+            atlas_por_rehacer = false;
+        }
+        // Se compone aunque aún no haya dónde pintar: así el taller va haciendo
+        // los textos y las imágenes mientras la GPU y las ventanas arrancan.
+        dibujo.componer(&escena.instrs, c, &textos, &mut letras, tam, op.hud);
         let Some(g) = &gpu else {
             // Aún no hay dónde: el tiempo corre igual, pero sin prisa.
             std::thread::sleep(Duration::from_millis(8));
             continue;
         };
-        let c = Ctx { props: &props, hechos: &hechos };
-        // El texto y las imágenes se pintan a la escala de la lámina más fina; las
-        // demás lo ven reducido, que se nota mucho menos que ampliado.
-        let tipografo = tipografo.get_or_insert_with(|| tipografo_en_camino.take().unwrap().join().expect("el tipógrafo no arrancó"));
-        let fina = laminas.iter().map(|l| l.escala).fold(1.0f32, f32::max);
-        if tipografo.poner_escala(fina) || imagenes_por_cargar {
-            tipografo.vaciar();
-            tipografo.cargar_imagenes(&escena.imagenes);
-            imagenes_por_cargar = false;
-        }
-        dibujo.componer(&escena.instrs, c, &textos, tipografo, tam, op.hud);
-        g.subir_atlas(tipografo);
+        g.subir_atlas(&mut letras.por_subir);
         g.subir(&dibujo);
 
         // Por dónde entra el ratón: las zonas activas, y nada más. Lo demás de
@@ -593,8 +594,23 @@ pub fn hilo(
             println!("render · primer frame a los {} ms de arrancar", op.arranque.elapsed().as_millis());
         }
 
+        // Lo que midieron los textos pasa a sus propiedades: el frame que viene,
+        // la caja que dependa de ellas ya lo sabe.
+        let mut cambio_de_medida = false;
+        for (p, v) in &dibujo.medidas {
+            let a = &mut props[p.0 as usize];
+            if (a.x - v).abs() > 0.01 {
+                a.fijar(*v);
+                cambio_de_medida = true;
+            }
+        }
+
         // ── 4. medir ────────────────────────────────────────────
         let ms = dt * 1000.0;
+        // Un chivato permanente: cualquier frame que se pase de dos periodos, con su hora.
+        if ms > periodo_ms * 2.4 && !primer_frame && ciclo.dts.len() > 1 && !op.sin_vsync && !op.ingenuo {
+            println!("render · frame lento: {ms:.0} ms a los {t_total:.2} s");
+        }
         historial.copy_within(1.., 0);
         historial[119] = if bloqueada { -ms } else { ms };
         ciclo.dts.push(ms);
@@ -618,7 +634,7 @@ pub fn hilo(
         if op.sin_vsync && ciclo.dts.len() >= 600 {
             ciclo.cerrar();
         }
-        if !op.sin_vsync && !vivo && !bloqueada && !cambia_la_region && props.iter().all(Animada::quieta) {
+        if !op.sin_vsync && !vivo && !bloqueada && !cambia_la_region && !cambio_de_medida && props.iter().all(Animada::quieta) {
             for a in &mut props {
                 a.posar();
             }
