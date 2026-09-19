@@ -173,7 +173,7 @@ component MenuRow(r: record, chosen: event, tone: color = mint, width: number = 
 for r in rows { MenuRow(r, chosen: choose) }  // por posición y, desde donde se quiera, por nombre
 ```
 
-Tipos: `number`, `color`, `text`, `record` (una ficha), `event` e `image`. Lo que falte, sobre o no sea del tipo es un fallo **donde se usa**, con la firma entera: `a «MenuRow» le falta «chosen» (un suceso): es MenuRow(r: record, chosen: event, tone: color = …, width: number = …)`. Sin tipo, un parámetro es lo que parezca el argumento, como hasta ahora.
+Tipos: `number`, `bool`, `color`, `text`, `record` (una ficha), `event`, `image`, `gesture` y `spring`. Lo que falte, sobre o no sea del tipo es un fallo **donde se usa**, con la firma entera: `a «MenuRow» le falta «chosen» (un suceso): es MenuRow(r: record, chosen: event, tone: color = …, width: number = …)`. Sin tipo, un parámetro es lo que parezca el argumento, como hasta ahora.
 
 ```
 component Note(i) {                     // parámetros: números, colores, "textos", o el nombre de un texto vivo
@@ -203,6 +203,20 @@ box { from: 180, 66 + list.height + 10; size: head.width, 2 }   // con nombre, s
 - **No hay motor de layout.** El sitio de cada hijo es una expresión —lo que ocupan los anteriores—: si uno crece, los demás se corren; con `~muelle`, se corren animados. `show:` decide si un hijo está: ocupa y se ve, o ni lo uno ni lo otro, y con muelle también eso es un viaje.
 - Dentro de un reparto un hijo no dice dónde va. Saben cuánto ocupan `box`, `ellipse`, `image`, `text` (se mide solo), otro `row`/`column`, y un `group` o un componente con `size:`.
 - Una lista de longitud variable es hoy una de capacidad fija con `show:`. Ver `escenas/bandeja.plm`.
+
+**Un hueco para hijos.** Lo que una copia trae dentro de su bloque va donde su componente diga `children`, y se lee con los nombres de quien lo escribió:
+
+```
+component Card(title: text) {
+    size: 300, 40 + inside.height
+    body { color: #1b1c1c; box { from: 0, 0; size: 300, 40 + inside.height; corner: 12 } }
+    text "{upper(title)}" { at: 12, 18; anchor: left center; size: 11; color: ink }
+    column inside { at: 12, 32; gap: 4;  children }
+}
+Card("Avisos") { text title { size: 14; color: ink };  repeat i in 0..2 { text "fila {i}" { size: 13; color: ink } } }
+```
+
+**Bibliotecas que no fisgan.** `library Menu strict { … }`: sus componentes solo leen lo que piden por parámetro, lo que declaran y lo de su biblioteca. Es lo que hace falta para fiarse de una biblioteca de otro.
 
 ## Capas — quién gana
 
