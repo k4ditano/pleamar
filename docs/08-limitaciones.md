@@ -19,17 +19,26 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 
 ## Pendientes
 
+### La lógica (Luau)
+
+| # | Limitación | Gravedad | Cómo se arregla |
+| --- | --- | --- | --- |
+| U1 | **`run` lanza cualquier orden.** La caja de arena cierra `io` y `os`, pero esa puerta está abierta de par en par y sin permisos | 🔴 | Un manifiesto por escena o plugin: qué órdenes, qué rutas, qué servicios. Sin declarar, nada. Es la idea 5 del diseño: los plugins son actores con permisos |
+| U2 | `run` contesta cuando la orden acaba. No hay forma de escuchar algo que no acaba —`hyprctl -i events`, `playerctl --follow`—, que es como se entera uno de media shell | 🔴 | `spawn(orden, args, function(linea) … end)` con una llamada por línea, y `kill(id)`. Y detrás, los servicios de verdad en `plataforma/` (el grafo de datos), para no depender de órdenes de Linux |
+| U3 | Una lógica por escena: no hay plugins, ni varios scripts, ni `require` | 🟡 | Un estado de Luau por plugin, cada uno con su presupuesto, y un espacio de nombres para sus hechos |
+| U4 | Los hechos se leen como números (`fact.open == 1`), no como sí/no | ⚪ | Que la escena declare el tipo (`fact open: bool`) y la lógica lo respete |
+| U5 | `./portable.sh` comprueba Windows y macOS **sin** Luau: aquí no hay compilador cruzado de C++ | ⚪ | Instalar `mingw-w64-gcc`, o CI en los tres sistemas |
+| U6 | El error de un nombre mal escrito no trae la línea del script: la traza de Luau se queda en «[C]» | ⚪ | Pedir la traza al nivel de quien llama (`debug.traceback` al nivel 2) |
+
 ### El lenguaje
 
 | # | Limitación | Gravedad | Cómo se arregla |
 | --- | --- | --- | --- |
-| G12 | **Una lista de longitud variable es una de capacidad fija** con `show:`. Los límites de `repeat` son números, y la lógica no puede darle a la escena una lista de cosas | 🔴 | `repeat item in notes { … }` sobre un modelo que ponga la lógica, con clave por elemento para que al reordenar cada uno viaje a su sitio nuevo. Pide copias que nazcan y mueran en marcha: hoy todo se despliega al cargar |
-| G13 | Los sucesos no llevan datos: para saber qué aviso se pulsó hay un suceso por índice (`opened.$i`) | 🟡 | Sucesos con carga: `emit opened(i)`, y en la lógica `on("opened", function(i) … end)` |
+| G12 | **Una lista de longitud variable es una de capacidad fija** con `show:`. Con la lógica poniendo textos y un `count` se comporta como una de verdad (`bandeja.luau`), pero el tope lo pone el fichero y no hay copias que nazcan en marcha | 🟡 | `repeat item in notes { … }` sobre un modelo que ponga la lógica, con clave por elemento para que al reordenar cada uno viaje a su sitio nuevo. Pide copias que nazcan y mueran en marcha: hoy todo se despliega al cargar |
 | G14 | Los parámetros de un componente van por posición, sin tipo, sin valor por defecto, y no hay hueco para hijos (`children`) | 🟡 | `component Card(title, tone = mint) { … slot … }` |
 | G15 | El reparto solo sabe de fila y columna con hueco, relleno y alineado. Sin salto de línea, sin «ocupa lo que quede», sin mínimos ni máximos. Un `group` sin `size:` ocupa lo que su último hijo, por casualidad más que por diseño | 🟡 | `grow:` en un hijo (reparte el sobrante del `size:` del reparto), `wrap`, y que un grupo sin tamaño ocupe la unión de sus hijos |
 | G16 | El sitio de cada hijo es la suma de los anteriores, escrita entera: con *n* hijos las expresiones crecen como *n²*. Veinte no se notan; doscientos sí | ⚪ | Subexpresiones compartidas: que `Expr` sea un grafo y cada suma parcial se evalúe una vez por frame |
 | G17 | Lo que mide un texto llega un frame tarde, así que un reparto con textos se asienta en uno o dos frames al cargar. Con muelle no se ve; sin él, un parpadeo | ⚪ | Ver T12 |
-| G2 | **Una escena de fichero no tiene lógica propia**: la acompaña un guion mínimo en Rust que solo escucha | 🔴 | Punto 5: un bloque o un fichero Luau al lado, con `on("view_event", …)`, `fact.open = true`, `text["notice.title"] = …` |
 | G5 | Los mensajes de error están en castellano aunque las palabras clave sean inglesas. Y un fallo del tokenizador (una comilla sin cerrar) sigue parando la lectura en seco | 🟡 | Un catálogo de mensajes con las dos lenguas; que el tokenizador apunte el fallo y siga en la línea siguiente |
 | G7 | Al recargar no se aplican los cambios de `surface` (S1), y el gesto que estuviera sonando y los retrasos pendientes se pierden | ⚪ | Reconfigurar la superficie; conservar el gesto si sigue existiendo con ese nombre |
 | G9 | **Sin ayuda en el editor**: ni colores, ni autocompletado, ni errores mientras se escribe | 🟡 | Una gramática de tree-sitter para el resaltado, y un LSP pequeño que reutilice este mismo parser: los fallos ya vienen con su sitio |
@@ -87,7 +96,6 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | L4 | Lo que emite un fotograma se atiende en el frame siguiente, y lo del *primero* se ignora | ⚪ | Procesar los sucesos del gesto en el mismo bucle que los demás |
 | L5 | Los hechos son números. Hay textos vivos, pero no símbolos (`dropping: page`) | 🟡 | Un tipo símbolo internado: un número por nombre |
 | L7 | El movimiento reducido arranca y no se cae, pero no está mirado con capturas | 🟡 | Mirarlo |
-| L8 | La lógica es un `trait` de Rust, no Luau (ver G2) | 🔴 | Punto 5 |
 
 ## Arregladas
 
@@ -115,3 +123,6 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | 2026-09-19 | **G8** · Cada recarga dejaba bytes sin liberar → nombres internados |
 | 2026-09-19 | **G10** · Toda forma con nombre era zona → solo si una regla la nombra, lleva `active` o se declaró con `zone` |
 | 2026-09-19 | **G5** (a medias) · Solo se decía el primer error → hasta ocho de una vez |
+| 2026-09-19 | **G2 / L8** · Una escena de fichero no tenía lógica propia → Luau, en caja de arena, con tope de memoria y corte a los 2 s; se recarga en caliente |
+| 2026-09-19 | **G13** · Los sucesos no llevaban datos → `emit opened(i)` y `on("opened", function(i) … end)` |
+| 2026-09-19 | La lógica no se enteraba de los hechos que cambiaba una regla → `Evento::Hecho`, y `on("fact:open", …)` |

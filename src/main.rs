@@ -10,6 +10,8 @@ mod formas;
 mod gpu;
 mod lenguaje;
 mod logica;
+#[cfg(feature = "luau")]
+mod logica_luau;
 mod plataforma;
 mod render;
 mod texto;
@@ -91,13 +93,15 @@ fn main() {
     let arranque = std::time::Instant::now();
     let a = args();
     let bloqueada = Arc::new(AtomicBool::new(false));
+    let (a_render, de_render) = channel();
+    let (a_logica, de_logica) = channel();
     let mut guion: Box<dyn logica::Guion> = match a.escena.as_str() {
         "marea" => Box::<escenas::marea::Marea>::default(),
         "isla" => Box::<escenas::isla::Isla>::default(),
         "cara" => Box::<escenas::cara::Cara>::default(),
         "muestrario" => Box::<escenas::muestrario::Muestrario>::default(),
         "enjambre" => Box::<escenas::enjambre::Enjambre>::default(),
-        ruta if std::path::Path::new(ruta).is_file() => Box::new(escenas::de_fichero::DeFichero::nueva(ruta)),
+        ruta if std::path::Path::new(ruta).is_file() => escenas::de_fichero::guion_para(ruta, a_render.clone(), a_logica.clone(), bloqueada.clone()),
         otra => {
             eprintln!("no conozco la escena «{otra}», ni es un fichero\n{AYUDA}");
             std::process::exit(2)
@@ -113,11 +117,9 @@ fn main() {
         escena.superficie.margen[0] = m;
     }
 
-    let (a_render, de_render) = channel();
     // El taller de texto e imágenes. Lo primero que hace es leer las fuentes del
     // sistema, que es lo más lento del arranque: que vaya yendo.
     let letras = texto::Textos::abrir(a_render.clone());
-    let (a_logica, de_logica) = channel();
     let instancia = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, ..wgpu::InstanceDescriptor::new_without_display_handle() });
     let pide = escena.superficie.clone();
 
@@ -128,7 +130,7 @@ fn main() {
     );
     let _ = a_render.send(ARender::Escena(escena));
     if std::path::Path::new(&a.escena).is_file() {
-        escenas::de_fichero::vigilar(a.escena.clone(), a_render.clone());
+        escenas::de_fichero::vigilar(a.escena.clone(), a_render.clone(), a_logica.clone());
     }
     let render = {
         let bloqueada = bloqueada.clone();

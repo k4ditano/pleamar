@@ -191,7 +191,7 @@ impl Guion for Marea {
         e.regla(Entra(z_ver), vec![Efecto::Animar(ir(boton, 1.0, Muelle::RAPIDO, 0))]);
         e.regla(Sale(z_ver), vec![Efecto::Animar(ir(boton, 0.0, Muelle::RAPIDO, 0))]);
         e.regla(Pulsa(z_descartar), vec![Efecto::Hecho(abierta, 0.0)]);
-        e.regla(Pulsa(z_ver), vec![Efecto::Hecho(abierta, 0.0), Efecto::Impulso(orbe_y, -620.0), Efecto::Suceso(ver_evento)]);
+        e.regla(Pulsa(z_ver), vec![Efecto::Hecho(abierta, 0.0), Efecto::Impulso(orbe_y, -620.0), Efecto::Suceso(ver_evento, None)]);
         e.regla(Quieto { durante: ms(14_000), mientras: abierta.e().no() }, vec![Efecto::Hecho(dormida, 1.0)]);
 
         e
@@ -202,7 +202,7 @@ impl Guion for Marea {
             //  Lo único que le queda a la lógica: enterarse y hacer SU trabajo
             //  —montar el contenido, abrir el calendario—, que puede tardar.
             Evento::Capa("tarjeta", _) => c.trabajar(),
-            Evento::Suceso("ver-evento") => println!("lógica · alguien quiere ver el evento"),
+            Evento::Suceso("ver-evento", _) => println!("lógica · alguien quiere ver el evento"),
             //  Sin ratón, la demo hace de aviso que llega y se va.
             Evento::Demo => {
                 self.abierta = !self.abierta;

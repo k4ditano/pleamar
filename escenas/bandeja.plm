@@ -10,15 +10,15 @@ scene Tray {
     let sand = #e8c07a
 
     // ── la frontera con la lógica ────────────────────────────────
+    //  Cuántos avisos hay y qué pone cada uno lo dice la lógica (bandeja.luau).
+    fact count = 0
     fact more = false
-    let count = 2 + more * 3              // cuántos avisos hay: 2 o 5
 
-    text note.0.app = "MENSAJES";        text note.0.title = "Lucía: ¿bajas a por café? ☕"
-    text note.1.app = "CALENDARIO";      text note.1.title = "Reunión en 5 min · Revisión de diseño"
-    text note.2.app = "ACTUALIZACIONES"; text note.2.title = "Hay 214 paquetes esperando a que alguien se decida a instalarlos"
-    text note.3.app = "MÚSICA";          text note.3.title = "Tycho — Awake"
-    text note.4.app = "BATERÍA";         text note.4.title = "Queda un 12 %"
-    repeat i in 0..5 { event opened.$i -> }
+    repeat i in 0..5 {
+        text note.$i.app   = ""
+        text note.$i.title = ""
+    }
+    event opened ->                       // lleva dentro cuál: `emit opened(i)`
 
     // ── piezas ───────────────────────────────────────────────────
     //  Una etiqueta que mide lo que mida su texto: el `row` de dentro le da el
@@ -47,7 +47,7 @@ scene Tray {
 
         on enter hit { lit: 1 ~quick }
         on leave hit { lit: 0 ~quick }
-        on press hit { emit opened.$i }
+        on press hit { emit opened(i) }
     }
 
     // ── la escena ────────────────────────────────────────────────
@@ -72,5 +72,4 @@ scene Tray {
     //  Una raya que sigue al final de la lista: sabe cuánto mide sin que nadie se lo diga.
     box { from: 180, 66 + list.height + 10; size: head.width, 2; corner: 1; color: ink; opacity: 18% }
 
-    on demo { toggle more }
 }

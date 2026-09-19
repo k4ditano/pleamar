@@ -8,6 +8,7 @@ bytemuck = { version = "1.25.2", features = ["derive"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 cosmic-text = { version = "0.19.0", default-features = false, features = ["std", "swash"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+mlua = { version = "0.12", features = ["luau", "send"], optional = true }
 pollster = "1.0.1"
 resvg = { version = "0.48.1", default-features = false }
 wgpu = "30"
@@ -20,3 +21,10 @@ wayland-client = { version = "0.31", features = ["system"] }
 # fontconfig da los alias de fuentes del sistema («sans-serif» → la que toque). Sin él,
 # en Windows y macOS, fontdb lee las carpetas de fuentes directamente.
 cosmic-text = { version = "0.19.0", default-features = false, features = ["fontconfig"] }
+
+# La lógica en Luau trae consigo un compilador de C++: Luau se compila de sus
+# fuentes. Es una característica para que el núcleo se pueda comprobar contra
+# otros sistemas aunque aquí no haya compilador cruzado. Ver portable.sh.
+[features]
+default = ["luau"]
+luau = ["dep:mlua"]

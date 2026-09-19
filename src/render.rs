@@ -102,7 +102,7 @@ pub fn hilo(
         let mut bloquear = None;
         let mut pulsado = false;
         // (cuál, si viene de la lógica)
-        let mut sucesos: Vec<(usize, bool)> = sucesos_tardios.drain(..).map(|s| (s.0 as usize, false)).collect();
+        let mut sucesos: Vec<(usize, bool, Option<f32>)> = sucesos_tardios.drain(..).map(|s| (s.0 as usize, false, None)).collect();
         let mut gestos_pedidos: Vec<usize> = Vec::new();
         let mut entrada: Vec<ARender> = Vec::new();
         if en_reposo {
@@ -206,7 +206,7 @@ pub fn hilo(
                     None => eprintln!("render · no conozco el hecho «{nombre}»"),
                 },
                 ARender::Suceso(nombre) => match escena.sucesos.iter().position(|s| s.0 == nombre) {
-                    Some(i) => sucesos.push((i, true)),
+                    Some(i) => sucesos.push((i, true, None)),
                     None => eprintln!("render · no conozco el suceso «{nombre}»"),
                 },
                 ARender::Gesto(nombre) => match escena.gestos.iter().position(|g| g.nombre == nombre) {
@@ -324,14 +324,26 @@ pub fn hilo(
             for ef in std::mem::take(&mut efectos) {
                 match ef {
                     Efecto::Animar(t) => pendientes.push((ahora + t.retraso, t)),
-                    Efecto::Hecho(h, v) => hechos[h.0 as usize] = v,
-                    Efecto::Alternar(h) => hechos[h.0 as usize] = if hechos[h.0 as usize] > 0.5 { 0.0 } else { 1.0 },
-                    Efecto::Suceso(s) => sucesos.push((s.0 as usize, false)),
+                    // Un hecho que cambia una regla se le cuenta a la lógica, que si no
+                    // se quedaría creyendo lo que ella misma dijo la última vez.
+                    Efecto::Hecho(h, v) => {
+                        hechos[h.0 as usize] = v;
+                        let _ = a_logica.send(Evento::Hecho(escena.hechos[h.0 as usize].0, v));
+                    }
+                    Efecto::Alternar(h) => {
+                        let v = if hechos[h.0 as usize] > 0.5 { 0.0 } else { 1.0 };
+                        hechos[h.0 as usize] = v;
+                        let _ = a_logica.send(Evento::Hecho(escena.hechos[h.0 as usize].0, v));
+                    }
+                    Efecto::Suceso(s, carga) => {
+                        let v = carga.as_ref().map(|e| e.evaluar(Ctx { props: &props, hechos: &hechos }));
+                        sucesos.push((s.0 as usize, false, v));
+                    }
                     Efecto::Impulso(p, v) => props[p.0 as usize].v += v,
                     Efecto::Gesto(g) => gestos_pedidos.push(g.0 as usize),
                 }
             }
-            for (s, de_la_logica) in std::mem::take(&mut sucesos) {
+            for (s, de_la_logica, carga) in std::mem::take(&mut sucesos) {
                 let id = SucesoId(s as u16);
                 for (capa, est) in escena.capas.iter().zip(capas.iter_mut()) {
                     for (k, r) in capa.reclamaciones.iter().enumerate() {
@@ -355,7 +367,7 @@ pub fn hilo(
                 }
                 let (nombre, sale) = escena.sucesos[s];
                 if sale && !de_la_logica {
-                    let _ = a_logica.send(Evento::Suceso(nombre));
+                    let _ = a_logica.send(Evento::Suceso(nombre, carga));
                 }
             }
             // Gestos: uno solo corta a otro de su clase o inferior.

@@ -71,7 +71,7 @@ Todo ⬜: Hyprland (workspaces, ventanas, eventos), PipeWire, MPRIS, bandeja + s
 | Quickshell | pleamar |
 | --- | --- |
 | Lenguaje de escenas | ✅ v0: todo el modelo, componentes, `repeat`, reparto, errores y recarga en caliente |
-| Lógica en un lenguaje de script | ⬜ un `trait` de Rust; Luau por integrar |
+| Lógica en un lenguaje de script | ✅ Luau en caja de arena, con recarga en caliente |
 | Muelles propiedad del render | ✅ **y QtQuick no** |
 | Animación por fotogramas, estados, transiciones | ⬜ diseñado, sin hacer |
 | Movimiento reducido, i18n, accesibilidad | ⬜ |

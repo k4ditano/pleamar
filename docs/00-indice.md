@@ -16,6 +16,7 @@
 | [[pleamar · 06 Bocetos A-B-C]] | Las tres sintaxis que se compararon. Histórico. |
 | [[pleamar · 07 Qué falta para igualar a Quickshell]] | El inventario honesto, por tramos, y el orden de trabajo |
 | [[pleamar · 09 El lenguaje v0]] | **La gramática que ya funciona**, con palabras clave en inglés. La referencia |
+| [[pleamar · 10 La lógica en Luau]] | La frontera vista desde la lógica: qué puede hacer un `.luau`, y su caja de arena |
 | [[pleamar · 08 Limitaciones conocidas]] | Todo lo que está a medias, con su gravedad, para ir tachándolo |
 
 ## Estado (19 sep 2026)
@@ -30,6 +31,7 @@
 - ✅ **Medir texto desde una expresión** y **taller de texto** en su propio hilo: ni un frame lento después del primero.
 - ✅ **El lenguaje, v0**: un fichero `.plm` → escena. Tokenizador, parser, comprobación de nombres con «¿querías decir…?», errores con línea y flecha, y **recarga en caliente** que no pierde nada. `escenas/marea.plm` y `escenas/cara.plm` corren sin una línea de Rust.
 - ✅ **Componentes, `repeat` y reparto** (`row`/`column`): cada copia con sus propios nombres, zonas y reglas; cada hijo va a su hueco con un muelle. `escenas/bandeja.plm` es una lista de avisos que crece y encoge. Y el fichero se lee en cuatro vueltas: el orden es el de quien lee.
+- ✅ **La lógica en Luau**: un `.luau` al lado de la escena, en caja de arena (sin `io`, 64 MB, corte a los 2 s), con hechos, textos, sucesos con carga, temporizadores y órdenes del sistema. Se recarga en caliente. `bandeja.luau` mueve una lista desde datos.
 - ⬜ Parser.
 - ✅ **Renderer por elementos**: un quad por elemento con su caja. 600 formas cuestan 0,42 ms por frame frente a 3,66 ms del intérprete por píxel; 2000, 0,57 ms. Con él llegaron **aro/trazo, arco, segmento, giro** (propio y heredado), **degradado lineal, borde**, recortes anidados (hasta cuatro) y fundido real entre elementos. Y después, cerrando sus limitaciones: **transformaciones afines que se componen** (giro, escala, traslación), **opacidad de grupo** con capa intermedia, caja exacta para texturas giradas y zonas de ratón bajo transformaciones. Todo a la vista en `--escena muestrario`.
 - ✅ **Superficies de verdad**: una por monitor —y por los que se enchufen después—, escala fraccional (probada a 2 y a 1,5 en un monitor virtual), y una región de entrada que sigue a las zonas: lo transparente deja pasar el clic. La escena declara su superficie (tamaño, ancla, nivel, margen, reserva).
@@ -37,4 +39,4 @@
 
 ## Siguiente paso
 
-El punto 5: **Luau para la lógica** (G2). Es lo que le falta a una escena de fichero para tener vida propia: poner hechos y textos, oír sucesos, y —con ello— listas de verdad que vengan de datos (G12) y sucesos con carga (G13). Detrás, la entrada que falta (S6: rueda, teclado, arrastrar) y el primer servicio del sistema.
+Lo que queda rojo en [[pleamar · 08 Limitaciones conocidas]] es ya de otra clase: **la entrada que falta** (S6: rueda, teclado, arrastrar), **escuchar al sistema** (U2: órdenes que no acaban, y los primeros servicios de verdad —Hyprland, audio, música— detrás de `plataforma/`) y **los permisos** de la lógica (U1). Con eso se puede escribir una barra que sirva.

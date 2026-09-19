@@ -46,6 +46,16 @@ layer shape ~quick {
 on hover orb for 320ms { open = true }
 ```
 
+## La lógica
+
+Si al lado de `marea.plm` hay un `marea.luau`, esa es su lógica: Luau en una caja
+de arena —sin `io`, con tope de memoria, y cortada si un manejador no acaba en
+2 s—, en su propio hilo, que el render no espera nunca. Solo puede lo que cruza
+la frontera: `fact.open = true`, `text["notice.title"] = …`, `emit`, `play`, y
+oír (`on("view_event", …)`, `on("press:view", …)`), más temporizadores y `run`
+para órdenes del sistema. También se recarga al guardarla. Referencia en
+`docs/10-logica-luau.md`.
+
 ## Una escena son datos
 
 El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
@@ -85,6 +95,7 @@ El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
 | `forma.wgsl` | Un quad por elemento: cada píxel solo ejecuta las formas del elemento que lo cubre. |
 | `formas.rs` | La geometría, una vez, para tres usos: la GPU, el ratón y las cajas. Elipse, caja, arco, segmento, trazo y giro. |
 | `logica.rs` | Donde corre un `Guion`: recibe eventos, declara transiciones y alarmas, y se bloquea a propósito. |
+| `logica_luau.rs` | La lógica de una escena de fichero: Luau en caja de arena, con la frontera y nada más. |
 | `lenguaje/` | Del texto a la escena: `fichas` trocea, `arbol` agrupa sin saber qué significa nada, y `obra` le da sentido y comprueba los nombres. |
 | `escenas/marea.rs` | La bolita y su tarjeta: 12 propiedades, 12 instrucciones, 4 zonas. |
 | `escenas/isla.rs` | Una isla como la de k4 que suelta una gota. Su lógica no decide nada: dos capas y tres reglas. |
@@ -127,8 +138,8 @@ falta —con la lista de limitaciones conocidas en `docs/08`— están en `docs/
 
 ## Lo que no es
 
-Una escena de fichero no tiene todavía lógica propia —falta Luau—, y una lista
-es de capacidad fija: no hay modelos que vengan de datos. No hay
+Una lista es de capacidad fija —aunque la lógica la mueva con datos—, y la
+lógica solo se entera del sistema lanzando órdenes que acaban. No hay
 layout —las posiciones son expresiones a mano—
 y todas las superficies pintan la misma escena. Y los primeros frames tras despertar salen
 sin esperar al vsync, así que el reloj de animación debería ir con el tiempo de

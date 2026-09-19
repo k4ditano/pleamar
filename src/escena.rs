@@ -651,7 +651,8 @@ pub enum Efecto {
     Hecho(HechoId, f32),
     /// De sí a no y de no a sí.
     Alternar(HechoId),
-    Suceso(SucesoId),
+    /// Un suceso, con una carga si se quiere: `emit opened(i)`. Se evalúa al dispararse.
+    Suceso(SucesoId, Option<Expr>),
     Impulso(PropId, f32),
     Gesto(GestoId),
 }
@@ -821,7 +822,16 @@ pub enum Evento {
     Sale(&'static str),
     Pulsa(&'static str),
     Alarma(&'static str),
-    Suceso(&'static str),
+    /// Un suceso de la escena que sale hacia la lógica, con su carga si la trae.
+    Suceso(&'static str, Option<f32>),
+    /// Una regla ha cambiado un hecho: la lógica lleva la cuenta de lo que es verdad.
+    Hecho(&'static str, f32),
+    /// Una orden que se lanzó ha terminado: (cuál, lo que escribió, con qué código).
+    Proceso(u32, String, i32),
+    /// El fichero de la lógica ha cambiado.
+    RecargarLogica,
+    /// La escena se ha recargado: estos son ahora sus hechos y sus textos.
+    EscenaNueva(Vec<(&'static str, f32)>, Vec<(&'static str, String)>),
     /// Una capa ha cambiado de manos: (capa, quién gana ahora).
     Capa(&'static str, &'static str),
     /// Se pidió un gesto y había uno de más clase puesto.

@@ -1,0 +1,327 @@
+//! La lógica de una escena, en Luau. Vive en su hilo, en una caja de arena: sin
+//! ficheros ni sistema, con tope de memoria y con los segundos contados. Si se
+//! atasca no se entera nadie —el render no la espera—, y si se queda en un
+//! bucle para siempre, se la corta.
+//!
+//! Lo único que puede hacer es lo que cruza la frontera: decir qué es verdad,
+//! qué pone un texto, que algo ha pasado; y oír lo que pasa en la escena.
+//!
+//! ```lua
+//! fact.open = true                         -- un hecho
+//! text["notice.title"] = "Reunión"        -- un texto vivo
+//! emit("confirmed")   play("joy")          -- un suceso, un gesto
+//! on("view_event", function(n) … end)      -- un suceso de la escena, con su carga
+//! on("press:view", …)  on("enter:orb", …)  on("layer:card", function(claim) … end)
+//! on("fact:open", function(v) … end)       -- una regla cambió un hecho
+//! local t = every(1000, function() … end)  after(500, …)  cancel(t)
+//! run("date", {"+%H:%M"}, function(out, code) … end)   -- una orden del sistema
+//! ```
+
+use crate::escena::{internar, ARender, Escena, Evento};
+use crate::logica::{Contexto, Guion};
+use mlua::{Function, Lua, MultiValue, Table, Value, VmState};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// Cuánto puede tardar un manejador antes de que se le corte.
+const PACIENCIA: Duration = Duration::from_secs(2);
+const MEMORIA: usize = 64 << 20;
+
+struct Temporizador {
+    id: u32,
+    cuando: Instant,
+    cada: Option<Duration>,
+    f: Function,
+}
+
+#[derive(Default)]
+struct Compartido {
+    manejadores: HashMap<String, Vec<Function>>,
+    temporizadores: Vec<Temporizador>,
+    procesos: HashMap<u32, Function>,
+    siguiente: u32,
+    hechos: HashMap<String, f64>,
+    textos: HashMap<String, String>,
+    /// Hasta cuándo puede correr lo que está corriendo.
+    limite: Option<Instant>,
+}
+
+fn pista<'a>(k: &str, conocidos: impl Iterator<Item = &'a String>) -> String {
+    crate::lenguaje::parecido(k, conocidos).map_or(String::new(), |p| format!(". ¿Querías decir «{p}»?"))
+}
+
+pub struct GuionLuau {
+    escena: String,
+    logica: String,
+    tx: Sender<ARender>,
+    a_logica: Sender<Evento>,
+    bloqueada: Arc<AtomicBool>,
+    lua: Option<Lua>,
+    c: Arc<Mutex<Compartido>>,
+}
+
+impl GuionLuau {
+    pub fn nuevo(escena: &str, logica: &str, tx: Sender<ARender>, a_logica: Sender<Evento>, bloqueada: Arc<AtomicBool>) -> Self {
+        GuionLuau { escena: escena.to_owned(), logica: logica.to_owned(), tx, a_logica, bloqueada, lua: None, c: Arc::default() }
+    }
+
+    /// Un estado de Luau nuevo, con la frontera puesta, y el fichero ejecutado.
+    fn cargar(&mut self) {
+        {
+            let mut c = self.c.lock().unwrap();
+            c.manejadores.clear();
+            c.temporizadores.clear();
+            c.procesos.clear();
+        }
+        let fuente = match std::fs::read_to_string(&self.logica) {
+            Ok(f) => f,
+            Err(e) => return eprintln!("lógica · {}: {e}", self.logica),
+        };
+        let t0 = Instant::now();
+        match self.preparar().and_then(|lua| {
+            self.c.lock().unwrap().limite = Some(Instant::now() + PACIENCIA);
+            lua.load(&fuente).set_name(format!("@{}", self.logica)).exec()?;
+            Ok(lua)
+        }) {
+            Ok(lua) => {
+                self.lua = Some(lua);
+                let c = self.c.lock().unwrap();
+                println!("lógica · {} en marcha en {:.1} ms · {} manejadores, {} temporizadores", self.logica, t0.elapsed().as_secs_f32() * 1000.0, c.manejadores.values().map(Vec::len).sum::<usize>(), c.temporizadores.len());
+            }
+            Err(e) => eprintln!("lógica · la anterior sigue como estaba:\n{e}"),
+        }
+        self.c.lock().unwrap().limite = None;
+    }
+
+    fn preparar(&self) -> mlua::Result<Lua> {
+        let lua = Lua::new();
+        lua.set_memory_limit(MEMORIA)?;
+        let g = lua.globals();
+
+        // Un manejador que no acaba no puede quedarse con el hilo para siempre.
+        let c = self.c.clone();
+        lua.set_interrupt(move |_| match c.lock().unwrap().limite {
+            Some(l) if Instant::now() > l => Err(mlua::Error::runtime(format!("un manejador lleva más de {} s sin acabar: cortado", PACIENCIA.as_secs()))),
+            _ => Ok(VmState::Continue),
+        });
+
+        // fact.open = true · fact.open
+        let (tx, c) = (self.tx.clone(), self.c.clone());
+        let poner = lua.create_function(move |_, (_, k, v): (Table, String, Value)| {
+            let n = match v {
+                Value::Boolean(b) => b as u8 as f64,
+                Value::Integer(i) => i as f64,
+                Value::Number(x) => x,
+                otro => return Err(mlua::Error::runtime(format!("un hecho es un número o un sí/no, no un {}", otro.type_name()))),
+            };
+            // Un nombre mal escrito es un error aquí, con su línea, y no un aviso perdido en el render.
+            if !c.lock().unwrap().hechos.contains_key(&k) {
+                return Err(mlua::Error::runtime(format!("la escena no tiene ningún hecho «{k}»{}", pista(&k, c.lock().unwrap().hechos.keys()))));
+            }
+            c.lock().unwrap().hechos.insert(k.clone(), n);
+            let _ = tx.send(ARender::Hecho(internar(&k), n as f32));
+            Ok(())
+        })?;
+        let c = self.c.clone();
+        let leer = lua.create_function(move |_, (_, k): (Table, String)| Ok(c.lock().unwrap().hechos.get(&k).copied()))?;
+        g.set("fact", Self::tabla_viva(&lua, leer, poner)?)?;
+
+        // text["notice.title"] = "…"
+        let (tx, c) = (self.tx.clone(), self.c.clone());
+        let poner = lua.create_function(move |_, (_, k, v): (Table, String, String)| {
+            if !c.lock().unwrap().textos.contains_key(&k) {
+                return Err(mlua::Error::runtime(format!("la escena no tiene ningún texto «{k}»{}", pista(&k, c.lock().unwrap().textos.keys()))));
+            }
+            c.lock().unwrap().textos.insert(k.clone(), v.clone());
+            let _ = tx.send(ARender::Texto(internar(&k), v));
+            Ok(())
+        })?;
+        let c = self.c.clone();
+        let leer = lua.create_function(move |_, (_, k): (Table, String)| Ok(c.lock().unwrap().textos.get(&k).cloned()))?;
+        g.set("text", Self::tabla_viva(&lua, leer, poner)?)?;
+
+        let tx = self.tx.clone();
+        g.set("emit", lua.create_function(move |_, n: String| Ok(tx.send(ARender::Suceso(internar(&n))).is_ok()))?)?;
+        let tx = self.tx.clone();
+        g.set("play", lua.create_function(move |_, n: String| Ok(tx.send(ARender::Gesto(internar(&n))).is_ok()))?)?;
+
+        let c = self.c.clone();
+        g.set("on", lua.create_function(move |_, (que, f): (String, Function)| {
+            c.lock().unwrap().manejadores.entry(que).or_default().push(f);
+            Ok(())
+        })?)?;
+
+        let plazo = |c: &Arc<Mutex<Compartido>>, ms: f64, f: Function, repite: bool| {
+            let mut c = c.lock().unwrap();
+            c.siguiente += 1;
+            let d = Duration::from_secs_f64(ms.max(1.0) / 1000.0);
+            let id = c.siguiente;
+            c.temporizadores.push(Temporizador { id, cuando: Instant::now() + d, cada: repite.then_some(d), f });
+            id
+        };
+        let c = self.c.clone();
+        g.set("after", lua.create_function(move |_, (ms, f): (f64, Function)| Ok(plazo(&c, ms, f, false)))?)?;
+        let c = self.c.clone();
+        g.set("every", lua.create_function(move |_, (ms, f): (f64, Function)| Ok(plazo(&c, ms, f, true)))?)?;
+        let c = self.c.clone();
+        g.set("cancel", lua.create_function(move |_, id: u32| {
+            c.lock().unwrap().temporizadores.retain(|t| t.id != id);
+            Ok(())
+        })?)?;
+
+        // Trabajo de mentira, para ver que al render le da igual.
+        let (c, bloqueada) = (self.c.clone(), self.bloqueada.clone());
+        g.set("busy", lua.create_function(move |_, ms: f64| {
+            let d = Duration::from_secs_f64(ms.max(0.0) / 1000.0);
+            if let Some(l) = &mut c.lock().unwrap().limite {
+                *l += d;
+            }
+            bloqueada.store(true, Ordering::Relaxed);
+            let fin = Instant::now() + d;
+            while Instant::now() < fin {
+                std::hint::spin_loop();
+            }
+            bloqueada.store(false, Ordering::Relaxed);
+            Ok(())
+        })?)?;
+
+        // Una orden del sistema: corre en otro hilo y contesta cuando acaba.
+        let (c, a_logica) = (self.c.clone(), self.a_logica.clone());
+        g.set("run", lua.create_function(move |_, (orden, args, f): (String, Option<Vec<String>>, Option<Function>)| {
+            let id = {
+                let mut c = c.lock().unwrap();
+                c.siguiente += 1;
+                let id = c.siguiente;
+                if let Some(f) = f {
+                    c.procesos.insert(id, f);
+                }
+                id
+            };
+            let a_logica = a_logica.clone();
+            std::thread::spawn(move || {
+                let (salida, codigo) = match std::process::Command::new(&orden).args(args.unwrap_or_default()).output() {
+                    Ok(o) => (String::from_utf8_lossy(&o.stdout).trim_end().to_owned(), o.status.code().unwrap_or(-1)),
+                    Err(e) => (e.to_string(), -1),
+                };
+                let _ = a_logica.send(Evento::Proceso(id, salida, codigo));
+            });
+            Ok(())
+        })?)?;
+
+        g.set("log", lua.create_function(|_, v: MultiValue| {
+            let trozos: Vec<String> = v.iter().map(|x| x.to_string().unwrap_or_else(|_| format!("{x:?}"))).collect();
+            println!("luau   · {}", trozos.join(" "));
+            Ok(())
+        })?)?;
+
+        // La caja de arena, lo último: a partir de aquí los globales no se tocan.
+        lua.sandbox(true)?;
+        Ok(lua)
+    }
+
+    /// Una tabla que no guarda nada: leerla y escribirla son llamadas.
+    fn tabla_viva(lua: &Lua, leer: Function, poner: Function) -> mlua::Result<Table> {
+        let (t, meta) = (lua.create_table()?, lua.create_table()?);
+        meta.set("__index", leer)?;
+        meta.set("__newindex", poner)?;
+        t.set_metatable(Some(meta))?;
+        Ok(t)
+    }
+
+    fn llamar(&self, f: &Function, args: impl mlua::IntoLuaMulti) {
+        self.c.lock().unwrap().limite = Some(Instant::now() + PACIENCIA);
+        if let Err(e) = f.call::<()>(args) {
+            eprintln!("lógica · {e}");
+        }
+        self.c.lock().unwrap().limite = None;
+    }
+
+    fn avisar(&self, que: &str, arg: Value) {
+        let quienes: Vec<Function> = self.c.lock().unwrap().manejadores.get(que).cloned().unwrap_or_default();
+        for f in quienes {
+            self.llamar(&f, arg.clone());
+        }
+    }
+}
+
+impl Guion for GuionLuau {
+    fn escena(&mut self) -> Escena {
+        let e = super::escenas::de_fichero::leer(&self.escena).unwrap_or_else(|m| {
+            eprintln!("{m}");
+            std::process::exit(1)
+        });
+        // Lo que la escena da por cierto al nacer es lo que la lógica cree hasta que alguien diga otra cosa.
+        let mut c = self.c.lock().unwrap();
+        c.hechos = e.hechos.iter().map(|(n, v)| (n.to_string(), *v as f64)).collect();
+        c.textos = e.textos.iter().map(|(n, v)| (n.to_string(), v.clone())).collect();
+        e
+    }
+
+    fn evento(&mut self, e: Evento, _: &mut Contexto) {
+        let numero = |v: f32| Value::Number(v as f64);
+        match e {
+            // El fichero se ejecuta ya en el hilo de la lógica, con la escena entregada.
+            Evento::Alarma("inicio") | Evento::RecargarLogica => self.cargar(),
+            Evento::Suceso(n, carga) => self.avisar(n, carga.map_or(Value::Nil, numero)),
+            Evento::Entra(z) => self.avisar(&format!("enter:{z}"), Value::Nil),
+            Evento::Sale(z) => self.avisar(&format!("leave:{z}"), Value::Nil),
+            Evento::Pulsa(z) => self.avisar(&format!("press:{z}"), Value::Nil),
+            Evento::Demo => self.avisar("demo", Value::Nil),
+            Evento::Hecho(n, v) => {
+                self.c.lock().unwrap().hechos.insert(n.to_owned(), v as f64);
+                self.avisar(&format!("fact:{n}"), numero(v));
+            }
+            Evento::Capa(capa, gana) => {
+                let Some(lua) = &self.lua else { return };
+                if let Ok(s) = lua.create_string(gana) {
+                    self.avisar(&format!("layer:{capa}"), Value::String(s));
+                }
+            }
+            // La escena se recargó: lo que tenga de nuevo ya se puede nombrar; lo que
+            // ya se sabía, se sigue sabiendo.
+            Evento::EscenaNueva(hechos, textos) => {
+                let mut c = self.c.lock().unwrap();
+                for (n, v) in hechos {
+                    c.hechos.entry(n.to_owned()).or_insert(v as f64);
+                }
+                for (n, v) in textos {
+                    c.textos.entry(n.to_owned()).or_insert(v);
+                }
+            }
+            Evento::Proceso(id, salida, codigo) => {
+                let f = self.c.lock().unwrap().procesos.remove(&id);
+                if let Some(f) = f {
+                    self.llamar(&f, (salida, codigo));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn proxima(&self) -> Option<Instant> {
+        self.c.lock().unwrap().temporizadores.iter().map(|t| t.cuando).min()
+    }
+
+    fn tic(&mut self, _: &mut Contexto) {
+        let ahora = Instant::now();
+        let vencidos: Vec<Function> = {
+            let mut c = self.c.lock().unwrap();
+            let f = c.temporizadores.iter().filter(|t| t.cuando <= ahora).map(|t| t.f.clone()).collect();
+            for t in &mut c.temporizadores {
+                if t.cuando <= ahora {
+                    if let Some(d) = t.cada {
+                        t.cuando = ahora + d;
+                    }
+                }
+            }
+            c.temporizadores.retain(|t| t.cuando > ahora);
+            f
+        };
+        for f in vencidos {
+            self.llamar(&f, ());
+        }
+    }
+}

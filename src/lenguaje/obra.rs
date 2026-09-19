@@ -1570,7 +1570,18 @@ impl<'a> Obra<'a> {
                     let p = c.id("un efecto")?;
                     efectos.push(match p.as_str() {
                         "toggle" => Efecto::Alternar(self.hecho(&mut c)?),
-                        "emit" => Efecto::Suceso(self.suceso(&mut c)?),
+                        // `emit opened` o, con carga, `emit opened(i)`.
+                        "emit" => {
+                            let s = self.suceso(&mut c)?;
+                            let carga = if c.sim("(") {
+                                let e = self.expr(&mut c)?;
+                                c.exige_sim(")")?;
+                                Some(e)
+                            } else {
+                                None
+                            };
+                            Efecto::Suceso(s, carga)
+                        }
                         "impulse" => Efecto::Impulso(self.prop(&mut c)?, c.num()?),
                         "play" => {
                             let g = c.id("el nombre de un gesto")?;

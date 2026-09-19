@@ -39,7 +39,7 @@ pub fn leer(fuente: &str) -> Result<Escena, Vec<Fallo>> {
 }
 
 /// «¿Querías decir…?»: el nombre conocido que más se parece, si se parece bastante.
-pub(crate) fn parecido<'a>(a: &str, conocidos: impl Iterator<Item = &'a String>) -> Option<&'a String> {
+pub fn parecido<'a>(a: &str, conocidos: impl Iterator<Item = &'a String>) -> Option<&'a String> {
     let distancia = |x: &str, y: &str| {
         let (x, y): (Vec<char>, Vec<char>) = (x.chars().collect(), y.chars().collect());
         let mut fila: Vec<usize> = (0..=y.len()).collect();

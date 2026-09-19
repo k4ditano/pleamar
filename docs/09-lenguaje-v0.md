@@ -11,7 +11,7 @@ Ejemplos completos: `escenas/marea.plm` (la bolita y su tarjeta, 150 líneas), `
 
 ## La idea en una frase
 
-**Todo lo que se escribe aquí lo ejecuta el render, solo.** No hay bucles ni variables que muten: todo termina y todo se comprueba al cargar. La lógica —fuera— solo pone hechos, textos y sucesos.
+**Todo lo que se escribe aquí lo ejecuta el render, solo.** No hay bucles ni variables que muten: todo termina y todo se comprueba al cargar. La lógica —fuera, en un `.luau` con el mismo nombre: [[pleamar · 10 La lógica en Luau]]— solo pone hechos, textos y sucesos.
 
 ## Forma general
 
@@ -145,7 +145,7 @@ on confirmed             { play joy }
 every 2.5s..7s while awake { play yawn }
 ```
 
-Efectos: `hecho = true|false|n`, `toggle hecho`, `emit suceso`, `impulse prop velocidad`, `play gesto`, y `prop: valor ~muelle after 70ms`.
+Efectos: `hecho = true|false|n`, `toggle hecho`, `emit suceso` o con carga `emit opened(i)`, `impulse prop velocidad`, `play gesto`, y `prop: valor ~muelle after 70ms`.
 
 ## Lo que lleva sola
 

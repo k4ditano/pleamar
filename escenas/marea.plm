@@ -146,6 +146,5 @@ scene Marea {
     on press view            { open = false; impulse orb.y -620; emit view_event }
     on idle for 14s while not open { asleep = true }
 
-    //  Sin ratón: `--demo` hace de aviso que llega y se va.
-    on demo                  { toggle open }
+    //  Sin ratón, `--demo` avisa a la lógica (marea.luau), que hace de aviso que llega.
 }

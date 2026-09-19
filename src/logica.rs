@@ -23,6 +23,12 @@ pub struct Opciones {
 pub trait Guion: Send {
     fn escena(&mut self) -> Escena;
     fn evento(&mut self, e: Evento, c: &mut Contexto);
+    /// Cuándo quiere que le despierten, si tiene algo a plazo.
+    fn proxima(&self) -> Option<Instant> {
+        None
+    }
+    /// Le ha llegado la hora.
+    fn tic(&mut self, _: &mut Contexto) {}
 }
 
 pub struct Contexto {
@@ -76,16 +82,20 @@ impl Contexto {
     /// El trabajo pesado. En el modo ingenuo se lo endosa al hilo de render,
     /// porque ahí «lógica» y «pintado» son el mismo hilo.
     pub fn trabajar(&self) {
-        if self.op.bloqueo.is_zero() {
+        self.trabajar_durante(self.op.bloqueo);
+    }
+
+    pub fn trabajar_durante(&self, cuanto: Duration) {
+        if cuanto.is_zero() {
             return;
         }
         if self.op.ingenuo {
-            let _ = self.tx.send(ARender::Orden(Orden::Bloquear(self.op.bloqueo)));
-            std::thread::sleep(self.op.bloqueo);
+            let _ = self.tx.send(ARender::Orden(Orden::Bloquear(cuanto)));
+            std::thread::sleep(cuanto);
             return;
         }
         self.bloqueada.store(true, Ordering::Relaxed);
-        let fin = Instant::now() + self.op.bloqueo;
+        let fin = Instant::now() + cuanto;
         // Espera activa: un núcleo al 100 %, como un bucle de JS que no cede.
         while Instant::now() < fin {
             std::hint::spin_loop();
@@ -108,6 +118,9 @@ pub fn hilo(mut guion: Box<dyn Guion>, rx: Receiver<Evento>, tx: Sender<ARender>
         for (cuando, _) in &c.alarmas {
             hasta = hasta.min(*cuando);
         }
+        if let Some(p) = guion.proxima() {
+            hasta = hasta.min(p);
+        }
         match rx.recv_timeout(hasta.saturating_duration_since(Instant::now())) {
             // En la demo manda el reloj, no el ratón.
             Ok(e) if !(demo && matches!(e, Evento::Entra(_) | Evento::Sale(_) | Evento::Pulsa(_))) => {
@@ -124,6 +137,9 @@ pub fn hilo(mut guion: Box<dyn Guion>, rx: Receiver<Evento>, tx: Sender<ARender>
         c.alarmas.retain(|(t, _)| *t > ahora);
         for n in vencidas {
             guion.evento(Evento::Alarma(n), &mut c);
+        }
+        if guion.proxima().is_some_and(|p| p <= Instant::now()) {
+            guion.tic(&mut c);
         }
         if demo && ahora >= siguiente_demo {
             guion.evento(Evento::Demo, &mut c);
