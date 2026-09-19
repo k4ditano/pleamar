@@ -17,6 +17,7 @@ cargo build --release
 ./target/release/pleamar --escena escenas/lanzador.plm # un lanzador; se abre con: pleamar --decir lanzador "emit toggle"
 ./target/release/pleamar --escena escenas/marea.plm   # una escena escrita en el lenguaje; se recarga al guardarla
 ./target/release/pleamar --comprobar escenas/cara.plm # la lee, dice si está bien, y sale
+./probar.sh                                           # las pruebas del lenguaje: cada .plm de pruebas/ dice qué espera
 ./target/release/pleamar                 # pasa el ratón por la bolita; botón derecho la cierra
 ./target/release/pleamar --escena isla   # otra escena, el mismo render
 ./target/release/pleamar --escena cara   # la cara de Marea: capas, gestos y su guion

@@ -87,6 +87,29 @@ group {                                 // el árbol: transforma, funde y recort
 
 **Una forma con nombre es una zona si alguna regla la nombra** (o si lleva `active`, o se declaró con `zone`): se puede pulsar, y el ratón entra por ella. Un nombre puesto solo para leerse mejor no para el clic. Hereda las transformaciones de los grupos donde esté. `active: expr` la enciende y la apaga. `zone box whole { … }` es una zona que no se pinta. **La que se declara después queda encima.**
 
+## Modelos y `for` — listas que vienen de datos
+
+```
+model rows max 14 {                       // una lista de fichas, todas con estos campos
+    label: text
+    enabled: bool = true                  // lo que vale si la ficha no lo trae
+    depth: number
+}
+
+column list { for r in rows { Row(r) } }  // una copia por ficha
+
+component Row(r) {                        // una ficha se pasa como cualquier parámetro
+    size: 220, 30
+    box hit { from: 0, 0; size: 220, 30; corner: 7; active: r.enabled }
+    text r.label { at: 12 + r.depth * 12, 15; anchor: left center; size: 13.5; color: ink }
+    on press hit { emit choose(r.index) } // `index`: su posición, desde 0
+}
+```
+
+La lógica la entrega entera, de una vez: `model.rows = lista` (ver [[pleamar · 10 La lógica en Luau]]). Un campo `text` se usa donde va un texto vivo (`text r.label { … }`, `image pic = from r.icon, 24, 24`); uno `number` o `bool`, en cualquier expresión. Cada vuelta del `for` **solo existe si la lista llega hasta ahí**: no se ve, no ocupa en su reparto y sus zonas no paran el clic. `rows.count` es cuántas se ven y `rows.total` cuántas hay de verdad (`show: rows.total > rows.count` para un «hay más»). `max` es cuántas caben (16 si no se dice); una ficha suelta se nombra `rows.0.label`.
+
+Un `for` vale dentro de un `row` o `column` y también suelto, y dentro de una `popup`.
+
 ## Componentes, repeticiones y repartos
 
 ```

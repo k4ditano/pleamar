@@ -95,7 +95,14 @@ En la escena, `emit opened(i)`; en la lógica, `on("opened", function(i) … end
 
 ## Listas que vienen de datos
 
-Todavía no hay copias que nazcan en marcha (G12), pero con la lógica poniendo textos y un hecho `count`, una lista de capacidad fija se comporta como una de verdad. `bandeja.luau` tiene una tabla de avisos: cada 1,6 s llega uno arriba, pulsar uno lo despacha, y la columna de la escena recoloca a los demás con su muelle.
+```lua
+model.rows = { { label = "Abrir", enabled = true }, { label = "Salir" } }   -- la lista entera, de una vez
+local r = model.rows[i + 1]                                                 -- y se lee de vuelta tal como se puso
+```
+
+La escena declara la forma (`model rows max 14 { label: text; enabled: bool = true }`) y la recorre (`for r in rows`). De cada ficha se cogen los campos declarados y se ignora lo demás, así que **la lista de un servicio se entrega tal cual**: `sys.watch("tray", function(list) model.icons = list end)`. Lo que falte vale su valor por defecto; un `bool` se escribe con `true` y `false`; y donde se espera un número, una lista cuenta como cuántos tiene (`children: number` con un submenú dentro). Solo viaja al render lo que haya cambiado respecto a la vez anterior.
+
+Al leerla de vuelta sale la tabla original, con todo lo que traía (`model.icons[1].key`), no solo los campos de la escena: es donde la lógica guarda lo que la escena no necesita ver.
 
 ## Multiplataforma
 

@@ -117,6 +117,12 @@ Un hilo escucha en `$XDG_RUNTIME_DIR/pleamar-ESCENA.sock`; `pleamar --decir ESCE
 
 `wl_data_device`: al entrar un arrastre se mira si trae `text/uri-list` o `text/plain`, y al soltarlo se lee en un hilo aparte —quien lo ofrece puede tardar— y llega como `ARender::Soltado`. El render mira qué zona hay debajo y dispara `on drop zona`.
 
+## Modelos (`lenguaje/obra.rs`, `logica_luau.rs`)
+
+El render no sabe que hay listas. `model rows max 14 { label: text; enabled: bool }` declara, por dentro, catorce textos vivos `rows.k.label`, catorce hechos `rows.k.enabled`, y `rows.count` y `rows.total`. `for r in rows` despliega catorce copias, cada una en un ámbito donde `r` es otro nombre para `rows.k` (el mismo mecanismo de alias de los componentes) y con una condición: `rows.count > k`. Esa condición apaga el dibujo, el hueco en el reparto y las zonas. En Luau, `model.rows = lista` reparte cada campo a su texto o a su hecho y manda solo lo que cambió.
+
+Es una decisión a propósito: el lenguaje ya es el definitivo —se escribe una lista y se recorre—, y la implementación puede cambiar debajo (copias que nazcan en marcha, G12) sin tocar una escena.
+
 ## Emergentes (`plataforma/wayland.rs`, `gpu.rs`, `forma.wgsl`)
 
 Una `popup` no es otra escena: es **otra ventana a la misma**. Lo de dentro se compila bajo una traslación que lo lleva lejos (a 10 000 px por emergente), y su lámina lleva un *origen*: el shader resta ese origen al colocar los quads y lo suma al calcular cada píxel. Todo lo demás —propiedades, zonas, reglas, el atlas— es común, y por eso un menú se anima y se pulsa igual que la barra de la que sale. Al componer, un elemento sobrevive si toca la superficie principal o el trozo que alguna emergente abierta está enseñando.
