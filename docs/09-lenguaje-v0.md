@@ -7,7 +7,7 @@ pleamar --escena escenas/marea.plm      # se recarga sola al guardar el fichero
 pleamar --comprobar escenas/marea.plm   # la lee, dice si está bien, y sale
 ```
 
-Ejemplos completos: `escenas/marea.plm` (la bolita y su tarjeta, 150 líneas), `escenas/cara.plm` (capas y gestos, sin lógica ninguna) y `escenas/bandeja.plm` (componentes, `repeat` y reparto: una lista de avisos que crece y encoge).
+Ejemplos completos: **`escenas/barra.plm` (una barra de verdad: escritorios, ventana, hora y volumen)**, `escenas/marea.plm` (la bolita y su tarjeta, 150 líneas), `escenas/cara.plm` (capas y gestos, sin lógica ninguna) y `escenas/bandeja.plm` (componentes, `repeat` y reparto: una lista de avisos que crece y encoge).
 
 ## La idea en una frase
 
@@ -32,7 +32,7 @@ Números con unidad: `40`, `40px`, `34%` (= 0.34), `138deg` (a radianes), `320ms
 
 | Sentencia | Qué es |
 | --- | --- |
-| `surface { size: 720, 224; anchor: top; margin: 40; level: top; reserve: 0; screens: "HDMI-A-1" }` | La ventana que pide. `anchor`: top, bottom, left, right, top_left…, center. `level`: background, bottom, top, overlay. `screens: all` o una lista |
+| `surface { size: 720, 224; anchor: top; margin: 40; level: top; reserve: 0; screens: "HDMI-A-1" }` | La ventana que pide. `size: full, 44` es todo el ancho del monitor; cuánto es se lee en `screen.width`. `anchor`: top, bottom, left, right, top_left…, center. `level`: background, bottom, top, overlay. `screens: all` o una lista |
 | `prop orb.x = 360 ~lively` | Una propiedad animada: un muelle. Sin `~`, `lively` |
 | `pose eyes = 14` | Una propiedad de la pose: la que un gesto lleva de la mano |
 | `fact open = false` | Algo que es verdad un rato. Lo ponen la lógica y las reglas |
@@ -71,6 +71,7 @@ line    { from: x, y; to: x, y; width: w }
 text notice.title { at: x, y; anchor: left center; width: 354; lines: 1; size: 20; weight: 500;
                     color: #…; opacity: e; align: left; line_height: 1.3; family: "Inter"; measure: label }
 text "Descartar"  { at: x, y; anchor: center }
+text number(volume * 100, 0, " %") { … }                     // un número que sale de una expresión: decimales y lo de detrás
 
 image fox { at: x, y; size: w, h; opacity: e; tint: #9ed6bd }   // tint: para iconos simbólicos
 
@@ -102,6 +103,7 @@ repeat i in 0..5 { event opened.$i -> } // se despliega al cargar; `$i` entra en
 
 column list ~calm {                     // o `row`. Con muelle, cada hijo VA a su hueco
     at: 180, 66;  gap: 8;  padding: 0;  align: start | center | end
+    anchor: right                       // qué parte cae sobre `at`: left, center, right · top, middle, bottom
     fill: #222;  corner: 12             // un fondo del tamaño de lo que contenga
     repeat i in 0..5 { Note(i) { show: count > i } }
     space 6

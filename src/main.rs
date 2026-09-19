@@ -177,7 +177,7 @@ fn main() {
             // Salir pasa por el render para que cierre su último ciclo de medidas.
             let _ = tx.send(ARender::Salir);
             std::thread::sleep(Duration::from_millis(400));
-            std::process::exit(0);
+            salir();
         });
     }
 
@@ -187,6 +187,13 @@ fn main() {
     plataforma::atender(pide, alto_extra, instancia, a_render.clone());
     let _ = a_render.send(ARender::Salir);
     let _ = render.join();
-    // El proceso se va entero: el orden de destrucción no merece código en un prototipo.
-    std::process::exit(0);
+    salir();
+}
+
+/// El proceso se va entero —el orden de destrucción no merece código en un
+/// prototipo—, pero no sin parar antes lo que la lógica dejó corriendo.
+fn salir() -> ! {
+    #[cfg(feature = "luau")]
+    logica_luau::parar_hijos();
+    std::process::exit(0)
 }

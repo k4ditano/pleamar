@@ -64,7 +64,7 @@ Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
 
 ### Datos y sistema
 
-Todo ⬜: Hyprland (workspaces, ventanas, eventos), PipeWire, MPRIS, bandeja + sus menús, servidor de notificaciones, UPower, Bluetooth, red, lista de aplicaciones, `Process`, `FileView`, `Socket`, IPC, HTTP, reloj, ajustes persistentes.
+🟡 Hyprland (escritorios y ventana activa, por sus sockets) y `Process` (`run`, `spawn`). ⬜ lo demás: PipeWire, MPRIS, bandeja + sus menús, servidor de notificaciones, UPower, Bluetooth, red, lista de aplicaciones, `Process`, `FileView`, `Socket`, IPC, HTTP, reloj, ajustes persistentes.
 
 ### Lenguaje y herramientas
 

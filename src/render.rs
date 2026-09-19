@@ -172,7 +172,19 @@ pub fn hilo(
                 }
                 ARender::Lamina(n) => {
                     let g = gpu.get_or_insert_with(|| Gpu::nueva(&instancia, &n.superficie));
-                    println!("render · lámina {} en {} · escala {} · {:.0} Hz", n.id, n.nombre, n.escala, n.mhz as f32 / 1000.0);
+                    // Una escena que pide «todo el ancho» mide lo que mida su monitor, y lo
+                    // puede saber: `screen.width`.
+                    if escena.superficie.ancho == 0 {
+                        tam.0 = n.tam.0 as f32;
+                    }
+                    for (k, (nombre, _)) in escena.hechos.iter().enumerate() {
+                        match *nombre {
+                            "screen.width" => hechos[k] = tam.0,
+                            "screen.height" => hechos[k] = escena.superficie.alto as f32,
+                            _ => {}
+                        }
+                    }
+                    println!("render · lámina {} en {} · {}×{} · escala {} · {:.0} Hz", n.id, n.nombre, n.tam.0, n.tam.1, n.escala, n.mhz as f32 / 1000.0);
                     laminas.push(g.lamina(*n, tam));
                     repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
                     region = vec![[i32::MIN; 4]];

@@ -10,12 +10,52 @@
 //!  · decirle al sistema por dónde entra el ratón (`Ventana::region_de_entrada`),
 //!    para que lo transparente deje pasar el clic.
 //!
-//! Y una cuarta que no es de ventanas: encontrar un icono por su nombre.
+//! Y dos que no son de ventanas: encontrar un icono por su nombre, y los
+//! **servicios** —lo que pasa en el sistema: escritorios, ventana activa…—, que
+//! la lógica pide por un nombre que es el mismo en todos los sistemas. Lo que un
+//! sistema no tenga, dice que no lo tiene, y la escena decide qué hacer sin ello.
 
 #[cfg(not(target_os = "linux"))]
 use crate::escena::{ARender, Superficie};
 #[cfg(not(target_os = "linux"))]
 use std::sync::mpsc::Sender;
+
+/// Un dato del sistema, con la forma de un JSON: es lo que un servicio le
+/// cuenta a la lógica, que lo recibe como una tabla.
+#[derive(Clone, Debug)]
+pub enum Valor {
+    Nulo,
+    Si(bool),
+    Num(f64),
+    Texto(String),
+    Lista(Vec<Valor>),
+    Mapa(Vec<(String, Valor)>),
+}
+
+/// Empieza a escuchar un servicio. `avisar` se llama con el estado de ahora y
+/// luego cada vez que cambie. Devuelve si este sistema lo tiene.
+///
+/// Los nombres son los mismos en todas partes:
+///  · `workspaces` → `{ active = 3, list = { { id, name, windows, monitor }, … } }`
+///  · `window`     → `{ title, class }`
+pub fn servicio(nombre: &str, avisar: Box<dyn Fn(Valor) + Send>) -> bool {
+    #[cfg(target_os = "linux")]
+    if hyprland::esta() {
+        return hyprland::servicio(nombre, avisar);
+    }
+    let _ = (nombre, avisar);
+    false
+}
+
+/// Pedirle algo a un servicio: `workspaces.focus`, 3.
+pub fn orden(nombre: &str, args: &[Valor]) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if hyprland::esta() {
+        return hyprland::orden(nombre, args);
+    }
+    let _ = args;
+    Err(format!("este sistema no sabe hacer «{nombre}» todavía"))
+}
 
 /// Lo que el render le pide a una ventana del sistema.
 pub trait Ventana: Send {
@@ -23,6 +63,8 @@ pub trait Ventana: Send {
     fn region_de_entrada(&self, cajas: &[[i32; 4]]);
 }
 
+#[cfg(target_os = "linux")]
+mod hyprland;
 #[cfg(target_os = "linux")]
 mod wayland;
 #[cfg(target_os = "linux")]

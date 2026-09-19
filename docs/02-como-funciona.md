@@ -86,6 +86,10 @@ Todo lo que acaba siendo un trozo de atlas. Tres crates de Rust puro que existen
 
 Lo único del programa que sabe qué es Wayland. Una plataforma pone las superficies que pide una escena y se las entrega al render como láminas; le cuenta el ratón, la escala y los monitores que van y vienen; le da una `Ventana` con un método (`region_de_entrada`); y sabe encontrar un icono por su nombre. Hoy solo hay `wayland.rs`. En cualquier otro sistema el núcleo compila y dice que aún no sabe poner ventanas. **`./portable.sh` lo comprueba contra Linux, Windows y macOS**, y es la guarda de que nada de un sistema se cuele fuera de aquí.
 
+## Servicios (`plataforma/mod.rs`, `plataforma/hyprland.rs`)
+
+Lo que pasa en el sistema llega a la lógica por `plataforma::servicio(nombre, avisar)`: un hilo que escucha y avisa con un `Valor` —un JSON en pequeño: nulo, sí/no, número, texto, lista, mapa— que Luau recibe como tabla. `plataforma::orden(nombre, args)` es el camino de vuelta. Hoy contesta Hyprland, hablado por sus dos sockets con `std` y nada más: uno para preguntar y mandar (`j/workspaces`, `dispatch …`), otro por el que cuenta lo que pasa. Un sistema sin ese servicio dice que no lo tiene.
+
 ## Superficies (`plataforma/wayland.rs`, `gpu.rs`)
 
 La escena declara la superficie que quiere: tamaño en píxeles **lógicos**, ancla, margen, nivel (fondo, debajo, encima, sobre todo), cuánto sitio reserva, y en qué pantallas (`Todas` o una lista). El hilo de Wayland pone una en cada monitor que toque, las quita cuando el monitor se va y las pone cuando uno llega. Cada una pasa al render como una **lámina** cuando el compositor la configura.

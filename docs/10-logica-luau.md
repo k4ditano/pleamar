@@ -25,11 +25,30 @@ after(500, function() … end)
 cancel(t)
 
 run("date", { "+%H:%M" }, function(out, code) … end)   -- una orden del sistema; contesta al acabar
+local id = spawn("pactl", { "subscribe" }, function(line) … end)   -- una que NO acaba: una llamada por línea
+kill(id)
+
+sys.watch("workspaces", function(w) … end)   -- un servicio del sistema; devuelve si este sistema lo tiene
+sys.call("workspaces.focus", 3)               -- pedirle algo a un servicio
 log("lo que sea", 42)
 busy(600)                                 -- trabajo de mentira, para ver que al render le da igual
 ```
 
 Un nombre mal escrito es un error al momento, con sugerencia: `la escena no tiene ningún hecho «opne». ¿Querías decir «open»?`
+
+## Los servicios del sistema
+
+`sys.watch(nombre, fn)` escucha algo que pasa en el sistema. La función recibe el estado de ahora y luego cada cambio, como una tabla. **Los nombres son los mismos en todos los sistemas**; quién contesta es cosa de `src/plataforma/`. Si este sistema no tiene ese servicio, `sys.watch` devuelve `false` y la escena decide qué hacer sin él.
+
+| Servicio | Lo que cuenta | Quién lo da hoy |
+| --- | --- | --- |
+| `workspaces` | `{ active = 3, list = { { id, name, windows, monitor }, … } }` | Hyprland, por sus sockets (sin lanzar `hyprctl`) |
+| `window` | `{ title, class }` | Hyprland |
+| `sys.call("workspaces.focus", n)` | ir a un escritorio | Hyprland |
+
+Lo que aún no es un servicio se puede sacar con `spawn` y `run` —así lee el volumen `barra.luau`, con `pactl subscribe` y `wpctl`—, pero eso ata el script a Linux: es un apaño hasta que exista el servicio.
+
+Al salir, el programa para todo lo que la lógica dejó corriendo; al recargar la lógica, también.
 
 ## La caja de arena
 

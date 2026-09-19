@@ -12,6 +12,7 @@ aviso que le nace del costado.
 
 ```sh
 cargo build --release
+./target/release/pleamar --escena escenas/barra.plm   # una barra de verdad: escritorios, ventana, hora y volumen
 ./target/release/pleamar --escena escenas/marea.plm   # una escena escrita en el lenguaje; se recarga al guardarla
 ./target/release/pleamar --comprobar escenas/cara.plm # la lee, dice si está bien, y sale
 ./target/release/pleamar                 # pasa el ratón por la bolita; botón derecho la cierra
@@ -102,7 +103,7 @@ El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
 | `escenas/muestrario.rs` | Degradado y borde, un reloj con tres transformaciones anidadas, una textura girada y fundir un grupo frente a fundir sus piezas. |
 | `escenas/cara.rs` | La cara de Marea: `capa forma` (rec > aviso > contenta > lupa > ojos) y tres de sus gestos, fotograma a fotograma. |
 | `texto.rs` | Texto de verdad (`cosmic-text`: formas, líneas, emoji) e imágenes (SVG, PNG, JPEG), en un atlas a la escala del monitor. |
-| `plataforma/` | Lo único que sabe de Wayland. `./portable.sh` comprueba que todo lo demás compila para Windows y macOS. |
+| `plataforma/` | Lo único que sabe del sistema: Wayland para las ventanas, Hyprland por sus sockets para los servicios (`sys.watch("workspaces", …)`). `./portable.sh` comprueba que todo lo demás compila para Windows y macOS. |
 
 La gráfica de abajo es una barra por frame; la franja roja es el tiempo que la
 lógica estuvo bloqueada, y el piloto de la izquierda, su estado ahora.

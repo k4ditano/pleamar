@@ -239,9 +239,14 @@ impl Dibujo {
                     self.trozo(d, hueco.uv(), a, rgb, afin, &recortes);
                 }
                 Instr::Texto { contenido, en, ancla, ancho, estilo, alfa, mide } => {
+                    let numero;
                     let texto = match contenido {
                         Contenido::Fijo(t) => t.as_str(),
                         Contenido::Vivo(id) => textos.get(id.0 as usize).map_or("", String::as_str),
+                        Contenido::Numero(e, decimales, detras) => {
+                            numero = format!("{:.*}{detras}", *decimales as usize, e.evaluar(c));
+                            numero.as_str()
+                        }
                     };
                     // Se encarga aunque no se vea: cuando aparezca, que ya esté.
                     let clave = Clave::de(texto, estilo, ancho.as_ref().map(|w| w.evaluar(c)));
@@ -306,6 +311,8 @@ pub struct NuevaLamina {
     pub superficie: wgpu::Surface<'static>,
     pub ventana: Box<dyn Ventana>,
     pub escala: f32,
+    /// El tamaño lógico que le ha dado el compositor.
+    pub tam: (u32, u32),
     /// Milihercios del monitor; 0 si no se sabe.
     pub mhz: i32,
     pub nombre: String,

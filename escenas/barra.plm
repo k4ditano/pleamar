@@ -1,0 +1,87 @@
+// Una barra de verdad: los escritorios de Hyprland, la ventana que tienes
+// delante, la hora y el volumen. La escena no sabe qué es Hyprland ni PipeWire:
+// solo tiene hechos y textos, y quién los pone es cosa de barra.luau.
+
+scene Bar {
+    surface {
+        size: full, 44
+        anchor: top
+        margin: 6
+        reserve: 0            // súbelo a 44 para que las ventanas le dejen sitio
+        screens: "HDMI-A-1"
+    }
+
+    let ink  = #f5f7f5
+    let mint = #9ed6bd
+    let coal = #151616
+
+    // ── lo que cuenta la lógica ──────────────────────────────────
+    fact ws.active = 1
+    repeat i in 1..10 {
+        fact ws.$i.there = false          // ¿existe ese escritorio?
+        fact ws.$i.busy  = false          // ¿tiene ventanas?
+    }
+    text title = ""
+    text clock = "--:--"
+    text day   = ""
+    fact volume = 0
+    fact muted  = false
+    event go ->                           // `emit go(3)`: llévame al escritorio 3
+
+    image speaker = icon "audio-volume-high-symbolic", 16, 16
+
+    // ── un escritorio ────────────────────────────────────────────
+    //  Cada copia sabe si es la activa, y persigue ese sí o no con su muelle.
+    component Desk(i) {
+        size: 28, 26
+        prop on  = 0 ~lively
+        prop hot = 0 ~quick
+        follow on = if(ws.active > i - 0.5 and ws.active < i + 0.5, 1, 0)
+
+        box hit { from: 0, 0; size: 28, 26; corner: 9; color: mix(#2b2d2d, mint, on); opacity: 30% + on * 70% + hot * 35% }
+        text number(i) { at: 14, 12.5; anchor: center; size: 12.5; weight: 600; color: mix(ink, #121f1a, on) }
+        //  Un punto debajo si tiene ventanas y no estás en él.
+        ellipse { at: 14, 22; radius: 1.6 * ws.$i.busy * (1 - on); color: ink; opacity: 65% }
+
+        on enter hit { hot: 1 ~quick }
+        on leave hit { hot: 0 ~quick }
+        on press hit { emit go(i) }
+    }
+
+    // ── a la izquierda: escritorios y ventana ────────────────────
+    row desks ~calm {
+        at: 10, 4
+        padding: 5; gap: 4
+        fill: coal; corner: 14
+        repeat i in 1..10 { Desk(i) { show: ws.$i.there } }
+    }
+    text title { at: 10 + desks.width + 14, 22; anchor: left center; size: 13; width: screen.width / 2 - desks.width - 130; lines: 1; color: ink; opacity: 80% }
+
+    // ── en el centro: la hora ────────────────────────────────────
+    row ~calm {
+        at: screen.width / 2, 4
+        anchor: center
+        padding: 9; gap: 8; align: center
+        fill: coal; corner: 14
+        text clock { size: 14; weight: 600; color: ink }
+        text day   { size: 12.5; color: ink; opacity: 55% }
+    }
+
+    // ── a la derecha: el volumen ─────────────────────────────────
+    prop level = 0 ~calm
+    follow level = volume * 64 * (1 - muted)
+
+    row ~calm {
+        at: screen.width - 10, 4
+        anchor: right
+        padding: 9; gap: 9; align: center
+        fill: coal; corner: 14
+        image speaker { size: 16, 16; tint: ink; opacity: 100% - muted * 60% }
+        group {
+            size: 64, 4
+            box { from: 0, 0; size: 64, 4; corner: 2; color: #343737 }
+            box { from: 0, 0; size: level, 4; corner: 2; color: mint }
+        }
+        text number(volume * 100, 0, " %") { size: 12.5; weight: 500; color: ink; opacity: 80% }
+    }
+}

@@ -19,12 +19,27 @@
 
 use crate::escena::{internar, ARender, Escena, Evento};
 use crate::logica::{Contexto, Guion};
+use crate::plataforma::Valor;
 use mlua::{Function, Lua, MultiValue, Table, Value, VmState};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// Todo lo que la lógica ha dejado corriendo. Al salir el programa hay que
+/// pararlo: un hijo no muere con su padre, y un `pactl subscribe` huérfano se
+/// quedaría ahí para siempre.
+static HIJOS: Mutex<Vec<Arc<Mutex<Option<std::process::Child>>>>> = Mutex::new(Vec::new());
+
+pub fn parar_hijos() {
+    for h in HIJOS.lock().unwrap().drain(..) {
+        if let Some(mut h) = h.lock().unwrap().take() {
+            let _ = h.kill();
+            let _ = h.wait();
+        }
+    }
+}
 
 /// Cuánto puede tardar un manejador antes de que se le corte.
 const PACIENCIA: Duration = Duration::from_secs(2);
@@ -42,11 +57,38 @@ struct Compartido {
     manejadores: HashMap<String, Vec<Function>>,
     temporizadores: Vec<Temporizador>,
     procesos: HashMap<u32, Function>,
+    /// Las órdenes que siguen en marcha: a quién se le cuenta cada línea, y cómo pararlas.
+    en_marcha: HashMap<u32, (Function, Arc<Mutex<Option<std::process::Child>>>)>,
+    vigias: HashMap<String, Vec<Function>>,
     siguiente: u32,
     hechos: HashMap<String, f64>,
     textos: HashMap<String, String>,
     /// Hasta cuándo puede correr lo que está corriendo.
     limite: Option<Instant>,
+}
+
+/// Un dato del sistema, como lo ve Luau: tablas, números, textos.
+fn a_lua(lua: &Lua, v: &Valor) -> mlua::Result<Value> {
+    Ok(match v {
+        Valor::Nulo => Value::Nil,
+        Valor::Si(b) => Value::Boolean(*b),
+        Valor::Num(n) => Value::Number(*n),
+        Valor::Texto(s) => Value::String(lua.create_string(s)?),
+        Valor::Lista(l) => {
+            let t = lua.create_table()?;
+            for (k, x) in l.iter().enumerate() {
+                t.set(k + 1, a_lua(lua, x)?)?;
+            }
+            Value::Table(t)
+        }
+        Valor::Mapa(m) => {
+            let t = lua.create_table()?;
+            for (k, x) in m {
+                t.set(k.as_str(), a_lua(lua, x)?)?;
+            }
+            Value::Table(t)
+        }
+    })
 }
 
 fn pista<'a>(k: &str, conocidos: impl Iterator<Item = &'a String>) -> String {
@@ -75,6 +117,13 @@ impl GuionLuau {
             c.manejadores.clear();
             c.temporizadores.clear();
             c.procesos.clear();
+            c.vigias.clear();
+            // Lo que la lógica vieja dejó corriendo se para con ella.
+            for (_, (_, hijo)) in c.en_marcha.drain() {
+                if let Some(mut h) = hijo.lock().unwrap().take() {
+                    let _ = h.kill();
+                }
+            }
         }
         let fuente = match std::fs::read_to_string(&self.logica) {
             Ok(f) => f,
@@ -211,6 +260,81 @@ impl GuionLuau {
             Ok(())
         })?)?;
 
+        // Una orden que no acaba —`pactl subscribe`, `playerctl --follow`—: una
+        // llamada por cada línea que escriba, y `kill(id)` para pararla.
+        let (c, a_logica) = (self.c.clone(), self.a_logica.clone());
+        g.set("spawn", lua.create_function(move |_, (orden, args, f): (String, Option<Vec<String>>, Function)| {
+            use std::io::BufRead;
+            let mut hijo = std::process::Command::new(&orden)
+                .args(args.unwrap_or_default())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| mlua::Error::runtime(format!("no puedo lanzar «{orden}»: {e}")))?;
+            let salida = hijo.stdout.take();
+            let hijo = Arc::new(Mutex::new(Some(hijo)));
+            HIJOS.lock().unwrap().push(hijo.clone());
+            let id = {
+                let mut c = c.lock().unwrap();
+                c.siguiente += 1;
+                let id = c.siguiente;
+                c.en_marcha.insert(id, (f, hijo.clone()));
+                id
+            };
+            let a_logica = a_logica.clone();
+            std::thread::spawn(move || {
+                if let Some(s) = salida {
+                    for linea in std::io::BufReader::new(s).lines().map_while(Result::ok) {
+                        if a_logica.send(Evento::Linea(id, linea)).is_err() {
+                            break;
+                        }
+                    }
+                }
+                let codigo = hijo.lock().unwrap().take().and_then(|mut h| h.wait().ok()).and_then(|s| s.code()).unwrap_or(-1);
+                let _ = a_logica.send(Evento::Proceso(id, String::new(), codigo));
+            });
+            Ok(id)
+        })?)?;
+        let c = self.c.clone();
+        g.set("kill", lua.create_function(move |_, id: u32| {
+            if let Some((_, hijo)) = c.lock().unwrap().en_marcha.remove(&id) {
+                if let Some(mut h) = hijo.lock().unwrap().take() {
+                    let _ = h.kill();
+                }
+            }
+            Ok(())
+        })?)?;
+
+        // Lo que pasa en el sistema, por un nombre que es el mismo en todas partes.
+        let sys = lua.create_table()?;
+        let (c, a_logica) = (self.c.clone(), self.a_logica.clone());
+        sys.set("watch", lua.create_function(move |_, (nombre, f): (String, Function)| {
+            let primero = {
+                let mut c = c.lock().unwrap();
+                let v = c.vigias.entry(nombre.clone()).or_default();
+                v.push(f);
+                v.len() == 1
+            };
+            if !primero {
+                return Ok(true);
+            }
+            let (a_logica, n) = (Mutex::new(a_logica.clone()), nombre.clone());
+            Ok(crate::plataforma::servicio(&nombre, Box::new(move |v| {
+                let _ = a_logica.lock().unwrap().send(Evento::Dato(n.clone(), v));
+            })))
+        })?)?;
+        sys.set("call", lua.create_function(|_, (nombre, args): (String, mlua::Variadic<Value>)| {
+            let args: Vec<Valor> = args.iter().map(|v| match v {
+                Value::Boolean(b) => Valor::Si(*b),
+                Value::Integer(i) => Valor::Num(*i as f64),
+                Value::Number(n) => Valor::Num(*n),
+                Value::String(s) => Valor::Texto(s.to_string_lossy()),
+                _ => Valor::Nulo,
+            }).collect();
+            crate::plataforma::orden(&nombre, &args).map_err(mlua::Error::runtime)
+        })?)?;
+        g.set("sys", sys)?;
+
         g.set("log", lua.create_function(|_, v: MultiValue| {
             let trozos: Vec<String> = v.iter().map(|x| x.to_string().unwrap_or_else(|_| format!("{x:?}"))).collect();
             println!("luau   · {}", trozos.join(" "));
@@ -291,7 +415,22 @@ impl Guion for GuionLuau {
                     c.textos.entry(n.to_owned()).or_insert(v);
                 }
             }
+            Evento::Linea(id, linea) => {
+                let f = self.c.lock().unwrap().en_marcha.get(&id).map(|x| x.0.clone());
+                if let Some(f) = f {
+                    self.llamar(&f, linea);
+                }
+            }
+            Evento::Dato(nombre, valor) => {
+                let Some(lua) = &self.lua else { return };
+                let quienes = self.c.lock().unwrap().vigias.get(&nombre).cloned().unwrap_or_default();
+                match a_lua(lua, &valor) {
+                    Ok(v) => quienes.iter().for_each(|f| self.llamar(f, v.clone())),
+                    Err(e) => eprintln!("lógica · {e}"),
+                }
+            }
             Evento::Proceso(id, salida, codigo) => {
+                self.c.lock().unwrap().en_marcha.remove(&id);
                 let f = self.c.lock().unwrap().procesos.remove(&id);
                 if let Some(f) = f {
                     self.llamar(&f, (salida, codigo));

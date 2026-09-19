@@ -19,12 +19,23 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 
 ## Pendientes
 
+### Servicios y la barra
+
+| # | Limitación | Gravedad | Cómo se arregla |
+| --- | --- | --- | --- |
+| B1 | **Solo hay dos servicios, y solo de Hyprland**: `workspaces` y `window`. El volumen de `barra.luau` sale de `pactl` y `wpctl`, que ata ese script a Linux | 🔴 | `audio`, `media`, `battery`, `network`, `notifications` y `tray` como servicios en `plataforma/`, con el mismo nombre y la misma tabla en todos los sistemas: PipeWire / WASAPI / CoreAudio, MPRIS / SMTC / MediaRemote. Otros compositores de Linux: `ext-workspace` y `wlr-foreign-toplevel` |
+| B2 | `ws.active` es el escritorio con foco en todo el sistema, no el del monitor donde está la barra | 🟡 | Una instancia de escena por monitor (S2), con un hecho `screen.name` que la lógica pueda leer |
+| B3 | `size: full` usa el ancho del **primer** monitor para todas las superficies | 🟡 | Lo mismo: S2 |
+| B4 | **Sin probar**: pulsar un escritorio (`sys.call("workspaces.focus", n)`) y `reserve` distinto de 0. Probarlo Claude le habría movido el escritorio o las ventanas a Abel | 🟡 | Que lo pruebe Abel: pulsar un número de la barra, y subir `reserve` a 44 |
+| B5 | Si al programa lo matan con una señal, lo que dejó corriendo (`pactl subscribe`) queda huérfano. Al salir por las buenas sí se para | 🟡 | En `plataforma/`: `PR_SET_PDEATHSIG` en Linux, un Job Object en Windows; y atender `SIGTERM` para salir por las buenas |
+| B6 | La barra tarda ~420 ms en su primer frame, frente a ~170 de Marea | ⚪ | Medir qué: probablemente los 27 textos y el icono, que el taller hace en serie |
+| B7 | No se puede cambiar el volumen desde la barra: falta la rueda (S6) | 🟡 | S6 |
+
 ### La lógica (Luau)
 
 | # | Limitación | Gravedad | Cómo se arregla |
 | --- | --- | --- | --- |
 | U1 | **`run` lanza cualquier orden.** La caja de arena cierra `io` y `os`, pero esa puerta está abierta de par en par y sin permisos | 🔴 | Un manifiesto por escena o plugin: qué órdenes, qué rutas, qué servicios. Sin declarar, nada. Es la idea 5 del diseño: los plugins son actores con permisos |
-| U2 | `run` contesta cuando la orden acaba. No hay forma de escuchar algo que no acaba —`hyprctl -i events`, `playerctl --follow`—, que es como se entera uno de media shell | 🔴 | `spawn(orden, args, function(linea) … end)` con una llamada por línea, y `kill(id)`. Y detrás, los servicios de verdad en `plataforma/` (el grafo de datos), para no depender de órdenes de Linux |
 | U3 | Una lógica por escena: no hay plugins, ni varios scripts, ni `require` | 🟡 | Un estado de Luau por plugin, cada uno con su presupuesto, y un espacio de nombres para sus hechos |
 | U4 | Los hechos se leen como números (`fact.open == 1`), no como sí/no | ⚪ | Que la escena declare el tipo (`fact open: bool`) y la lógica lo respete |
 | U5 | `./portable.sh` comprueba Windows y macOS **sin** Luau: aquí no hay compilador cruzado de C++ | ⚪ | Instalar `mingw-w64-gcc`, o CI en los tres sistemas |
@@ -36,7 +47,7 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | --- | --- | --- | --- |
 | G12 | **Una lista de longitud variable es una de capacidad fija** con `show:`. Con la lógica poniendo textos y un `count` se comporta como una de verdad (`bandeja.luau`), pero el tope lo pone el fichero y no hay copias que nazcan en marcha | 🟡 | `repeat item in notes { … }` sobre un modelo que ponga la lógica, con clave por elemento para que al reordenar cada uno viaje a su sitio nuevo. Pide copias que nazcan y mueran en marcha: hoy todo se despliega al cargar |
 | G14 | Los parámetros de un componente van por posición, sin tipo, sin valor por defecto, y no hay hueco para hijos (`children`) | 🟡 | `component Card(title, tone = mint) { … slot … }` |
-| G15 | El reparto solo sabe de fila y columna con hueco, relleno y alineado. Sin salto de línea, sin «ocupa lo que quede», sin mínimos ni máximos. Un `group` sin `size:` ocupa lo que su último hijo, por casualidad más que por diseño | 🟡 | `grow:` en un hijo (reparte el sobrante del `size:` del reparto), `wrap`, y que un grupo sin tamaño ocupe la unión de sus hijos |
+| G15 | El reparto sabe de fila y columna con hueco, relleno, alineado y ancla (`anchor: right`). Sin salto de línea, sin «ocupa lo que quede», sin mínimos ni máximos. Un `group` sin `size:` ocupa lo que su último hijo, por casualidad más que por diseño | 🟡 | `grow:` en un hijo (reparte el sobrante del `size:` del reparto), `wrap`, y que un grupo sin tamaño ocupe la unión de sus hijos |
 | G16 | El sitio de cada hijo es la suma de los anteriores, escrita entera: con *n* hijos las expresiones crecen como *n²*. Veinte no se notan; doscientos sí | ⚪ | Subexpresiones compartidas: que `Expr` sea un grafo y cada suma parcial se evalúe una vez por frame |
 | G17 | Lo que mide un texto llega un frame tarde, así que un reparto con textos se asienta en uno o dos frames al cargar. Con muelle no se ve; sin él, un parpadeo | ⚪ | Ver T12 |
 | G5 | Los mensajes de error están en castellano aunque las palabras clave sean inglesas. Y un fallo del tokenizador (una comilla sin cerrar) sigue parando la lectura en seco | 🟡 | Un catálogo de mensajes con las dos lenguas; que el tokenizador apunte el fallo y siga en la línea siguiente |
@@ -54,7 +65,7 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | T5 | Texto bajo una transformación que escala se remuestrea (ampliado, sale blando), y girado no cae en píxeles enteros | ⚪ | Pintar a `escala × factor` de la transformación cuando lleve quieta unos frames |
 | T6 | Sin texto rico (negrita o color a mitad de párrafo), ni espaciado entre letras, ni subrayado, ni selección ni edición | 🟡 | `cosmic-text` ya tiene tramos con atributos: exponer `Contenido::Rico`. La edición es otro proyecto (IME incluido) |
 | T7 | Al partir líneas queda un espacio al principio de la línea nueva | ⚪ | Mirar cómo trata `cosmic-text` el espacio final con `Wrap::WordOrGlyph`; si no tiene ajuste, recortarlo al colocar los glifos |
-| T8 | La lógica pone cadenas; la escena no sabe formatear un número (`"{volumen} %"`) | 🟡 | `Contenido::Formato` con expresiones dentro. Llegará con el lenguaje |
+| T8 | `text number(expr, decimales, "detrás")` formatea un número, pero no hay plantillas (`"{a} de {b}"`), ni horas, ni separadores de miles | ⚪ | Cadenas con huecos: `text "{done} de {total}"` |
 | T9 | Las imágenes tienen un tamaño máximo que declara la escena. Sin URL, sin GIF, sin «nueve parches». Al cambiar la escala se repintan todas | 🟡 | Caché en disco de los SVG ya pintados; tamaño según el destino en vez de declarado |
 | T10 | La búsqueda de iconos no lee los `index.theme` ni sabe cuál es tu tema: prueba en los de siempre y se queda con el primero | 🟡 | La búsqueda de freedesktop de verdad (tema actual, herencia, tallas). Vive en `plataforma/` |
 | T11 | Solo degradado lineal; sin radial, sin desenfoque, sin máscaras | 🟡 | El radial son diez líneas de shader. El desenfoque pide otra pasada por capa: la infraestructura de las capas de opacidad ya vale |
@@ -126,3 +137,7 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | 2026-09-19 | **G2 / L8** · Una escena de fichero no tenía lógica propia → Luau, en caja de arena, con tope de memoria y corte a los 2 s; se recarga en caliente |
 | 2026-09-19 | **G13** · Los sucesos no llevaban datos → `emit opened(i)` y `on("opened", function(i) … end)` |
 | 2026-09-19 | La lógica no se enteraba de los hechos que cambiaba una regla → `Evento::Hecho`, y `on("fact:open", …)` |
+| 2026-09-19 | **U2** · La lógica solo se enteraba del sistema con órdenes que acaban → `spawn`/`kill` (una llamada por línea) y servicios de verdad detrás de `plataforma/`: `sys.watch`, `sys.call`. Hyprland por sus sockets |
+| 2026-09-19 | Un reparto no se podía centrar ni pegar a la derecha sin saber lo que mide → `anchor:` |
+| 2026-09-19 | Una superficie tenía un ancho fijo → `size: full, 44` y `screen.width` |
+| 2026-09-19 | Lo que la lógica dejaba corriendo sobrevivía al programa (un `pactl subscribe` huérfano) → se para al salir y al recargar |

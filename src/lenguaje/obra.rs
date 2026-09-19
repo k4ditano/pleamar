@@ -173,6 +173,12 @@ pub fn levantar(arbol: &[Entrada]) -> Result<Escena, Vec<Fallo>> {
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
         entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None,
     };
+    // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
+    // render los pone cuando el compositor la configura.
+    for n in ["screen.width", "screen.height"] {
+        let h = o.e.hecho(n, 0.0);
+        o.hechos.insert(n.into(), h);
+    }
     // Un suceso que siempre existe: lo dispara `--demo`, para escenas sin ratón.
     let demo = o.e.suceso("demo");
     o.sucesos.insert("demo".into(), demo);
@@ -195,6 +201,10 @@ pub fn levantar(arbol: &[Entrada]) -> Result<Escena, Vec<Fallo>> {
             }
         }
     }
+    // Hasta que llegue la de verdad, la que pide el fichero.
+    let (w, h) = (o.e.superficie.ancho as f32, o.e.superficie.alto as f32);
+    o.e.hechos[0].1 = if w > 0.0 { w } else { 1920.0 };
+    o.e.hechos[1].1 = h;
     if o.fallos.is_empty() { Ok(o.e) } else { Err(o.fallos) }
 }
 
@@ -905,6 +915,15 @@ impl<'a> Obra<'a> {
         let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
         let contenido = match c.mira() {
             Some(F::Cadena(s)) => Contenido::Fijo(s.clone()),
+            // `text number(volume * 100, 0, " %")`: un número que sale de una expresión.
+            Some(F::Id(n)) if n == "number" && matches!(c.f.get(c.i + 1).map(|x| &x.f), Some(F::Sim("("))) => {
+                c.i += 2;
+                let e = self.expr(&mut c)?;
+                let decimales = if c.sim(",") { c.num()? as u8 } else { 0 };
+                let detras = if c.sim(",") { c.cadena()? } else { String::new() };
+                c.exige_sim(")")?;
+                Contenido::Numero(e, decimales, detras)
+            }
             // Un parámetro de componente que vale un texto entre comillas.
             Some(F::Id(nombre)) if self.entornos.iter().any(|e| e.cadenas.contains_key(nombre)) => {
                 Contenido::Fijo(self.entornos.iter().rev().find_map(|e| e.cadenas.get(nombre)).unwrap().clone())
@@ -1030,7 +1049,8 @@ impl<'a> Obra<'a> {
         let mut p = self.propiedades(n, &["size", "anchor", "margin", "level", "reserve", "screens"])?;
         let s = &mut self.e.superficie;
         if let Some(c) = p.get_mut("size") {
-            s.ancho = c.num()? as u32;
+            // `size: full, 36`: todo el ancho del monitor.
+            s.ancho = if c.palabra("full") { 0 } else { c.num()? as u32 };
             c.exige_sim(",")?;
             s.alto = c.num()? as u32;
         }
@@ -1308,7 +1328,7 @@ impl<'a> Obra<'a> {
         };
         let muelle = if c.sim("~") { Some(self.muelle(c)?) } else { None };
         c.nada_mas()?;
-        let mut p = self.propiedades(n, &["at", "gap", "padding", "align", "fill", "corner", "show", "opacity"])?;
+        let mut p = self.propiedades(n, &["at", "anchor", "gap", "padding", "align", "fill", "corner", "show", "opacity"])?;
         self.en_hueco = false;
         let origen = match p.get_mut("at") {
             Some(c) => self.punto(c)?,
@@ -1339,8 +1359,26 @@ impl<'a> Obra<'a> {
             None => None,
         };
 
-        // Todo el reparto vive bajo una transformación que lo lleva a su origen.
-        let base = Transformacion::en((0.0.into(), 0.0.into())).mueve(origen.0, origen.1);
+        // Qué parte del reparto cae sobre `at`: `anchor: right` lo pega por la derecha
+        // mida lo que mida, que es lo que quiere lo que va al final de una barra.
+        let mut ancla = (0.0f32, 0.0f32);
+        if let Some(c) = p.get_mut("anchor") {
+            while !c.acabo() {
+                match c.id("left, center, right, top o bottom")?.as_str() {
+                    "left" => ancla.0 = 0.0,
+                    "right" => ancla.0 = 1.0,
+                    "top" => ancla.1 = 0.0,
+                    "bottom" => ancla.1 = 1.0,
+                    "center" => ancla.0 = 0.5,
+                    "middle" => ancla.1 = 0.5,
+                    _ => return c.fallo("un ancla es left, center o right, y top, middle o bottom"),
+                }
+            }
+        }
+        // Todo el reparto vive bajo una transformación que lo lleva a su origen. Si
+        // tiene ancla, el origen depende de lo que mida, y eso se sabe al final.
+        let base = Transformacion::en((0.0.into(), 0.0.into())).mueve(origen.0.clone(), origen.1.clone());
+        let (instr_base, nivel_base, candidatas_base) = (self.e.instrs.len(), self.bajo.len(), self.candidatas.len());
         self.e.pintar(Instr::Transformar(Some(base.clone())));
         self.bajo.push(base);
         if let Some(o) = &opacidad {
@@ -1456,6 +1494,15 @@ impl<'a> Obra<'a> {
                 color,
                 alfa: Expr::K(1.0),
             };
+        }
+        if ancla != (0.0, 0.0) {
+            let mueve = (origen.0 - tam.0.clone() * ancla.0, origen.1 - tam.1.clone() * ancla.1);
+            if let Instr::Transformar(Some(t)) = &mut self.e.instrs[instr_base] {
+                t.mueve = mueve.clone();
+            }
+            for c in &mut self.candidatas[candidatas_base..] {
+                c.bajo[nivel_base].mueve = mueve.clone();
+            }
         }
         if opacidad.is_some() {
             self.e.pintar(Instr::Opacidad(None));

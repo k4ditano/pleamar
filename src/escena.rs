@@ -65,6 +65,7 @@ pub enum Pantallas {
 /// monitor a escala 2 se pinta con el doble de píxeles de verdad.
 #[derive(Clone, Debug)]
 pub struct Superficie {
+    /// 0 es «todo el ancho del monitor».
     pub ancho: u32,
     pub alto: u32,
     pub ancla: Ancla,
@@ -335,6 +336,8 @@ impl Transformacion {
 #[derive(Clone, Debug)]
 pub enum Contenido {
     Fijo(String),
+    /// Un número que sale de una expresión, con tantos decimales y lo que lleve detrás: `54 %`.
+    Numero(Expr, u8, String),
     /// Lo que valga ahora mismo un texto vivo: lo cambia la lógica.
     Vivo(TextoId),
 }
@@ -828,6 +831,10 @@ pub enum Evento {
     Hecho(&'static str, f32),
     /// Una orden que se lanzó ha terminado: (cuál, lo que escribió, con qué código).
     Proceso(u32, String, i32),
+    /// Una orden que sigue en marcha ha escrito una línea.
+    Linea(u32, String),
+    /// Un servicio del sistema tiene algo nuevo que contar.
+    Dato(String, crate::plataforma::Valor),
     /// El fichero de la lógica ha cambiado.
     RecargarLogica,
     /// La escena se ha recargado: estos son ahora sus hechos y sus textos.

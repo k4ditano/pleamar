@@ -59,7 +59,7 @@ struct Puesta {
     capa: LayerSurface,
     salida: wl_output::WlOutput,
     /// Para pintar a una escala que no sea entera.
-    _ventanilla: Option<WpViewport>,
+    ventanilla: Option<WpViewport>,
     _escala: Option<WpFractionalScaleV1>,
     /// La última escala que dijo el compositor. Suele llegar ANTES de que la
     /// superficie esté configurada, cuando el render aún no la conoce.
@@ -142,7 +142,7 @@ impl Estado {
                 Ancla::AbajoIzquierda => Anchor::BOTTOM | Anchor::LEFT,
                 Ancla::AbajoDerecha => Anchor::BOTTOM | Anchor::RIGHT,
                 Ancla::Centro => Anchor::empty(),
-            });
+            } | if p.ancho == 0 { Anchor::LEFT | Anchor::RIGHT } else { Anchor::empty() });
             // La segunda en el mismo monitor, debajo de la primera: es para ensayar.
             let m = p.margen;
             capa.set_margin(m[0] + k as i32 * (alto as i32 + 12), m[1], m[2], m[3]);
@@ -153,11 +153,8 @@ impl Estado {
             self.siguiente_id += 1;
             // Con ventanilla, el tamaño lógico es fijo y los píxeles de verdad los
             // decide la escala: así vale también una que no sea entera.
-            let ventanilla = self.ventanillas.as_ref().map(|v| {
-                let w = v.get_viewport(capa.wl_surface(), qh, Mudo);
-                w.set_destination(p.ancho as i32, alto as i32);
-                w
-            });
+            // Ancho 0 es «todo el monitor»: cuánto es lo dirá el compositor al configurarla.
+            let ventanilla = self.ventanillas.as_ref().map(|v| v.get_viewport(capa.wl_surface(), qh, Mudo));
             let escala = self.escalas.as_ref().map(|m| m.get_fractional_scale(capa.wl_surface(), qh, EscalaDe(id)));
             capa.commit();
             let superficie = unsafe {
@@ -172,7 +169,7 @@ impl Estado {
                     })
                     .expect("no se pudo crear la superficie gráfica")
             };
-            self.puestas.push(Puesta { id, capa, salida: salida.clone(), _ventanilla: ventanilla, _escala: escala, escala: 1.0, pendiente: Some((superficie, nombre.clone(), mhz)) });
+            self.puestas.push(Puesta { id, capa, salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, pendiente: Some((superficie, nombre.clone(), mhz)) });
         }
     }
 
@@ -237,14 +234,21 @@ impl LayerShellHandler for Estado {
     }
     /// Hasta que el compositor no la configura no se le puede pegar nada:
     /// es ahora cuando pasa a manos del render.
-    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, capa: &LayerSurface, _: LayerSurfaceConfigure, _: u32) {
+    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, capa: &LayerSurface, conf: LayerSurfaceConfigure, _: u32) {
+        let pedido = (self.pide.ancho, self.pide.alto + self.alto_extra);
         let Some(p) = self.puestas.iter_mut().find(|p| &p.capa == capa) else { return };
+        // Lo que el compositor haya dado; si dice 0, lo que se pidió.
+        let tam = (if conf.new_size.0 > 0 { conf.new_size.0 } else { pedido.0 }, if conf.new_size.1 > 0 { conf.new_size.1 } else { pedido.1 });
+        if let Some(v) = &p.ventanilla {
+            v.set_destination(tam.0 as i32, tam.1 as i32);
+        }
         if let Some((superficie, nombre, mhz)) = p.pendiente.take() {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: p.id,
                 superficie,
                 ventana: Box::new(VentanaWayland { wl: p.capa.wl_surface().clone(), compositor: self.compositor.clone() }),
                 escala: p.escala,
+                tam,
                 mhz,
                 nombre,
             })));
