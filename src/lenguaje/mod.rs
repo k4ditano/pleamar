@@ -10,6 +10,12 @@ mod fichas;
 mod obra;
 
 use crate::escena::Escena;
+use std::path::{Path, PathBuf};
+
+/// Una escena puede estar hecha de varios ficheros (`import`), y un fallo tiene
+/// que decir en cuál. Para no cargar cada ficha con un nombre, el número de línea
+/// lleva dentro el del fichero: línea 12 del tercero es 2 000 012.
+const POR_FICHERO: usize = 1_000_000;
 
 #[derive(Debug)]
 pub struct Fallo {
@@ -24,18 +30,128 @@ impl Fallo {
     }
 
     /// Con la línea del fichero y una flecha debajo, como lo enseña un compilador.
-    pub fn con_fuente(&self, ruta: &str, fuente: &str) -> String {
-        let linea = fuente.lines().nth(self.linea.saturating_sub(1)).unwrap_or("");
-        let margen = format!("{:>4} | ", self.linea);
-        format!("{ruta}:{}:{}: {}\n{margen}{linea}\n{}^", self.linea, self.col, self.mensaje, " ".repeat(margen.len() + self.col.saturating_sub(1)))
+    fn con_fuente(&self, ficheros: &[(PathBuf, String)]) -> String {
+        let (ruta, fuente) = ficheros.get(self.linea / POR_FICHERO).or(ficheros.first()).map_or((String::new(), ""), |(r, f)| {
+            // Desde donde se está, si se puede: una ruta entera estorba más que ayuda.
+            let corta = std::env::current_dir().ok().and_then(|aqui| r.strip_prefix(aqui).ok().map(Path::to_owned)).unwrap_or_else(|| r.clone());
+            (corta.display().to_string(), f.as_str())
+        });
+        let n = self.linea % POR_FICHERO;
+        let linea = fuente.lines().nth(n.saturating_sub(1)).unwrap_or("");
+        let margen = format!("{n:>4} | ");
+        format!("{ruta}:{n}:{}: {}\n{margen}{linea}\n{}^", self.col, self.mensaje, " ".repeat(margen.len() + self.col.saturating_sub(1)))
     }
 }
 
-/// Devuelve la escena, o todos los fallos que se hayan podido encontrar.
-pub fn leer(fuente: &str) -> Result<Escena, Vec<Fallo>> {
-    let fichas = fichas::trocear(fuente).map_err(|f| vec![f])?;
-    let arbol = arbol::arbol(&fichas).map_err(|f| vec![f])?;
-    obra::levantar(&arbol)
+/// «fichero:línea» de algo que se declaró, para decir dónde estaba lo que se pisa.
+pub fn sitio(nombres: &[String], linea: usize) -> String {
+    format!("{}:{}", nombres.get(linea / POR_FICHERO).map_or("", String::as_str), linea % POR_FICHERO)
+}
+
+/// Lo que se ha ido leyendo: cada fichero una vez, con su texto para enseñar los fallos.
+#[derive(Default)]
+struct Lectura {
+    ficheros: Vec<(PathBuf, String)>,
+    /// Los que se están leyendo ahora mismo, unos dentro de otros: para ver los círculos.
+    abiertos: Vec<PathBuf>,
+}
+
+impl Lectura {
+    /// Trocea y agrupa un fichero, con su número metido en las líneas.
+    fn abrir(&mut self, ruta: &Path) -> Result<Vec<arbol::Entrada>, Fallo> {
+        let k = self.ficheros.len();
+        let fuente = std::fs::read_to_string(ruta).map_err(|e| Fallo::en(0, 0, format!("no puedo leer {}: {e}", ruta.display())))?;
+        self.ficheros.push((ruta.to_owned(), fuente));
+        let aqui = |mut f: Fallo| { f.linea += k * POR_FICHERO; f };
+        let mut fichas = fichas::trocear(&self.ficheros[k].1).map_err(aqui)?;
+        for f in &mut fichas {
+            f.linea += k * POR_FICHERO;
+        }
+        arbol::arbol(&fichas).map_err(|f| if f.linea < POR_FICHERO { aqui(f) } else { f })
+    }
+
+    /// Lo que declaran los `import` de un fichero, en orden, y lo que queda de él.
+    /// Una biblioteca importada dos veces —por dos caminos— se lee una.
+    fn resolver(&mut self, ruta: &Path, entradas: Vec<arbol::Entrada>, traido: &mut Vec<arbol::Entrada>) -> Result<Vec<arbol::Entrada>, Fallo> {
+        use fichas::F;
+        let mut resto = Vec::new();
+        for e in entradas {
+            let arbol::Entrada::Nodo(n) = &e else { resto.push(e); continue };
+            if !matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "import") {
+                resto.push(e);
+                continue;
+            }
+            let (Some(F::Cadena(cual)), 2, None) = (n.cabeza.get(1).map(|f| &f.f), n.cabeza.len(), &n.cuerpo) else {
+                return Err(Fallo::en(n.linea, n.col, "un import es `import \"ruta/de/la/biblioteca.plm\"`"));
+            };
+            // Las rutas son relativas al fichero que importa, no a desde dónde se lance.
+            let destino = ruta.parent().unwrap_or(Path::new(".")).join(cual);
+            let destino = destino.canonicalize().map_err(|e| Fallo::en(n.linea, n.cabeza[1].col, format!("no encuentro «{cual}» (lo busco en {}): {e}", destino.display())))?;
+            if self.abiertos.contains(&destino) {
+                return Err(Fallo::en(n.linea, n.cabeza[1].col, format!("«{cual}» acaba importándose a sí misma: {}", self.abiertos.iter().chain([&destino]).map(|p| p.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(" → "))));
+            }
+            if self.ficheros.iter().any(|(r, _)| r == &destino) {
+                continue;
+            }
+            self.abiertos.push(destino.clone());
+            let suyas = self.abrir(&destino)?;
+            let suyas = self.resolver(&destino, suyas, traido)?;
+            self.abiertos.pop();
+            let [arbol::Entrada::Nodo(b)] = suyas.as_slice() else {
+                return Err(Fallo::en(n.linea, n.cabeza[1].col, format!("«{cual}» no es una biblioteca: tiene que ser `library Nombre {{ … }}`, y nada más")));
+            };
+            if !matches!(b.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "library") {
+                return Err(Fallo::en(b.linea, b.col, "lo que se importa es una biblioteca: `library Nombre { … }`. Una escena no se importa"));
+            }
+            let Some(arbol::Entrada::Nodo(b)) = suyas.into_iter().next() else { unreachable!() };
+            for d in b.cuerpo.unwrap_or_default() {
+                // Una biblioteca declara; no pinta, ni reacciona, ni tiene frontera con la lógica.
+                let vale = matches!(&d, arbol::Entrada::Nodo(x) if matches!(x.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if ["let", "spring", "component"].contains(&p.as_str())));
+                if !vale {
+                    let (l, c) = match &d { arbol::Entrada::Nodo(x) => (x.linea, x.col), arbol::Entrada::Prop { linea, col, .. } => (*linea, *col) };
+                    return Err(Fallo::en(l, c, "una biblioteca solo declara: `let`, `spring` y `component`. Lo que se pinta y lo que se mueve es cosa de la escena"));
+                }
+                traido.push(d);
+            }
+        }
+        Ok(resto)
+    }
+}
+
+/// Lee una escena de su fichero, con lo que importe. Devuelve la escena y todos los
+/// ficheros de los que está hecha —para vigilarlos—, o los fallos ya con su fichero,
+/// su línea y su flecha.
+pub fn leer_fichero(ruta: &str) -> Result<(Escena, Vec<PathBuf>), String> {
+    let mut l = Lectura::default();
+    let principal = Path::new(ruta).canonicalize().unwrap_or_else(|_| PathBuf::from(ruta));
+    let levantada = (|| {
+        l.abiertos.push(principal.clone());
+        let entradas = l.abrir(Path::new(ruta)).map_err(|f| vec![f])?;
+        l.ficheros[0].0 = principal.clone();
+        let mut traido = Vec::new();
+        let mut resto = l.resolver(&principal, entradas, &mut traido).map_err(|f| vec![f])?;
+        // Lo importado va delante de lo de la escena, como si estuviera escrito ahí.
+        if let [arbol::Entrada::Nodo(escena)] = resto.as_mut_slice() {
+            if let Some(cuerpo) = escena.cuerpo.as_mut() {
+                traido.append(cuerpo);
+                *cuerpo = traido;
+            }
+        }
+        let nombres: Vec<String> = l.ficheros.iter().map(|(r, _)| r.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect();
+        obra::levantar(&resto, &nombres)
+    })();
+    // Al enseñar un fallo, el fichero principal con la ruta que dio quien lo abrió.
+    if let Some(f) = l.ficheros.first_mut() {
+        f.0 = PathBuf::from(ruta);
+    }
+    match levantada {
+        Ok(e) => Ok((e, l.ficheros.into_iter().map(|(r, _)| r).collect())),
+        Err(fallos) => {
+            let n = fallos.len();
+            let texto: Vec<String> = fallos.iter().map(|f| f.con_fuente(&l.ficheros)).collect();
+            Err(format!("{}\n{}", texto.join("\n\n"), if n == 1 { "un fallo".to_owned() } else { format!("{n} fallos") }))
+        }
+    }
 }
 
 /// «¿Querías decir…?»: el nombre conocido que más se parece, si se parece bastante.

@@ -1,0 +1,6 @@
+// espera: fallo «ya hay un componente «Dot», en paleta.plm:4»
+import "comun/paleta.plm"
+scene X {
+    surface { size: 10, 10 }
+    component Dot(t) { size: 1, 1 }
+}

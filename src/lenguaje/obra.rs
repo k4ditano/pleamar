@@ -139,6 +139,8 @@ struct Componente<'a> {
 
 struct Obra<'a> {
     e: Escena,
+    /// Los nombres de los ficheros de los que está hecha, para decir dónde está algo.
+    ficheros: &'a [String],
     props: HashMap<String, PropId>,
     hechos: HashMap<String, HechoId>,
     sucesos: HashMap<String, SucesoId>,
@@ -170,10 +172,13 @@ struct Obra<'a> {
     bajo: Vec<Transformacion>,
 }
 
-pub fn levantar(arbol: &[Entrada]) -> Result<Escena, Vec<Fallo>> {
+pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String]) -> Result<Escena, Vec<Fallo>> {
     let escena = match arbol {
         [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "scene") => n,
-        _ => return Err(vec![Fallo::en(1, 1, "un fichero es una escena: `scene Nombre { … }`")]),
+        [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "library") => {
+            return Err(vec![Fallo::en(n.linea, n.col, "esto es una biblioteca: no se abre, se importa desde una escena (`import \"…\"`)")]);
+        }
+        _ => return Err(vec![Fallo::en(1, 1, "un fichero es una escena: los `import` que quiera, y luego `scene Nombre { … }`")]),
     };
     let mut o = Obra {
         e: Escena::default(),
@@ -182,7 +187,7 @@ pub fn levantar(arbol: &[Entrada]) -> Result<Escena, Vec<Fallo>> {
         muelles: [("lively", Muelle::VIVO), ("calm", Muelle::SERENO), ("quick", Muelle::RAPIDO), ("slow", Muelle::LENTO), ("eyes", Muelle::OJOS), ("pose", Muelle::POSE)]
             .into_iter().map(|(n, m)| (n.to_owned(), m)).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
-        entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
+        ficheros, entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
@@ -1531,6 +1536,9 @@ impl<'a> Obra<'a> {
             }
         }
         c.nada_mas()?;
+        if let Some(ya) = self.componentes.get(&nombre) {
+            return Err(Fallo::en(n.linea, n.col, format!("ya hay un componente «{nombre}», en {}. Dos con el mismo nombre no pueden convivir: cambia uno", super::sitio(self.ficheros, ya.nodo.linea))));
+        }
         if n.cuerpo.is_none() {
             return Err(Fallo::en(n.linea, n.col, "a este componente le falta su bloque `{ … }`"));
         }

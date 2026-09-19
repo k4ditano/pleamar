@@ -3,6 +3,8 @@
 // `pleamar --decir lanzador "emit toggle"`— y se cierra con Escape, al lanzar
 // algo, o al pulsar en cualquier otro sitio.
 
+import "comun/paleta.plm"
+
 scene Launcher {
     surface {
         size: 600, 440
@@ -16,9 +18,6 @@ scene Launcher {
     //  Lo que `lanzador.luau` puede tocar: saber qué aplicaciones hay, y lanzar una de ellas.
     permissions { services: "apps" }
 
-    let ink  = #f5f7f5
-    let mint = #9ed6bd
-    let coal = #151616
 
     // ── la frontera ──────────────────────────────────────────────
     fact open  = false

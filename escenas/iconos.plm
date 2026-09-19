@@ -2,14 +2,14 @@
 // ventana. Pulsar uno es su clic de siempre; el botón derecho abre su menú, que
 // es una superficie emergente: sale de la barra y se pinta como todo lo demás.
 
+import "comun/paleta.plm"
+import "comun/menu.plm"
+
 scene TrayIcons {
     surface { size: 420, 52; anchor: top; margin: 60; screens: "HDMI-A-1" }
     //  Lo que `iconos.luau` puede tocar: la bandeja, y nada más.
     permissions { services: "tray" }
 
-    let ink  = #f5f7f5
-    let mint = #9ed6bd
-    let coal = #151616
 
     // ── la frontera: dos listas que pone la lógica ───────────────
     model icons max 8 { icon: text }
@@ -59,25 +59,7 @@ scene TrayIcons {
         body { color: #1b1c1c; border: 1, #38393a
             box { from: 0, 0; size: 236, 16 + list.height; corner: 12 } }
         column list { at: 8, 8
-            for r in rows { Row(r) }
+            for r in rows { MenuRow(r) }
         }
-    }
-
-    component Row(r) {
-        size: 220, 30 - r.separator * 21
-        prop on = 0 ~quick
-        box hit { from: 0, 0; size: 220, 30 - r.separator * 21; corner: 7; color: mint
-                  opacity: on * 20%; cursor: pointer; active: r.enabled and not r.separator }
-        //  La raya de un separador.
-        box { from: 6, 4; size: 208, 1; color: ink; opacity: r.separator * 14% }
-        text r.label { at: 12, 15; anchor: left center; size: 13.5; width: 170; lines: 1; color: ink
-                       opacity: (1 - r.separator) * (0.45 + r.enabled * 0.55) }
-        //  Una casilla, marcada o no; o la flecha de «hay más».
-        ellipse { at: 204, 15; radius: 3.5; color: mint; opacity: r.checked > 0.5 }
-        ellipse { at: 204, 15; radius: 3.5; stroke: 1.2; color: ink; opacity: if(r.checked > -0.5, 0.5, 0) }
-        text "›" { at: 204, 14; anchor: center; size: 16; color: ink; opacity: if(r.children > 0, 0.6, 0) }
-        on enter hit { on: 1 ~quick }
-        on leave hit { on: 0 ~quick }
-        on press hit { emit choose(r.index) }
     }
 }

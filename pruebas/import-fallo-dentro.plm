@@ -1,0 +1,7 @@
+// espera: fallo «rota.plm:4:23: no hay nada que se llame «totl»»
+import "comun/rota.plm"
+scene X {
+    surface { size: 100, 40 }
+    fact total = 3
+    row { at: 0, 0; Badge(1) }
+}

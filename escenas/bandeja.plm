@@ -2,14 +2,13 @@
 // `repeat` y reparto. La lista crece y encoge con un hecho; nadie calcula
 // posiciones: cada aviso va a su hueco con el muelle de la columna.
 
+import "comun/paleta.plm"
+
 scene Tray {
     surface { size: 720, 430; anchor: top; margin: 40; screens: "HDMI-A-1" }
     //  Lo que `bandeja.luau` puede tocar: ser quien recibe las notificaciones.
     permissions { services: "notifications" }
 
-    let ink  = #f5f7f5
-    let mint = #9ed6bd
-    let sand = #e8c07a
 
     // ── la frontera con la lógica ────────────────────────────────
     //  Los avisos son una lista que pone la lógica (bandeja.luau), tal como se la

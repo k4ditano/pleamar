@@ -1,0 +1,2 @@
+import "b.plm"
+library A { let a = 1 }

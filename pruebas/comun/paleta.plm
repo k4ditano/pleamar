@@ -1,0 +1,5 @@
+library Palette {
+    let ink = #f5f7f5
+    spring snappy = 320, 26
+    component Dot(tone) { size: 10, 10; ellipse { at: 5, 5; radius: 5; color: tone } }
+}

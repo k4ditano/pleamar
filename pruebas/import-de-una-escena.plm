@@ -1,0 +1,3 @@
+// espera: fallo «lo que se importa es una biblioteca»
+import "popup.plm"
+scene X { surface { size: 10, 10 } }

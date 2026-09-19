@@ -2,6 +2,8 @@
 // delante, la hora y el volumen. La escena no sabe qué es Hyprland ni PipeWire:
 // solo tiene hechos y textos, y quién los pone es cosa de barra.luau.
 
+import "comun/paleta.plm"
+
 scene Bar {
     surface {
         size: full, 44
@@ -14,9 +16,6 @@ scene Bar {
     //  Lo que `barra.luau` puede tocar del sistema. Sin declarar, nada.
     permissions { services: "workspaces", "window", "audio" }
 
-    let ink  = #f5f7f5
-    let mint = #9ed6bd
-    let coal = #151616
 
     // ── lo que cuenta la lógica ──────────────────────────────────
     fact ws.active = 1

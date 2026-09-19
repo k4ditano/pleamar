@@ -6,14 +6,9 @@ use crate::logica::{Contexto, Guion};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-/// Lee y levanta una escena. El fallo viene ya con su línea y su flecha.
+/// Lee y levanta una escena. El fallo viene ya con su fichero, su línea y su flecha.
 pub fn leer(ruta: &str) -> Result<Escena, String> {
-    let fuente = std::fs::read_to_string(ruta).map_err(|e| format!("{ruta}: {e}"))?;
-    crate::lenguaje::leer(&fuente).map_err(|fallos| {
-        let n = fallos.len();
-        let texto: Vec<String> = fallos.iter().map(|f| f.con_fuente(ruta, &fuente)).collect();
-        format!("{}\n{}", texto.join("\n\n"), if n == 1 { "un fallo".to_owned() } else { format!("{n} fallos") })
-    })
+    crate::lenguaje::leer_fichero(ruta).map(|(e, _)| e)
 }
 
 pub struct DeFichero {
@@ -94,30 +89,33 @@ pub fn vigilar(ruta: String, al_render: Sender<ARender>, a_logica: Sender<Evento
     std::thread::Builder::new()
         .name("recarga".into())
         .spawn(move || {
-            let fecha = |r: &str| std::fs::metadata(r).and_then(|m| m.modified()).ok();
-            let mut ultima = fecha(&ruta);
+            // La escena y lo que importe: tocar una biblioteca también la recarga.
+            let mut vigilados: Vec<std::path::PathBuf> = crate::lenguaje::leer_fichero(&ruta).map_or_else(|_| vec![ruta.clone().into()], |(_, f)| f);
+            let fecha = |v: &[std::path::PathBuf]| v.iter().map(|r| std::fs::metadata(r).and_then(|m| m.modified()).ok()).collect::<Vec<_>>();
+            let mut ultima = fecha(&vigilados);
             loop {
                 std::thread::sleep(Duration::from_millis(250));
-                let mut ahora = fecha(&ruta);
-                if ahora == ultima || ahora.is_none() {
+                let mut ahora = fecha(&vigilados);
+                if ahora == ultima || ahora.iter().all(Option::is_none) {
                     continue;
                 }
                 // Un editor guarda en varios tiempos —trunca, escribe, a veces renombra—:
                 // se espera a que el fichero lleve un momento quieto y no esté vacío.
                 loop {
                     std::thread::sleep(Duration::from_millis(60));
-                    let despues = fecha(&ruta);
-                    let vacio = std::fs::metadata(&ruta).map_or(true, |m| m.len() == 0);
+                    let despues = fecha(&vigilados);
+                    let vacio = vigilados.iter().any(|r| std::fs::metadata(r).map_or(true, |m| m.len() == 0));
                     if despues == ahora && !vacio {
                         break;
                     }
                     ahora = despues;
                 }
-                ultima = ahora;
                 let t0 = std::time::Instant::now();
-                match leer(&ruta) {
-                    Ok(e) => {
-                        println!("recarga · {ruta} leída en {:.1} ms", t0.elapsed().as_secs_f32() * 1000.0);
+                match crate::lenguaje::leer_fichero(&ruta) {
+                    Ok((e, ficheros)) => {
+                        println!("recarga · {ruta} leída en {:.1} ms{}", t0.elapsed().as_secs_f32() * 1000.0, if ficheros.len() > 1 { format!(" · con {} bibliotecas", ficheros.len() - 1) } else { String::new() });
+                        // Puede que ahora importe otras cosas.
+                        vigilados = ficheros;
                         let _ = a_la_logica.send(Evento::EscenaNueva(e.hechos.clone(), e.textos.clone(), e.permisos.clone(), e.modelos.clone()));
                         if al_render.send(ARender::Escena(e)).is_err() {
                             return;
@@ -125,6 +123,7 @@ pub fn vigilar(ruta: String, al_render: Sender<ARender>, a_logica: Sender<Evento
                     }
                     Err(m) => eprintln!("recarga · la escena sigue como estaba:\n{m}"),
                 }
+                ultima = fecha(&vigilados);
             }
         })
         .unwrap();

@@ -1,0 +1,3 @@
+// espera: fallo «una biblioteca solo declara»
+import "comun/pinta.plm"
+scene X { surface { size: 10, 10 } }

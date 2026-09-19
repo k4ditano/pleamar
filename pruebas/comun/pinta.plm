@@ -1,0 +1,4 @@
+library Paints {
+    let ink = #fff
+    box { at: 0, 0; size: 10, 10; color: ink }
+}
