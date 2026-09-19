@@ -148,18 +148,50 @@ on away whole for 420ms  { open = false }            // estuvo encima y lleva es
 on scroll sound          { emit volume_step(wheel) } // la rueda, en cualquier zona que tenga debajo
 on drag track            { volume = clamp(local.x / 64, 0, 1) }   // se mueve con el botón puesto
 on key Escape            { open = false }            // la superficie tiene que pedir teclado: `keyboard: on_demand`
+on key Ctrl+k            { toggle open }             // con modificadores: Ctrl+, Alt+, Super+ (Mayús va en la propia tecla)
+on submit query          { emit launch(sel) }        // Intro dentro del campo `query`
+on focus                 { glow: 1 ~quick }          // la superficie gana el teclado…
+on blur                  { open = false }            // …o lo pierde: han pulsado en otro sitio
+on drop tray             { emit dropped }            // sueltan algo de otra aplicación sobre la zona
+on toggle                { toggle open; focus query } // un suceso, que puede venir de fuera (ver abajo)
 on idle for 14s while not open { asleep = true }
 on confirmed             { play joy }
 every 2.5s..7s while awake { play yawn }
 ```
 
-Efectos: `hecho = expresión` (se evalúa al dispararse), `toggle hecho`, `emit suceso` o con carga `emit opened(i)`, `impulse prop velocidad`, `play gesto`, y `prop: valor ~muelle after 70ms`.
+Efectos: `hecho = expresión` (se evalúa al dispararse), `toggle hecho`, `emit suceso` o con carga `emit opened(i)`, `impulse prop velocidad`, `play gesto`, `focus campo` (le da el cursor de escribir), `blur`, y `prop: valor ~muelle after 70ms`.
 
 **Lo que una regla puede leer del ratón**, como si fueran hechos: `pointer.x`, `pointer.y` (en la superficie), `local.x`, `local.y` (**dentro de la zona**: en un reparto, (0, 0) es la esquina del hueco, esté donde esté en pantalla), `drag.dx`, `drag.dy` (desde que se pulsó) y `wheel` (muescas; positivo, hacia arriba). Un arrastre sigue aunque el ratón se salga de la zona, hasta soltar.
 
 Una forma puede llevar `cursor: pointer | text | grab | grabbing`. **Un `row` o `column` con nombre es también una zona** —su caja entera, debajo de las de sus hijos—: así la rueda vale en toda una píldora.
 
 > Ojo con lo que se arrastra dentro de un reparto anclado: si algo de dentro cambia de ancho mientras tanto (un «54 %» que pasa a «100 %»), el reparto se recoloca y la zona se mueve debajo del ratón. Dale ancho fijo a lo que cambie (`width: 42; align: right`).
+
+## Escribir: `input`
+
+```
+text query = ""
+input query { at: 48, 44; width: 504; size: 20; color: ink
+              placeholder: "Busca una aplicación…"; selection: #2f5f52 }
+```
+
+Un campo de una línea que edita **el render**: cada tecla se ve en el frame siguiente, esté como esté la lógica. El campo se llama como el `text` que edita, y ese mismo nombre es su zona (pulsar le da el foco y coloca el cursor; arrastrar selecciona). Sabe lo de siempre: flechas, Inicio y Fin, Ctrl+flecha por palabras, Mayús para seleccionar, Ctrl+A, Ctrl+C / X / V contra el portapapeles del sistema, Retroceso y Supr, y repite la tecla que se deja pulsada. Si el texto no cabe, se desliza para que el cursor se vea.
+
+La lógica se entera de cada cambio (`text:query`) y del Intro (`submit:query`); lo que no es escribir —Escape, las flechas de arriba y abajo— sigue llegando a `on key`.
+
+**El teclado, solo cuando hace falta.** `keyboard: exclusive while open` en la `surface`: mientras `open` es falso la superficie no pide teclado, y el escritorio sigue siendo de quien era.
+
+## Órdenes desde fuera
+
+```
+pleamar --decir lanzador "emit toggle"
+```
+
+Cada escena en marcha escucha en un socket con su nombre (el del fichero). `emit suceso` o `emit suceso 3` dispara sus reglas como si lo hubiera emitido la lógica. **Un atajo global es esto**: un bind del compositor que ejecuta esa orden. En Hyprland:
+
+```lua
+hl.bind("SUPER + space", hl.dsp.exec_cmd('pleamar --decir lanzador "emit toggle"'))
+```
 
 ## Lo que lleva sola
 

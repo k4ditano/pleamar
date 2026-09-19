@@ -17,6 +17,11 @@ play("joy")                               -- pedir un gesto (la escena lo conced
 on("view_event", function(n) … end)       -- un suceso que la escena deja salir (`event x ->`), con su carga
 on("press:view", …)  on("release:view", …)  on("enter:orb", …)  on("leave:orb", …)
 on("scroll:sound", function(notches) … end)   on("key", function(name, text) … end)
+on("text:query", function(value) … end)   -- alguien escribió en el campo `query`; `text.query` ya vale eso
+on("submit:query", function(value) … end) -- Intro en el campo
+on("focus", …)  on("blur", …)             -- la superficie gana o pierde el teclado
+on("drop:tray", function(data, mime) … end)  -- soltaron algo de otra aplicación: texto, o una lista de `file://…`
+focus("query")                            -- darle el cursor de escribir a un campo; `focus()` se lo quita
 on("layer:card", function(claim) … end)   -- una capa cambió de manos
 on("fact:open", function(v) … end)        -- una REGLA de la escena cambió un hecho
 on("demo", …)                             -- el tic de `--demo`
@@ -46,6 +51,8 @@ Un nombre mal escrito es un error al momento, con sugerencia: `la escena no tien
 | `workspaces` | `{ active = 3, list = { { id, name, windows, monitor }, … } }` | Hyprland, por sus sockets (sin lanzar `hyprctl`) |
 | `window` | `{ title, class }` | Hyprland |
 | `sys.call("workspaces.focus", n)` | ir a un escritorio | Hyprland |
+| `apps` | `{ { name, exec, icon }, … }`, por orden alfabético | Linux: los `.desktop` de `XDG_DATA_DIRS` (sin los ocultos ni los de terminal) |
+| `sys.call("apps.launch", exec)` | lanzar una, suelta del programa | Linux: `setsid -f sh -c` |
 
 Lo que aún no es un servicio se puede sacar con `spawn` y `run` —así lee el volumen `barra.luau`, con `pactl subscribe` y `wpctl`—, pero eso ata el script a Linux: es un apaño hasta que exista el servicio.
 
@@ -57,6 +64,8 @@ Al salir, el programa para todo lo que la lógica dejó corriendo; al recargar l
 - **Tope de memoria**: 64 MB.
 - **Los segundos contados**: un manejador que lleve más de 2 s sin acabar se corta, y la lógica sigue viva. Probado con un `while true do end`.
 - **Un error no tumba nada**: se dice por consola y el resto de manejadores siguen.
+
+> **`fact`, `text` y `sys` se leen siempre en el momento.** En su caja de arena, Luau da por hecho que un global no cambia y se guarda lo que leyó al cargar: `text.query` valía `""` para siempre dentro de un manejador. Se le dice al compilador que esos tres son mutables. Costó una tarde encontrarlo.
 
 ## Sucesos con carga
 

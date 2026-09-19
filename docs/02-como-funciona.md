@@ -99,6 +99,20 @@ La escena declara la superficie que quiere: tamaño en píxeles **lógicos**, an
 - **Región de entrada.** Cada frame en que cambian, las cajas de las zonas activas se le dan al compositor como región de entrada, justo antes de presentar: lo demás de la superficie, aunque sea suya, deja pasar el clic.
 - La GPU (dispositivo, tubería, almacenes) se crea con la primera lámina que llega.
 
+## Escribir (`render.rs`, `texto.rs`)
+
+Un `input` lo edita **el render**, no la lógica: la tecla entra, `Edicion` cambia el texto y el cursor, y se ve en ese mismo frame aunque la lógica lleve un segundo atascada. El taller devuelve con cada maqueta dónde cae cada letra (`cursores`), y con eso se coloca el cursor, se pinta la selección y se sabe qué letra hay bajo el ratón. La lógica recibe el texto ya cambiado (`Evento::Texto`) y el Intro (`Evento::Envia`).
+
+La repetición de tecla es nuestra (400 ms, luego una cada 33): así es igual en todos los sistemas. El portapapeles es `arboard`, que existe en los tres.
+
+## Órdenes desde fuera (`plataforma/mod.rs`)
+
+Un hilo escucha en `$XDG_RUNTIME_DIR/pleamar-ESCENA.sock`; `pleamar --decir ESCENA "emit toggle"` escribe una línea y se va (2 ms). La orden entra al render como `ARender::SucesoDeFuera`, por la misma puerta que los sucesos de la lógica. Es `cfg(unix)`: en Windows será una tubería con nombre.
+
+## Soltar desde otra aplicación (`plataforma/wayland.rs`)
+
+`wl_data_device`: al entrar un arrastre se mira si trae `text/uri-list` o `text/plain`, y al soltarlo se lee en un hilo aparte —quien lo ofrece puede tardar— y llega como `ARender::Soltado`. El render mira qué zona hay debajo y dispara `on drop zona`.
+
 ## Reposo
 
 Si ninguna propiedad se mueve y ningún comportamiento está vivo, el render no pinta: espera un mensaje, un retraso que venza o el próximo parpadeo. Cero frames.

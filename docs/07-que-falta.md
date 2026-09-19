@@ -10,7 +10,7 @@ Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
 
 | Quickshell | pleamar |
 | --- | --- |
-| `PanelWindow`: anclas, márgenes, zona exclusiva, capa, foco | ✅ la escena declara tamaño, ancla, margen, nivel y reserva; sin foco de teclado |
+| `PanelWindow`: anclas, márgenes, zona exclusiva, capa, foco | ✅ la escena declara tamaño, ancla, margen, nivel y reserva; con teclado (`keyboard:`) |
 | Una ventana por monitor (`Variants`), monitores que van y vienen | 🟡 una por monitor y en caliente; todas pintan la misma escena, sin instancia por monitor |
 | Escala HiDPI y fraccional | ✅ probada a 2 y a 1,5 |
 | Redimensionar la superficie según el contenido | ⬜ |
@@ -57,10 +57,10 @@ Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
 | Realce sin pasar por la lógica | ✅ **y QtQuick no lo garantiza** |
 | Botones del ratón, rueda, arrastrar, mantener pulsado | ✅ |
 | Forma del cursor | ✅ `cursor:` |
-| Teclado, foco, atajos | 🟡 teclas como sucesos (`on key Escape`); sin modificadores ni atajos globales |
-| Entrada de texto, selección, portapapeles, IME | ⬜ |
-| Arrastrar y soltar (Marea lo usa) | ⬜ |
-| Atajos globales, captura de foco para cerrar al pulsar fuera | ⬜ |
+| Teclado, foco, atajos | ✅ `on key Ctrl+k`, `on focus` / `on blur`, `focus campo`, y teclado solo mientras haga falta (`keyboard: exclusive while open`) |
+| Entrada de texto, selección, portapapeles, IME | 🟡 `input` de una línea con selección y portapapeles, editado por el render; **sin IME** |
+| Arrastrar y soltar (Marea lo usa) | 🟡 recibir (`on drop zona`); arrastrar hacia fuera, no |
+| Atajos globales, captura de foco para cerrar al pulsar fuera | 🟡 el atajo es un bind del compositor que llama a `pleamar --decir`; cerrar al pulsar fuera, con `on blur` |
 
 ### Datos y sistema
 
