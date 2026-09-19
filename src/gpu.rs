@@ -2,9 +2,8 @@
 //! superficie de Wayland— y la composición de la lista de dibujo en elementos.
 
 use crate::escena::*;
-use smithay_client_toolkit::compositor::{CompositorState, Region};
+use crate::plataforma::Ventana;
 use std::ops::Range;
-use wayland_client::protocol::wl_surface::WlSurface;
 
 const POR_FORMA: usize = 20;
 const POR_ELEMENTO: usize = 52;
@@ -263,7 +262,7 @@ impl Dibujo {
 pub struct NuevaLamina {
     pub id: u32,
     pub superficie: wgpu::Surface<'static>,
-    pub wl: WlSurface,
+    pub ventana: Box<dyn Ventana>,
     pub escala: f32,
     /// Milihercios del monitor; 0 si no se sabe.
     pub mhz: i32,
@@ -281,7 +280,7 @@ pub struct Lamina {
     /// La que espera a la pantalla y marca el ritmo; las demás no bloquean.
     pub marca_el_ritmo: bool,
     superficie: wgpu::Surface<'static>,
-    wl: WlSurface,
+    ventana: Box<dyn Ventana>,
     px: (u32, u32),
     uniformes: wgpu::Buffer,
     grupo_uniformes: wgpu::BindGroup,
@@ -463,7 +462,7 @@ impl Gpu {
         let (vistas_de_capa, grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, 1, 1);
         let mut l = Lamina {
             id: n.id, nombre: n.nombre, mhz: n.mhz, escala: n.escala, marca_el_ritmo: true,
-            superficie: n.superficie, wl: n.wl, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas,
+            superficie: n.superficie, ventana: n.ventana, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas,
         };
         self.configurar(&mut l, tam);
         l
@@ -559,16 +558,10 @@ impl Gpu {
 }
 
 impl Lamina {
-    /// Por dónde entra el ratón: solo por estas cajas. El resto de la
-    /// superficie, aunque sea suya, deja pasar el clic a lo de debajo. Se aplica
-    /// con el siguiente frame que se presente.
-    pub fn region_de_entrada(&self, compositor: &CompositorState, cajas: &[[i32; 4]]) {
-        if let Ok(region) = Region::new(compositor) {
-            for c in cajas {
-                region.add(c[0], c[1], c[2] - c[0], c[3] - c[1]);
-            }
-            self.wl.set_input_region(Some(region.wl_region()));
-        }
+    /// Por dónde entra el ratón. El resto de la superficie, aunque sea suya,
+    /// deja pasar el clic a lo de debajo.
+    pub fn region_de_entrada(&self, cajas: &[[i32; 4]]) {
+        self.ventana.region_de_entrada(cajas);
     }
 }
 

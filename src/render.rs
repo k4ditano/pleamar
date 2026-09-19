@@ -55,7 +55,6 @@ impl Ciclo {
 
 pub fn hilo(
     instancia: wgpu::Instance,
-    compositor: smithay_client_toolkit::compositor::CompositorState,
     rx: Receiver<ARender>,
     a_logica: Sender<Evento>,
     logica_bloqueada: Arc<AtomicBool>,
@@ -558,7 +557,7 @@ pub fn hilo(
         let cambia_la_region = cajas != region;
         if cambia_la_region {
             for l in &laminas {
-                l.region_de_entrada(&compositor, &cajas);
+                l.region_de_entrada(&cajas);
             }
             region = cajas;
         }

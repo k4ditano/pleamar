@@ -16,6 +16,8 @@
 | 2026-09-19 | **Una forma de capa solo se ve con más de media presencia** | Fundir dos formas de ojos da un borrón; como las presencias suman uno, así una se va y entra la otra |
 | 2026-09-19 | **Un `estado` es una reclamación que fija propiedades**; no hay construcción aparte | Abrir/cerrar la tarjeta de Marea salió como `capa tarjeta { abierta mientras abierta?; reposo }`, sin nada nuevo |
 | 2026-09-19 | **Las palabras clave del lenguaje, en inglés** (`layer`, `gesture`, `while`, `after`…) | Decisión de Abel. k4 ya recibe PRs de fuera y cambiarlo después es caro. El código Rust del runtime sigue en castellano por ahora; el parser hará de frontera |
+| 2026-09-19 | **Multiplataforma: ahora no, pero sin cerrarlo — y siempre presente.** Todo lo de sistema va detrás de `src/plataforma/`; el núcleo solo usa crates que existen en Linux, Windows y macOS; `cargo check` contra Windows tiene que pasar | Decisión de Abel. El 80 % ya es portable (`wgpu`, el modelo, el lenguaje, Luau). Lo que no: la ventana (layer-shell no existe fuera) y los servicios, que van por el grafo de datos. Primera candidata a portarse: **Marea**, no k4 —en Mac no se puede sustituir el Dock—. Primer sistema: Windows |
+| 2026-09-19 | **Las limitaciones se anotan según salen, cada una con su plan de arreglo** ([[pleamar · 08 Limitaciones conocidas]]) | Decisión de Abel: nada de deuda escondida |
 
 ## Lo que enseñó implementarlo
 
