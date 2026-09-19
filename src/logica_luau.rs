@@ -64,6 +64,7 @@ struct Compartido {
     hechos: HashMap<String, f64>,
     textos: HashMap<String, String>,
     permisos: crate::escena::Permisos,
+    modelos: Vec<crate::escena::Modelo>,
     /// Hasta cuándo puede correr lo que está corriendo.
     limite: Option<Instant>,
 }
@@ -174,7 +175,7 @@ impl GuionLuau {
         lua.set_memory_limit(MEMORIA)?;
         // En la caja de arena, Luau da por hecho que los globales no cambian y lee
         // `fact.open` UNA vez, al cargar el script. Estos sí cambian: hay que decírselo.
-        lua.set_compiler(mlua::chunk::Compiler::new().set_mutable_globals(["fact", "text", "sys"]));
+        lua.set_compiler(mlua::chunk::Compiler::new().set_mutable_globals(["fact", "text", "model", "sys"]));
         let g = lua.globals();
 
         // Un manejador que no acaba no puede quedarse con el hilo para siempre.
@@ -218,6 +219,73 @@ impl GuionLuau {
         let c = self.c.clone();
         let leer = lua.create_function(move |_, (_, k): (Table, String)| Ok(c.lock().unwrap().textos.get(&k).cloned()))?;
         g.set("text", Self::tabla_viva(&lua, leer, poner)?)?;
+
+        // model.rows = { { label = "Abrir", enabled = true }, … }: una lista entera, de una vez.
+        // Cada campo de cada ficha es por dentro un texto o un hecho; aquí se reparten,
+        // y solo viaja lo que haya cambiado.
+        let guardadas = lua.create_table()?;
+        let (tx, c, almacen) = (self.tx.clone(), self.c.clone(), guardadas.clone());
+        let poner = lua.create_function(move |_, (_, k, lista): (Table, String, Value)| {
+            use crate::escena::{TipoDeCampo, ValorDeCampo};
+            let Value::Table(lista) = lista else {
+                return Err(mlua::Error::runtime(format!("a «model.{k}» se le da una lista de fichas: model.{k} = {{ {{ … }}, {{ … }} }}")));
+            };
+            let mut c = c.lock().unwrap();
+            let Some(m) = c.modelos.iter().find(|m| m.nombre == k).cloned() else {
+                return Err(mlua::Error::runtime(format!("la escena no tiene ningún modelo «{k}»{}", pista(&k, c.modelos.iter().map(|m| &m.nombre)))));
+            };
+            let total = lista.raw_len();
+            for i in 0..total.min(m.caben) {
+                let ficha: Value = lista.raw_get(i + 1)?;
+                let Value::Table(ficha) = ficha else {
+                    return Err(mlua::Error::runtime(format!("«{k}» es una lista de fichas, y la número {} no es una tabla", i + 1)));
+                };
+                for campo in &m.campos {
+                    let nombre = format!("{k}.{i}.{}", campo.nombre);
+                    let v: Value = ficha.get(campo.nombre.as_str())?;
+                    // Una lista donde se espera un número cuenta como cuántos tiene: `children: number`.
+                    let numero = |v: &Value| match v {
+                        Value::Number(n) => Some(*n),
+                        Value::Integer(n) => Some(*n as f64),
+                        Value::Boolean(b) => Some(*b as u8 as f64),
+                        Value::Table(t) => Some(t.raw_len() as f64),
+                        _ => None,
+                    };
+                    match (&campo.tipo, &campo.por_defecto) {
+                        (TipoDeCampo::Texto, por_defecto) => {
+                            let t = match &v {
+                                Value::Nil => if let ValorDeCampo::Texto(t) = por_defecto { t.clone() } else { String::new() },
+                                otro => otro.to_string()?,
+                            };
+                            if c.textos.get(&nombre) != Some(&t) {
+                                c.textos.insert(nombre.clone(), t.clone());
+                                let _ = tx.send(ARender::Texto(internar(&nombre), t));
+                            }
+                        }
+                        (tipo, por_defecto) => {
+                            let mut n = numero(&v).unwrap_or(if let ValorDeCampo::Numero(d) = por_defecto { *d as f64 } else { 0.0 });
+                            if *tipo == TipoDeCampo::Bool {
+                                n = (n != 0.0) as u8 as f64;
+                            }
+                            if c.hechos.get(&nombre) != Some(&n) {
+                                c.hechos.insert(nombre.clone(), n);
+                                let _ = tx.send(ARender::Hecho(internar(&nombre), n as f32));
+                            }
+                        }
+                    }
+                }
+            }
+            for (parte, n) in [("count", total.min(m.caben)), ("total", total)] {
+                let nombre = format!("{k}.{parte}");
+                if c.hechos.get(&nombre) != Some(&(n as f64)) {
+                    c.hechos.insert(nombre.clone(), n as f64);
+                    let _ = tx.send(ARender::Hecho(internar(&nombre), n as f32));
+                }
+            }
+            almacen.raw_set(k, lista)
+        })?;
+        let leer = lua.create_function(move |_, (_, k): (Table, String)| guardadas.raw_get::<Value>(k))?;
+        g.set("model", Self::tabla_viva(&lua, leer, poner)?)?;
 
         let tx = self.tx.clone();
         g.set("emit", lua.create_function(move |_, n: String| Ok(tx.send(ARender::Suceso(internar(&n))).is_ok()))?)?;
@@ -438,6 +506,7 @@ impl Guion for GuionLuau {
         c.hechos = e.hechos.iter().map(|(n, v)| (n.to_string(), *v as f64)).collect();
         c.textos = e.textos.iter().map(|(n, v)| (n.to_string(), v.clone())).collect();
         c.permisos = e.permisos.clone();
+        c.modelos = e.modelos.clone();
         e
     }
 
@@ -484,8 +553,9 @@ impl Guion for GuionLuau {
             }
             // La escena se recargó: lo que tenga de nuevo ya se puede nombrar; lo que
             // ya se sabía, se sigue sabiendo.
-            Evento::EscenaNueva(hechos, textos, permisos) => {
+            Evento::EscenaNueva(hechos, textos, permisos, modelos) => {
                 let mut c = self.c.lock().unwrap();
+                c.modelos = modelos;
                 // Los permisos sí se sustituyen: quitar uno de la escena lo quita ya.
                 if c.permisos != permisos {
                     println!("lógica · permisos ahora: {}", en_claro(&permisos));

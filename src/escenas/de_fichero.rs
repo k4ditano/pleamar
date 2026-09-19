@@ -118,7 +118,7 @@ pub fn vigilar(ruta: String, al_render: Sender<ARender>, a_logica: Sender<Evento
                 match leer(&ruta) {
                     Ok(e) => {
                         println!("recarga · {ruta} leída en {:.1} ms", t0.elapsed().as_secs_f32() * 1000.0);
-                        let _ = a_la_logica.send(Evento::EscenaNueva(e.hechos.clone(), e.textos.clone(), e.permisos.clone()));
+                        let _ = a_la_logica.send(Evento::EscenaNueva(e.hechos.clone(), e.textos.clone(), e.permisos.clone(), e.modelos.clone()));
                         if al_render.send(ARender::Escena(e)).is_err() {
                             return;
                         }

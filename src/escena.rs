@@ -773,6 +773,41 @@ pub struct Escena {
     pub teclado_mientras: Option<Expr>,
     pub permisos: Permisos,
     pub emergentes: Vec<Emergente>,
+    pub modelos: Vec<Modelo>,
+}
+
+/// Datos con forma que cruzan la frontera: una lista de fichas, todas con los
+/// mismos campos. La lógica la entrega entera (`model.rows = lista`) y la escena
+/// la recorre (`for r in rows`). Por dentro, cada campo de cada ficha es un texto
+/// vivo o un hecho con nombre —`rows.3.label`—: el render no sabe que hay listas.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Modelo {
+    pub nombre: String,
+    /// Cuántas fichas caben. Lo que pase de ahí no se ve, pero se cuenta: `rows.total`.
+    pub caben: usize,
+    pub campos: Vec<Campo>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Campo {
+    pub nombre: String,
+    pub tipo: TipoDeCampo,
+    /// Lo que vale si la ficha no lo trae.
+    pub por_defecto: ValorDeCampo,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TipoDeCampo {
+    Texto,
+    Numero,
+    /// Como `Numero`, pero solo 0 o 1, y la lógica lo escribe con `true` y `false`.
+    Bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ValorDeCampo {
+    Texto(String),
+    Numero(f32),
 }
 
 /// Una superficie que sale de la principal: un menú, una ficha. Lo que pinta
@@ -976,7 +1011,7 @@ pub enum Evento {
     /// El fichero de la lógica ha cambiado.
     RecargarLogica,
     /// La escena se ha recargado: estos son ahora sus hechos y sus textos.
-    EscenaNueva(Vec<(&'static str, f32)>, Vec<(&'static str, String)>, Permisos),
+    EscenaNueva(Vec<(&'static str, f32)>, Vec<(&'static str, String)>, Permisos, Vec<Modelo>),
     /// Una capa ha cambiado de manos: (capa, quién gana ahora).
     Capa(&'static str, &'static str),
     /// Se pidió un gesto y había uno de más clase puesto.

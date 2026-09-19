@@ -1,0 +1,7 @@
+// espera: fallo «los tipos de un campo son text, number y bool»
+scene Bad2 {
+    surface { size: 300, 200 }
+    model rows { label: string; index: number }
+    model empty max 3 { }
+    model big max 9000 { a: text }
+}

@@ -11,77 +11,73 @@ scene TrayIcons {
     let mint = #9ed6bd
     let coal = #151616
 
-    // ── la frontera ──────────────────────────────────────────────
-    fact count = 0                        // cuántos iconos hay, hasta 8
+    // ── la frontera: dos listas que pone la lógica ───────────────
+    model icons max 8 { icon: text }
+    model rows max 14 {
+        label: text
+        separator: bool
+        enabled: bool = true
+        checked: number = -1              // -1: no es una casilla · 0: vacía · 1: marcada
+        children: number                  // cuántos tiene dentro: lleva a otro menú
+    }
     fact menu_open = false
     fact slot = 0                         // de qué icono es el menú abierto
-    fact rows = 0                         // cuántas filas tiene, hasta 14
-    repeat i in 0..8 {
-        text pic.$i = ""
-        image icon.$i = from pic.$i, 28, 28
-    }
-    repeat i in 0..14 {
-        text row.$i = ""
-        fact sep.$i = 0                   // es una raya
-        fact off.$i = 0                   // no se puede pulsar
-        fact sub.$i = 0                   // lleva a otro menú
-        fact chk.$i = 0                   // 1: casilla vacía · 2: marcada
-    }
     event activate ->                     // (i): el clic de siempre
     event menu ->                         // (i): quiere ver su menú
     event choose ->                       // (i): ha elegido esa fila
 
     // ── la píldora ───────────────────────────────────────────────
-    row icons ~quick {
+    row tray ~quick {
         at: 210, 0
         anchor: center
         padding: 10
         gap: 10
         fill: coal
         corner: 23
-        repeat i in 0..8 { Icon(i) { show: count > i } }
+        for i in icons { Icon(i) }
     }
 
     component Icon(i) {
         size: 32, 32
         prop lift = 0 ~lively
+        image pic = from i.icon, 28, 28
         box hit { from: 0, 0; size: 32, 32; corner: 9; color: ink; opacity: lift * 12%; cursor: pointer }
-        image icon.$i { at: 2, 2; size: 28, 28 }
+        image pic { at: 2, 2; size: 28, 28 }
         on enter hit       { lift: 1 ~quick }
         on leave hit       { lift: 0 ~quick }
-        on press hit       { emit activate(i) }
-        on press right hit { slot = i; emit menu(i) }
+        on press hit       { emit activate(i.index) }
+        on press right hit { slot = i.index; emit menu(i.index) }
     }
 
     // ── el menú ──────────────────────────────────────────────────
     //  Debajo de su icono, y tan alto como su lista.
     popup tray_menu {
-        at: 210 - icons.width / 2 + 10 + slot * 42 - 8, 50
+        at: 210 - tray.width / 2 + 10 + slot * 42 - 8, 50
         size: 236, 16 + list.height
         open: menu_open
 
         body { color: #1b1c1c; border: 1, #38393a
             box { from: 0, 0; size: 236, 16 + list.height; corner: 12 } }
         column list { at: 8, 8
-            repeat i in 0..14 { Row(i) { show: rows > i } }
+            for r in rows { Row(r) }
         }
     }
 
-    component Row(i) {
-        size: 220, 30 - sep.$i * 21
+    component Row(r) {
+        size: 220, 30 - r.separator * 21
         prop on = 0 ~quick
-        box hit { from: 0, 0; size: 220, 30 - sep.$i * 21; corner: 7; color: mint
-                  opacity: on * 20% * (1 - sep.$i) * (1 - off.$i); cursor: pointer }
+        box hit { from: 0, 0; size: 220, 30 - r.separator * 21; corner: 7; color: mint
+                  opacity: on * 20%; cursor: pointer; active: r.enabled and not r.separator }
         //  La raya de un separador.
-        box { from: 6, 4; size: 208, 1; color: ink; opacity: sep.$i * 14% }
-        text row.$i { at: 12, 15; anchor: left center; size: 13.5; width: 170; lines: 1; color: ink
-                      opacity: (1 - sep.$i) * (1 - off.$i * 0.55) }
-        //  Una casilla marcada, o la flecha de «hay más».
-        ellipse { at: 204, 15; radius: 3.5; color: mint; opacity: if(chk.$i > 1.5, 1, 0) }
-        ellipse { at: 204, 15; radius: 3.5; stroke: 1.2; color: ink; opacity: if(chk.$i > 0.5, 0.5, 0) }
-        text "›" { at: 204, 14; anchor: center; size: 16; color: ink; opacity: sub.$i * 0.6 }
+        box { from: 6, 4; size: 208, 1; color: ink; opacity: r.separator * 14% }
+        text r.label { at: 12, 15; anchor: left center; size: 13.5; width: 170; lines: 1; color: ink
+                       opacity: (1 - r.separator) * (0.45 + r.enabled * 0.55) }
+        //  Una casilla, marcada o no; o la flecha de «hay más».
+        ellipse { at: 204, 15; radius: 3.5; color: mint; opacity: r.checked > 0.5 }
+        ellipse { at: 204, 15; radius: 3.5; stroke: 1.2; color: ink; opacity: if(r.checked > -0.5, 0.5, 0) }
+        text "›" { at: 204, 14; anchor: center; size: 16; color: ink; opacity: if(r.children > 0, 0.6, 0) }
         on enter hit { on: 1 ~quick }
         on leave hit { on: 0 ~quick }
-        on press hit { emit choose(i) }
+        on press hit { emit choose(r.index) }
     }
 }

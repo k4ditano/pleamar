@@ -22,14 +22,10 @@ scene Launcher {
 
     // ── la frontera ──────────────────────────────────────────────
     fact open  = false
-    fact count = 0                        // cuántos resultados hay, hasta 7
+    //  Los resultados, como los cuenta el servicio `apps`: la lógica filtra y entrega.
+    model hits max 7 { name: text; icon: text }
     fact sel   = 0                        // cuál está elegido
     text query = ""
-    repeat i in 0..7 {
-        text hit.$i = ""
-        text pic.$i = ""                  // el nombre de su icono: lo pone la lógica…
-        image icon.$i = from pic.$i, 24, 24   // …y la imagen es la que ese texto diga
-    }
     event toggle                          // viene de fuera
     event launch ->                       // `emit launch(2)`: lanza el tercero
 
@@ -63,22 +59,23 @@ scene Launcher {
         column list ~quick {
             at: 32, 94
             gap: 2
-            repeat i in 0..7 { Row(i) { show: count > i } }
+            for h in hits { Row(h) }
         }
     }
 
-    component Row(i) {
+    component Row(h) {
         size: 536, 40
         prop on = 0 ~quick
-        follow on = if(sel > i - 0.5 and sel < i + 0.5, 1, 0)
+        follow on = if(sel > h.index - 0.5 and sel < h.index + 0.5, 1, 0)
+        image pic = from h.icon, 24, 24   // la imagen es la que ese texto diga
 
         box hit { from: 0, 0; size: 536, 40; corner: 12; color: mint; opacity: on * 16%; cursor: pointer }
         box { from: 0, 10; size: 3, 20; corner: 1.5; color: mint; opacity: on }
-        image icon.$i { at: 14, 8; size: 24, 24 }
-        text hit.$i { at: 50, 20; anchor: left center; size: 15.5; width: 468; lines: 1; color: ink; opacity: 62% + on * 38% }
+        image pic { at: 14, 8; size: 24, 24 }
+        text h.name { at: 50, 20; anchor: left center; size: 15.5; width: 468; lines: 1; color: ink; opacity: 62% + on * 38% }
 
-        on enter hit { sel = i }
-        on press hit { emit launch(i) }
+        on enter hit { sel = h.index }
+        on press hit { emit launch(h.index) }
     }
 
     // ── teclas ───────────────────────────────────────────────────
@@ -86,7 +83,7 @@ scene Launcher {
     on toggle          { toggle open; focus query }
     on key Escape      { open = false }
     on blur            { open = false }              // han pulsado en otro sitio
-    on key Down        { sel = min(sel + 1, max(count - 1, 0)) }
+    on key Down        { sel = min(sel + 1, max(hits.count - 1, 0)) }
     on key Up          { sel = max(sel - 1, 0) }
     on submit query    { emit launch(sel) }
 }

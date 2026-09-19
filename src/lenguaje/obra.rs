@@ -107,6 +107,8 @@ struct Candidata {
     nombre: String,
     forma: Forma,
     activa: Option<Expr>,
+    /// Si lo que la contiene no está (`show:`, una ficha que no existe), ella tampoco.
+    visible: Option<Expr>,
     bajo: Vec<Transformacion>,
     forzada: bool,
     cursor: Cursor,
@@ -124,6 +126,8 @@ struct Entorno {
     /// De esos nombres, los que tienen partes: `label.width` es de la medida `label`.
     con_partes: std::collections::HashSet<String>,
     sufijo: String,
+    /// Dentro de un `for`: esta vuelta solo existe si su ficha existe.
+    visible: Option<Expr>,
 }
 
 struct Componente<'a> {
@@ -138,6 +142,7 @@ struct Obra<'a> {
     sucesos: HashMap<String, SucesoId>,
     textos: HashMap<String, TextoId>,
     imagenes: HashMap<String, ImagenId>,
+    modelos: HashMap<String, usize>,
     medidas: HashMap<String, (PropId, PropId)>,
     gestos: HashMap<String, GestoId>,
     zonas: HashMap<String, ZonaId>,
@@ -170,7 +175,7 @@ pub fn levantar(arbol: &[Entrada]) -> Result<Escena, Vec<Fallo>> {
     };
     let mut o = Obra {
         e: Escena::default(),
-        props: HashMap::new(), hechos: HashMap::new(), sucesos: HashMap::new(), textos: HashMap::new(), imagenes: HashMap::new(),
+        props: HashMap::new(), hechos: HashMap::new(), sucesos: HashMap::new(), textos: HashMap::new(), imagenes: HashMap::new(), modelos: HashMap::new(),
         medidas: HashMap::new(), gestos: HashMap::new(), zonas: HashMap::new(), lets: HashMap::new(), colores: HashMap::new(),
         muelles: [("lively", Muelle::VIVO), ("calm", Muelle::SERENO), ("quick", Muelle::RAPIDO), ("slow", Muelle::LENTO), ("eyes", Muelle::OJOS), ("pose", Muelle::POSE)]
             .into_iter().map(|(n, m)| (n.to_owned(), m)).collect(),
@@ -198,7 +203,7 @@ pub fn levantar(arbol: &[Entrada]) -> Result<Escena, Vec<Fallo>> {
             let Entrada::Nodo(n) = e else { continue };
             let palabra = |k: usize| match n.cabeza.get(k).map(|f| &f.f) { Some(F::Id(p)) => Some(p.as_str()), _ => None };
             match palabra(0) {
-                Some("component" | "repeat") => continue,
+                Some("component" | "repeat" | "for") => continue,
                 Some("row" | "column") => if let Some(nombre) = palabra(1) {
                     for parte in ["width", "height"] {
                         let entero = format!("{nombre}.{parte}");
@@ -223,9 +228,7 @@ pub fn levantar(arbol: &[Entrada]) -> Result<Escena, Vec<Fallo>> {
         let mut c = Cur::de(&n.cabeza, n.linea, n.col);
         let palabra = c.id("on o every").unwrap_or_default();
         if let Err(f) = o.regla(n, &palabra, &mut c) {
-            if o.fallos.len() < 8 {
-                o.fallos.push(f);
-            }
+            o.anotar(f);
         }
     }
     if let Some((fichas, (l, col))) = o.teclado_pendiente.take() {
@@ -249,7 +252,7 @@ fn vuelta_de(e: &Entrada) -> u8 {
     let es_asignacion = matches!(n.cabeza.get(2).map(|x| &x.f), Some(F::Sim("=")));
     match n.cabeza.first().map(|f| &f.f) {
         Some(F::Id(p)) => match p.as_str() {
-            "surface" | "permissions" | "spring" | "prop" | "pose" | "fact" | "event" | "measure" | "component" => 0,
+            "surface" | "permissions" | "model" | "spring" | "prop" | "pose" | "fact" | "event" | "measure" | "component" => 0,
             "text" | "image" if es_asignacion => 0,
             "let" | "layer" => 1,
             _ => 2,
@@ -317,9 +320,42 @@ impl<'a> Obra<'a> {
         }
     }
 
+    /// Un fallo más, hasta ocho. El mismo fallo en el mismo sitio se dice una vez:
+    /// un componente mal escrito falla en cada copia, y son la misma errata.
+    fn anotar(&mut self, f: Fallo) {
+        let repetido = self.fallos.iter().any(|g| g.linea == f.linea && g.col == f.col && g.mensaje == f.mensaje);
+        if !repetido && self.fallos.len() < 8 {
+            self.fallos.push(f);
+        }
+    }
+
     fn desconocido<T>(&self, c: &Cur, que: &str, nombre: &str, conocidos: Vec<&String>) -> R<T> {
-        let pista = parecido(nombre, conocidos.into_iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
         let (l, col) = c.f.get(c.i.saturating_sub(1)).map_or(c.fin, |x| (x.linea, x.col));
+        // ¿Es el campo de una ficha? Entonces lo que importa son los campos de su modelo,
+        // no que por dentro se llame `rows.3.lable`.
+        let entero = self.global(nombre);
+        let de_ficha = entero.rsplit_once('.').and_then(|(ficha, campo)| {
+            let (modelo, k) = ficha.rsplit_once('.')?;
+            k.parse::<usize>().ok()?;
+            Some((self.e.modelos.iter().find(|m| m.nombre == modelo)?, campo))
+        });
+        if let Some((m, campo)) = de_ficha {
+            // Existe, pero es de otra clase: un número donde hace falta un texto, o al revés.
+            if let Some(c) = m.campos.iter().find(|c| c.nombre == campo) {
+                let (es, hace_falta) = match c.tipo {
+                    TipoDeCampo::Texto => ("text", "un número (number o bool)"),
+                    TipoDeCampo::Numero => ("number", "un text"),
+                    TipoDeCampo::Bool => ("bool", "un text"),
+                };
+                return Err(Fallo::en(l, col, format!("el campo «{campo}» de «{}» es {es}, y aquí hace falta {hace_falta}.", m.nombre)));
+            }
+            let mut campos: Vec<String> = m.campos.iter().map(|c| c.nombre.clone()).collect();
+            campos.push("index".into());
+            let pista = parecido(campo, campos.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
+            let de_que = match que { "ningún texto" => " de tipo text", _ => "" };
+            return Err(Fallo::en(l, col, format!("las fichas de «{}» no tienen ningún campo{de_que} «{campo}».{pista} Sus campos son: {}.", m.nombre, campos.join(", "))));
+        }
+        let pista = parecido(nombre, conocidos.into_iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
         Err(Fallo::en(l, col, format!("no hay {que} que se llame «{nombre}».{pista} Un `let` tiene que ir antes de quien lo usa; lo demás, donde quieras.")))
     }
 
@@ -667,7 +703,7 @@ impl<'a> Obra<'a> {
         // las que se pinta. Si lo es o no se decide al final: ver `zonas_de_verdad`.
         if let Some(nombre) = &nombre {
             let nombre = &self.declarar(nombre);
-            self.candidatas.push(Candidata { nombre: nombre.clone(), forma: forma.clone(), activa: active, bajo: self.bajo.clone(), forzada: false, cursor });
+            self.candidatas.push(Candidata { nombre: nombre.clone(), forma: forma.clone(), activa: active, visible: None, bajo: self.bajo.clone(), forzada: false, cursor });
         }
         Ok(FormaLeida { forma, color, opacidad: opacity, fusion: blend, tam })
     }
@@ -681,9 +717,7 @@ impl<'a> Obra<'a> {
             let Entrada::Nodo(n) = e else { continue };
             // Un fallo no para la lectura: se apunta y se sigue, para decirlos todos.
             if let Err(f) = self.sentencia(n, &mut recortes) {
-                if self.fallos.len() < 8 {
-                    self.fallos.push(f);
-                }
+                self.anotar(f);
             }
         }
         // Un recorte vale hasta el final de su grupo.
@@ -698,6 +732,7 @@ impl<'a> Obra<'a> {
             let palabra = c.id("una declaración")?;
             match palabra.as_str() {
                 "surface" => self.superficie(n)?,
+                "model" => self.modelo(n, &mut c)?,
                 "permissions" => {
                     // permissions { run: "date", "notify-send";  services: "audio", "apps" }
                     let mut p = self.propiedades(n, &["run", "services"])?;
@@ -839,6 +874,7 @@ impl<'a> Obra<'a> {
                 "popup" => self.emergente(n, &mut c)?,
                 "component" => self.declarar_componente(n, &mut c)?,
                 "repeat" => self.repetir(n, &mut c)?,
+                "for" => self.para(n, &mut c)?,
                 "row" | "column" => self.reparto(n, &mut c, palabra == "row")?,
                 "space" => {
                     let v = self.expr(&mut c)?;
@@ -1181,7 +1217,7 @@ impl<'a> Obra<'a> {
         self.candidatas.push(Candidata {
             nombre: zona.clone(),
             forma: Forma::Caja { centro: (en.0.clone() + ancho.clone() * 0.5, en.1.clone() + alto * 0.5), mitad: (ancho.clone() * 0.5, (alto * 0.5 + 3.0).into()), radio: 0.0.into() },
-            activa: None, bajo: self.bajo.clone(), forzada: true, cursor: Cursor::Texto,
+            activa: None, visible: None, bajo: self.bajo.clone(), forzada: true, cursor: Cursor::Texto,
         });
         self.ultimo_tam = Some((ancho.clone(), alto.into()));
         self.e.pintar(Instr::Campo { texto, zona: fijo(&zona), en, ancho, estilo, alfa, marcador, seleccion });
@@ -1418,6 +1454,14 @@ impl<'a> Obra<'a> {
                     Some(F::Id(x)) if solo && (self.colores.contains_key(x) || self.entornos.iter().any(|e| e.colores.contains_key(x))) => {
                         env.colores.insert(p.clone(), self.color(c)?);
                     }
+                    // Una ficha de un modelo —la de un `for`, o `rows.3`—: dentro, `p.label` es su campo.
+                    Some(F::Id(x)) if solo && self.ficha(x).is_some() => {
+                        let (ficha, indice) = self.ficha(x).unwrap();
+                        env.alias.insert(p.clone(), ficha);
+                        env.con_partes.insert(p.clone());
+                        env.exprs.insert(format!("{p}.index"), Expr::K(indice as f32));
+                        c.i += 1;
+                    }
                     // El nombre de un texto, una imagen o un gesto: el parámetro es otro nombre para él.
                     Some(F::Id(x)) if solo && { let g = self.global(x); self.textos.contains_key(&g) || self.imagenes.contains_key(&g) || self.gestos.contains_key(&g) } => {
                         env.alias.insert(p.clone(), self.global(x));
@@ -1608,6 +1652,13 @@ impl<'a> Obra<'a> {
                     }
                 }
             }
+            for e in &self.entornos[self.entornos.len() - extra..] {
+                if let Some(v) = &e.visible {
+                    visible = if matches!(visible, Expr::K(k) if k == 1.0) { v.clone() } else { visible * v.clone() };
+                }
+            }
+            // Lo que decide si está, sin muelles: es lo que apaga sus zonas.
+            let esta = (!matches!(visible, Expr::K(_))).then(|| visible.clone());
             if let (Some(m), false) = (muelle, matches!(visible, Expr::K(_))) {
                 // Con muelle, aparecer y desaparecer también es un viaje.
                 self.copias += 1;
@@ -1646,6 +1697,11 @@ impl<'a> Obra<'a> {
             let Some(tam) = self.ultimo_tam.take() else {
                 return Err(Fallo::en(hijo.linea, hijo.col, "no sé cuánto ocupa esto dentro de un reparto: mételo en un `group` con `size: ancho, alto`"));
             };
+            if let Some(esta) = esta {
+                for c in &mut self.candidatas[desde..] {
+                    c.visible = Some(match c.visible.take() { Some(v) => v * esta.clone(), None => esta.clone() });
+                }
+            }
             puestos.push(Puesto { instr, candidatas: desde..self.candidatas.len(), tam, visible });
         }
 
@@ -1712,7 +1768,7 @@ impl<'a> Obra<'a> {
                 bajo.push(t.clone());
             }
             let caja = Forma::Caja { centro: (tam.0.clone() * 0.5, tam.1.clone() * 0.5), mitad: (tam.0.clone() * 0.5, tam.1.clone() * 0.5), radio: esquina_de_zona };
-            self.candidatas.insert(candidatas_base, Candidata { nombre: nombre.clone(), forma: caja, activa: None, bajo, forzada: false, cursor: cursor_del_reparto });
+            self.candidatas.insert(candidatas_base, Candidata { nombre: nombre.clone(), forma: caja, activa: None, visible: None, bajo, forzada: false, cursor: cursor_del_reparto });
             let destino = match self.entornos.last_mut() {
                 Some(e) => &mut e.exprs,
                 None => &mut self.lets,
@@ -1747,9 +1803,132 @@ impl<'a> Obra<'a> {
                     self.desplegar(n.cuerpo.as_deref().unwrap_or(&[]), ambito, hijos)?;
                     ambito.pop();
                 }
+            } else if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "for") {
+                let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
+                let (var, modelo, caben) = self.cabeza_de_for(&mut c)?;
+                for k in 0..caben {
+                    ambito.push(self.vuelta_de_for(&var, &modelo, k));
+                    self.desplegar(n.cuerpo.as_deref().unwrap_or(&[]), ambito, hijos)?;
+                    ambito.pop();
+                }
             } else {
                 hijos.push((n, ambito.clone()));
             }
+        }
+        Ok(())
+    }
+
+    // ── modelos ─────────────────────────────────────────────────
+
+    /// `model rows max 14 { label: text;  enabled: bool = true;  depth: number }`
+    fn modelo(&mut self, n: &Nodo, c: &mut Cur) -> R<()> {
+        let nombre = self.declarar(&c.id("un nombre para el modelo")?);
+        let caben = if c.palabra("max") { c.num()? as usize } else { 16 };
+        c.nada_mas()?;
+        if !(1..=256).contains(&caben) {
+            return Err(Fallo::en(n.linea, n.col, "en un modelo caben entre 1 y 256 fichas: cada una se despliega al cargar"));
+        }
+        let mut campos = Vec::new();
+        for e in n.cuerpo.as_deref().unwrap_or(&[]) {
+            let Entrada::Prop { nombre: campo, valor, linea, col } = e else {
+                return Err(Fallo::en(n.linea, n.col, "dentro de un modelo solo van sus campos: `label: text`"));
+            };
+            let mut c = Cur::de(valor, *linea, *col);
+            let tipo = match c.id("el tipo del campo: text, number o bool")?.as_str() {
+                "text" => TipoDeCampo::Texto,
+                "number" => TipoDeCampo::Numero,
+                "bool" => TipoDeCampo::Bool,
+                _ => return c.fallo("los tipos de un campo son text, number y bool"),
+            };
+            let por_defecto = match (tipo, c.sim("=")) {
+                (TipoDeCampo::Texto, true) => ValorDeCampo::Texto(c.cadena()?),
+                (TipoDeCampo::Texto, false) => ValorDeCampo::Texto(String::new()),
+                (TipoDeCampo::Bool, true) => ValorDeCampo::Numero(if c.palabra("true") { 1.0 } else if c.palabra("false") { 0.0 } else { return c.fallo("un bool vale true o false") }),
+                (TipoDeCampo::Numero, true) => ValorDeCampo::Numero(if c.sim("-") { -c.num()? } else { c.num()? }),
+                (_, false) => ValorDeCampo::Numero(0.0),
+            };
+            c.nada_mas()?;
+            if campo == "index" {
+                return Err(Fallo::en(*linea, *col, "`index` ya existe en todas las fichas: es su posición"));
+            }
+            campos.push(Campo { nombre: campo.clone(), tipo, por_defecto });
+        }
+        if campos.is_empty() {
+            return Err(Fallo::en(n.linea, n.col, "a este modelo le faltan sus campos: `label: text`"));
+        }
+        // Por dentro, cada campo de cada ficha es un texto o un hecho con nombre.
+        for k in 0..caben {
+            for campo in &campos {
+                let entero = format!("{nombre}.{k}.{}", campo.nombre);
+                match &campo.por_defecto {
+                    ValorDeCampo::Texto(t) => {
+                        let id = self.e.texto_vivo(fijo(&entero), t);
+                        self.textos.insert(entero, id);
+                    }
+                    ValorDeCampo::Numero(v) => {
+                        let id = self.e.hecho(fijo(&entero), *v);
+                        self.hechos.insert(entero, id);
+                    }
+                }
+            }
+        }
+        for parte in ["count", "total"] {
+            let entero = format!("{nombre}.{parte}");
+            let id = self.e.hecho(fijo(&entero), 0.0);
+            self.hechos.insert(entero, id);
+        }
+        self.modelos.insert(nombre.clone(), caben);
+        self.e.modelos.push(Modelo { nombre, caben, campos });
+        Ok(())
+    }
+
+    /// Si ese nombre es una ficha de un modelo: cómo se llama de verdad, y cuál es.
+    fn ficha(&self, n: &str) -> Option<(String, usize)> {
+        let g = self.global(n);
+        let (modelo, k) = g.rsplit_once('.')?;
+        let k: usize = k.parse().ok()?;
+        (k < *self.modelos.get(modelo)?).then_some((g, k))
+    }
+
+    /// `for r in rows`: el nombre de la ficha, el modelo y cuántas caben.
+    fn cabeza_de_for(&self, c: &mut Cur) -> R<(String, String, usize)> {
+        let var = c.id("un nombre para la ficha")?;
+        c.exige_palabra("in")?;
+        let modelo = self.global(&c.id("el nombre de un modelo")?);
+        c.nada_mas()?;
+        match self.modelos.get(&modelo) {
+            Some(caben) => Ok((var, modelo, *caben)),
+            None => self.desconocido(c, "ningún modelo", &modelo, self.modelos.keys().collect()),
+        }
+    }
+
+    /// Dentro de la vuelta `k`, `r.label` es `rows.k.label`, `r.index` es `k`, y
+    /// todo lo que se dibuje solo existe si la lista llega hasta ahí.
+    fn vuelta_de_for(&self, var: &str, modelo: &str, k: usize) -> Entorno {
+        let mut env = Entorno { sufijo: format!("#{var}{k}"), ..Default::default() };
+        env.alias.insert(var.to_owned(), format!("{modelo}.{k}"));
+        env.con_partes.insert(var.to_owned());
+        env.exprs.insert(format!("{var}.index"), Expr::K(k as f32));
+        env.visible = Some(self.hechos[&format!("{modelo}.count")].e().mayor(Expr::K(k as f32 + 0.5)));
+        env
+    }
+
+    /// Un `for` suelto, fuera de un reparto: cada vuelta se pinta donde diga, si existe.
+    fn para(&mut self, n: &'a Nodo, c: &mut Cur) -> R<()> {
+        let (var, modelo, caben) = self.cabeza_de_for(c)?;
+        for k in 0..caben {
+            let marca = self.reglas.len();
+            let env = self.vuelta_de_for(&var, &modelo, k);
+            let esta = env.visible.clone().unwrap();
+            self.entornos.push(env);
+            let desde = self.candidatas.len();
+            self.e.pintar(Instr::Opacidad(Some(esta.clone())));
+            self.grupo(n.cuerpo.as_deref().unwrap_or(&[]).iter());
+            self.e.pintar(Instr::Opacidad(None));
+            for c in &mut self.candidatas[desde..] {
+                c.visible = Some(match c.visible.take() { Some(v) => v * esta.clone(), None => esta.clone() });
+            }
+            self.cerrar_ambito(marca);
         }
         Ok(())
     }
@@ -1777,7 +1956,12 @@ impl<'a> Obra<'a> {
         self.reglas = reglas;
         for k in std::mem::take(&mut self.candidatas) {
             if k.forzada || k.activa.is_some() || nombradas.contains(&k.nombre) {
-                let z = self.e.zona_bajo(fijo(&k.nombre), k.forma, k.activa.unwrap_or(Expr::K(1.0)), k.bajo);
+                // Una zona de algo que no está no para el clic de nadie.
+                let activa = match (k.activa, k.visible) {
+                    (Some(a), Some(v)) => a * v,
+                    (a, v) => a.or(v).unwrap_or(Expr::K(1.0)),
+                };
+                let z = self.e.zona_bajo(fijo(&k.nombre), k.forma, activa, k.bajo);
                 self.e.zonas[z.0 as usize].cursor = k.cursor;
                 self.zonas.insert(k.nombre, z);
             }

@@ -12,15 +12,15 @@ scene Tray {
     let sand = #e8c07a
 
     // ── la frontera con la lógica ────────────────────────────────
-    //  Cuántos avisos hay y qué pone cada uno lo dice la lógica (bandeja.luau).
-    fact count = 0
-    fact more = false
-
-    repeat i in 0..5 {
-        text note.$i.app   = ""
-        text note.$i.title = ""
+    //  Los avisos son una lista que pone la lógica (bandeja.luau), tal como se la
+    //  da el sistema. Caben cinco a la vez; cuántos hay de verdad es `notes.total`.
+    model notes max 5 {
+        app: text
+        title: text
+        body: text
+        urgency: number = 1               // 0 poca · 1 normal · 2 crítica
     }
-    event opened ->                       // lleva dentro cuál: `emit opened(i)`
+    event opened ->                       // lleva dentro cuál: `emit opened(n.index)`
 
     // ── piezas ───────────────────────────────────────────────────
     //  Una etiqueta que mide lo que mida su texto: el `row` de dentro le da el
@@ -33,7 +33,7 @@ scene Tray {
 
     //  Un aviso. Cada copia tiene su propio `lit` y su propia zona `hit`: dos
     //  copias no se pisan, y la regla de dentro habla de las suyas.
-    component Note(i) {
+    component Note(n) {
         size: 360, 58
         prop lit = 0 ~quick
 
@@ -43,13 +43,21 @@ scene Tray {
             shadow: 0, 6, 18, 22%
             box hit { from: 0, 0; size: 360, 58; corner: 14 }
         }
-        box { from: 0, 14; size: 3, 30; corner: 1.5; color: mix(mint, sand, i / 4) }
-        text note.$i.app   { at: 16, 19; anchor: left center; size: 10.5; color: ink; opacity: 55% }
-        text note.$i.title { at: 16, 38; anchor: left center; size: 14.5; weight: 500; width: 328; lines: 1; color: ink }
+        //  La raya dice cuánta prisa tiene.
+        box { from: 0, 14; size: 3, 30; corner: 1.5; color: mix(mint, #e8776a, max(n.urgency - 1, 0)) }
+        text n.app { at: 16, 19; anchor: left center; size: 10.5; color: ink; opacity: 55% }
+        //  El título, y a su lado lo que dice: el cuerpo empieza donde el título acabe.
+        group {
+            clip box { from: 12, 24; size: 336, 28 }
+            row { at: 16, 28; gap: 8; align: center
+                text n.title { size: 14.5; weight: 500; color: ink }
+                text n.body  { size: 13.5; color: ink; opacity: 60% }
+            }
+        }
 
         on enter hit { lit: 1 ~quick }
         on leave hit { lit: 0 ~quick }
-        on press hit { emit opened(i) }
+        on press hit { emit opened(n.index) }
     }
 
     // ── la escena ────────────────────────────────────────────────
@@ -60,15 +68,13 @@ scene Tray {
         text "Avisos" { size: 19; weight: 600; color: ink }
         space 6
         Chip("nuevos", mint)
-        Chip("no molestar", sand) { show: more }
+        Chip("hay más", sand) { show: notes.total > 5 }
     }
 
     column list ~calm {
         at: 180, 66
         gap: 8
-        repeat i in 0..5 {
-            Note(i) { show: count > i }
-        }
+        for n in notes { Note(n) }
     }
 
     //  Una raya que sigue al final de la lista: sabe cuánto mide sin que nadie se lo diga.

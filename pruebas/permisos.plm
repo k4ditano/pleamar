@@ -1,0 +1,5 @@
+// espera: fallo «¿Querías decir «services»?»
+scene Perms {
+    surface { size: 300, 60 }
+    permissions { run: "date"; service: "audio" }
+}

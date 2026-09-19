@@ -1,0 +1,13 @@
+// espera: fallo «no tienen ningún campo de tipo text «lable». ¿Querías decir «label»?»
+scene Bad {
+    surface { size: 300, 200 }
+    model rows max 3 { label: text; enabled: bool = true }
+    column list { at: 10, 10
+        for r in rows { Row(r) }
+    }
+    component Row(r) {
+        size: 200, 30
+        text r.lable { at: 0, 15; size: 13; color: #fff; opacity: r.enabeld }
+    }
+    for x in rowz { box { at: 0, 0; size: 1, 1; color: #fff } }
+}
