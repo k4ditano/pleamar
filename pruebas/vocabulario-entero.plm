@@ -1,0 +1,42 @@
+// espera: bien
+language 0.1
+// Lo que ninguna otra prueba usa. `./probar.sh` exige que cada palabra del
+// vocabulario salga en alguna: una que nadie usa es una que nadie vigila.
+scene WholeVocabulary {
+    surface { size: 300, 200; anchor: bottom; level: background; keyboard: none }
+    measure label
+    prop angle = 0
+    prop chip.w = 0 ~calm
+    pose tilt = 0
+    text note = "hola"
+    fact held = false
+    event dropped ->
+
+    body { gradient: 0, 0, 300, 200, #151616, #26302c; border: 1, #38393a
+        box { from: 0, 0; size: 300, 200; corner: 16 } }
+    group { pivot: 150, 100; rotate: angle + tilt
+        line { from: 150, 100; to: 150, 60; width: 3; color: #9ed6bd } }
+    text note { at: 20, 30; anchor: left center; size: 14; line_height: 1.4; family: "Inter"; color: #f5f7f5; measure: label }
+    input note { at: 20, 60; width: 200; size: 14; family: "Inter"; color: #f5f7f5 }
+    box handle { at: 40, 150; size: 40 + chip.w, 24; corner: 12; color: #9ed6bd; cursor: grab }
+    box target { at: 240, 150; size: 60, 40; corner: 8; color: #2e2f2f; cursor: default }
+    box busy   { at: 150, 150; size: 30, 30; corner: 8; color: #e8c07a; cursor: grabbing; active: held }
+    row spread  { at: 20, 100; gap: 4; align: start; box { size: 10, 20; color: #fff }; box { size: 10, 10; color: #fff } }
+    row bottoms { at: 80, 100; gap: 4; align: end;   box { size: 10, 20; color: #fff }; box { size: 10, 10; color: #fff } }
+
+    spin angle by 0.5
+    follow chip.w = label.width
+
+    on press handle   { held = true }
+    on release handle { held = false }
+    on drop target    { emit dropped }
+
+    gesture sway ambient {
+        300ms linear   { tilt: 0.1 }
+        300ms in_cubic { tilt: -0.1 }
+        300ms out_cubic
+    }
+    gesture alarm state { 200ms in_quad { tilt: 0.4 }; 200ms }
+    on dropped { play alarm }
+    every 5s..9s { play sway }
+}

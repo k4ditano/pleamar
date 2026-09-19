@@ -1,0 +1,6 @@
+// espera: bien
+// Las anclas y los niveles de una superficie: una escena tiene una sola, así que van de una en una.
+scene Surface4 {
+    surface { size: 200, 60; anchor: bottom_right; margin: 8, 12, 8, 12; level: top; reserve: 0; screens: all }
+    box { at: 100, 30; size: 180, 40; corner: 20; color: #151616 }
+}

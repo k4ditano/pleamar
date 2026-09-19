@@ -1,6 +1,6 @@
 # Referencia del lenguaje — versión 0.1
 
-**Qué es esta nota.** La descripción completa y exacta de lo que el lenguaje acepta. [[pleamar · 09 El lenguaje v0]] es la guía —se lee de corrido, con el porqué de cada cosa—; esto es donde se mira una duda. Está sacada del compilador (`src/lenguaje/`), no de la memoria, y **sus ejemplos completos se compilan con `./probar.sh`**: si esta nota miente, la batería falla.
+**Qué es esta nota.** La descripción completa y exacta de lo que el lenguaje acepta. [[pleamar · 09 El lenguaje v0]] es la guía —se lee de corrido, con el porqué de cada cosa—; esto es donde se mira una duda. Está sacada del compilador (`src/lenguaje/`), no de la memoria, y **no se puede desfasar sin que `./probar.sh` lo diga**: sus ejemplos completos se compilan, y su vocabulario (§17) se compara con el que consulta el compilador.
 
 ```sh
 pleamar --version                  # pleamar 0.1.0 · lenguaje 0.1
@@ -90,13 +90,13 @@ cuando       = "while" expr | "for" duracion "after" sucesos | "from" sucesos "u
 sucesos      = nombre { "," nombre } ;
 transicion   = nombre ":" expr [ "~" ref_muelle ] [ "after" duracion ] fin ;
 
-regla        = "on" disparador "{" { efecto } "}"
+regla        = "on" disparador [ "while" expr ] "{" { efecto } "}"
              | "every" duracion [ ".." duracion ] [ "while" expr ] "{" { efecto } "}" ;
 disparador   = "press" [ "right" | "middle" ] zona_ref | "release" zona_ref | "scroll" zona_ref
              | "drag" zona_ref | "hold" zona_ref "for" duracion
              | "enter" zona_ref | "leave" zona_ref
-             | ( "hover" | "away" ) zona_ref "for" duracion [ "while" expr ]
-             | "idle" "for" duracion [ "while" expr ]
+             | ( "hover" | "away" ) zona_ref "for" duracion
+             | "idle" "for" duracion
              | "key" tecla | "submit" nombre | "focus" | "blur" | "drop" zona_ref
              | nombre ;                                  (* un suceso *)
 tecla        = nombre { "+" nombre } ;                  (* Escape · Ctrl+k · Super+Alt+s *)
@@ -253,7 +253,7 @@ Los nombres de un hueco se resuelven donde está escrita la cadena, no donde se 
 | `idle for 14s` | nadie toca nada en ese rato |
 | `nombre_de_suceso` | ocurre ese suceso: lo emite la lógica, otra regla, un gesto, o viene de fuera |
 
-`hover`, `away`, `idle` y `every` admiten `while expr`.
+**Cualquier regla admite `while expr`** al final de su cabecera: se mira en el momento de dispararse. En `idle` y `every` decide además si el rato cuenta.
 
 | Efecto | |
 | --- | --- |
@@ -387,6 +387,48 @@ scene Reference3 {
 }
 ```
 
-## 17. Lo que esta versión no tiene
+## 17. El vocabulario, tal como lo consulta el compilador
+
+Esto es la salida de `pleamar --gramatica`, copiada. No es una segunda lista: son las mismas tablas (`src/lenguaje/vocabulario.rs`) que el compilador consulta para aceptar o rechazar una palabra. `./probar.sh` compara este bloque con lo que imprime el programa —si alguien añade una palabra y no la apunta aquí, falla— y comprueba además que **cada palabra aparece en alguna prueba**.
+
+```vocabulario
+language: 0.1
+statements: surface permissions model spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture
+library: let spring component
+properties.surface: size anchor margin level reserve screens keyboard
+properties.permissions: run services
+properties.shape: rotate stroke color opacity blend active show cursor
+properties.ellipse: at radius scale
+properties.box: at from size corner
+properties.arc: at radius span width
+properties.line: from to width
+properties.body: color gradient rim light shadow border opacity show
+properties.text: at anchor width size weight color opacity lines align line_height family measure show
+properties.image: at size opacity tint show
+properties.input: at width size weight color opacity family placeholder selection show
+properties.group: pivot rotate scale move opacity size show
+properties.popup: at size open
+properties.layout: at anchor gap padding align fill corner show opacity cursor
+functions: min max abs clamp smooth mix if vel
+text_functions: upper lower
+triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop
+effects: toggle emit impulse play focus blur
+curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back
+frame: hold emit
+classes: ambient reflex asked state
+field_types: text number bool
+springs: lively calm quick slow eyes pose
+units: px % deg ms s
+cursors: default pointer text grab grabbing
+surface.anchor: top bottom left right top_left top_right bottom_left bottom_right center
+surface.level: background bottom top overlay
+surface.keyboard: none on_demand exclusive
+text.align: left center right
+layout.align: start center end
+```
+
+`properties.shape` son las comunes a `ellipse`, `box`, `arc` y `line`; `properties.layout`, las de `row` y `column`.
+
+## 18. Lo que esta versión no tiene
 
 Para no buscarlo aquí: tipos para los hechos (son números), enumerados, fichas dentro de fichas, `import … as`, bibliotecas con lógica, parámetros con nombre o por defecto, salto de línea en los repartos, horas y plurales en los huecos, y escribir en el campo de una ficha desde una regla. Todo está, con su plan, en [[pleamar · 08 Limitaciones conocidas]].

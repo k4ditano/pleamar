@@ -18,5 +18,31 @@ for f in pruebas/*.plm escenas/*.plm "$ejemplos"/*.plm; do
             echo "$salida" | grep -qF "$trozo" || { echo "✗ $f: esperaba un fallo con «$trozo»"; echo "$salida" | head -3; mal=$((mal + 1)); } ;;
     esac
 done
+
+# El vocabulario de la referencia tiene que ser el que consulta el compilador, palabra por palabra.
+awk '/^```vocabulario$/ { dentro = 1; next } /^```$/ { dentro = 0 } dentro' docs/11-referencia-del-lenguaje.md > "$ejemplos/escrito.txt"
+./target/release/pleamar --gramatica > "$ejemplos/de-verdad.txt"
+if ! diff -q "$ejemplos/escrito.txt" "$ejemplos/de-verdad.txt" > /dev/null; then
+    echo "✗ la referencia (docs/11, §17) y el compilador no dicen lo mismo:"
+    diff "$ejemplos/escrito.txt" "$ejemplos/de-verdad.txt" | sed 's/^</  la nota: /; s/^>/  pleamar: /' | grep -v "^[0-9-]"
+    mal=$((mal + 1))
+fi
+n=$((n + 1))
+
+# Y cada palabra del vocabulario tiene que salir en alguna prueba: una que nadie usa es una que nadie vigila.
+cat pruebas/*.plm pruebas/comun/*.plm escenas/*.plm escenas/comun/*.plm "$ejemplos"/*.plm > "$ejemplos/todo.txt"
+sin_uso=""
+while IFS= read -r linea; do
+    lista=${linea%%:*}
+    case "$lista" in language|units) continue ;; esac
+    for palabra in ${linea#*: }; do
+        grep -qw -- "$palabra" "$ejemplos/todo.txt" || sin_uso="$sin_uso $lista/$palabra"
+    done
+done < "$ejemplos/de-verdad.txt"
+if [ -n "$sin_uso" ]; then
+    echo "✗ palabras del vocabulario que ninguna prueba usa:$sin_uso"
+    mal=$((mal + 1))
+fi
+n=$((n + 1))
 rm -rf "$ejemplos"
-[ "$mal" -eq 0 ] && echo "lenguaje · $n escenas, todas como se esperaba" || { echo "lenguaje · $mal de $n no cumplen"; exit 1; }
+[ "$mal" -eq 0 ] && echo "lenguaje · $n comprobaciones, todas como se esperaba" || { echo "lenguaje · $mal de $n no cumplen"; exit 1; }

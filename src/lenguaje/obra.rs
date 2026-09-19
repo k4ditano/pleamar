@@ -7,6 +7,7 @@
 
 use super::arbol::{Entrada, Nodo};
 use super::fichas::{Ficha, F};
+use super::vocabulario as voz;
 use super::{parecido, Fallo};
 use crate::escena::*;
 use std::collections::HashMap;
@@ -96,6 +97,17 @@ impl<'a> Cur<'a> {
             _ => self.fallo("aquí esperaba un texto entre comillas"),
         }
     }
+    /// Una palabra de una lista del vocabulario. Si no es ninguna, dice cuáles valen.
+    fn una_de(&mut self, lista: &[&str], que: &str) -> R<String> {
+        let palabra = self.id(que)?;
+        if lista.contains(&palabra.as_str()) {
+            return Ok(palabra);
+        }
+        self.i -= 1;
+        let todas: Vec<String> = lista.iter().map(|s| s.to_string()).collect();
+        let pista = parecido(&palabra, todas.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
+        self.fallo(format!("«{palabra}» no vale aquí: {que} es {}.{pista}", enumerar(lista)))
+    }
     fn nada_mas(&self) -> R<()> {
         if self.acabo() { Ok(()) } else { self.fallo("esto sobra") }
     }
@@ -184,8 +196,15 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String]) -> Result<Esce
         e: Escena::default(),
         props: HashMap::new(), hechos: HashMap::new(), sucesos: HashMap::new(), textos: HashMap::new(), imagenes: HashMap::new(), modelos: HashMap::new(),
         medidas: HashMap::new(), gestos: HashMap::new(), zonas: HashMap::new(), lets: HashMap::new(), colores: HashMap::new(),
-        muelles: [("lively", Muelle::VIVO), ("calm", Muelle::SERENO), ("quick", Muelle::RAPIDO), ("slow", Muelle::LENTO), ("eyes", Muelle::OJOS), ("pose", Muelle::POSE)]
-            .into_iter().map(|(n, m)| (n.to_owned(), m)).collect(),
+        muelles: voz::MUELLES.iter().map(|n| ((*n).to_owned(), match *n {
+            "lively" => Muelle::VIVO,
+            "calm" => Muelle::SERENO,
+            "quick" => Muelle::RAPIDO,
+            "slow" => Muelle::LENTO,
+            "eyes" => Muelle::OJOS,
+            "pose" => Muelle::POSE,
+            otro => unreachable!("«{otro}» está en el vocabulario, pero no tiene rigidez ni freno"),
+        })).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
         ficheros, entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
@@ -527,6 +546,11 @@ impl<'a> Obra<'a> {
         }
     }
     fn funcion(&self, nombre: &str, c: &mut Cur) -> R<Expr> {
+        if !voz::FUNCIONES.contains(&nombre) {
+            let todas: Vec<String> = voz::FUNCIONES.iter().map(|s| s.to_string()).collect();
+            let pista = parecido(nombre, todas.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
+            return c.fallo(format!("no conozco la función «{nombre}»: hay {}.{pista}", voz::FUNCIONES.join(", ")));
+        }
         let (l, col) = c.f.get(c.i.saturating_sub(2)).map_or(c.fin, |x| (x.linea, x.col));
         if nombre == "vel" {
             let p = self.prop(c)?;
@@ -570,7 +594,7 @@ impl<'a> Obra<'a> {
                 let (si, x, y) = (toma()?, toma()?, toma()?);
                 y.clone() + (x - y) * si
             }
-            otra => return Err(Fallo::en(l, col, format!("no conozco la función «{otra}»: hay min, max, abs, clamp, smooth, mix, if y vel"))),
+            otra => unreachable!("«{otra}» está en el vocabulario, pero `funcion` no sabe calcularla"),
         })
     }
 
@@ -633,13 +657,10 @@ impl<'a> Obra<'a> {
         let clase = c.id("una forma: ellipse, box, arc o line")?;
         let nombre = if c.acabo() { None } else { Some(c.id("un nombre para la forma")?) };
         c.nada_mas()?;
-        let comunes = ["rotate", "stroke", "color", "opacity", "blend", "active", "show", "cursor"];
+        let comunes = voz::propiedades("shape");
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let propias: &[&str] = match clase.as_str() {
-            "ellipse" => &["at", "radius", "scale"],
-            "box" => &["at", "from", "size", "corner"],
-            "arc" => &["at", "radius", "span", "width"],
-            "line" => &["from", "to", "width"],
+            "ellipse" | "box" | "arc" | "line" => voz::propiedades(&clase),
             otra => return Err(Fallo::en(n.linea, n.col, format!("no conozco la forma «{otra}»: hay ellipse, box, arc y line"))),
         };
         let validas: Vec<&str> = propias.iter().chain(comunes.iter()).copied().collect();
@@ -741,12 +762,17 @@ impl<'a> Obra<'a> {
         {
             let mut c = Cur::de(&n.cabeza, n.linea, n.col);
             let palabra = c.id("una declaración")?;
+            if !voz::SENTENCIAS.contains(&palabra.as_str()) && !self.componentes.contains_key(&palabra) {
+                let validas: Vec<String> = voz::SENTENCIAS.iter().map(|s| s.to_string()).chain(self.componentes.keys().cloned()).collect();
+                let pista = parecido(&palabra, validas.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
+                return Err(Fallo::en(n.linea, n.col, format!("no sé qué es «{palabra}».{pista}")));
+            }
             match palabra.as_str() {
                 "surface" => self.superficie(n)?,
                 "model" => self.modelo(n, &mut c)?,
                 "permissions" => {
                     // permissions { run: "date", "notify-send";  services: "audio", "apps" }
-                    let mut p = self.propiedades(n, &["run", "services"])?;
+                    let mut p = self.propiedades(n, voz::propiedades("permissions"))?;
                     for (clave, destino) in [("run", 0), ("services", 1)] {
                         let Some(c) = p.get_mut(clave) else { continue };
                         let mut lista = vec![c.cadena()?];
@@ -896,11 +922,9 @@ impl<'a> Obra<'a> {
                 "on" | "every" => self.reglas.push((n, self.entornos.clone())),
                 "blink" | "wave" | "spin" | "follow" | "look" => self.comportamiento(&palabra, &mut c)?,
                 "gesture" | "posture" => self.gesto(n, &palabra, &mut c)?,
-                otra => {
-                    let validas: Vec<String> = ["surface", "prop", "pose", "fact", "event", "text", "image", "measure", "let", "spring", "body", "ellipse", "box", "arc", "line", "input", "zone", "clip", "group", "row", "column", "repeat", "component", "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture"].iter().map(|s| s.to_string()).collect();
-                    let pista = parecido(otra, validas.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
-                    return Err(Fallo::en(n.linea, n.col, format!("no sé qué es «{otra}».{pista}")));
-                }
+                // La puerta de arriba solo deja pasar lo que está en el vocabulario: si se llega
+                // aquí, es que se apuntó una palabra y nadie la atiende.
+                otra => unreachable!("«{otra}» está en el vocabulario, pero `sentencia` no sabe qué hacer con ella"),
             }
         }
         Ok(())
@@ -909,7 +933,7 @@ impl<'a> Obra<'a> {
     /// `n` trae las propiedades; `cuerpo`, los hijos: los del propio grupo, o los
     /// de un componente cuando `n` es una de sus copias.
     fn grupo_con_propiedades(&mut self, n: &Nodo, cuerpo: &'a [Entrada]) -> R<()> {
-        let mut p = self.propiedades(n, &["pivot", "rotate", "scale", "move", "opacity", "size", "show"])?;
+        let mut p = self.propiedades(n, voz::propiedades("group"))?;
         self.en_hueco = false;
         let tam = match p.get_mut("size") {
             Some(c) => Some(self.punto(c)?),
@@ -967,7 +991,7 @@ impl<'a> Obra<'a> {
         if !self.entornos.is_empty() || !self.bajo.is_empty() {
             return Err(Fallo::en(n.linea, n.col, "una `popup` va en el nivel de la escena, no dentro de un grupo ni de un componente"));
         }
-        let mut p = self.propiedades(n, &["at", "size", "open"])?;
+        let mut p = self.propiedades(n, voz::propiedades("popup"))?;
         let falta = |q: &str| Fallo::en(n.linea, n.col, format!("a esta `popup` le falta «{q}»"));
         let en = self.punto(p.get_mut("at").ok_or_else(|| falta("at"))?)?;
         let tam = self.punto(p.get_mut("size").ok_or_else(|| falta("size"))?)?;
@@ -994,7 +1018,7 @@ impl<'a> Obra<'a> {
 
     /// `body { color: …; shadow: …; ellipse {…}; box {… blend: …} }`
     fn cuerpo(&mut self, n: &Nodo) -> R<()> {
-        let mut p = self.propiedades(n, &["color", "gradient", "rim", "light", "shadow", "border", "opacity", "show"])?;
+        let mut p = self.propiedades(n, voz::propiedades("body"))?;
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let mut tam = None;
         let sombra = match p.get_mut("shadow") {
@@ -1160,11 +1184,11 @@ impl<'a> Obra<'a> {
         let es_texto = |o: &Self, n: &str| o.textos.get(&o.global(n)).copied();
         // upper(nombre) · lower(nombre)
         if let (Some(F::Id(f)), Some(F::Sim("("))) = (c.mira(), fichas.get(1).map(|x| &x.f)) {
-            let letras = match f.as_str() {
-                "upper" => Some(Letras::Mayusculas),
-                "lower" => Some(Letras::Minusculas),
-                _ => None,
-            };
+            let letras = voz::DE_TEXTO.contains(&f.as_str()).then(|| match f.as_str() {
+                "upper" => Letras::Mayusculas,
+                "lower" => Letras::Minusculas,
+                otra => unreachable!("«{otra}» está en el vocabulario, pero un hueco no sabe aplicarla"),
+            });
             if let Some(letras) = letras {
                 c.i += 2;
                 let nombre = c.id("el nombre de un texto")?;
@@ -1221,7 +1245,7 @@ impl<'a> Obra<'a> {
             },
             _ => return c.fallo("un texto es `text \"literal\" { … }` o `text nombre { … }`"),
         };
-        let mut p = self.propiedades(n, &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show"])?;
+        let mut p = self.propiedades(n, voz::propiedades("text"))?;
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let en = match p.get_mut("at") {
             Some(c) => self.punto(c)?,
@@ -1248,11 +1272,11 @@ impl<'a> Obra<'a> {
             estilo.color = self.color(c)?;
         }
         if let Some(c) = p.get_mut("align") {
-            estilo.alineado = match c.id("left, center o right")?.as_str() {
+            estilo.alineado = match c.una_de(voz::ALINEADOS_DE_TEXTO, "el alineado de un texto")?.as_str() {
                 "left" => Alineado::Izquierda,
                 "center" => Alineado::Centro,
                 "right" => Alineado::Derecha,
-                _ => return c.fallo("se alinea a left, center o right"),
+                _ => unreachable!(),
             };
         }
         let mut ancla = (0.0, 0.0);
@@ -1310,7 +1334,7 @@ impl<'a> Obra<'a> {
         let Some(texto) = self.textos.get(&nombre).copied() else {
             return self.desconocido(&c, "ningún texto", &nombre, self.textos.keys().collect());
         };
-        let mut p = self.propiedades(n, &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "show"])?;
+        let mut p = self.propiedades(n, voz::propiedades("input"))?;
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let en = match p.get_mut("at") {
             Some(c) => self.punto(c)?,
@@ -1366,7 +1390,7 @@ impl<'a> Obra<'a> {
         let Some(imagen) = self.imagenes.get(&nombre).copied() else {
             return self.desconocido(&c, "ninguna imagen", &nombre, self.imagenes.keys().collect());
         };
-        let mut p = self.propiedades(n, &["at", "size", "opacity", "tint", "show"])?;
+        let mut p = self.propiedades(n, voz::propiedades("image"))?;
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let falta = |q: &str| Fallo::en(n.linea, n.col, format!("a esta imagen le falta «{q}»"));
         let (x, y) = match p.get_mut("at") {
@@ -1389,7 +1413,7 @@ impl<'a> Obra<'a> {
     }
 
     fn superficie(&mut self, n: &'a Nodo) -> R<()> {
-        let mut p = self.propiedades(n, &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard"])?;
+        let mut p = self.propiedades(n, voz::propiedades("surface"))?;
         let s = &mut self.e.superficie;
         if let Some(c) = p.get_mut("size") {
             // `size: full, 36`: todo el ancho del monitor.
@@ -1398,7 +1422,7 @@ impl<'a> Obra<'a> {
             s.alto = c.num()? as u32;
         }
         if let Some(c) = p.get_mut("anchor") {
-            s.ancla = match c.id("dónde anclarla")?.as_str() {
+            s.ancla = match c.una_de(voz::ANCLAS_DE_SUPERFICIE, "el ancla de una superficie")?.as_str() {
                 "top" => Ancla::Arriba,
                 "bottom" => Ancla::Abajo,
                 "left" => Ancla::Izquierda,
@@ -1408,7 +1432,7 @@ impl<'a> Obra<'a> {
                 "bottom_left" => Ancla::AbajoIzquierda,
                 "bottom_right" => Ancla::AbajoDerecha,
                 "center" => Ancla::Centro,
-                _ => return c.fallo("se ancla a top, bottom, left, right, top_left, top_right, bottom_left, bottom_right o center"),
+                _ => unreachable!(),
             };
         }
         if let Some(c) = p.get_mut("margin") {
@@ -1420,20 +1444,20 @@ impl<'a> Obra<'a> {
             }
         }
         if let Some(c) = p.get_mut("level") {
-            s.nivel = match c.id("un nivel")?.as_str() {
+            s.nivel = match c.una_de(voz::NIVELES, "un nivel")?.as_str() {
                 "background" => Nivel::Fondo,
                 "bottom" => Nivel::Debajo,
                 "top" => Nivel::Encima,
                 "overlay" => Nivel::SobreTodo,
-                _ => return c.fallo("los niveles son background, bottom, top y overlay"),
+                _ => unreachable!(),
             };
         }
         if let Some(c) = p.get_mut("keyboard") {
-            s.teclado = match c.id("none, on_demand o exclusive")?.as_str() {
+            s.teclado = match c.una_de(voz::TECLADOS, "cómo se pide el teclado")?.as_str() {
                 "none" => Teclado::Nunca,
                 "on_demand" => Teclado::AlPulsar,
                 "exclusive" => Teclado::Siempre,
-                _ => return c.fallo("el teclado se pide con none, on_demand (al pulsar) o exclusive (todo para ella)"),
+                _ => unreachable!(),
             };
             // `keyboard: exclusive while open`: solo mientras eso sea verdad.
             // La condición se lee al final: puede nombrar un hecho declarado más abajo.
@@ -1700,7 +1724,7 @@ impl<'a> Obra<'a> {
         };
         let muelle = if c.sim("~") { Some(self.muelle(c)?) } else { None };
         c.nada_mas()?;
-        let mut p = self.propiedades(n, &["at", "anchor", "gap", "padding", "align", "fill", "corner", "show", "opacity", "cursor"])?;
+        let mut p = self.propiedades(n, voz::propiedades("layout"))?;
         let cursor_del_reparto = match p.get_mut("cursor") {
             Some(c) => leer_cursor(c)?,
             None => Cursor::Normal,
@@ -1719,11 +1743,11 @@ impl<'a> Obra<'a> {
         let (hueco, relleno, esquina) = (una(self, "gap", 0.0)?, una(self, "padding", 0.0)?, una(self, "corner", 0.0)?);
         let esquina_de_zona = esquina.clone();
         let alinea = match p.get_mut("align") {
-            Some(c) => match c.id("start, center o end")?.as_str() {
+            Some(c) => match c.una_de(voz::ALINEADOS_DE_REPARTO, "el alineado de un reparto")?.as_str() {
                 "start" => 0.0,
                 "center" => 0.5,
                 "end" => 1.0,
-                _ => return c.fallo("se alinea a start, center o end"),
+                _ => unreachable!(),
             },
             None => 0.0,
         };
@@ -1977,11 +2001,11 @@ impl<'a> Obra<'a> {
                 return Err(Fallo::en(n.linea, n.col, "dentro de un modelo solo van sus campos: `label: text`"));
             };
             let mut c = Cur::de(valor, *linea, *col);
-            let tipo = match c.id("el tipo del campo: text, number o bool")?.as_str() {
+            let tipo = match c.una_de(voz::TIPOS, "el tipo de un campo")?.as_str() {
                 "text" => TipoDeCampo::Texto,
                 "number" => TipoDeCampo::Numero,
                 "bool" => TipoDeCampo::Bool,
-                _ => return c.fallo("los tipos de un campo son text, number y bool"),
+                _ => unreachable!(),
             };
             let por_defecto = match (tipo, c.sim("=")) {
                 (TipoDeCampo::Texto, true) => ValorDeCampo::Texto(c.cadena()?),
@@ -2121,7 +2145,8 @@ impl<'a> Obra<'a> {
             Disparador::Cada { entre: (a, b), mientras: mientras(self, c)? }
         } else {
             let que = c.id("qué tiene que pasar: press, release, scroll, drag, hold, key, submit, focus, blur, drop, enter, leave, hover, away, idle, o un suceso")?;
-            match que.as_str() {
+            // Solo es un disparador lo que el vocabulario diga; lo demás es el nombre de un suceso.
+            match if voz::DISPARADORES.contains(&que.as_str()) { que.as_str() } else { "" } {
                 // `on press orb`, o con otro botón: `on press right orb`.
                 "press" => {
                     if c.palabra("right") {
@@ -2172,6 +2197,7 @@ impl<'a> Obra<'a> {
                     let durante = c.dur()?;
                     Disparador::Quieto { durante, mientras: mientras(self, c)? }
                 }
+                otra if voz::DISPARADORES.contains(&otra) => unreachable!("«{otra}» está en el vocabulario, pero `regla` no la atiende"),
                 _ => {
                     c.i -= 1;
                     Disparador::Al(self.suceso(c)?)
@@ -2189,7 +2215,7 @@ impl<'a> Obra<'a> {
                 Entrada::Nodo(x) => {
                     let mut c = Cur::de(&x.cabeza, x.linea, x.col);
                     let p = c.id("un efecto")?;
-                    efectos.push(match p.as_str() {
+                    efectos.push(match if voz::EFECTOS.contains(&p.as_str()) { p.as_str() } else { "" } {
                         "toggle" => Efecto::Alternar(self.hecho(&mut c)?),
                         "blur" => Efecto::Enfocar(None),
                         "focus" => {
@@ -2219,6 +2245,7 @@ impl<'a> Obra<'a> {
                                 None => return self.desconocido(&c, "ningún gesto", &g, self.gestos.keys().collect()),
                             }
                         }
+                        otra if voz::EFECTOS.contains(&otra) => unreachable!("«{otra}» está en el vocabulario, pero `regla` no sabe hacerla"),
                         _ => {
                             // `open = true`
                             c.i -= 1;
@@ -2304,12 +2331,12 @@ impl<'a> Obra<'a> {
             c.exige_palabra("while")?;
             (Clase::Postura, Some(self.expr(c)?))
         } else {
-            let k = match c.id("su clase: ambient, reflex, asked o state")?.as_str() {
+            let k = match c.una_de(voz::CLASES, "la clase de un gesto")?.as_str() {
                 "ambient" => Clase::Ambiente,
                 "reflex" => Clase::Reflejo,
                 "asked" => Clase::Pedido,
                 "state" => Clase::Estado,
-                _ => return c.fallo("las clases son ambient, reflex, asked y state; una postura se declara con `posture`"),
+                _ => unreachable!(),
             };
             (k, None)
         };
@@ -2323,7 +2350,8 @@ impl<'a> Obra<'a> {
             let ms = (c.dur()?.as_secs_f32() * 1000.0) as u32;
             let mut foto = foto(ms, Curva::InOutSine);
             while !c.acabo() {
-                let p = c.id("una curva, `hold` o `emit`")?;
+                let de_fotograma: Vec<&str> = voz::CURVAS.iter().chain(voz::DE_FOTOGRAMA).copied().collect();
+                let p = c.una_de(&de_fotograma, "lo que lleva un fotograma")?;
                 match p.as_str() {
                     "hold" => foto.aguanta = (c.dur()?.as_secs_f32() * 1000.0) as u32,
                     "emit" => foto.emite = Some(self.suceso(&mut c)?),
@@ -2334,10 +2362,7 @@ impl<'a> Obra<'a> {
                     "out_cubic" => foto.curva = Curva::OutCubic,
                     "in_out_sine" => foto.curva = Curva::InOutSine,
                     "out_back" => foto.curva = Curva::OutBack,
-                    _ => {
-                        c.i -= 1;
-                        return c.fallo("las curvas son linear, in_quad, out_quad, in_cubic, out_cubic, in_out_sine y out_back");
-                    }
+                    _ => unreachable!(),
                 }
             }
             for v in f.cuerpo.as_deref().unwrap_or(&[]) {
@@ -2368,14 +2393,23 @@ impl<'a> Obra<'a> {
     }
 }
 
+/// «a, b o c»
+fn enumerar(lista: &[&str]) -> String {
+    match lista {
+        [] => String::new(),
+        [una] => (*una).to_owned(),
+        [antes @ .., ultima] => format!("{} o {ultima}", antes.join(", ")),
+    }
+}
+
 fn leer_cursor(c: &mut Cur) -> R<Cursor> {
-    Ok(match c.id("un cursor")?.as_str() {
+    Ok(match c.una_de(voz::CURSORES, "un cursor")?.as_str() {
         "default" => Cursor::Normal,
         "pointer" => Cursor::Mano,
         "text" => Cursor::Texto,
         "grab" => Cursor::Agarrar,
         "grabbing" => Cursor::Agarrando,
-        _ => return c.fallo("los cursores son default, pointer, text, grab y grabbing"),
+        _ => unreachable!(),
     })
 }
 

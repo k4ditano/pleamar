@@ -8,6 +8,7 @@
 mod arbol;
 mod fichas;
 mod obra;
+pub mod vocabulario;
 
 use crate::escena::Escena;
 use std::path::{Path, PathBuf};
@@ -112,7 +113,7 @@ impl Lectura {
             let Some(arbol::Entrada::Nodo(b)) = suyas.into_iter().next() else { unreachable!() };
             for d in b.cuerpo.unwrap_or_default() {
                 // Una biblioteca declara; no pinta, ni reacciona, ni tiene frontera con la lógica.
-                let vale = matches!(&d, arbol::Entrada::Nodo(x) if matches!(x.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if ["let", "spring", "component"].contains(&p.as_str())));
+                let vale = matches!(&d, arbol::Entrada::Nodo(x) if matches!(x.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if vocabulario::DE_BIBLIOTECA.contains(&p.as_str())));
                 if !vale {
                     let (l, c) = match &d { arbol::Entrada::Nodo(x) => (x.linea, x.col), arbol::Entrada::Prop { linea, col, .. } => (*linea, *col) };
                     return Err(Fallo::en(l, c, "una biblioteca solo declara: `let`, `spring` y `component`. Lo que se pinta y lo que se mueve es cosa de la escena"));

@@ -66,7 +66,8 @@ pub fn trocear(fuente: &str) -> Result<Vec<Ficha>, Fallo> {
                     "deg" => F::Num(numero.to_radians()),
                     "ms" => F::Dur(numero / 1000.0),
                     "s" => F::Dur(numero),
-                    otra => return Err(Fallo::en(n + 1, j + 1, format!("no conozco la unidad «{otra}»: valen px, %, deg, ms y s"))),
+                    otra if super::vocabulario::UNIDADES.contains(&otra) => unreachable!("«{otra}» está en el vocabulario, pero el troceador no sabe convertirla"),
+                    otra => return Err(Fallo::en(n + 1, j + 1, format!("no conozco la unidad «{otra}»: valen {}", super::vocabulario::UNIDADES.join(", ")))),
                 };
                 poner(f);
                 i = j + unidad.chars().count();

@@ -1,4 +1,4 @@
-// espera: fallo «los tipos de un campo son text, number y bool»
+// espera: fallo ««string» no vale aquí: el tipo de un campo es text, number o bool»
 scene Bad2 {
     surface { size: 300, 200 }
     model rows { label: string; index: number }
