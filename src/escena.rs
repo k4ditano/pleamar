@@ -771,6 +771,18 @@ pub struct Escena {
     pub superficie: Superficie,
     /// `keyboard: exclusive while open`: cuándo quiere el teclado.
     pub teclado_mientras: Option<Expr>,
+    pub permisos: Permisos,
+}
+
+/// Lo que la lógica de esta escena puede tocar del sistema. **Sin declarar,
+/// nada**: ni una orden, ni un servicio. Está en la escena y no en el script
+/// para que se lea de un vistazo, antes de ejecutar nada, qué va a poder hacer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Permisos {
+    /// Las órdenes que `run` y `spawn` pueden lanzar, por su nombre exacto.
+    pub ordenes: Vec<String>,
+    /// Los servicios que `sys.watch` y `sys.call` pueden usar: `audio`, `apps`…
+    pub servicios: Vec<String>,
 }
 
 impl Escena {
@@ -946,7 +958,7 @@ pub enum Evento {
     /// El fichero de la lógica ha cambiado.
     RecargarLogica,
     /// La escena se ha recargado: estos son ahora sus hechos y sus textos.
-    EscenaNueva(Vec<(&'static str, f32)>, Vec<(&'static str, String)>),
+    EscenaNueva(Vec<(&'static str, f32)>, Vec<(&'static str, String)>, Permisos),
     /// Una capa ha cambiado de manos: (capa, quién gana ahora).
     Capa(&'static str, &'static str),
     /// Se pidió un gesto y había uno de más clase puesto.

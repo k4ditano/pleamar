@@ -249,7 +249,7 @@ fn vuelta_de(e: &Entrada) -> u8 {
     let es_asignacion = matches!(n.cabeza.get(2).map(|x| &x.f), Some(F::Sim("=")));
     match n.cabeza.first().map(|f| &f.f) {
         Some(F::Id(p)) => match p.as_str() {
-            "surface" | "spring" | "prop" | "pose" | "fact" | "event" | "measure" | "component" => 0,
+            "surface" | "permissions" | "spring" | "prop" | "pose" | "fact" | "event" | "measure" | "component" => 0,
             "text" | "image" if es_asignacion => 0,
             "let" | "layer" => 1,
             _ => 2,
@@ -698,6 +698,19 @@ impl<'a> Obra<'a> {
             let palabra = c.id("una declaración")?;
             match palabra.as_str() {
                 "surface" => self.superficie(n)?,
+                "permissions" => {
+                    // permissions { run: "date", "notify-send";  services: "audio", "apps" }
+                    let mut p = self.propiedades(n, &["run", "services"])?;
+                    for (clave, destino) in [("run", 0), ("services", 1)] {
+                        let Some(c) = p.get_mut(clave) else { continue };
+                        let mut lista = vec![c.cadena()?];
+                        while c.sim(",") {
+                            lista.push(c.cadena()?);
+                        }
+                        c.nada_mas()?;
+                        if destino == 0 { self.e.permisos.ordenes = lista } else { self.e.permisos.servicios = lista }
+                    }
+                }
                 "spring" => {
                     let nombre = c.id("un nombre para el muelle")?;
                     c.exige_sim("=")?;

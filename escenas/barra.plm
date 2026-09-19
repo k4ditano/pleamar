@@ -11,6 +11,9 @@ scene Bar {
         screens: "HDMI-A-1"
     }
 
+    //  Lo que `barra.luau` puede tocar del sistema. Sin declarar, nada.
+    permissions { services: "workspaces", "window", "audio" }
+
     let ink  = #f5f7f5
     let mint = #9ed6bd
     let coal = #151616

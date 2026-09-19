@@ -13,6 +13,9 @@ scene Launcher {
         keyboard: exclusive while open
     }
 
+    //  Lo que `lanzador.luau` puede tocar: saber qué aplicaciones hay, y lanzar una de ellas.
+    permissions { services: "apps" }
+
     let ink  = #f5f7f5
     let mint = #9ed6bd
     let coal = #151616

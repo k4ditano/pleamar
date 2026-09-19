@@ -12,6 +12,9 @@ scene Marea {
         screens: "HDMI-A-1"
     }
 
+    //  `marea.luau` mira la hora con `date`. Es lo único que puede lanzar.
+    permissions { run: "date" }
+
     // ── la frontera con la lógica ────────────────────────────────
     fact open = false
     fact asleep = false

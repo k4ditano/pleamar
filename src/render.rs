@@ -820,7 +820,7 @@ pub fn hilo(
             citas.push(*cuando);
         }
         dibujo.componer(&escena.instrs, c, &textos, &mut letras, vista, tam, op.hud);
-        let Some(g) = &gpu else {
+        let Some(g) = &mut gpu else {
             // Aún no hay dónde: el tiempo corre igual, pero sin prisa.
             std::thread::sleep(Duration::from_millis(8));
             continue;

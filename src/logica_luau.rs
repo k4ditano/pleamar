@@ -63,8 +63,31 @@ struct Compartido {
     siguiente: u32,
     hechos: HashMap<String, f64>,
     textos: HashMap<String, String>,
+    permisos: crate::escena::Permisos,
     /// Hasta cuándo puede correr lo que está corriendo.
     limite: Option<Instant>,
+}
+
+fn en_claro(p: &crate::escena::Permisos) -> String {
+    let lista = |l: &[String]| if l.is_empty() { "ninguno".to_owned() } else { l.join(", ") };
+    format!("órdenes: {} · servicios: {}", lista(&p.ordenes), lista(&p.servicios))
+}
+
+/// ¿Puede esta lógica lanzar esa orden? Sin declarar, no; y el error dice qué escribir.
+fn permiso_de_orden(c: &Mutex<Compartido>, orden: &str) -> mlua::Result<()> {
+    if c.lock().unwrap().permisos.ordenes.iter().any(|o| o == orden) {
+        return Ok(());
+    }
+    Err(mlua::Error::runtime(format!("la escena no da permiso para lanzar «{orden}». Si debe poder, decláralo en el .plm: permissions {{ run: \"{orden}\" }}")))
+}
+
+/// Lo mismo para un servicio: `audio.step` es del servicio `audio`.
+fn permiso_de_servicio(c: &Mutex<Compartido>, nombre: &str) -> mlua::Result<()> {
+    let servicio = nombre.split('.').next().unwrap_or(nombre);
+    if c.lock().unwrap().permisos.servicios.iter().any(|s| s == servicio) {
+        return Ok(());
+    }
+    Err(mlua::Error::runtime(format!("la escena no da permiso para usar el servicio «{servicio}». Si debe poder, decláralo en el .plm: permissions {{ services: \"{servicio}\" }}")))
 }
 
 /// Un dato del sistema, como lo ve Luau: tablas, números, textos.
@@ -139,6 +162,7 @@ impl GuionLuau {
                 self.lua = Some(lua);
                 let c = self.c.lock().unwrap();
                 println!("lógica · {} en marcha en {:.1} ms · {} manejadores, {} temporizadores", self.logica, t0.elapsed().as_secs_f32() * 1000.0, c.manejadores.values().map(Vec::len).sum::<usize>(), c.temporizadores.len());
+                println!("lógica · permisos · {}", en_claro(&c.permisos));
             }
             Err(e) => eprintln!("lógica · la anterior sigue como estaba:\n{e}"),
         }
@@ -246,6 +270,7 @@ impl GuionLuau {
         // Una orden del sistema: corre en otro hilo y contesta cuando acaba.
         let (c, a_logica) = (self.c.clone(), self.a_logica.clone());
         g.set("run", lua.create_function(move |_, (orden, args, f): (String, Option<Vec<String>>, Option<Function>)| {
+            permiso_de_orden(&c, &orden)?;
             let id = {
                 let mut c = c.lock().unwrap();
                 c.siguiente += 1;
@@ -271,6 +296,7 @@ impl GuionLuau {
         let (c, a_logica) = (self.c.clone(), self.a_logica.clone());
         g.set("spawn", lua.create_function(move |_, (orden, args, f): (String, Option<Vec<String>>, Function)| {
             use std::io::BufRead;
+            permiso_de_orden(&c, &orden)?;
             let mut lanzar = std::process::Command::new(&orden);
             lanzar.args(args.unwrap_or_default()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
             // Si al programa lo matan, esto se va con él.
@@ -316,6 +342,7 @@ impl GuionLuau {
         let sys = lua.create_table()?;
         let (c, a_logica) = (self.c.clone(), self.a_logica.clone());
         sys.set("watch", lua.create_function(move |_, (nombre, f): (String, Function)| {
+            permiso_de_servicio(&c, &nombre)?;
             let primero = {
                 let mut c = c.lock().unwrap();
                 let v = c.vigias.entry(nombre.clone()).or_default();
@@ -330,7 +357,9 @@ impl GuionLuau {
                 let _ = a_logica.lock().unwrap().send(Evento::Dato(n.clone(), v));
             })))
         })?)?;
-        sys.set("call", lua.create_function(|_, (nombre, args): (String, mlua::Variadic<Value>)| {
+        let c = self.c.clone();
+        sys.set("call", lua.create_function(move |_, (nombre, args): (String, mlua::Variadic<Value>)| {
+            permiso_de_servicio(&c, &nombre)?;
             let args: Vec<Valor> = args.iter().map(|v| match v {
                 Value::Boolean(b) => Valor::Si(*b),
                 Value::Integer(i) => Valor::Num(*i as f64),
@@ -395,6 +424,7 @@ impl Guion for GuionLuau {
         let mut c = self.c.lock().unwrap();
         c.hechos = e.hechos.iter().map(|(n, v)| (n.to_string(), *v as f64)).collect();
         c.textos = e.textos.iter().map(|(n, v)| (n.to_string(), v.clone())).collect();
+        c.permisos = e.permisos.clone();
         e
     }
 
@@ -441,8 +471,13 @@ impl Guion for GuionLuau {
             }
             // La escena se recargó: lo que tenga de nuevo ya se puede nombrar; lo que
             // ya se sabía, se sigue sabiendo.
-            Evento::EscenaNueva(hechos, textos) => {
+            Evento::EscenaNueva(hechos, textos, permisos) => {
                 let mut c = self.c.lock().unwrap();
+                // Los permisos sí se sustituyen: quitar uno de la escena lo quita ya.
+                if c.permisos != permisos {
+                    println!("lógica · permisos ahora: {}", en_claro(&permisos));
+                    c.permisos = permisos;
+                }
                 for (n, v) in hechos {
                     c.hechos.entry(n.to_owned()).or_insert(v as f64);
                 }
