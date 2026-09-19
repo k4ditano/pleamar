@@ -117,6 +117,10 @@ Un hilo escucha en `$XDG_RUNTIME_DIR/pleamar-ESCENA.sock`; `pleamar --decir ESCE
 
 `wl_data_device`: al entrar un arrastre se mira si trae `text/uri-list` o `text/plain`, y al soltarlo se lee en un hilo aparte —quien lo ofrece puede tardar— y llega como `ARender::Soltado`. El render mira qué zona hay debajo y dispara `on drop zona`.
 
+## Varios ficheros (`lenguaje/mod.rs`)
+
+`import` se resuelve **antes** de compilar, empalmando árboles: cada fichero se trocea y se agrupa por separado, lo que declaran las bibliotecas se pone delante del cuerpo de la escena, y `obra` compila un solo árbol sin saber que hubo varios. Para que un fallo sepa de qué fichero viene sin cargar cada ficha con un nombre, el número de línea lo lleva dentro: la línea 12 del tercer fichero es la 2 000 012, y al enseñar el fallo se deshace. `leer_fichero` devuelve, con la escena, la lista de ficheros de los que está hecha: es lo que vigila la recarga en caliente.
+
 ## Modelos (`lenguaje/obra.rs`, `logica_luau.rs`)
 
 El render no sabe que hay listas. `model rows max 14 { label: text; enabled: bool }` declara, por dentro, catorce textos vivos `rows.k.label`, catorce hechos `rows.k.enabled`, y `rows.count` y `rows.total`. `for r in rows` despliega catorce copias, cada una en un ámbito donde `r` es otro nombre para `rows.k` (el mismo mecanismo de alias de los componentes) y con una condición: `rows.count > k`. Esa condición apaga el dibujo, el hueco en el reparto y las zonas. En Luau, `model.rows = lista` reparte cada campo a su texto o a su hecho y manda solo lo que cambió.

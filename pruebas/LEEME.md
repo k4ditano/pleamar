@@ -10,3 +10,5 @@ Un `.plm` pequeño por cosa que el lenguaje promete. La primera línea dice qué
 `./probar.sh` los pasa todos por `pleamar --comprobar` y dice cuáles no cumplen. Un fallo esperado se comprueba por un trozo de su mensaje: así también se vigila que los errores sigan diciendo algo útil.
 
 Cuando se arregla un fallo del lenguaje, su caso mínimo acaba aquí.
+
+Las bibliotecas que importan las pruebas están en `pruebas/comun/`; esas no se comprueban solas, porque una biblioteca no se abre: se importa.

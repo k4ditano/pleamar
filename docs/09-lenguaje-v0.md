@@ -13,6 +13,32 @@ Ejemplos completos: **`escenas/barra.plm` (una barra de verdad: escritorios, ven
 
 **Todo lo que se escribe aquí lo ejecuta el render, solo.** No hay bucles ni variables que muten: todo termina y todo se comprueba al cargar. La lógica —fuera, en un `.luau` con el mismo nombre: [[pleamar · 10 La lógica en Luau]]— solo pone hechos, textos y sucesos.
 
+## Varios ficheros: `import` y `library`
+
+```
+// escenas/comun/paleta.plm
+library Palette {
+    let ink  = #f5f7f5
+    let mint = #9ed6bd
+    spring snappy = 320, 26
+    component Dot(tone) { size: 10, 10; ellipse { at: 5, 5; radius: 5; color: tone } }
+}
+```
+```
+// escenas/iconos.plm
+import "comun/paleta.plm"
+import "comun/menu.plm"              // que a su vez importa la paleta: se lee una vez
+
+scene TrayIcons {
+    let mint = #e86a9a               // el de la escena gana: así se cambia un tono
+    …
+}
+```
+
+Los `import` van antes de `scene` (o de `library`), y la ruta es relativa **al fichero que importa**, no a desde dónde se lance. Una biblioteca **solo declara** —`let`, `spring` y `component`—: lo que se pinta, lo que se mueve y la frontera con la lógica son de la escena. Lo importado se comporta como si estuviera escrito al principio de la escena, así que un componente de biblioteca ve los hechos, los sucesos y los colores de quien lo usa.
+
+Dos componentes con el mismo nombre no conviven (`ya hay un componente «Dot», en paleta.plm:4`); un círculo de imports se dice con su camino; y **un fallo dice en qué fichero está**, también si está dentro de una biblioteca. Guardar una biblioteca recarga en caliente las escenas que la usan.
+
 ## Forma general
 
 ```
