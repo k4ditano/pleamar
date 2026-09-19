@@ -62,7 +62,7 @@ scene Launcher {
         }
     }
 
-    component Row(h) {
+    component Row(h: record) {
         size: 536, 40
         prop on = 0 ~quick
         follow on = if(sel == h.index, 1, 0)

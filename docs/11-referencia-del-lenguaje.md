@@ -76,8 +76,12 @@ grupo        = "group" "{" { propiedad_de | sentencia } "}" ;
 emergente    = "popup" nombre "{" { propiedad_de | sentencia } "}" ;
 
 estructura   = componente | copia | repeat | for | reparto | espacio ;
-componente   = "component" nombre [ "(" [ nombre { "," nombre } ] ")" ] "{" { propiedad_de | sentencia } "}" ;
-copia        = Nombre [ "(" [ argumento { "," argumento } ] ")" ] [ "{" { propiedad_de } "}" ] ;
+componente   = "component" nombre [ "(" [ parametro { "," parametro } ] ")" ] "{" { propiedad_de | sentencia } "}" ;
+parametro    = nombre [ ":" tipo_param ] [ "=" argumento ] ;
+tipo_param   = "number" | "color" | "text" | "record" | "event" | "image" ;
+copia        = Nombre [ "(" [ argumentos ] ")" ] [ "{" { propiedad_de } "}" ] ;
+argumentos   = argumento { "," argumento } { "," nombre ":" argumento }
+             | nombre ":" argumento { "," nombre ":" argumento } ;
 argumento    = expr | color | texto | nombre ;
 repeat       = "repeat" nombre "in" entero ".." entero "{" { sentencia } "}" ;
 for          = "for" nombre "in" nombre "{" { sentencia } "}" ;
@@ -209,7 +213,24 @@ Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sug
 
 ## 10. Componentes, `repeat`, `for`
 
-`component Nombre(a, b) { size: w, h; … }` declara; `Nombre(1, #fff)` pone una copia. Un argumento es una expresión, un color, un texto (con huecos, si quiere), el nombre de un texto vivo, una imagen o un gesto, o **una ficha** (`Row(r)`: dentro, `r.label`). `size:` dice cuánto ocupa, para quien lo reparta. Lo que una copia declara —`prop`, formas con nombre, reglas— es suyo.
+`component Nombre(parámetros) { size: w, h; … }` declara; `Nombre(argumentos)` pone una copia. `size:` dice cuánto ocupa, para quien lo reparta. Lo que una copia declara —`prop`, formas con nombre, reglas— es suyo.
+
+**Un componente dice qué necesita.** Cada parámetro puede llevar tipo y valor por defecto: `component Row(r: record, chosen: event, tone: color = mint, height: number = 30)`.
+
+| Tipo | Lo que se le pasa | Dentro |
+| --- | --- | --- |
+| `number` | una expresión | vale en cualquier expresión |
+| `color` | `#fff`, un `let` de color, `mix(…)` | donde va un color |
+| `text` | `"entre comillas"` (con huecos, si quiere) o el nombre de un texto vivo | `text nombre { … }`, y en un hueco: `"{nombre}"` |
+| `record` | una ficha: la de un `for`, o `rows.0` | `r.campo`, `r.index` |
+| `event` | el nombre de un suceso de la escena | `emit nombre(…)` y `on nombre { … }` hablan de **ese** suceso |
+| `image` | el nombre de una imagen | `image nombre { … }` |
+
+Así un componente de biblioteca no da por hecho que la escena tenga un suceso que se llame de cierta manera: lo pide. Los argumentos van **por posición y luego, si se quiere, por nombre** (`Row(r, choose, height: 40)`); desde el primero con nombre, todos con nombre. Los que tienen valor por defecto se pueden omitir, y van al final. Lo que falte, sobre, se repita o no sea del tipo es un fallo donde se usa, que enseña la firma entera: `a «Row» le falta «chosen» (un suceso): es Row(r: record, chosen: event, tone: color = …)`. El valor por defecto se lee donde se usa el componente, así que `= mint` es el `mint` de esa escena.
+
+Sin tipo (`component Dot(tone)`), el parámetro es lo que parezca el argumento: es como se escribían antes, y sigue valiendo.
+
+Un fallo **dentro** de un componente dice también desde dónde se usó —`(dentro de «Badge», puesto en escena.plm:6)`—, porque a menudo lo que está mal es lo que se le pasó.
 
 `repeat i in 0..5 { … }` despliega cinco vueltas al cargar (512 como mucho); dentro, `i` es un número y `$i` se sustituye en los nombres.
 
@@ -417,6 +438,7 @@ curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back
 frame: hold emit
 classes: ambient reflex asked state
 field_types: text number bool
+parameter_types: number color text record event image
 springs: lively calm quick slow eyes pose
 units: px % deg ms s
 cursors: default pointer text grab grabbing
@@ -431,4 +453,4 @@ layout.align: start center end
 
 ## 18. Lo que esta versión no tiene
 
-Para no buscarlo aquí: tipos para los hechos (son números), enumerados, fichas dentro de fichas, `import … as`, bibliotecas con lógica, parámetros con nombre o por defecto, salto de línea en los repartos, horas y plurales en los huecos, y escribir en el campo de una ficha desde una regla. Todo está, con su plan, en [[pleamar · 08 Limitaciones conocidas]].
+Para no buscarlo aquí: tipos para los hechos (son números), enumerados, fichas dentro de fichas, `import … as`, bibliotecas con lógica, componentes con hueco para hijos, salto de línea en los repartos, horas y plurales en los huecos, y escribir en el campo de una ficha desde una regla. Todo está, con su plan, en [[pleamar · 08 Limitaciones conocidas]].

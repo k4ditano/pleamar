@@ -24,7 +24,7 @@ scene Tray {
     // ── piezas ───────────────────────────────────────────────────
     //  Una etiqueta que mide lo que mida su texto: el `row` de dentro le da el
     //  tamaño, y con él el de la copia entera.
-    component Chip(label, tone) {
+    component Chip(label: text, tone: color) {
         row { padding: 7; fill: tone; corner: 13
             text label { size: 12.5; weight: 500; color: #121f1a }
         }
@@ -32,7 +32,7 @@ scene Tray {
 
     //  Un aviso. Cada copia tiene su propio `lit` y su propia zona `hit`: dos
     //  copias no se pisan, y la regla de dentro habla de las suyas.
-    component Note(n) {
+    component Note(n: record) {
         size: 360, 58
         prop lit = 0 ~quick
 

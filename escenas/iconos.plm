@@ -59,7 +59,7 @@ scene TrayIcons {
         body { color: #1b1c1c; border: 1, #38393a
             box { from: 0, 0; size: 236, 16 + list.height; corner: 12 } }
         column list { at: 8, 8
-            for r in rows { MenuRow(r) }
+            for r in rows { MenuRow(r, chosen: choose) }
         }
     }
 }

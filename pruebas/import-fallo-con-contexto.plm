@@ -1,0 +1,7 @@
+// espera: fallo «(dentro de «Badge», puesto en import-fallo-con-contexto.plm:6)»
+import "comun/rota.plm"
+scene X {
+    surface { size: 100, 40 }
+    fact total = 3
+    row { at: 0, 0; Badge(1) }
+}

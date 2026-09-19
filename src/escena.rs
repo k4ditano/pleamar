@@ -369,6 +369,10 @@ pub enum Trozo {
     Numero(Expr, u8),
     /// `{? · {r.body}}`: un tramo que solo está si ninguno de sus textos está vacío.
     Opcional(Vec<Trozo>),
+    /// Un tramo que viene de fuera ya montado: el texto que se le pasó a un componente.
+    Tramo(Vec<Trozo>),
+    /// Un texto que se pasó vacío: no escribe nada, pero cuenta como vacío para un `{? …}`.
+    Vacio,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -398,6 +402,8 @@ impl Trozo {
                 Trozo::Numero(e, decimales) => {
                     let _ = write!(en, "{:.*}", *decimales as usize, e.evaluar(c));
                 }
+                Trozo::Tramo(dentro) => entero &= Trozo::escribir(dentro, c, textos, en),
+                Trozo::Vacio => entero = false,
                 Trozo::Opcional(dentro) => {
                     let desde = en.len();
                     if !Trozo::escribir(dentro, c, textos, en) {

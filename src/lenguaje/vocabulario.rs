@@ -45,6 +45,8 @@ pub const CURVAS: &[&str] = &["linear", "in_quad", "out_quad", "in_cubic", "out_
 pub const DE_FOTOGRAMA: &[&str] = &["hold", "emit"];
 pub const CLASES: &[&str] = &["ambient", "reflex", "asked", "state"];
 pub const TIPOS: &[&str] = &["text", "number", "bool"];
+/// Lo que un componente puede pedir: `component Row(r: record, chosen: event, tone: color = mint)`.
+pub const TIPOS_DE_PARAMETRO: &[&str] = &["number", "color", "text", "record", "event", "image"];
 pub const MUELLES: &[&str] = &["lively", "calm", "quick", "slow", "eyes", "pose"];
 pub const UNIDADES: &[&str] = &["px", "%", "deg", "ms", "s"];
 pub const CURSORES: &[&str] = &["default", "pointer", "text", "grab", "grabbing"];
@@ -77,6 +79,7 @@ pub fn como_texto() -> String {
     linea("frame", DE_FOTOGRAMA);
     linea("classes", CLASES);
     linea("field_types", TIPOS);
+    linea("parameter_types", TIPOS_DE_PARAMETRO);
     linea("springs", MUELLES);
     linea("units", UNIDADES);
     linea("cursors", CURSORES);

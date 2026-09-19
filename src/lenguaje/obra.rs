@@ -142,11 +142,23 @@ struct Entorno {
     sufijo: String,
     /// Dentro de un `for`: esta vuelta solo existe si su ficha existe.
     visible: Option<Expr>,
+    /// Si es la copia de un componente: cuál, y en qué línea se puso.
+    copia: Option<(String, usize)>,
 }
 
 struct Componente<'a> {
-    parametros: Vec<String>,
+    parametros: Vec<Parametro>,
     nodo: &'a Nodo,
+}
+
+/// Lo que un componente pide a quien lo usa. Con tipo, quien lo usa se entera al
+/// momento de qué falta o de qué sobra; sin él, se adivina por lo que se le pase.
+#[derive(Clone)]
+struct Parametro {
+    nombre: String,
+    tipo: Option<String>,
+    /// Lo que vale si no se le pasa: tal como se escribió, para leerlo donde se use.
+    por_defecto: Option<Vec<Ficha>>,
 }
 
 struct Obra<'a> {
@@ -348,7 +360,14 @@ impl<'a> Obra<'a> {
 
     /// Un fallo más, hasta ocho. El mismo fallo en el mismo sitio se dice una vez:
     /// un componente mal escrito falla en cada copia, y son la misma errata.
-    fn anotar(&mut self, f: Fallo) {
+    fn anotar(&mut self, mut f: Fallo) {
+        // Un fallo dentro de un componente —que puede estar en otro fichero— dice también
+        // desde dónde se usó: a menudo lo que está mal es lo que se le pasó.
+        if let Some((componente, linea)) = self.entornos.iter().rev().find_map(|e| e.copia.as_ref()) {
+            if *linea != f.linea {
+                f.mensaje = format!("{} (dentro de «{componente}», puesto en {})", f.mensaje, super::sitio(self.ficheros, *linea));
+            }
+        }
         let repetido = self.fallos.iter().any(|g| g.linea == f.linea && g.col == f.col && g.mensaje == f.mensaje);
         if !repetido && self.fallos.len() < 8 {
             self.fallos.push(f);
@@ -1205,6 +1224,14 @@ impl<'a> Obra<'a> {
             }
         }
         if let (Some(F::Id(n)), 1) = (c.mira(), fichas.len()) {
+            // Un parámetro de texto del componente donde está esta cadena: lo que se le pasó.
+            if let Some(e) = self.entornos.iter().rev().find(|e| e.cadenas.contains_key(n)) {
+                return Ok(match e.contenidos.get(n) {
+                    Some(Contenido::Plantilla(trozos)) => Trozo::Tramo(trozos.clone()),
+                    _ if e.cadenas[n].is_empty() => Trozo::Vacio,
+                    _ => Trozo::Fijo(e.cadenas[n].clone()),
+                });
+            }
             if let Some(t) = es_texto(self, n) {
                 return Ok(Trozo::Vivo(t, Letras::Igual));
             }
@@ -1553,10 +1580,42 @@ impl<'a> Obra<'a> {
     /// `component Chip(label, tone) { size: …; … }`
     fn declarar_componente(&mut self, n: &'a Nodo, c: &mut Cur) -> R<()> {
         let nombre = c.id("un nombre para el componente")?;
-        let mut parametros = Vec::new();
+        // (r: record, chosen: event, tone: color = mint, height = 30)
+        let mut parametros: Vec<Parametro> = Vec::new();
         if c.sim("(") && !c.sim(")") {
             loop {
-                parametros.push(c.id("el nombre de un parámetro")?);
+                let nombre = c.id("el nombre de un parámetro")?;
+                if parametros.iter().any(|p| p.nombre == nombre) {
+                    c.i -= 1;
+                    return c.fallo(format!("«{nombre}» ya es un parámetro de este componente"));
+                }
+                let tipo = if c.sim(":") { Some(c.una_de(voz::TIPOS_DE_PARAMETRO, "el tipo de un parámetro")?) } else { None };
+                let por_defecto = if c.sim("=") {
+                    // Hasta la coma o el paréntesis que lo cierre, sin contar los de dentro.
+                    let (desde, mut hondo) = (c.i, 0);
+                    while let Some(f) = c.mira() {
+                        match f {
+                            F::Sim("(") => hondo += 1,
+                            F::Sim(")") if hondo == 0 => break,
+                            F::Sim(")") => hondo -= 1,
+                            F::Sim(",") if hondo == 0 => break,
+                            _ => {}
+                        }
+                        c.i += 1;
+                    }
+                    if c.i == desde {
+                        return c.fallo("aquí falta lo que vale por defecto");
+                    }
+                    Some(c.f[desde..c.i].to_vec())
+                } else {
+                    // Tras uno con valor por defecto, todos: si no, no se sabría cuál se ha saltado.
+                    if parametros.last().is_some_and(|p| p.por_defecto.is_some()) {
+                        c.i -= 1;
+                        return c.fallo(format!("«{nombre}» va detrás de un parámetro con valor por defecto, así que necesita el suyo"));
+                    }
+                    None
+                };
+                parametros.push(Parametro { nombre, tipo, por_defecto });
                 if c.sim(")") {
                     break;
                 }
@@ -1571,6 +1630,121 @@ impl<'a> Obra<'a> {
             return Err(Fallo::en(n.linea, n.col, "a este componente le falta su bloque `{ … }`"));
         }
         self.componentes.insert(nombre, Componente { parametros, nodo: n });
+        Ok(())
+    }
+
+    /// Lee un argumento y lo deja en el ámbito de la copia. Con tipo, se lee como
+    /// lo que es y un fallo dice qué se esperaba; sin él, se adivina por su forma.
+    fn argumento(&self, componente: &str, p: &Parametro, c: &mut Cur, env: &mut Entorno) -> R<()> {
+        let nombre = &p.nombre;
+        let esperaba = |c: &Cur, que: &str| c.fallo::<()>(format!("«{nombre}», de «{componente}», es {que}, y esto no lo es")).unwrap_err();
+        match p.tipo.as_deref() {
+            Some("number") => {
+                env.exprs.insert(nombre.clone(), self.expr(c)?);
+            }
+            Some("color") => {
+                env.colores.insert(nombre.clone(), self.color(c).map_err(|_| esperaba(c, "un color"))?);
+            }
+            Some("text") => match c.mira() {
+                Some(F::Cadena(t)) => {
+                    if let plantilla @ Contenido::Plantilla(_) = self.contenido_de(t, &c.f[c.i])? {
+                        env.contenidos.insert(nombre.clone(), plantilla);
+                    }
+                    env.cadenas.insert(nombre.clone(), t.clone());
+                    c.i += 1;
+                }
+                Some(F::Id(x)) if self.textos.contains_key(&self.global(x)) => {
+                    env.alias.insert(nombre.clone(), self.global(x));
+                    c.i += 1;
+                }
+                Some(F::Id(x)) if self.entornos.iter().any(|e| e.cadenas.contains_key(x)) => {
+                    let de_fuera = self.entornos.iter().rev().find(|e| e.cadenas.contains_key(x)).unwrap();
+                    env.cadenas.insert(nombre.clone(), de_fuera.cadenas[x].clone());
+                    if let Some(k) = de_fuera.contenidos.get(x) {
+                        env.contenidos.insert(nombre.clone(), k.clone());
+                    }
+                    c.i += 1;
+                }
+                _ => return Err(esperaba(c, "un texto: entre comillas, o el nombre de un texto vivo")),
+            },
+            Some("record") => {
+                let Some(F::Id(x)) = c.mira() else { return Err(esperaba(c, "una ficha de un modelo")) };
+                let Some((ficha, indice)) = self.ficha(x) else { return Err(esperaba(c, "una ficha de un modelo (la de un `for`, o `rows.0`)")) };
+                env.alias.insert(nombre.clone(), ficha);
+                env.con_partes.insert(nombre.clone());
+                env.exprs.insert(format!("{nombre}.index"), Expr::K(indice as f32));
+                c.i += 1;
+            }
+            Some("event") => {
+                // Dentro, `emit chosen` y `on chosen` hablan del suceso que se pasó.
+                let Some(F::Id(x)) = c.mira() else { return Err(esperaba(c, "un suceso")) };
+                let g = self.global(x);
+                if !self.sucesos.contains_key(&g) {
+                    c.i += 1;
+                    return self.desconocido(c, "ningún suceso", &g, self.sucesos.keys().collect());
+                }
+                env.alias.insert(nombre.clone(), g);
+                c.i += 1;
+            }
+            Some("image") => {
+                let Some(F::Id(x)) = c.mira() else { return Err(esperaba(c, "una imagen")) };
+                let g = self.global(x);
+                if !self.imagenes.contains_key(&g) {
+                    c.i += 1;
+                    return self.desconocido(c, "ninguna imagen", &g, self.imagenes.keys().collect());
+                }
+                env.alias.insert(nombre.clone(), g);
+                c.i += 1;
+            }
+            Some(otro) => unreachable!("«{otro}» está en el vocabulario, pero `argumento` no sabe leerlo"),
+            None => self.argumento_sin_tipo(nombre, c, env)?,
+        }
+        Ok(())
+    }
+
+    /// Sin tipo declarado: lo que parezca. Es como se escribían los componentes antes de tenerlos.
+    fn argumento_sin_tipo(&self, p: &String, c: &mut Cur, env: &mut Entorno) -> R<()> {
+        let sigue = c.f.get(c.i + 1).map(|x| &x.f);
+        let solo = matches!(sigue, Some(F::Sim(",")) | Some(F::Sim(")")) | None);
+        match c.mira() {
+            Some(F::Cadena(t)) => {
+                // Los huecos hablan de los nombres de aquí, no de los de dentro del componente.
+                if let plantilla @ Contenido::Plantilla(_) = self.contenido_de(t, &c.f[c.i])? {
+                    env.contenidos.insert(p.clone(), plantilla);
+                }
+                env.cadenas.insert(p.clone(), t.clone());
+                c.i += 1;
+            }
+            Some(F::Color(_)) => {
+                env.colores.insert(p.clone(), self.color(c)?);
+            }
+            Some(F::Id(x)) if x == "mix" && matches!(c.f.get(c.i + 2).map(|y| &y.f), Some(F::Color(_))) => {
+                env.colores.insert(p.clone(), self.color(c)?);
+            }
+            Some(F::Id(x)) if solo && (self.colores.contains_key(x) || self.entornos.iter().any(|e| e.colores.contains_key(x))) => {
+                env.colores.insert(p.clone(), self.color(c)?);
+            }
+            // Una ficha de un modelo —la de un `for`, o `rows.3`—: dentro, `p.label` es su campo.
+            Some(F::Id(x)) if solo && self.ficha(x).is_some() => {
+                let (ficha, indice) = self.ficha(x).unwrap();
+                env.alias.insert(p.clone(), ficha);
+                env.con_partes.insert(p.clone());
+                env.exprs.insert(format!("{p}.index"), Expr::K(indice as f32));
+                c.i += 1;
+            }
+            // El nombre de un texto, una imagen o un gesto: el parámetro es otro nombre para él.
+            Some(F::Id(x)) if solo && { let g = self.global(x); self.textos.contains_key(&g) || self.imagenes.contains_key(&g) || self.gestos.contains_key(&g) || self.sucesos.contains_key(&g) } => {
+                env.alias.insert(p.clone(), self.global(x));
+                c.i += 1;
+            }
+            Some(F::Id(x)) if solo && self.entornos.iter().any(|e| e.cadenas.contains_key(x)) => {
+                env.cadenas.insert(p.clone(), self.entornos.iter().rev().find_map(|e| e.cadenas.get(x)).unwrap().clone());
+                c.i += 1;
+            }
+            _ => {
+                env.exprs.insert(p.clone(), self.expr(c)?);
+            }
+        }
         Ok(())
     }
 
@@ -1596,62 +1770,68 @@ impl<'a> Obra<'a> {
             (k.parametros.clone(), k.nodo.cuerpo.as_deref().unwrap_or(&[]))
         };
         let mut env = Entorno::default();
-        if c.sim("(") {
-            for (k, p) in parametros.iter().enumerate() {
-                if k > 0 {
-                    c.exige_sim(",")?;
-                }
-                let sigue = c.f.get(c.i + 1).map(|x| &x.f);
-                let solo = matches!(sigue, Some(F::Sim(",")) | Some(F::Sim(")")));
-                match c.mira() {
-                    Some(F::Cadena(t)) => {
-                        // Los huecos hablan de los nombres de aquí, no de los de dentro del componente.
-                        if let plantilla @ Contenido::Plantilla(_) = self.contenido_de(t, &c.f[c.i])? {
-                            env.contenidos.insert(p.clone(), plantilla);
+        let mut dados = vec![false; parametros.len()];
+        let firma = || parametros.iter().map(|p| match (&p.tipo, &p.por_defecto) {
+            (Some(t), None) => format!("{}: {t}", p.nombre),
+            (Some(t), Some(_)) => format!("{}: {t} = …", p.nombre),
+            (None, None) => p.nombre.clone(),
+            (None, Some(_)) => format!("{} = …", p.nombre),
+        }).collect::<Vec<_>>().join(", ");
+        if c.sim("(") && !c.sim(")") {
+            let mut por_nombre = false;
+            let mut k = 0;
+            loop {
+                // `tone: mint`: desde el primero con nombre, todos con nombre.
+                let con_nombre = matches!((c.mira(), c.f.get(c.i + 1).map(|x| &x.f)), (Some(F::Id(_)), Some(F::Sim(":"))));
+                let cual = if con_nombre {
+                    por_nombre = true;
+                    let n = c.id("el nombre de un parámetro")?;
+                    c.exige_sim(":")?;
+                    match parametros.iter().position(|p| p.nombre == n) {
+                        Some(k) => k,
+                        None => {
+                            c.i -= 2;
+                            let todos: Vec<String> = parametros.iter().map(|p| p.nombre.clone()).collect();
+                            let pista = parecido(&n, todos.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
+                            return c.fallo(format!("«{nombre}» no tiene ningún parámetro «{n}».{pista} Es {nombre}({})", firma()));
                         }
-                        env.cadenas.insert(p.clone(), t.clone());
-                        c.i += 1;
                     }
-                    Some(F::Color(_)) => {
-                        env.colores.insert(p.clone(), self.color(c)?);
-                    }
-                    Some(F::Id(x)) if x == "mix" && matches!(c.f.get(c.i + 2).map(|y| &y.f), Some(F::Color(_))) => {
-                        env.colores.insert(p.clone(), self.color(c)?);
-                    }
-                    Some(F::Id(x)) if solo && (self.colores.contains_key(x) || self.entornos.iter().any(|e| e.colores.contains_key(x))) => {
-                        env.colores.insert(p.clone(), self.color(c)?);
-                    }
-                    // Una ficha de un modelo —la de un `for`, o `rows.3`—: dentro, `p.label` es su campo.
-                    Some(F::Id(x)) if solo && self.ficha(x).is_some() => {
-                        let (ficha, indice) = self.ficha(x).unwrap();
-                        env.alias.insert(p.clone(), ficha);
-                        env.con_partes.insert(p.clone());
-                        env.exprs.insert(format!("{p}.index"), Expr::K(indice as f32));
-                        c.i += 1;
-                    }
-                    // El nombre de un texto, una imagen o un gesto: el parámetro es otro nombre para él.
-                    Some(F::Id(x)) if solo && { let g = self.global(x); self.textos.contains_key(&g) || self.imagenes.contains_key(&g) || self.gestos.contains_key(&g) } => {
-                        env.alias.insert(p.clone(), self.global(x));
-                        c.i += 1;
-                    }
-                    Some(F::Id(x)) if solo && self.entornos.iter().any(|e| e.cadenas.contains_key(x)) => {
-                        env.cadenas.insert(p.clone(), self.entornos.iter().rev().find_map(|e| e.cadenas.get(x)).unwrap().clone());
-                        c.i += 1;
-                    }
-                    _ => {
-                        env.exprs.insert(p.clone(), self.expr(c)?);
-                    }
+                } else if por_nombre {
+                    return c.fallo("después de un argumento con nombre, todos llevan el suyo");
+                } else {
+                    k += 1;
+                    k - 1
+                };
+                if cual >= parametros.len() {
+                    return c.fallo(format!("a «{nombre}» le sobran argumentos: es {nombre}({})", firma()));
                 }
+                if std::mem::replace(&mut dados[cual], true) {
+                    return c.fallo(format!("«{}» ya se ha dado", parametros[cual].nombre));
+                }
+                self.argumento(&nombre, &parametros[cual], c, &mut env)?;
+                if c.sim(")") {
+                    break;
+                }
+                c.exige_sim(",")?;
             }
-            if !c.sim(")") {
-                return c.fallo(format!("«{nombre}» tiene {} parámetros: {}", parametros.len(), parametros.join(", ")));
+        }
+        // Lo que no se ha dado: su valor por defecto, leído aquí, o un fallo que dice qué falta.
+        for (p, dado) in parametros.iter().zip(&dados) {
+            if *dado {
+                continue;
             }
-        } else if !parametros.is_empty() {
-            return c.fallo(format!("«{nombre}» pide parámetros: {nombre}({})", parametros.join(", ")));
+            let Some(fichas) = &p.por_defecto else {
+                let que = p.tipo.as_ref().map_or(String::new(), |t| format!(" ({})", nombre_de_tipo(t)));
+                return Err(Fallo::en(n.linea, n.col, format!("a «{nombre}» le falta «{}»{que}: es {nombre}({})", p.nombre, firma())));
+            };
+            let mut d = Cur::de(fichas, n.linea, n.col);
+            self.argumento(&nombre, p, &mut d, &mut env)?;
+            d.nada_mas()?;
         }
         c.nada_mas()?;
         self.copias += 1;
         env.sufijo = format!("#{nombre}{}", self.copias);
+        env.copia = Some((nombre.clone(), n.linea));
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let desde = self.reglas.len();
         self.entornos.push(env);
@@ -2399,6 +2579,18 @@ fn enumerar(lista: &[&str]) -> String {
         [] => String::new(),
         [una] => (*una).to_owned(),
         [antes @ .., ultima] => format!("{} o {ultima}", antes.join(", ")),
+    }
+}
+
+fn nombre_de_tipo(t: &str) -> &'static str {
+    match t {
+        "number" => "un número",
+        "color" => "un color",
+        "text" => "un texto",
+        "record" => "una ficha de un modelo",
+        "event" => "un suceso",
+        "image" => "una imagen",
+        _ => "algo",
     }
 }
 
