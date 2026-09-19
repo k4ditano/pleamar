@@ -7,7 +7,7 @@ pleamar --escena escenas/marea.plm      # se recarga sola al guardar el fichero
 pleamar --comprobar escenas/marea.plm   # la lee, dice si está bien, y sale
 ```
 
-Ejemplos completos: `escenas/marea.plm` (la bolita y su tarjeta, 150 líneas) y `escenas/cara.plm` (capas y gestos, sin lógica ninguna).
+Ejemplos completos: `escenas/marea.plm` (la bolita y su tarjeta, 150 líneas), `escenas/cara.plm` (capas y gestos, sin lógica ninguna) y `escenas/bandeja.plm` (componentes, `repeat` y reparto: una lista de avisos que crece y encoge).
 
 ## La idea en una frase
 
@@ -22,9 +22,11 @@ scene Nombre {
 }
 ```
 
-Un salto de línea o un `;` acaban una sentencia. `//` comenta hasta el final de la línea. Los nombres llevan puntos (`orb.x`). **Lo que se usa tiene que estar declarado más arriba.**
+Un salto de línea o un `;` acaban una sentencia. `//` comenta hasta el final de la línea. Los nombres llevan puntos (`orb.x`, `note.0.title`).
 
-Números con unidad: `40`, `40px`, `34%` (= 0.34), `138deg` (a radianes), `320ms` y `14s` (duraciones). Colores `#151616`. Textos `"entre comillas"`.
+**El orden es el que le convenga a quien lee.** El fichero se lee en cuatro vueltas —declaraciones; `let` y capas; dibujo; reglas—, así que una regla puede ir antes que la forma que nombra, y un `prop` al final. Solo un `let` tiene que ir antes de quien lo usa.
+
+Números con unidad: `40`, `40px`, `34%` (= 0.34), `138deg` (a radianes), `320ms` y `14s` (duraciones). Colores `#151616` o `#fff`. Textos `"entre comillas"`.
 
 ## Declaraciones
 
@@ -39,6 +41,7 @@ Números con unidad: `40`, `40px`, `34%` (= 0.34), `138deg` (a radianes), `320ms
 | `image fox = icon "firefox", 48, 48` · `… = file "ruta.png", 48, 48` | Una imagen, y a qué tamaño se pinta como mucho |
 | `measure label` | Crea `label.width` y `label.height`, que rellena el texto que lleve `measure: label` |
 | `let panel.x = orb.x + 62` | Un nombre para una expresión |
+| `let mint = #9ed6bd` · `let warm = mix(mint, #f84, 50%)` | Un nombre para un color |
 | `spring bouncy = 170, 12` | Un muelle propio: rigidez, freno. De casa: lively, calm, quick, slow, eyes, pose. En línea: `~spring(170, 12)` |
 
 ## Expresiones
@@ -79,7 +82,37 @@ group {                                 // el árbol: transforma, funde y recort
 }
 ```
 
-**Una forma con nombre es también una zona**: se puede pulsar, y el ratón entra por ella. Hereda las transformaciones de los grupos donde esté. `active: expr` la enciende y la apaga. `zone box whole { … }` es una zona que no se pinta. **La que se declara después queda encima.**
+**Una forma con nombre es una zona si alguna regla la nombra** (o si lleva `active`, o se declaró con `zone`): se puede pulsar, y el ratón entra por ella. Un nombre puesto solo para leerse mejor no para el clic. Hereda las transformaciones de los grupos donde esté. `active: expr` la enciende y la apaga. `zone box whole { … }` es una zona que no se pinta. **La que se declara después queda encima.**
+
+## Componentes, repeticiones y repartos
+
+```
+component Note(i) {                     // parámetros: números, colores, "textos", o el nombre de un texto vivo
+    size: 360, 58                       // cuánto ocupa, para quien lo reparta
+    prop lit = 0 ~quick                 // cada copia tiene el suyo
+    body { color: mix(#1b1c1c, #2b2d2d, lit); box hit { from: 0, 0; size: 360, 58; corner: 14 } }
+    text note.$i.title { at: 16, 38; anchor: left center }
+    on enter hit { lit: 1 ~quick }      // …y su propia zona y sus propias reglas
+    on press hit { emit opened.$i }
+}
+
+Note(3) { move: 20, 40 }                // una copia es un grupo: move, rotate, scale, opacity
+
+repeat i in 0..5 { event opened.$i -> } // se despliega al cargar; `$i` entra en los nombres
+
+column list ~calm {                     // o `row`. Con muelle, cada hijo VA a su hueco
+    at: 180, 66;  gap: 8;  padding: 0;  align: start | center | end
+    fill: #222;  corner: 12             // un fondo del tamaño de lo que contenga
+    repeat i in 0..5 { Note(i) { show: count > i } }
+    space 6
+}
+box { from: 180, 66 + list.height + 10; size: head.width, 2 }   // con nombre, se puede medir
+```
+
+- Lo que una copia declara por dentro (`prop`, formas con nombre, medidas) **es suyo**: dos copias no se pisan, y las reglas de dentro hablan de las suyas.
+- **No hay motor de layout.** El sitio de cada hijo es una expresión —lo que ocupan los anteriores—: si uno crece, los demás se corren; con `~muelle`, se corren animados. `show:` decide si un hijo está: ocupa y se ve, o ni lo uno ni lo otro, y con muelle también eso es un viaje.
+- Dentro de un reparto un hijo no dice dónde va. Saben cuánto ocupan `box`, `ellipse`, `image`, `text` (se mide solo), otro `row`/`column`, y un `group` o un componente con `size:`.
+- Una lista de longitud variable es hoy una de capacidad fija con `show:`. Ver `escenas/bandeja.plm`.
 
 ## Capas — quién gana
 
@@ -97,7 +130,7 @@ layer card ~calm {
 }
 ```
 
-Gana la primera reclamación que se cumple; cuando deja de cumplirse se ve la siguiente, sola. El bloque de una reclamación es su coreografía: adónde va cada propiedad, con qué muelle y con qué retraso. `shape.rec` se puede usar en cualquier expresión.
+Gana la primera reclamación que se cumple; cuando deja de cumplirse se ve la siguiente, sola. El bloque de una reclamación es su coreografía: adónde va cada propiedad, con qué muelle y con qué retraso. **El destino es una expresión**, y se evalúa cuando le llega la hora: `r: base * 3 ~lively`. `shape.rec` se puede usar en cualquier expresión.
 
 ## Reglas — qué hace cambiar las cosas
 
@@ -139,7 +172,7 @@ Un gesto solo corta a otro de su clase o inferior. Lo que un fotograma no nombra
 
 ## Errores
 
-Con línea, columna, el trozo de fichero y, si se parece a algo, una sugerencia:
+Con línea, columna, el trozo de fichero y, si se parece a algo, una sugerencia. **Se dicen todos los que se encuentren** (hasta ocho), no solo el primero:
 
 ```
 marea.plm:91:28: no hay nada que se llame «pannel.h». ¿Querías decir «panel.h»?

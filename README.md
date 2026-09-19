@@ -31,8 +31,9 @@ cada evento que le llega a la lógica: sirve para ensayar sin tocar el de verdad
 ## El lenguaje
 
 Una escena se escribe en un fichero `.plm` —palabras clave en inglés— y no hace
-falta Rust: `escenas/marea.plm` es Marea entera, y `escenas/cara.plm` su cara
-con capas y gestos, sin lógica ninguna. Los errores salen al cargar, con línea,
+falta Rust: `escenas/marea.plm` es Marea entera, `escenas/cara.plm` su cara con
+capas y gestos, y `escenas/bandeja.plm` una lista de avisos hecha con
+componentes, `repeat` y reparto, donde cada aviso va a su hueco con un muelle. Los errores salen al cargar, con línea,
 flecha y «¿querías decir…?»; al guardar, la escena se recarga sin perder valores,
 velocidades, hechos ni textos. La referencia está en `docs/09-lenguaje-v0.md`.
 
@@ -126,8 +127,8 @@ falta —con la lista de limitaciones conocidas en `docs/08`— están en `docs/
 
 ## Lo que no es
 
-El lenguaje no tiene todavía componentes, `repeat` ni layout, y una escena de
-fichero no tiene lógica propia: falta Luau. No hay
+Una escena de fichero no tiene todavía lógica propia —falta Luau—, y una lista
+es de capacidad fija: no hay modelos que vengan de datos. No hay
 layout —las posiciones son expresiones a mano—
 y todas las superficies pintan la misma escena. Y los primeros frames tras despertar salen
 sin esperar al vsync, así que el reloj de animación debería ir con el tiempo de

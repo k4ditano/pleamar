@@ -70,9 +70,9 @@ pub fn trocear(fuente: &str) -> Result<Vec<Ficha>, Fallo> {
                 };
                 poner(f);
                 i = j + unidad.chars().count();
-            } else if ch.is_alphabetic() || ch == '_' {
+            } else if ch.is_alphabetic() || ch == '_' || ch == '$' {
                 let mut j = i;
-                while j < c.len() && (c[j].is_alphanumeric() || c[j] == '_' || (c[j] == '.' && c.get(j + 1).is_some_and(|x| x.is_alphabetic() || *x == '_'))) {
+                while j < c.len() && (c[j].is_alphanumeric() || c[j] == '_' || c[j] == '$' || (c[j] == '.' && c.get(j + 1).is_some_and(|x| x.is_alphanumeric() || *x == '_' || *x == '$'))) {
                     j += 1;
                 }
                 poner(F::Id(c[i..j].iter().collect()));

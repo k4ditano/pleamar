@@ -23,16 +23,16 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 
 | # | Limitación | Gravedad | Cómo se arregla |
 | --- | --- | --- | --- |
-| G1 | **Sin componentes, sin `repeat` y sin layout.** No se puede hacer una lista de notificaciones ni un lanzador | 🔴 | `component Chip(label) { … }`, `repeat i in 0..12 { … }` sobre un número o sobre una lista que ponga la lógica, y `row`/`column` con `taffy`, donde el layout pone *destinos* y los muelles van hacia ellos |
+| G12 | **Una lista de longitud variable es una de capacidad fija** con `show:`. Los límites de `repeat` son números, y la lógica no puede darle a la escena una lista de cosas | 🔴 | `repeat item in notes { … }` sobre un modelo que ponga la lógica, con clave por elemento para que al reordenar cada uno viaje a su sitio nuevo. Pide copias que nazcan y mueran en marcha: hoy todo se despliega al cargar |
+| G13 | Los sucesos no llevan datos: para saber qué aviso se pulsó hay un suceso por índice (`opened.$i`) | 🟡 | Sucesos con carga: `emit opened(i)`, y en la lógica `on("opened", function(i) … end)` |
+| G14 | Los parámetros de un componente van por posición, sin tipo, sin valor por defecto, y no hay hueco para hijos (`children`) | 🟡 | `component Card(title, tone = mint) { … slot … }` |
+| G15 | El reparto solo sabe de fila y columna con hueco, relleno y alineado. Sin salto de línea, sin «ocupa lo que quede», sin mínimos ni máximos. Un `group` sin `size:` ocupa lo que su último hijo, por casualidad más que por diseño | 🟡 | `grow:` en un hijo (reparte el sobrante del `size:` del reparto), `wrap`, y que un grupo sin tamaño ocupe la unión de sus hijos |
+| G16 | El sitio de cada hijo es la suma de los anteriores, escrita entera: con *n* hijos las expresiones crecen como *n²*. Veinte no se notan; doscientos sí | ⚪ | Subexpresiones compartidas: que `Expr` sea un grafo y cada suma parcial se evalúe una vez por frame |
+| G17 | Lo que mide un texto llega un frame tarde, así que un reparto con textos se asienta en uno o dos frames al cargar. Con muelle no se ve; sin él, un parpadeo | ⚪ | Ver T12 |
 | G2 | **Una escena de fichero no tiene lógica propia**: la acompaña un guion mínimo en Rust que solo escucha | 🔴 | Punto 5: un bloque o un fichero Luau al lado, con `on("view_event", …)`, `fact.open = true`, `text["notice.title"] = …` |
-| G3 | Los destinos de una capa y los valores de un fotograma son **números, no expresiones**: `orb.x: 140`, no `orb.x: center - 220`. Tampoco hay gestos con parámetros | 🟡 | Que `Transicion` y `Fotograma` guarden expresiones y se evalúen al dispararse. Tacha también L3 |
-| G4 | Se lee de arriba abajo, una vez: lo que se usa tiene que estar declarado antes, y una capa tiene que ir antes del dibujo que mire su presencia | 🟡 | Dos pasadas: primero recoger todas las declaraciones, luego resolver |
-| G5 | Solo se informa del **primer** error, y los mensajes están en castellano aunque las palabras clave sean inglesas | 🟡 | Seguir tras un error por bloque y juntar los fallos; catálogo de mensajes en inglés (y castellano) |
-| G6 | No hay colores con nombre (`let mint = #9ed6bd`), ni un color como propiedad animada; solo literales y `mix(#a, #b, t)` | 🟡 | `let` con tipo —número o color— y `prop` de color con tres muelles |
+| G5 | Los mensajes de error están en castellano aunque las palabras clave sean inglesas. Y un fallo del tokenizador (una comilla sin cerrar) sigue parando la lectura en seco | 🟡 | Un catálogo de mensajes con las dos lenguas; que el tokenizador apunte el fallo y siga en la línea siguiente |
 | G7 | Al recargar no se aplican los cambios de `surface` (S1), y el gesto que estuviera sonando y los retrasos pendientes se pierden | ⚪ | Reconfigurar la superficie; conservar el gesto si sigue existiendo con ese nombre |
-| G8 | Cada recarga deja unos bytes sin liberar: los nombres se guardan como `&'static str` | ⚪ | Nombres internados (`Arc<str>`) en vez de fugas |
 | G9 | **Sin ayuda en el editor**: ni colores, ni autocompletado, ni errores mientras se escribe | 🟡 | Una gramática de tree-sitter para el resaltado, y un LSP pequeño que reutilice este mismo parser: los fallos ya vienen con su sitio |
-| G10 | Toda forma con nombre es una zona y para el clic, aunque el nombre fuera solo para leer mejor; una sin nombre no se puede pulsar | ⚪ | `active: false` lo apaga hoy. Mejor: que sea zona solo si alguna regla la nombra |
 | G11 | La recarga mira la fecha del fichero cuatro veces por segundo | ⚪ | Vale en los tres sistemas, que es por lo que se hizo así. Si molesta: el crate `notify` |
 
 ### Texto e imágenes
@@ -108,3 +108,10 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | 2026-09-19 | **T2** · No se podía medir un texto desde una expresión → `mide`: dos propiedades que rellena el render; con `Sigue`, una caja persigue a su rótulo con un muelle |
 | 2026-09-19 | **L8 (a medias)** · Las escenas se escribían en Rust → el lenguaje v0: parser, comprobación de nombres, errores con su sitio y recarga en caliente |
 | 2026-09-19 | **L6** · Una zona bajo transformaciones había que declararla a mano → en el lenguaje, una forma con nombre hereda las de sus grupos |
+| 2026-09-19 | **G1** · Sin componentes, `repeat` ni layout → `component` con parámetros y nombres propios por copia, `repeat` con `$i` en los nombres, y `row`/`column` donde cada hijo va a su hueco con un muelle. `escenas/bandeja.plm` |
+| 2026-09-19 | **G3** (y **L3** a medias) · Los destinos y los fotogramas eran números → expresiones que se evalúan al dispararse; un gesto puede depender de un hecho |
+| 2026-09-19 | **G4** · Había que declarar antes de usar → cuatro vueltas: el orden es el de quien lee |
+| 2026-09-19 | **G6** (a medias) · Sin colores con nombre → `let mint = #9ed6bd`, `mix` entre nombres, y `#fff`. Sigue sin haber propiedades de color |
+| 2026-09-19 | **G8** · Cada recarga dejaba bytes sin liberar → nombres internados |
+| 2026-09-19 | **G10** · Toda forma con nombre era zona → solo si una regla la nombra, lleva `active` o se declaró con `zone` |
+| 2026-09-19 | **G5** (a medias) · Solo se decía el primer error → hasta ocho de una vez |

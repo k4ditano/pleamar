@@ -42,11 +42,11 @@ Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
 
 | Quickshell / QtQuick | pleamar |
 | --- | --- |
-| Anclas, `Row`/`Column`/`Grid`, `RowLayout` con reparto | ⬜ posiciones a mano |
-| `Repeater`, `ListView`/`GridView` con virtualización | ⬜ |
+| Anclas, `Row`/`Column`/`Grid`, `RowLayout` con reparto | 🟡 `row`/`column` con hueco, relleno y alineado, animados; sin «ocupa lo que quede» ni salto de línea |
+| `Repeater`, `ListView`/`GridView` con virtualización | 🟡 `repeat` de capacidad fija con `show:`; sin modelos ni virtualización |
 | Scroll, inercia, `Flickable` | ⬜ |
 | `Loader` (no instanciar lo que no se ve) | ⬜ |
-| Componentes reutilizables, importar ficheros, singletons | ⬜ |
+| Componentes reutilizables, importar ficheros, singletons | 🟡 `component` con parámetros; sin importar ficheros |
 | Recarga en caliente | ✅ y sin perder valores, velocidades, hechos ni textos |
 
 ### Entrada
@@ -70,7 +70,7 @@ Todo ⬜: Hyprland (workspaces, ventanas, eventos), PipeWire, MPRIS, bandeja + s
 
 | Quickshell | pleamar |
 | --- | --- |
-| Lenguaje de escenas | 🟡 v0: todo el modelo, con errores y recarga en caliente; sin componentes, `repeat` ni layout |
+| Lenguaje de escenas | ✅ v0: todo el modelo, componentes, `repeat`, reparto, errores y recarga en caliente |
 | Lógica en un lenguaje de script | ⬜ un `trait` de Rust; Luau por integrar |
 | Muelles propiedad del render | ✅ **y QtQuick no** |
 | Animación por fotogramas, estados, transiciones | ⬜ diseñado, sin hacer |

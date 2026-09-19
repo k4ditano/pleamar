@@ -1,0 +1,76 @@
+// Una bandeja de avisos: lo que el lenguaje no podía hacer sin componentes,
+// `repeat` y reparto. La lista crece y encoge con un hecho; nadie calcula
+// posiciones: cada aviso va a su hueco con el muelle de la columna.
+
+scene Tray {
+    surface { size: 720, 430; anchor: top; margin: 40; screens: "HDMI-A-1" }
+
+    let ink  = #f5f7f5
+    let mint = #9ed6bd
+    let sand = #e8c07a
+
+    // ── la frontera con la lógica ────────────────────────────────
+    fact more = false
+    let count = 2 + more * 3              // cuántos avisos hay: 2 o 5
+
+    text note.0.app = "MENSAJES";        text note.0.title = "Lucía: ¿bajas a por café? ☕"
+    text note.1.app = "CALENDARIO";      text note.1.title = "Reunión en 5 min · Revisión de diseño"
+    text note.2.app = "ACTUALIZACIONES"; text note.2.title = "Hay 214 paquetes esperando a que alguien se decida a instalarlos"
+    text note.3.app = "MÚSICA";          text note.3.title = "Tycho — Awake"
+    text note.4.app = "BATERÍA";         text note.4.title = "Queda un 12 %"
+    repeat i in 0..5 { event opened.$i -> }
+
+    // ── piezas ───────────────────────────────────────────────────
+    //  Una etiqueta que mide lo que mida su texto: el `row` de dentro le da el
+    //  tamaño, y con él el de la copia entera.
+    component Chip(label, tone) {
+        row { padding: 7; fill: tone; corner: 13
+            text label { size: 12.5; weight: 500; color: #121f1a }
+        }
+    }
+
+    //  Un aviso. Cada copia tiene su propio `lit` y su propia zona `hit`: dos
+    //  copias no se pisan, y la regla de dentro habla de las suyas.
+    component Note(i) {
+        size: 360, 58
+        prop lit = 0 ~quick
+
+        body {
+            color: mix(#1b1c1c, #2b2d2d, lit)
+            rim: 4%
+            shadow: 0, 6, 18, 22%
+            box hit { from: 0, 0; size: 360, 58; corner: 14 }
+        }
+        box { from: 0, 14; size: 3, 30; corner: 1.5; color: mix(mint, sand, i / 4) }
+        text note.$i.app   { at: 16, 19; anchor: left center; size: 10.5; color: ink; opacity: 55% }
+        text note.$i.title { at: 16, 38; anchor: left center; size: 14.5; weight: 500; width: 328; lines: 1; color: ink }
+
+        on enter hit { lit: 1 ~quick }
+        on leave hit { lit: 0 ~quick }
+        on press hit { emit opened.$i }
+    }
+
+    // ── la escena ────────────────────────────────────────────────
+    row head ~calm {
+        at: 180, 22
+        gap: 8
+        align: center
+        text "Avisos" { size: 19; weight: 600; color: ink }
+        space 6
+        Chip("nuevos", mint)
+        Chip("no molestar", sand) { show: more }
+    }
+
+    column list ~calm {
+        at: 180, 66
+        gap: 8
+        repeat i in 0..5 {
+            Note(i) { show: count > i }
+        }
+    }
+
+    //  Una raya que sigue al final de la lista: sabe cuánto mide sin que nadie se lo diga.
+    box { from: 180, 66 + list.height + 10; size: head.width, 2; corner: 1; color: ink; opacity: 18% }
+
+    on demo { toggle more }
+}

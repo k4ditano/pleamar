@@ -29,6 +29,7 @@
 - ✅ **Texto de verdad e imágenes**: `cosmic-text` (ligaduras, árabe, japonés, emoji, líneas, puntos suspensivos, alineado), glifos a la escala del monitor, **textos vivos** que cambia la lógica, SVG/PNG/JPEG, iconos por nombre y teñido. Marea y la isla ya no usan mapas de bits.
 - ✅ **Medir texto desde una expresión** y **taller de texto** en su propio hilo: ni un frame lento después del primero.
 - ✅ **El lenguaje, v0**: un fichero `.plm` → escena. Tokenizador, parser, comprobación de nombres con «¿querías decir…?», errores con línea y flecha, y **recarga en caliente** que no pierde nada. `escenas/marea.plm` y `escenas/cara.plm` corren sin una línea de Rust.
+- ✅ **Componentes, `repeat` y reparto** (`row`/`column`): cada copia con sus propios nombres, zonas y reglas; cada hijo va a su hueco con un muelle. `escenas/bandeja.plm` es una lista de avisos que crece y encoge. Y el fichero se lee en cuatro vueltas: el orden es el de quien lee.
 - ⬜ Parser.
 - ✅ **Renderer por elementos**: un quad por elemento con su caja. 600 formas cuestan 0,42 ms por frame frente a 3,66 ms del intérprete por píxel; 2000, 0,57 ms. Con él llegaron **aro/trazo, arco, segmento, giro** (propio y heredado), **degradado lineal, borde**, recortes anidados (hasta cuatro) y fundido real entre elementos. Y después, cerrando sus limitaciones: **transformaciones afines que se componen** (giro, escala, traslación), **opacidad de grupo** con capa intermedia, caja exacta para texturas giradas y zonas de ratón bajo transformaciones. Todo a la vista en `--escena muestrario`.
 - ✅ **Superficies de verdad**: una por monitor —y por los que se enchufen después—, escala fraccional (probada a 2 y a 1,5 en un monitor virtual), y una región de entrada que sigue a las zonas: lo transparente deja pasar el clic. La escena declara su superficie (tamaño, ancla, nivel, margen, reserva).
@@ -36,4 +37,4 @@
 
 ## Siguiente paso
 
-Lo que queda del punto 4: **componentes, `repeat` y layout** —sin eso no hay lista de notificaciones ni lanzador—, y que los destinos de una capa o de un fotograma puedan ser expresiones. Después, el punto 5: **Luau** para la lógica, que es lo que le falta a una escena de fichero para tener vida propia.
+El punto 5: **Luau para la lógica** (G2). Es lo que le falta a una escena de fichero para tener vida propia: poner hechos y textos, oír sucesos, y —con ello— listas de verdad que vengan de datos (G12) y sucesos con carga (G13). Detrás, la entrada que falta (S6: rueda, teclado, arrastrar) y el primer servicio del sistema.
