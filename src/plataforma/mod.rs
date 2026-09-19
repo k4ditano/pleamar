@@ -56,6 +56,7 @@ pub fn servicio(nombre: &str, avisar: Box<dyn Fn(Valor) + Send>) -> bool {
         "network" => return sistema::red(avisar),
         "media" => return mpris::servicio(avisar),
         "notifications" => return avisos::servicio(avisar),
+        "tray" => return bandeja::servicio(avisar),
         _ => {}
     }
     #[cfg(target_os = "linux")]
@@ -75,6 +76,10 @@ pub fn orden(nombre: &str, args: &[Valor]) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     if nombre.starts_with("audio.") {
         return sistema::audio_orden(nombre, args);
+    }
+    #[cfg(target_os = "linux")]
+    if nombre.starts_with("tray.") {
+        return bandeja::orden(nombre, args);
     }
     #[cfg(target_os = "linux")]
     if nombre.starts_with("notifications.") {
@@ -215,6 +220,8 @@ pub trait Ventana: Send {
 
 #[cfg(target_os = "linux")]
 mod avisos;
+#[cfg(target_os = "linux")]
+mod bandeja;
 #[cfg(target_os = "linux")]
 mod escritorio;
 #[cfg(target_os = "linux")]

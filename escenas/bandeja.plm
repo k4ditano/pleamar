@@ -4,6 +4,8 @@
 
 scene Tray {
     surface { size: 720, 430; anchor: top; margin: 40; screens: "HDMI-A-1" }
+    //  Lo que `bandeja.luau` puede tocar: ser quien recibe las notificaciones.
+    permissions { services: "notifications" }
 
     let ink  = #f5f7f5
     let mint = #9ed6bd
