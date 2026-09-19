@@ -216,6 +216,16 @@ component Card(title: text) {
 Card("Avisos") { text title { size: 14; color: ink };  repeat i in 0..2 { text "fila {i}" { size: 13; color: ink } } }
 ```
 
+Un componente puede tener **varios huecos** (`children header`, `children footer`; en la copia, `header { … }`). Y un reparto puede poner algo **entre** sus hijos y saber **cuántos** son:
+
+```
+column inside { at: 14, 40; gap: 5
+    children
+    between { box { size: 272, 1; color: ink; opacity: 12% } }   // solo entre los que estén
+}
+text "· {inside.count}" { … }
+```
+
 **Bibliotecas que no fisgan.** `library Menu strict { … }`: sus componentes solo leen lo que piden por parámetro, lo que declaran y lo de su biblioteca. Es lo que hace falta para fiarse de una biblioteca de otro.
 
 ## Capas — quién gana
