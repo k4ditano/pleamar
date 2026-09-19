@@ -87,6 +87,28 @@ group {                                 // el árbol: transforma, funde y recort
 
 **Una forma con nombre es una zona si alguna regla la nombra** (o si lleva `active`, o se declaró con `zone`): se puede pulsar, y el ratón entra por ella. Un nombre puesto solo para leerse mejor no para el clic. Hereda las transformaciones de los grupos donde esté. `active: expr` la enciende y la apaga. `zone box whole { … }` es una zona que no se pinta. **La que se declara después queda encima.**
 
+## Textos con huecos
+
+```
+text "Hola, {who}"                                   // un texto vivo
+text "{volume * 100} %"                              // una expresión, sin decimales
+text "{temperature, 1} °C"                           // con uno
+text "{upper(n.app)}"                                // upper() y lower(), sobre un texto
+text "{n.title}{? · {n.body}}"                       // {? …}: el tramo solo está si su texto no está vacío
+text "unas {{llaves}} de verdad"                     // dos seguidas son una
+Chip("{notes.total} nuevos", mint)                   // y entra en un componente ya resuelta
+```
+
+Lo monta el render, cada vez que cambie cualquiera de sus partes: un texto que pone la lógica, un hecho, una propiedad con su muelle (`"{progress * 100} %"` sube solo). Dentro de un hueco vale todo lo que vale en una expresión, y los nombres se resuelven donde está escrita la cadena, no donde se use. Un fallo dentro de una cadena señala su carácter exacto:
+
+```
+6:25: no hay nada que se llame «volumen». ¿Querías decir «volume»?
+   6 |     text "Hola, {who}: {volumen * 100} %" { … }
+                               ^
+```
+
+`text number(expr, decimales, "detrás")` sigue valiendo, pero ya no hace falta.
+
 ## Modelos y `for` — listas que vienen de datos
 
 ```
