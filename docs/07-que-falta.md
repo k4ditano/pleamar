@@ -15,7 +15,7 @@ Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
 | Escala HiDPI y fraccional | ✅ probada a 2 y a 1,5 |
 | Redimensionar la superficie según el contenido | ⬜ |
 | Región de entrada dinámica (clic a través de lo transparente) | ✅ sigue a las zonas activas (por cajas) |
-| `FloatingWindow`, `PopupWindow` (menús anclados) | ⬜ |
+| `FloatingWindow`, `PopupWindow` (menús anclados) | 🟡 `popup`: un `xdg_popup` hijo de la superficie, con sus zonas y sus muelles. Ventanas flotantes, no |
 | `WlSessionLock` (pantalla de bloqueo) + PAM | ⬜ |
 | Varias ventanas por configuración | ⬜ |
 
@@ -64,7 +64,7 @@ Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
 
 ### Datos y sistema
 
-🟡 Hyprland (escritorios y ventana activa, por sus sockets), **audio, batería, red, lo que suena (MPRIS) y la lista de aplicaciones** como servicios con el mismo nombre en todos los sistemas, `Process` (`run`, `spawn`) e IPC (`--decir`, con `get`). **servidor de notificaciones y bandeja** (sin sus menús). ⬜ lo demás: los menús de la bandeja, Bluetooth, `FileView`, `Socket`, HTTP, ajustes persistentes.
+🟡 Hyprland (escritorios y ventana activa, por sus sockets), **audio, batería, red, lo que suena (MPRIS) y la lista de aplicaciones** como servicios con el mismo nombre en todos los sistemas, `Process` (`run`, `spawn`) e IPC (`--decir`, con `get`). **servidor de notificaciones y bandeja, con sus menús**. ⬜ lo demás: Bluetooth, `FileView`, `Socket`, HTTP, ajustes persistentes.
 
 ### Lenguaje y herramientas
 

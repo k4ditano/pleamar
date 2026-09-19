@@ -36,6 +36,7 @@ kill(id)
 
 sys.watch("workspaces", function(w) … end)   -- un servicio del sistema; devuelve si este sistema lo tiene
 sys.call("workspaces.focus", 3)               -- pedirle algo a un servicio
+local menu = sys.ask("tray.menu", key)        -- preguntarle algo y esperar la respuesta (la lógica puede esperar)
 log("lo que sea", 42)
 busy(600)                                 -- trabajo de mentira, para ver que al render le da igual
 ```
@@ -61,6 +62,7 @@ Un nombre mal escrito es un error al momento, con sugerencia: `la escena no tien
 | `sys.call("notifications.dismiss", id)` · `("notifications.invoke", id, "default")` · `("notifications.clear")` | descartar, pulsar uno de sus botones (la aplicación se entera), vaciar | |
 | `tray` | `{ { key, id, title, status, icon, menu }, … }`; `icon` es un nombre o una ruta, tal cual para `image … = from` | Linux: `StatusNotifierItem`. Vigía si no hay otro; si lo hay, anfitrión del suyo |
 | `sys.call("tray.activate", key)` · `("tray.secondary", key)` · `("tray.context", key)` · `("tray.scroll", key, 1)` | el clic, el del medio, que enseñe su menú (si sabe), la rueda | |
+| `sys.ask("tray.menu", key)` → `{ { id, label, enabled, separator, checked, children }, … }` · `sys.call("tray.menu_click", key, id)` | el menú de un icono, como un árbol, y elegir algo de él | Linux: `com.canonical.dbusmenu` |
 | `apps` | `{ { name, exec, icon }, … }`, por orden alfabético | Linux: los `.desktop` de `XDG_DATA_DIRS` (sin los ocultos ni los de terminal) |
 | `sys.call("apps.launch", exec)` | lanzar una, suelta del programa | Linux: `setsid -f sh -c` |
 

@@ -117,6 +117,12 @@ Un hilo escucha en `$XDG_RUNTIME_DIR/pleamar-ESCENA.sock`; `pleamar --decir ESCE
 
 `wl_data_device`: al entrar un arrastre se mira si trae `text/uri-list` o `text/plain`, y al soltarlo se lee en un hilo aparte —quien lo ofrece puede tardar— y llega como `ARender::Soltado`. El render mira qué zona hay debajo y dispara `on drop zona`.
 
+## Emergentes (`plataforma/wayland.rs`, `gpu.rs`, `forma.wgsl`)
+
+Una `popup` no es otra escena: es **otra ventana a la misma**. Lo de dentro se compila bajo una traslación que lo lleva lejos (a 10 000 px por emergente), y su lámina lleva un *origen*: el shader resta ese origen al colocar los quads y lo suma al calcular cada píxel. Todo lo demás —propiedades, zonas, reglas, el atlas— es común, y por eso un menú se anima y se pulsa igual que la barra de la que sale. Al componer, un elemento sobrevive si toca la superficie principal o el trozo que alguna emergente abierta está enseñando.
+
+El render decide cuándo (el hecho de `open:` y la geometría, mirados después de las reglas) y llama a `plataforma::emergente`; la plataforma crea el `xdg_popup` desde ese mismo hilo —los objetos de Wayland lo permiten—, y cuando el compositor lo configura, la lámina le llega al render como cualquier otra. El ratón dentro de una emergente llega ya con el origen sumado. Al cerrar, primero suelta el render lo que pintaba y luego se destruye la superficie.
+
 ## Reposo
 
 Si ninguna propiedad se mueve y ningún comportamiento está vivo, el render no pinta: espera un mensaje, un retraso que venza o el próximo parpadeo. Cero frames.

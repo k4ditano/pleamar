@@ -185,6 +185,24 @@ La lógica se entera de cada cambio (`text:query`) y del Intro (`submit:query`);
 
 **El teclado, solo cuando hace falta.** `keyboard: exclusive while open` en la `surface`: mientras `open` es falso la superficie no pide teclado, y el escritorio sigue siendo de quien era.
 
+## Superficies emergentes: `popup`
+
+```
+fact menu_open = false
+on press right hit { menu_open = true }
+
+popup menu {
+    at: 285, 56                       // dónde sale, dentro de la superficie de la escena
+    size: 200, 16 + items.height      // expresiones: mide lo que mida su lista
+    open: menu_open                   // un hecho: abierta mientras sea verdad
+
+    body { color: #1b1c1c;  box { from: 0, 0; size: 200, 16 + items.height; corner: 12 } }
+    column items { at: 8, 8;  repeat i in 0..4 { Item(i) } }
+}
+```
+
+Una superficie de verdad, hija de la principal: **puede salirse de ella** (un menú bajo una barra de 44 px). Lo de dentro se dibuja con (0, 0) en su esquina y es escena como la demás: mismos muelles, componentes, zonas y reglas, y `menu_open` se pone y se quita desde donde sea. Si el sistema la cierra —han pulsado fuera—, el hecho pasa a falso y la lógica se entera (`fact:menu_open`). Va en el nivel de la escena, no dentro de un grupo. Si no cabe en la pantalla, el compositor la desliza hasta que quepa.
+
 ## Imágenes que elige la lógica
 
 ```
