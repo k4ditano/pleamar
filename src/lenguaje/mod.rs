@@ -17,6 +17,11 @@ use std::path::{Path, PathBuf};
 /// lleva dentro el del fichero: línea 12 del tercero es 2 000 012.
 const POR_FICHERO: usize = 1_000_000;
 
+/// La versión del lenguaje que entiende este programa. El primer número cambia
+/// cuando algo escrito deja de valer; el segundo, cuando se añade algo. Un fichero
+/// puede decir cuál necesita (`language 0.1`) y enterarse al cargar, no a medias.
+pub const VERSION: (u32, u32) = (0, 1);
+
 #[derive(Debug)]
 pub struct Fallo {
     pub linea: usize,
@@ -67,7 +72,8 @@ impl Lectura {
         for f in &mut fichas {
             f.linea += k * POR_FICHERO;
         }
-        arbol::arbol(&fichas).map_err(|f| if f.linea < POR_FICHERO { aqui(f) } else { f })
+        // Cada fichero dice qué versión necesita, también una biblioteca.
+        version_pedida(arbol::arbol(&fichas).map_err(|f| if f.linea < POR_FICHERO { aqui(f) } else { f })?)
     }
 
     /// Lo que declaran los `import` de un fichero, en orden, y lo que queda de él.
@@ -116,6 +122,25 @@ impl Lectura {
         }
         Ok(resto)
     }
+}
+
+/// `language 0.1`, si está, es lo primero del fichero. Se comprueba y se quita.
+fn version_pedida(mut entradas: Vec<arbol::Entrada>) -> Result<Vec<arbol::Entrada>, Fallo> {
+    use fichas::F;
+    let Some(arbol::Entrada::Nodo(n)) = entradas.first() else { return Ok(entradas) };
+    if !matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "language") {
+        return Ok(entradas);
+    }
+    let (Some(F::Num(v)), 2, None) = (n.cabeza.get(1).map(|f| &f.f), n.cabeza.len(), &n.cuerpo) else {
+        return Err(Fallo::en(n.linea, n.col, format!("la versión se pide así: `language {}.{}`", VERSION.0, VERSION.1)));
+    };
+    // `0.1` llega como un número: la parte entera y el primer decimal.
+    let pedida = (v.trunc() as u32, ((v.fract() * 10.0).round()) as u32);
+    if pedida.0 != VERSION.0 || pedida.1 > VERSION.1 {
+        return Err(Fallo::en(n.linea, n.cabeza[1].col, format!("este fichero pide el lenguaje {}.{}, y este pleamar entiende el {}.{}", pedida.0, pedida.1, VERSION.0, VERSION.1)));
+    }
+    entradas.remove(0);
+    Ok(entradas)
 }
 
 /// Lee una escena de su fichero, con lo que importe. Devuelve la escena y todos los

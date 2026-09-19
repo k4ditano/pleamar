@@ -1,0 +1,3 @@
+// espera: fallo «este fichero pide el lenguaje 1.0»
+language 1.0
+scene X { surface { size: 10, 10 } }

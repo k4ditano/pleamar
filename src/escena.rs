@@ -794,6 +794,8 @@ pub enum Efecto {
 #[derive(Clone, Debug)]
 pub struct Regla {
     pub cuando: Disparador,
+    /// `on press x while open`: solo si esto es verdad en el momento de dispararse.
+    pub si: Option<Expr>,
     pub efectos: Vec<Efecto>,
 }
 
@@ -965,7 +967,7 @@ impl Escena {
         self.posturas.push((gesto, mientras.into()));
     }
     pub fn regla(&mut self, cuando: Disparador, efectos: Vec<Efecto>) {
-        self.reglas.push(Regla { cuando, efectos });
+        self.reglas.push(Regla { cuando, si: None, efectos });
     }
 }
 

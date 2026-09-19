@@ -65,7 +65,7 @@ scene Launcher {
     component Row(h) {
         size: 536, 40
         prop on = 0 ~quick
-        follow on = if(sel > h.index - 0.5 and sel < h.index + 0.5, 1, 0)
+        follow on = if(sel == h.index, 1, 0)
         image pic = from h.icon, 24, 24   // la imagen es la que ese texto diga
 
         box hit { from: 0, 0; size: 536, 40; corner: 12; color: mint; opacity: on * 16%; cursor: pointer }

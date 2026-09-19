@@ -438,14 +438,18 @@ impl<'a> Obra<'a> {
             return Ok(self.expr_no(c)?.no());
         }
         let a = self.expr_suma(c)?;
-        for (s, f) in [(">=", 0), ("<=", 1), (">", 2), ("<", 3)] {
+        for (s, f) in [(">=", 0), ("<=", 1), ("==", 4), ("!=", 5), (">", 2), ("<", 3)] {
             if c.sim(s) {
                 let b = self.expr_suma(c)?;
+                // Iguales es «a menos de una milésima»: son números con coma, y un muelle nunca llega del todo.
+                let distintos = |a: Expr, b: Expr| (a - b).abs().mayor(Expr::K(0.001));
                 return Ok(match f {
                     0 => b.mayor(a).no(),
                     1 => a.mayor(b).no(),
                     2 => a.mayor(b),
-                    _ => b.mayor(a),
+                    3 => b.mayor(a),
+                    4 => distintos(a, b).no(),
+                    _ => distintos(a, b),
                 });
             }
         }
@@ -2174,6 +2178,9 @@ impl<'a> Obra<'a> {
                 }
             }
         };
+        // `while` vale en cualquier regla: se mira en el momento de dispararse.
+        // (`idle` y `every` ya se lo han quedado: en ellas decide también si el rato cuenta.)
+        let si = if c.palabra("while") { Some(self.expr(c)?) } else { None };
         c.nada_mas()?;
         let mut efectos = Vec::new();
         for e in n.cuerpo.as_deref().unwrap_or(&[]) {
@@ -2226,6 +2233,9 @@ impl<'a> Obra<'a> {
             }
         }
         self.e.regla(cuando, efectos);
+        if let Some(r) = self.e.reglas.last_mut() {
+            r.si = si;
+        }
         Ok(())
     }
 

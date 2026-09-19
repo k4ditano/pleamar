@@ -1,0 +1,11 @@
+// espera: bien
+language 0.1
+// `==` y `!=`: iguales a menos de una milésima.
+scene Equal {
+    surface { size: 100, 40 }
+    fact sel = 2
+    repeat i in 0..4 {
+        box { at: 10 + i * 20, 20; size: 16, 16; corner: 4; color: #9ed6bd; opacity: if(sel == i, 1, 0.3) }
+    }
+    box { at: 90, 20; size: 6, 6; color: #fff; opacity: sel != 0 and not (sel == 3) }
+}

@@ -1,0 +1,392 @@
+# Referencia del lenguaje — versión 0.1
+
+**Qué es esta nota.** La descripción completa y exacta de lo que el lenguaje acepta. [[pleamar · 09 El lenguaje v0]] es la guía —se lee de corrido, con el porqué de cada cosa—; esto es donde se mira una duda. Está sacada del compilador (`src/lenguaje/`), no de la memoria, y **sus ejemplos completos se compilan con `./probar.sh`**: si esta nota miente, la batería falla.
+
+```sh
+pleamar --version                  # pleamar 0.1.0 · lenguaje 0.1
+pleamar --comprobar escena.plm     # la lee, con lo que importe; dice si está bien, y sale
+./probar.sh                        # pruebas/*.plm, escenas/*.plm y los ejemplos de esta nota
+```
+
+## 1. Versión
+
+El lenguaje tiene número propio, aparte del programa: **0.1**. El primero cambia cuando algo escrito deja de valer; el segundo, cuando se añade algo. Un fichero puede decir cuál necesita, en su primera línea:
+
+```
+language 0.1
+```
+
+Si pide un primer número distinto, o un segundo mayor que el que entiende el programa, es un fallo al cargar —`este fichero pide el lenguaje 0.7, y este pleamar entiende el 0.1`— y no una escena a medias. Sin esa línea, se lee con lo que haya. Mientras el primero sea 0, nada está prometido: es un lenguaje que aún se está haciendo.
+
+## 2. Lo que garantiza
+
+Es un lenguaje **declarativo y que siempre termina**. No hay bucles libres, ni recursión, ni variables que muten: `repeat` y `for` se despliegan al cargar, con un tope. Todo lo que se escribe lo ejecuta el render, solo, a la cadencia de la pantalla; la lógica (Luau, aparte) solo pone hechos, textos, modelos y sucesos. **Todos los nombres se comprueban al cargar**: uno mal escrito es un fallo con su fichero, su línea, su flecha y un «¿querías decir…?», nunca un error en marcha.
+
+## 3. Léxico
+
+| | |
+| --- | --- |
+| Comentario | `//` hasta el final de la línea |
+| Fin de sentencia | un salto de línea o `;`. Dentro de un paréntesis, un salto de línea no acaba nada |
+| Nombre | letras, cifras, `_` y `.`; empieza por letra o `_`. Los puntos son parte del nombre: `orb.x`, `note.0.title`. Dentro de un `repeat`, `$i` se sustituye por el número de la vuelta: `hit.$i` |
+| Número | `40`, `0.5`, `-3`. Con unidad: `40px` (= 40), `34%` (= 0.34), `138deg` (a radianes) |
+| Duración | `320ms`, `14s`. Donde se espera una duración no vale un número sin unidad |
+| Color | `#151616` o `#fff` |
+| Texto | `"entre comillas"`. Con huecos, ver §11 |
+| Símbolos | `{ } ( ) , : ; = ~ + - * / < > <= >= == != .. -> %` |
+
+Palabras del lenguaje (no se pueden usar como nombre de algo propio sin confundir a quien lee, aunque el compilador no lo prohíbe): `language import scene library surface permissions model spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, y dentro de sus sentencias `in max while for after from until at by reach within rest every inset right middle true false and or not`.
+
+## 4. Gramática
+
+En EBNF: `[ x ]` es opcional, `{ x }` cero o más veces, `|` alternativas, `"x"` tal cual. `fin` es un salto de línea o `;`.
+
+```
+fichero      = [ "language" numero fin ] { "import" texto fin } ( escena | biblioteca ) ;
+escena       = "scene" nombre "{" { sentencia } "}" ;
+biblioteca   = "library" nombre "{" { let | muelle | componente } "}" ;
+
+sentencia    = declaracion | dibujo | estructura | capa | regla | comportamiento | gesto ;
+
+declaracion  = superficie | permisos | modelo | muelle | propiedad | hecho | suceso
+             | texto_vivo | imagen_decl | medida | let | zona ;
+superficie   = "surface" "{" { propiedad_de } "}" ;
+permisos     = "permissions" "{" { ( "run" | "services" ) ":" texto { "," texto } fin } "}" ;
+modelo       = "model" nombre [ "max" numero ] "{" { nombre ":" tipo [ "=" literal ] fin } "}" ;
+tipo         = "text" | "number" | "bool" ;
+muelle       = "spring" nombre "=" numero "," numero ;
+propiedad    = ( "prop" | "pose" ) nombre "=" numero [ "~" ref_muelle ] ;
+hecho        = "fact" nombre "=" ( numero | "true" | "false" ) ;
+suceso       = "event" nombre [ "->" ] ;
+texto_vivo   = "text" nombre "=" texto ;
+imagen_decl  = "image" nombre "=" ( "icon" texto | "file" texto | "from" nombre ) "," numero "," numero ;
+medida       = "measure" nombre ;
+let          = "let" nombre "=" ( expr | color ) ;
+zona         = "zone" forma ;
+ref_muelle   = nombre | "spring" "(" numero "," numero ")" ;
+
+dibujo       = cuerpo | forma | texto | imagen | campo | recorte | grupo | emergente ;
+cuerpo       = "body" "{" { propiedad_de | forma } "}" ;
+forma        = ( "ellipse" | "box" | "arc" | "line" ) [ nombre ] "{" { propiedad_de } "}" ;
+texto        = "text" ( texto | nombre | "number" "(" expr [ "," numero [ "," texto ] ] ")" ) "{" { propiedad_de } "}" ;
+imagen       = "image" nombre "{" { propiedad_de } "}" ;
+campo        = "input" nombre "{" { propiedad_de } "}" ;
+recorte      = "clip" [ "inset" numero ] forma ;
+grupo        = "group" "{" { propiedad_de | sentencia } "}" ;
+emergente    = "popup" nombre "{" { propiedad_de | sentencia } "}" ;
+
+estructura   = componente | copia | repeat | for | reparto | espacio ;
+componente   = "component" nombre [ "(" [ nombre { "," nombre } ] ")" ] "{" { propiedad_de | sentencia } "}" ;
+copia        = Nombre [ "(" [ argumento { "," argumento } ] ")" ] [ "{" { propiedad_de } "}" ] ;
+argumento    = expr | color | texto | nombre ;
+repeat       = "repeat" nombre "in" entero ".." entero "{" { sentencia } "}" ;
+for          = "for" nombre "in" nombre "{" { sentencia } "}" ;
+reparto      = ( "row" | "column" ) [ nombre ] [ "~" ref_muelle ] "{" { propiedad_de | sentencia } "}" ;
+espacio      = "space" expr ;
+
+capa         = "layer" nombre [ "~" ref_muelle ] "{" { reclamacion } "}" ;
+reclamacion  = nombre [ cuando ] [ "{" { transicion } "}" ] ;
+cuando       = "while" expr | "for" duracion "after" sucesos | "from" sucesos "until" sucesos ;
+sucesos      = nombre { "," nombre } ;
+transicion   = nombre ":" expr [ "~" ref_muelle ] [ "after" duracion ] fin ;
+
+regla        = "on" disparador "{" { efecto } "}"
+             | "every" duracion [ ".." duracion ] [ "while" expr ] "{" { efecto } "}" ;
+disparador   = "press" [ "right" | "middle" ] zona_ref | "release" zona_ref | "scroll" zona_ref
+             | "drag" zona_ref | "hold" zona_ref "for" duracion
+             | "enter" zona_ref | "leave" zona_ref
+             | ( "hover" | "away" ) zona_ref "for" duracion [ "while" expr ]
+             | "idle" "for" duracion [ "while" expr ]
+             | "key" tecla | "submit" nombre | "focus" | "blur" | "drop" zona_ref
+             | nombre ;                                  (* un suceso *)
+tecla        = nombre { "+" nombre } ;                  (* Escape · Ctrl+k · Super+Alt+s *)
+efecto       = transicion | nombre "=" expr | "toggle" nombre
+             | "emit" nombre [ "(" expr ")" ] | "impulse" nombre numero
+             | "play" nombre | "focus" nombre | "blur" ;
+
+comportamiento = "blink" nombre "every" duracion ".." duracion "for" duracion
+             | "wave" nombre "=" expr "at" numero
+             | "spin" nombre "by" expr
+             | "follow" nombre "=" expr
+             | "look" nombre "," nombre "at" punto "reach" numero "," numero "within" numero [ "rest" punto ] ;
+
+gesto        = "gesture" nombre ( "ambient" | "reflex" | "asked" | "state" ) "{" { fotograma } "}"
+             | "posture" nombre "while" expr "{" { fotograma } "}" ;
+fotograma    = duracion { curva | "hold" duracion | "emit" nombre } [ "{" { nombre ":" expr fin } "}" ] ;
+curva        = "linear" | "in_quad" | "out_quad" | "in_cubic" | "out_cubic" | "in_out_sine" | "out_back" ;
+
+propiedad_de = nombre ":" valor { "," valor } fin ;      (* cuáles valen, según el elemento: §8 *)
+punto        = expr "," expr ;
+
+expr         = o ;
+o            = y { "or" y } ;
+y            = no { "and" no } ;
+no           = "not" no | suma [ ( "<" | ">" | "<=" | ">=" | "==" | "!=" ) suma ] ;
+suma         = producto { ( "+" | "-" ) producto } ;
+producto     = unario { ( "*" | "/" ) unario } ;
+unario       = "-" unario | "(" expr ")" | numero | duracion | "true" | "false"
+             | nombre | funcion "(" [ expr { "," expr } ] ")" ;
+color        = "#" hex | nombre | "mix" "(" color "," color "," expr ")" ;
+```
+
+`Nombre` en `copia` es el de un componente ya declarado: por convención, con mayúscula, que es lo que lo distingue a la vista de una sentencia del lenguaje.
+
+## 5. Ficheros, orden y nombres
+
+**Un fichero es una escena o una biblioteca.** Una escena se abre; una biblioteca se importa. `import "ruta.plm"` va antes de `scene` o `library`, y la ruta es relativa **al fichero que importa**. Una biblioteca importada por dos caminos se lee una vez; un círculo es un fallo que dice su camino. Una biblioteca solo declara: `let`, `spring` y `component`. Lo importado se comporta como si estuviera escrito al principio de la escena.
+
+**El fichero se lee en cuatro vueltas** —declaraciones; `let` y capas; dibujo; reglas—, así que el orden de lo escrito es el que le convenga a quien lee: una regla puede ir antes que la forma que nombra, y un `prop` al final. Dos excepciones: un `let` tiene que ir antes de quien lo usa, y **se pinta en el orden en que se escribe** (y de las zonas, la que se declara después queda encima).
+
+**Todos los nombres son globales**, salvo dentro de un componente o de una vuelta de `repeat` o `for`: ahí lo que se declara es propio de esa copia (dos copias de `Note` tienen cada una su `lit` y su zona `hit`), y primero se busca lo de dentro —parámetros, `let` del componente— y luego lo de fuera. Un `let` de la escena con el nombre de uno importado lo pisa: así se cambia un tono. Dos componentes con el mismo nombre no conviven.
+
+**Nombres que siempre existen**, y se leen como hechos: `screen.width`, `screen.height` (lo que mide la superficie de verdad), y durante una regla, lo del ratón: `pointer.x`, `pointer.y` (en la superficie), `local.x`, `local.y` (dentro de la zona), `drag.dx`, `drag.dy` (desde que se pulsó), `wheel` (muescas; positivo, hacia arriba). Y el suceso `demo`, que dispara `--demo`.
+
+## 6. Declaraciones
+
+| Sentencia | Qué declara |
+| --- | --- |
+| `surface { … }` | La ventana que pide la escena. Ver abajo |
+| `permissions { run: "date"; services: "audio", "apps" }` | Lo que la lógica puede tocar del sistema. Sin declarar, nada |
+| `model rows max 14 { label: text; enabled: bool = true; depth: number }` | Una lista de fichas que pone la lógica. `max`: cuántas caben (1 a 256; 16 si no se dice). Crea `rows.count`, `rows.total` y, por ficha, `rows.K.campo` |
+| `prop orb.x = 360 ~lively` | Una propiedad animada: un muelle. Sin `~`, `lively` |
+| `pose eyes = 14` | Una propiedad de la pose: la que un gesto lleva de la mano |
+| `fact open = false` | Algo que es verdad un rato: un número (`true` es 1). Lo ponen la lógica y las reglas |
+| `event confirmed` · `event view_event ->` | Algo que ocurre. Con `->`, además le llega a la lógica |
+| `text notice.title = "Reunión"` | Un texto vivo: lo cambia la lógica, o un `input` |
+| `image fox = icon "firefox", 48, 48` | Una imagen, y a qué tamaño lógico se pinta como mucho. `icon "nombre"`, `file "ruta"`, o `from un_texto`: la que ese texto diga (un nombre de icono, o una ruta si empieza por `/`) |
+| `measure label` | Crea `label.width` y `label.height`, que rellena el texto que lleve `measure: label` |
+| `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | Un nombre para una expresión, o para un color |
+| `spring bouncy = 170, 12` | Un muelle propio: rigidez, freno. De casa: `lively`, `calm`, `quick`, `slow`, `eyes`, `pose`. En línea: `~spring(170, 12)` |
+| `zone box whole { at: …; size: …; active: expr }` | Una zona que no se pinta |
+
+**`surface`**: `size: ancho, alto` (`full` como ancho es todo el monitor) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` · `margin: n` o `arriba, derecha, abajo, izquierda` · `level:` `background` `bottom` `top` `overlay` · `reserve: n` (el sitio que las ventanas le dejan) · `screens: all` o `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, y con `while expr` solo lo pide mientras sea verdad.
+
+## 7. Expresiones
+
+Son números. **Verdad es más de 0.5**; `true` es 1 y `false` es 0. Las evalúa el render, en cada frame que haga falta.
+
+De menos a más fuerza: `or` · `and` · `not` · `< > <= >= == !=` (no se encadenan: `a < b < c` no vale) · `+ -` · `* /` · `-` delante. `==` es «iguales a menos de una milésima»: son números con coma, y un muelle nunca llega del todo.
+
+| Función | |
+| --- | --- |
+| `min(a, b)` `max(a, b)` `abs(x)` | |
+| `clamp(x, a, b)` | x, entre a y b |
+| `smooth(a, b, x)` | de 0 a 1 mientras x va de a a b, con entrada y salida suaves |
+| `mix(a, b, t)` | entre a y b. También entre dos colores |
+| `if(cond, a, b)` | |
+| `vel(prop)` | la velocidad de un muelle, que solo el render conoce |
+
+Vale como nombre: un `let`, un `prop`, un `fact`, una medida (`label.width`), lo que ocupa un reparto con nombre (`list.width`, `list.height`: se puede leer también antes de donde se declara), el campo numérico de una ficha (`r.depth`, `r.index`, `rows.count`), y la presencia de una reclamación (`shape.rec`: 1 mientras gana).
+
+## 8. Dibujo
+
+Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sugerencia.
+
+| Elemento | Propiedades |
+| --- | --- |
+| `ellipse` | `at` · `radius` · `scale: sx, sy` |
+| `box` | `at: cx, cy` o `from: x, y` · `size: w, h` · `corner` |
+| `arc` (como «∩») | `at` · `radius` · `span` · `width` |
+| `line` | `from` · `to` · `width` |
+| …y todas las formas | `color` · `opacity` · `rotate` · `stroke` (solo el contorno) · `blend` (dentro de un `body`: cuánto se funde con lo anterior) · `active` · `cursor` · `show` |
+| `body` | `color` o `gradient: x0, y0, x1, y1, #c0, #c1` · `rim` · `light: cantidad, desde_y, alto` · `shadow: dx, dy, difusa, alfa` · `border: grosor, #color` · `opacity` · `show`, y dentro sus formas, fundidas en una silueta |
+| `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` |
+| `image` | `at` · `size` · `opacity` · `tint` · `show` |
+| `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `show` |
+| `group` | `pivot` · `rotate` · `scale: s` o `sx, sy` · `move: dx, dy` · `opacity` (se funden como una sola cosa) · `size` (para quien lo reparta) · `show` |
+| `popup` | `at` (dentro de la superficie) · `size` · `open:` un hecho |
+| `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` |
+
+`anchor` de un texto: `left` `center` `right` y `top` `center` `bottom`, uno o los dos (`anchor: left center`). De un reparto: `left` `center` `right` y `top` `middle` `bottom` —sin ancla, `at` es su esquina de arriba a la izquierda—. `cursor:` `default` `pointer` `text` `grab` `grabbing`.
+
+`clip [inset n] forma` recorta todo lo que venga después, hasta el final de su `group`. Hasta cuatro anidados recortan por su forma; los de más afuera, por su caja.
+
+**Una forma con nombre es una zona** si alguna regla la nombra, si lleva `active`, o si se declaró con `zone`. Un nombre puesto solo para leerse mejor no para el clic. Una zona hereda las transformaciones de los grupos donde esté, y **lo que no está —un `show:` falso, una ficha que no existe— no es zona**. Un `row` o `column` con nombre también lo es: su caja entera, debajo de las de sus hijos.
+
+## 9. Repartos
+
+`row` y `column` colocan a sus hijos uno detrás de otro: el sitio de cada uno es una expresión, así que si uno crece o desaparece, los demás se mueven. Con `~muelle` en la cabecera, viajan a su sitio en vez de saltar. Cada hijo tiene que saber cuánto ocupa: una forma con `size` o `radius`, un texto (se mide solo), una imagen, un `group` o un componente con `size:`, otro reparto, o `space n`. `show: expr` en un hijo decide si está: ocupa y se ve, o ni lo uno ni lo otro.
+
+## 10. Componentes, `repeat`, `for`
+
+`component Nombre(a, b) { size: w, h; … }` declara; `Nombre(1, #fff)` pone una copia. Un argumento es una expresión, un color, un texto (con huecos, si quiere), el nombre de un texto vivo, una imagen o un gesto, o **una ficha** (`Row(r)`: dentro, `r.label`). `size:` dice cuánto ocupa, para quien lo reparta. Lo que una copia declara —`prop`, formas con nombre, reglas— es suyo.
+
+`repeat i in 0..5 { … }` despliega cinco vueltas al cargar (512 como mucho); dentro, `i` es un número y `$i` se sustituye en los nombres.
+
+`for r in rows { … }` despliega una vuelta por ficha que quepa en el modelo. Dentro, `r.campo` es el campo de esa ficha —un texto donde va un texto vivo, un número en cualquier expresión— y `r.index` su posición desde 0. **Cada vuelta solo existe si la lista llega hasta ahí.** Vale dentro de un reparto, suelto, y dentro de una `popup`.
+
+## 11. Textos con huecos
+
+Dentro de un texto entre comillas que sea el contenido de un `text` o el argumento de un componente:
+
+| | |
+| --- | --- |
+| `{nombre}` | un texto vivo, o el campo `text` de una ficha |
+| `{expr}` · `{expr, n}` | una expresión, con n decimales (0 si no se dice) |
+| `{upper(nombre)}` · `{lower(nombre)}` | ese texto, en mayúsculas o minúsculas |
+| `{? … }` | un tramo que solo está si ninguno de los textos de dentro está vacío |
+| `{{` · `}}` | una llave de verdad |
+
+Los nombres de un hueco se resuelven donde está escrita la cadena, no donde se use.
+
+## 12. Capas
+
+`layer nombre [~muelle] { reclamaciones }`. **Gana la primera reclamación que se cumple**, de arriba abajo; cuando deja de cumplirse se ve la siguiente, sola. Una reclamación es `nombre` seguido de cuándo —`while expr`, `for 700ms after suceso, otro`, `from suceso until suceso`, o nada (por defecto)— y, si quiere, un bloque con su coreografía: adónde va cada propiedad, con qué muelle y con qué retraso. El destino es una expresión que se evalúa cuando le llega la hora. `capa.reclamacion` vale 1 mientras gana, y se puede leer en cualquier expresión.
+
+## 13. Reglas
+
+`on disparador { efectos }` y `every 2s..7s [while expr] { efectos }`.
+
+| Disparador | Cuándo |
+| --- | --- |
+| `press zona` · `press right zona` · `press middle zona` | se pulsa. Usar `right` en alguna regla quita la salida de emergencia del prototipo (el botón derecho cierra) |
+| `release zona` | se suelta lo que se pulsó ahí, esté donde esté ya el ratón |
+| `hold zona for 500ms` | lleva ese rato pulsada |
+| `enter zona` · `leave zona` | el ratón entra o sale |
+| `hover zona for 320ms` · `away zona for 420ms` | lleva ese rato encima; estuvo encima y lleva ese rato fuera |
+| `scroll zona` | la rueda, sobre cualquier zona que tenga debajo. Se lee en `wheel` |
+| `drag zona` | se mueve con el botón puesto; sigue aunque se salga, hasta soltar. `local.x`, `drag.dx` |
+| `key Escape` · `key Ctrl+k` | una tecla; la superficie tiene que pedir teclado. Modificadores: `Ctrl+` `Alt+` `Super+` |
+| `submit campo` | Intro dentro de ese `input` |
+| `focus` · `blur` | la superficie gana o pierde el teclado |
+| `drop zona` | sueltan sobre ella algo arrastrado desde otra aplicación |
+| `idle for 14s` | nadie toca nada en ese rato |
+| `nombre_de_suceso` | ocurre ese suceso: lo emite la lógica, otra regla, un gesto, o viene de fuera |
+
+`hover`, `away`, `idle` y `every` admiten `while expr`.
+
+| Efecto | |
+| --- | --- |
+| `prop: valor ~muelle after 70ms` | esa propiedad va hacia ahí |
+| `hecho = expr` | se evalúa al dispararse |
+| `toggle hecho` | |
+| `emit suceso` · `emit suceso(expr)` | con una carga, que le llega a la lógica |
+| `impulse prop -620` | un empujón: suma a la velocidad del muelle |
+| `play gesto` | lo pide; se le concederá o no, según su clase |
+| `focus campo` · `blur` | le da el cursor de escribir a un `input`, o lo quita |
+
+## 14. Lo que lleva sola
+
+| | |
+| --- | --- |
+| `blink eyelid every 2.4s..6s for 170ms` | de 1 a 0 y vuelta, de vez en cuando |
+| `wave breath = amplitud at 1.7` | amplitud · sin(1.7 t) |
+| `spin angle by 0.9` | += 0.9 por segundo |
+| `follow chip.w = label.width + 32` | persigue a la expresión, con su muelle |
+| `look gx, gy at cx, cy reach 5, 3.2 within 140 rest rx, ry` | dos propiedades que tiran hacia el ratón |
+
+## 15. Gestos
+
+Un gesto es una línea de tiempo sobre las propiedades de la pose (`pose`). `gesture nombre clase { fotogramas }`; clases, de menos a más: `ambient` < posturas < `reflex` < `asked` < `state`. **Un gesto solo corta a otro de su clase o inferior.** Un fotograma es una duración, y si quiere una curva, `hold 60ms` (aguanta ahí) y `emit suceso`; su bloque dice adónde va cada propiedad, y lo que no nombre vuelve a su base. Sin bloque, es la vuelta a la base. `posture nombre while expr { … }` se repite sola mientras sea verdad.
+
+## 16. Ejemplos comprobados
+
+Estos se compilan con `./probar.sh`.
+
+Una lista que viene de datos, con un componente, textos con huecos, y una regla por fila:
+
+```plm
+language 0.1
+scene Reference1 {
+    surface { size: 320, 220; anchor: top; margin: 40 }
+    let ink = #f5f7f5
+    model notes max 4 { app: text; title: text; body: text; urgency: number = 1 }
+    event opened ->
+
+    text "{notes.total} avisos" { at: 20, 20; anchor: left center; size: 15; weight: 600; color: ink }
+    column list ~calm { at: 20, 40; gap: 6
+        for n in notes { Note(n) }
+    }
+    component Note(n) {
+        size: 280, 40
+        prop lit = 0 ~quick
+        box hit { from: 0, 0; size: 280, 40; corner: 10; color: mix(#1b1c1c, #2b2d2d, lit); cursor: pointer }
+        box { from: 0, 8; size: 3, 24; corner: 1.5; color: mix(#9ed6bd, #e8776a, n.urgency == 2) }
+        text "{upper(n.app)}  {n.title}{? · {n.body}}" { at: 12, 20; anchor: left center; size: 13; width: 260; lines: 1; color: ink }
+        on enter hit { lit: 1 ~quick }
+        on leave hit { lit: 0 ~quick }
+        on press hit { emit opened(n.index) }
+    }
+}
+```
+
+Una capa que decide, una emergente, y el teclado solo mientras hace falta:
+
+```plm
+language 0.1
+scene Reference2 {
+    surface { size: 300, 60; anchor: top; keyboard: on_demand while open }
+    fact open = false
+    fact busy = false
+    event saved
+    prop glow = 0
+    prop tint = 0
+
+    layer mood ~quick {
+        done    for 600ms after saved { tint: 1 ~lively }
+        working while busy            { tint: 0.5 ~calm }
+        idle                          { tint: 0 ~slow }
+    }
+    box button { at: 150, 30; size: 120, 34; corner: 17; color: mix(#2e2f2f, #9ed6bd, max(tint, glow)); cursor: pointer }
+    text "Guardar" { at: 150, 30; anchor: center; size: 14; color: #f5f7f5; opacity: 60% + mood.idle * 40% }
+
+    popup confirm { at: 90, 56; size: 120, 16 + choices.height; open: open
+        body { color: #1b1c1c; box { from: 0, 0; size: 120, 16 + choices.height; corner: 10 } }
+        column choices { at: 8, 8; gap: 4
+            box yes { size: 104, 28; corner: 7; color: #9ed6bd }
+            box no  { size: 104, 28; corner: 7; color: #3a3b3b }
+        }
+    }
+
+    on press button  { toggle open }
+    on press yes     { open = false; emit saved }
+    on press no      { open = false }
+    on key Escape    { open = false }
+    on hover button for 200ms while not open { glow: 1 ~quick }
+    on leave button  { glow: 0 ~quick }
+}
+```
+
+Una cara: una pose, un gesto, y lo que lleva sola:
+
+```plm
+language 0.1
+scene Reference3 {
+    surface { size: 200, 200; anchor: center }
+    pose eyes = 14
+    pose look.y = 0
+    prop lid = 1
+    prop breath = 0
+    prop gaze.x = 0 ~eyes
+    prop gaze.y = 0 ~eyes
+    fact searching = false
+    event shutter
+
+    body { color: #151616; rim: 5%; shadow: 0, 8, 24, 30%
+        ellipse face { at: 100, 100 + breath; radius: 60 } }
+    group {
+        clip inset 3 ellipse { at: 100, 100; radius: 60 }
+        box { at: 82 + gaze.x, 96 + gaze.y + look.y; size: 9, eyes * lid; corner: 4.5; color: #f5f7f5 }
+        box { at: 118 + gaze.x, 96 + gaze.y + look.y; size: 9, eyes * lid; corner: 4.5; color: #f5f7f5 }
+    }
+
+    blink lid every 2.4s..6s for 170ms
+    wave breath = 1.2 at 1.7
+    look gaze.x, gaze.y at 100, 100 reach 6, 4 within 160
+
+    gesture nod reflex {
+        130ms out_quad              { look.y: 4; eyes: 10 }
+        170ms out_back hold 60ms emit shutter { eyes: 15 }
+        160ms
+    }
+    posture scanning while searching {
+        400ms in_out_sine { look.y: -3 }
+        400ms in_out_sine { look.y: 3 }
+    }
+    on press face { play nod }
+}
+```
+
+## 17. Lo que esta versión no tiene
+
+Para no buscarlo aquí: tipos para los hechos (son números), enumerados, fichas dentro de fichas, `import … as`, bibliotecas con lógica, parámetros con nombre o por defecto, salto de línea en los repartos, horas y plurales en los huecos, y escribir en el campo de una ficha desde una regla. Todo está, con su plan, en [[pleamar · 08 Limitaciones conocidas]].

@@ -552,7 +552,7 @@ pub fn hilo(
                     }
                     Disparador::Al(_) => false, // se atienden con los sucesos, abajo
                 };
-                if dispara {
+                if dispara && r.si.as_ref().is_none_or(|si| si.es_verdad(c)) {
                     efectos.extend(r.efectos.iter().cloned());
                 }
             }
@@ -608,7 +608,7 @@ pub fn hilo(
                     }
                 }
                 for r in &escena.reglas {
-                    if matches!(&r.cuando, Disparador::Al(x) if *x == id) {
+                    if matches!(&r.cuando, Disparador::Al(x) if *x == id) && r.si.as_ref().is_none_or(|si| si.es_verdad(Ctx { props: &props, hechos: &hechos })) {
                         efectos.extend(r.efectos.iter().cloned());
                     }
                 }

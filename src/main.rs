@@ -26,6 +26,7 @@ const AYUDA: &str = "pleamar [opciones]
   --escena NOMBRE     un fichero de escena (.plm), que se recarga solo al guardarlo; o una de las
                       escritas en Rust: marea (por defecto), isla, cara, muestrario, enjambre
   --comprobar FICHERO lee una escena, dice si está bien y sale
+  --version           la versión del programa y la del lenguaje que entiende
   --decir [ESCENA] ORDEN   le dice algo a una escena en marcha y sale. Órdenes:
                       «emit suceso [n]», «fact hecho valor», «text nombre lo que ponga», «focus campo», «get nombre» (contesta), «quit»
   --pantalla NOMBRES  «todas», o monitores separados por comas (por defecto, lo que pida la escena).
@@ -75,6 +76,10 @@ fn args() -> Args {
                         1
                     }
                 });
+            }
+            "--version" => {
+                println!("pleamar {} · lenguaje {}.{}", env!("CARGO_PKG_VERSION"), lenguaje::VERSION.0, lenguaje::VERSION.1);
+                std::process::exit(0);
             }
             "--comprobar" => {
                 let ruta = valor();
