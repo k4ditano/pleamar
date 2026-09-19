@@ -55,11 +55,11 @@ impl Guion for Marea {
         e.pintar(Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 10.0), difusa: 30.0, alfa: 0.34 }) });
         e.pintar(Instr::Forma { forma: orbe.clone(), fusion: 0.0.into() });
         e.pintar(Instr::Forma { forma: panel.clone(), fusion: fusion * panel_w.e().suave(0.0, 40.0) });
-        e.pintar(Instr::Relleno {
-            color: color(0.082, 0.086, 0.086),
+        e.pintar(Instr::Relleno { pintura: color(0.082, 0.086, 0.086).into(),
             alfa: 1.0.into(),
             filo: 0.05,
             luz: Some(Luz { cantidad: 0.03, desde_y: orbe_y - ANCLA_Y, alto: PANEL_H }),
+            borde: None,
         });
 
         // Lo de dentro de la tarjeta, anclado a donde quedará y recortado a
@@ -96,6 +96,7 @@ impl Guion for Marea {
             mitad: (3.5.into(), 8.4 * abierto.clone()),
             radio: 3.5.into(),
         };
+        e.pintar(Instr::Recorte(None));
         e.pintar(Instr::Recorte(Some((orbe.clone(), 3.0))));
         for lado in [-8.6, 8.6] {
             e.pintar(Instr::Plano { forma: ojo(lado), color: color(0.96, 0.97, 0.96), alfa: 1.0.into() });

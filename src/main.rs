@@ -5,6 +5,7 @@
 
 mod escena;
 mod escenas;
+mod formas;
 mod logica;
 mod render;
 mod texto;
@@ -38,7 +39,7 @@ use wayland_client::{
 };
 
 const AYUDA: &str = "pleamar [opciones]
-  --escena NOMBRE     marea (por defecto), isla o cara
+  --escena NOMBRE     marea (por defecto), isla, cara o enjambre (PLEAMAR_N formas)
   --pantalla NOMBRE   monitor donde aparecer (por defecto HDMI-A-1)
   --bloqueo MS        lo que se bloquea la lógica tras cada decisión (600)
   --ingenuo           la lógica bloquea el hilo que pinta, como en QtQuick
@@ -47,6 +48,7 @@ const AYUDA: &str = "pleamar [opciones]
   --segundos N        salir sola al cabo de N segundos
   --margen PX         margen superior (40)
   --sin-hud           sin la gráfica de frames
+  --sin-vsync         pintar sin esperar a la pantalla, para medir lo que cuesta un frame
   --movimiento-reducido  los muelles se posan y los gestos enseñan su cara quieta
 Botón derecho sobre ella para cerrarla.";
 
@@ -61,10 +63,11 @@ struct Args {
     margen: i32,
     hud: bool,
     reducido: bool,
+    sin_vsync: bool,
 }
 
 fn args() -> Args {
-    let mut a = Args { escena: "marea".into(), pantalla: "HDMI-A-1".into(), bloqueo: 600, ingenuo: false, demo: false, raton: None, segundos: None, margen: 40, hud: true, reducido: false };
+    let mut a = Args { escena: "marea".into(), pantalla: "HDMI-A-1".into(), bloqueo: 600, ingenuo: false, demo: false, raton: None, segundos: None, margen: 40, hud: true, reducido: false, sin_vsync: false };
     let mut it = std::env::args().skip(1);
     while let Some(op) = it.next() {
         let mut valor = || it.next().unwrap_or_else(|| { eprintln!("{AYUDA}"); std::process::exit(2) });
@@ -79,6 +82,7 @@ fn args() -> Args {
             "--demo" => a.demo = true,
             "--sin-hud" => a.hud = false,
             "--movimiento-reducido" => a.reducido = true,
+            "--sin-vsync" => a.sin_vsync = true,
             _ => { eprintln!("{AYUDA}"); std::process::exit(2) }
         }
     }
@@ -168,6 +172,7 @@ fn main() {
         "marea" => Box::<escenas::marea::Marea>::default(),
         "isla" => Box::<escenas::isla::Isla>::default(),
         "cara" => Box::<escenas::cara::Cara>::default(),
+        "enjambre" => Box::<escenas::enjambre::Enjambre>::default(),
         otra => {
             eprintln!("no conozco la escena «{otra}»\n{AYUDA}");
             std::process::exit(2)
@@ -180,7 +185,7 @@ fn main() {
     );
     let render = {
         let bloqueada = bloqueada.clone();
-        let op = render::Opciones { hud: a.hud, ingenuo: a.ingenuo, reducido: a.reducido };
+        let op = render::Opciones { hud: a.hud, ingenuo: a.ingenuo, reducido: a.reducido, sin_vsync: a.sin_vsync };
         std::thread::Builder::new()
             .name("render".into())
             .spawn(move || render::hilo(instancia, superficie, de_render, a_logica, bloqueada, op))

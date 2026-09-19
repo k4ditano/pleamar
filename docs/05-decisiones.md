@@ -15,6 +15,7 @@
 | 2026-09-19 | **Primero la semántica en el runtime, después el parser** | Un parser congela la sintaxis; aún no sabemos del todo qué conceptos hacen falta |
 | 2026-09-19 | **Una forma de capa solo se ve con más de media presencia** | Fundir dos formas de ojos da un borrón; como las presencias suman uno, así una se va y entra la otra |
 | 2026-09-19 | **Un `estado` es una reclamación que fija propiedades**; no hay construcción aparte | Abrir/cerrar la tarjeta de Marea salió como `capa tarjeta { abierta mientras abierta?; reposo }`, sin nada nuevo |
+| 2026-09-19 | **Las palabras clave del lenguaje, en inglés** (`layer`, `gesture`, `while`, `after`…) | Decisión de Abel. k4 ya recibe PRs de fuera y cambiarlo después es caro. El código Rust del runtime sigue en castellano por ahora; el parser hará de frontera |
 
 ## Lo que enseñó implementarlo
 
@@ -28,7 +29,6 @@
 
 | Pregunta | Opciones | Nota |
 | --- | --- | --- |
-| **¿Palabras clave en castellano o en inglés?** | `capa`/`gesto`/`mientras` · `layer`/`gesture`/`while` | k4 ya recibe PRs de fuera. Cambiarlo después es caro. **Sin decidir.** |
 | ¿Cómo se llama el lenguaje, y su extensión? | — | pleamar es el runtime; el nombre lo puso Claude y se puede cambiar |
 | El orden de prioridad de `capa forma` | Ver [[pleamar · 04 Prueba - cabe Marea]] §3.2 | Lo dedujo Claude de los comentarios. Hay que revisarlo línea a línea |
 | ¿`confirmado()` mientras graba borra el disco rojo? | — | Visto leyendo `ExpressionController.qml`, sin ejecutar. Comprobar en Marea |

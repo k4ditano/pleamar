@@ -13,6 +13,8 @@ pub struct Opciones {
     pub ingenuo: bool,
     /// Movimiento reducido: los muelles se posan y los gestos enseñan su cara quieta.
     pub reducido: bool,
+    /// Sin esperar a la pantalla y sin reposo: para medir lo que cuesta pintar.
+    pub sin_vsync: bool,
 }
 
 struct Azar(u64);
@@ -91,7 +93,11 @@ pub fn hilo(
             width: ANCHO,
             height: ALTO,
             desired_maximum_frame_latency: 1,
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode: if op.sin_vsync {
+                *caps.present_modes.iter().find(|m| matches!(m, wgpu::PresentMode::Immediate | wgpu::PresentMode::Mailbox)).unwrap_or(&wgpu::PresentMode::Fifo)
+            } else {
+                wgpu::PresentMode::Fifo
+            },
             color_space: wgpu::SurfaceColorSpace::Auto,
         },
     );
@@ -103,13 +109,17 @@ pub fn hilo(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let mut lista = vec![0f32; MAX_INSTR * POR_INSTR];
-    let bufer_lista = dispositivo.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("lista de dibujo"),
-        size: (lista.len() * 4) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    let almacen = |etiqueta, floats: usize| {
+        dispositivo.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(etiqueta),
+            size: (floats * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    };
+    let bufer_formas = almacen("formas", MAX_FORMAS * POR_FORMA);
+    let bufer_elementos = almacen("elementos", MAX_ELEMENTOS * POR_ELEMENTO);
+    let mut dibujo = Dibujo::default();
     let muestreo = dispositivo.create_sampler(&wgpu::SamplerDescriptor {
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
@@ -138,7 +148,7 @@ pub fn hilo(
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format: formato,
-                blend: None,
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),
@@ -170,9 +180,10 @@ pub fn hilo(
             layout: &tuberia.get_bind_group_layout(0),
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: bufer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: bufer_lista.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&vista) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&muestreo) },
+                wgpu::BindGroupEntry { binding: 1, resource: bufer_formas.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: bufer_elementos.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&vista) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&muestreo) },
             ],
         })
     };
@@ -266,7 +277,6 @@ pub fn hilo(
                     if let Some(atlas) = &nueva.atlas {
                         grupo = enlazar(atlas);
                     }
-                    assert!(nueva.instrs.len() <= MAX_INSTR, "la escena no cabe en la lista de dibujo");
                     println!(
                         "render · escena: {} propiedades, {} instrucciones, {} hechos, {} capas, {} gestos, {} reglas, {} zonas",
                         nueva.props.len(), nueva.instrs.len(), nueva.hechos.len(), nueva.capas.len(),
@@ -612,13 +622,11 @@ pub fn hilo(
 
         // ── 3. pintar ───────────────────────────────────────────
         let bloqueada = logica_bloqueada.load(Ordering::Relaxed);
-        for (k, i) in escena.instrs.iter().enumerate() {
-            codificar(i, Ctx { props: &props, hechos: &hechos }, &mut lista[k * POR_INSTR..(k + 1) * POR_INSTR]);
-        }
-        let n = escena.instrs.len();
-        cola.write_buffer(&bufer_lista, 0, bytemuck::cast_slice(&lista[..n.max(1) * POR_INSTR]));
+        dibujo.componer(&escena.instrs, Ctx { props: &props, hechos: &hechos }, op.hud);
+        cola.write_buffer(&bufer_formas, 0, bytemuck::cast_slice(&dibujo.formas));
+        cola.write_buffer(&bufer_elementos, 0, bytemuck::cast_slice(&dibujo.elementos));
         let cabecera = [
-            ANCHO as f32, ALTO as f32, t_total, n as f32,
+            ANCHO as f32, ALTO as f32, t_total, 0.0,
             if op.hud { 1.0 } else { 0.0 }, periodo_ms, if bloqueada { 1.0 } else { 0.0 }, 0.0,
         ];
         uniformes[..8].copy_from_slice(&cabecera);
@@ -651,7 +659,7 @@ pub fn hilo(
             });
             pase.set_pipeline(&tuberia);
             pase.set_bind_group(0, &grupo, &[]);
-            pase.draw(0..3, 0..1);
+            pase.draw(0..6, 0..dibujo.n_elementos() as u32);
         }
         cola.submit(Some(codificador.finish()));
         cola.present(marco);
@@ -678,7 +686,10 @@ pub fn hilo(
         }
 
         // ── 5. ¿queda algo moviéndose? ──────────────────────────
-        if !vivo && !bloqueada && props.iter().all(Animada::quieta) {
+        if op.sin_vsync && ciclo.dts.len() >= 600 {
+            ciclo.cerrar();
+        }
+        if !op.sin_vsync && !vivo && !bloqueada && props.iter().all(Animada::quieta) {
             for a in &mut props {
                 a.posar();
             }
@@ -758,81 +769,200 @@ impl Reproduccion {
     }
 }
 
-const POR_INSTR: usize = 20;
+const POR_FORMA: usize = 16;
+const POR_ELEMENTO: usize = 48;
+const MAX_FORMAS: usize = 4096;
+const MAX_ELEMENTOS: usize = 2048;
 
-/// Una instrucción, con sus expresiones ya evaluadas, en los veinte números
-/// que lee el shader.
-fn codificar(i: &Instr, props: Ctx, s: &mut [f32]) {
-    s.fill(0.0);
-    let forma = |f: &Forma, s: &mut [f32]| match f {
-        Forma::Elipse { centro, radio, escala } => {
-            s[1] = 0.0;
-            s[4] = centro.0.evaluar(props);
-            s[5] = centro.1.evaluar(props);
-            s[8] = radio.evaluar(props);
-            s[9] = escala.0.evaluar(props);
-            s[10] = escala.1.evaluar(props);
+/// La lista de dibujo convertida en lo que pinta la GPU: formas evaluadas y
+/// elementos con su caja. Se recompone cada frame; son unos pocos cientos de
+/// números.
+#[derive(Default)]
+struct Dibujo {
+    formas: Vec<f32>,
+    elementos: Vec<f32>,
+}
+
+struct CuerpoAbierto {
+    primera: usize,
+    n: usize,
+    caja: Option<[f32; 4]>,
+    holgura: f32,
+    sombra: Option<Sombra>,
+}
+
+fn unir(a: Option<[f32; 4]>, b: [f32; 4]) -> [f32; 4] {
+    a.map_or(b, |a| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
+}
+
+impl Dibujo {
+    fn n_elementos(&self) -> usize {
+        self.elementos.len() / POR_ELEMENTO
+    }
+
+    fn forma(&mut self, p: crate::formas::Plana, fusion: f32) -> usize {
+        let k = self.formas.len() / POR_FORMA;
+        self.formas.resize(self.formas.len() + POR_FORMA, 0.0);
+        p.codificar(fusion, &mut self.formas[k * POR_FORMA..]);
+        k
+    }
+
+    /// Un elemento solo existe si su caja, recortada, toca la pantalla.
+    fn elemento(&mut self, tipo: f32, caja: [f32; 4], recortes: &[(usize, [f32; 4])], rellenar: impl FnOnce(&mut [f32])) {
+        let mut c = [caja[0].max(0.0), caja[1].max(0.0), caja[2].min(ANCHO as f32), caja[3].min(ALTO as f32)];
+        for (_, r) in recortes {
+            c = [c[0].max(r[0]), c[1].max(r[1]), c[2].min(r[2]), c[3].min(r[3])];
         }
-        Forma::Caja { centro, mitad, radio } => {
-            s[1] = 1.0;
-            s[4] = centro.0.evaluar(props);
-            s[5] = centro.1.evaluar(props);
-            s[6] = mitad.0.evaluar(props).max(0.0);
-            s[7] = mitad.1.evaluar(props).max(0.0);
-            s[8] = radio.evaluar(props).min(s[6]).min(s[7]).max(0.0);
+        if c[2] <= c[0] || c[3] <= c[1] || self.n_elementos() >= MAX_ELEMENTOS {
+            return;
         }
-    };
-    match i {
-        Instr::Grupo { sombra } => {
-            s[0] = 0.0;
-            if let Some(so) = sombra {
-                s[16..20].copy_from_slice(&[so.desplazada.0, so.desplazada.1, so.difusa, so.alfa]);
+        let k = self.elementos.len();
+        self.elementos.resize(k + POR_ELEMENTO, 0.0);
+        let e = &mut self.elementos[k..];
+        e[0] = tipo;
+        e[4..8].copy_from_slice(&c);
+        for j in 0..4 {
+            e[32 + j] = recortes.get(j).map_or(-1.0, |r| r.0 as f32);
+        }
+        rellenar(e);
+    }
+
+    fn componer(&mut self, instrs: &[Instr], c: Ctx, hud: bool) {
+        self.formas.clear();
+        self.elementos.clear();
+        let mut recortes: Vec<(usize, [f32; 4])> = Vec::new();
+        let mut giros: Vec<((f32, f32), f32)> = Vec::new();
+        let mut cuerpo: Option<CuerpoAbierto> = None;
+        let aplanar = |f: &Forma, giros: &[((f32, f32), f32)]| {
+            let mut p = f.aplanar(c);
+            if let Some((pivote, angulo)) = giros.last() {
+                p.pivote = *pivote;
+                p.giro_heredado = *angulo;
             }
-        }
-        Instr::Forma { forma: f, fusion } => {
-            s[0] = 1.0;
-            forma(f, s);
-            s[2] = fusion.evaluar(props).max(0.0);
-        }
-        Instr::Relleno { color, alfa, filo, luz } => {
-            s[0] = 2.0;
-            s[3] = *filo;
-            s[11] = alfa.evaluar(props).clamp(0.0, 1.0);
-            for k in 0..3 {
-                s[12 + k] = color[k].evaluar(props);
+            p
+        };
+        let color = |col: &Color| [col[0].evaluar(c), col[1].evaluar(c), col[2].evaluar(c)];
+
+        for i in instrs {
+            if self.formas.len() / POR_FORMA >= MAX_FORMAS - 8 {
+                break;
             }
-            if let Some(l) = luz {
-                s[15] = l.cantidad;
-                s[16] = l.desde_y.evaluar(props);
-                s[17] = l.alto;
-            }
-        }
-        Instr::Recorte(r) => {
-            s[0] = 3.0;
-            match r {
-                Some((f, margen)) => {
-                    forma(f, s);
-                    s[3] = *margen;
+            match i {
+                Instr::Grupo { sombra } => {
+                    cuerpo = Some(CuerpoAbierto { primera: self.formas.len() / POR_FORMA, n: 0, caja: None, holgura: 0.0, sombra: sombra.clone() })
                 }
-                None => s[1] = 2.0,
+                Instr::Forma { forma, fusion } => {
+                    let p = aplanar(forma, &giros);
+                    let k = fusion.evaluar(c).max(0.0);
+                    let caja = p.caja();
+                    self.forma(p, k);
+                    if let Some(g) = &mut cuerpo {
+                        g.n += 1;
+                        g.holgura = g.holgura.max(k * 0.5);
+                        if let Some(b) = caja {
+                            g.caja = Some(unir(g.caja, b));
+                        }
+                    }
+                }
+                Instr::Relleno { pintura, alfa, filo, luz, borde } => {
+                    let Some(g) = cuerpo.take() else { continue };
+                    let Some(mut caja) = g.caja else { continue };
+                    let h = g.holgura + 2.0;
+                    caja = [caja[0] - h, caja[1] - h, caja[2] + h, caja[3] + h];
+                    if let Some(s) = &g.sombra {
+                        let d = s.difusa + 2.0;
+                        caja = unir(Some(caja), [caja[0] + s.desplazada.0 - d, caja[1] + s.desplazada.1 - d, caja[2] + s.desplazada.0 + d, caja[3] + s.desplazada.1 + d]);
+                    }
+                    let a = alfa.evaluar(c).clamp(0.0, 1.0);
+                    self.elemento(0.0, caja, &recortes, |e| {
+                        e[1] = g.primera as f32;
+                        e[2] = g.n as f32;
+                        e[3] = a;
+                        match pintura {
+                            Pintura::Color(col) => e[8..11].copy_from_slice(&color(col)),
+                            Pintura::Lineal { de, a, c0, c1 } => {
+                                e[8..11].copy_from_slice(&color(c0));
+                                e[12..15].copy_from_slice(&color(c1));
+                                e[15] = 1.0;
+                                e[16..20].copy_from_slice(&[de.0.evaluar(c), de.1.evaluar(c), a.0.evaluar(c), a.1.evaluar(c)]);
+                            }
+                        }
+                        e[11] = *filo;
+                        if let Some(l) = luz {
+                            e[20..23].copy_from_slice(&[l.cantidad, l.desde_y.evaluar(c), l.alto]);
+                        }
+                        if let Some((grosor, col)) = borde {
+                            e[23] = grosor.evaluar(c).max(0.0);
+                            e[24..27].copy_from_slice(&color(col));
+                        }
+                        if let Some(s) = &g.sombra {
+                            e[28..32].copy_from_slice(&[s.desplazada.0, s.desplazada.1, s.difusa, s.alfa]);
+                        }
+                    });
+                }
+                Instr::Plano { forma, color: col, alfa } => {
+                    let a = alfa.evaluar(c).clamp(0.0, 1.0);
+                    if a <= 0.001 {
+                        continue; // lo invisible no ocupa ni un quad
+                    }
+                    let p = aplanar(forma, &giros);
+                    let Some(b) = p.caja() else { continue };
+                    let k = self.forma(p, 0.0);
+                    let rgb = color(col);
+                    self.elemento(0.0, [b[0] - 2.0, b[1] - 2.0, b[2] + 2.0, b[3] + 2.0], &recortes, |e| {
+                        e[1] = k as f32;
+                        e[2] = 1.0;
+                        e[3] = a;
+                        e[8..11].copy_from_slice(&rgb);
+                    });
+                }
+                Instr::Textura { destino, uv, alfa } => {
+                    let a = alfa.evaluar(c).clamp(0.0, 1.0);
+                    if a <= 0.001 {
+                        continue;
+                    }
+                    let d = [destino.0.evaluar(c), destino.1.evaluar(c), destino.2.evaluar(c), destino.3.evaluar(c)];
+                    let mut caja = [d[0], d[1], d[0] + d[2], d[1] + d[3]];
+                    let giro = giros.last().copied();
+                    if giro.is_some() {
+                        // Girada, la caja exacta no vale: la pantalla entera, que el recorte acotará.
+                        caja = [0.0, 0.0, ANCHO as f32, ALTO as f32];
+                    }
+                    self.elemento(1.0, caja, &recortes, |e| {
+                        e[3] = a;
+                        e[36..40].copy_from_slice(&d);
+                        e[40..44].copy_from_slice(uv);
+                        if let Some((pivote, angulo)) = giro {
+                            e[44..47].copy_from_slice(&[pivote.0, pivote.1, angulo]);
+                        }
+                    });
+                }
+                Instr::Recorte(Some((forma, margen))) => {
+                    let p = aplanar(forma, &giros).encoger(*margen);
+                    let caja = p.caja().unwrap_or([0.0; 4]);
+                    let k = self.forma(p, 0.0);
+                    if recortes.len() < 4 {
+                        recortes.push((k, [caja[0] - 1.0, caja[1] - 1.0, caja[2] + 1.0, caja[3] + 1.0]));
+                    }
+                }
+                Instr::Recorte(None) => {
+                    recortes.pop();
+                }
+                Instr::Transformar(Some(t)) => giros.push(((t.pivote.0.evaluar(c), t.pivote.1.evaluar(c)), t.giro.evaluar(c))),
+                Instr::Transformar(None) => {
+                    giros.pop();
+                }
             }
         }
-        Instr::Plano { forma: f, color, alfa } => {
-            s[0] = 4.0;
-            forma(f, s);
-            s[11] = alfa.evaluar(props).clamp(0.0, 1.0);
-            for k in 0..3 {
-                s[12 + k] = color[k].evaluar(props);
-            }
+        if hud {
+            self.elemento(9.0, [0.0, 190.0, ANCHO as f32, ALTO as f32], &[], |_| {});
         }
-        Instr::Textura { destino, uv, alfa } => {
-            s[0] = 5.0;
-            s[4] = destino.0.evaluar(props);
-            s[5] = destino.1.evaluar(props);
-            s[6] = destino.2.evaluar(props);
-            s[7] = destino.3.evaluar(props);
-            s[11] = alfa.evaluar(props).clamp(0.0, 1.0);
-            s[16..20].copy_from_slice(uv);
+        // Un almacén vacío no se puede enlazar ni escribir.
+        if self.formas.is_empty() {
+            self.formas.resize(POR_FORMA, 0.0);
+        }
+        if self.elementos.is_empty() {
+            self.elementos.resize(POR_ELEMENTO, 0.0);
         }
     }
 }

@@ -34,8 +34,9 @@ El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
   incluso `orbe_x.vel()`). Son lo que sería un binding: como no tienen efectos,
   el render las evalúa cuando quiere, sin preguntar a nadie.
 - **Instrucciones de dibujo**, en orden: `Grupo`, `Forma` (elipse o caja, fundida
-  con lo anterior por un mínimo suave), `Relleno`, `Recorte`, `Plano`, `Textura`.
-  El shader es un intérprete de esa lista; no hay nada de Marea en él.
+  con lo anterior por un mínimo suave), `Relleno`, `Recorte`, `Transformar`,
+  `Plano`, `Textura`. El render la compone cada frame en elementos con su caja
+  envolvente y los pinta de una sola llamada; no hay nada de Marea en él.
 - **Hechos y sucesos**: la única frontera con la lógica. Ella cuenta lo que pasa
   (`grabando = sí`, `confirmado`); no toca formas, poses ni temporizadores.
 - **Capas**: un hueco que muchos reclaman, en orden de prioridad. Gana la primera
@@ -58,7 +59,8 @@ El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
 | `main.rs` | Wayland: la superficie layer-shell y el ratón. Nada más. |
 | `escena.rs` | El contrato: propiedades, expresiones, instrucciones, comportamientos, zonas. |
 | `render.rs` | Intérprete. Dueño de los muelles y del reloj; quieto, no pinta ni un frame. |
-| `forma.wgsl` | El mismo intérprete, por píxel: distancias con signo y alfa premultiplicado. |
+| `forma.wgsl` | Un quad por elemento: cada píxel solo ejecuta las formas del elemento que lo cubre. |
+| `formas.rs` | La geometría, una vez, para tres usos: la GPU, el ratón y las cajas. Elipse, caja, arco, segmento, trazo y giro. |
 | `logica.rs` | Donde corre un `Guion`: recibe eventos, declara transiciones y alarmas, y se bloquea a propósito. |
 | `escenas/marea.rs` | La bolita y su tarjeta: 12 propiedades, 12 instrucciones, 4 zonas. |
 | `escenas/isla.rs` | Una isla como la de k4 que suelta una gota. Su lógica no decide nada: dos capas y tres reglas. |
@@ -102,7 +104,6 @@ falta están en `docs/` (y, al día, en Edinot: `Proyectos/pleamar`).
 Una escena se escribe todavía en Rust y se compila con el programa: falta el
 lenguaje que la describa desde un fichero y la recargue en caliente. No hay
 layout —las posiciones son expresiones a mano—, el texto es un mapa de bits fijo
-y el shader recorre la lista entera en cada píxel, sin saber qué instrucciones
-le tocan a cada zona de la pantalla. Y los primeros frames tras despertar salen
+y una sola superficie fija en un monitor. Y los primeros frames tras despertar salen
 sin esperar al vsync, así que el reloj de animación debería ir con el tiempo de
 presentación, no con el de la CPU.

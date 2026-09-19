@@ -15,7 +15,7 @@ use std::time::Duration;
 
 pub const ANCHO: u32 = 720;
 pub const ALTO: u32 = 300;
-pub const MAX_INSTR: usize = 64;
+pub const MAX_INSTR: usize = 1024;
 
 // ── propiedades y expresiones ───────────────────────────────────
 
@@ -192,41 +192,7 @@ operador!(Div, div, Entre);
 
 pub type Punto = (Expr, Expr);
 
-#[derive(Clone, Debug)]
-pub enum Forma {
-    Elipse { centro: Punto, radio: Expr, escala: Punto },
-    /// Caja redondeada. Con media anchura o altura por debajo de medio píxel,
-    /// no existe: ni se pinta ni se funde con nada.
-    Caja { centro: Punto, mitad: Punto, radio: Expr },
-}
-
-impl Forma {
-    pub fn circulo(centro: Punto, radio: impl Into<Expr>) -> Forma {
-        Forma::Elipse { centro, radio: radio.into(), escala: (1.0.into(), 1.0.into()) }
-    }
-
-    /// La misma distancia que calcula el shader, para saber si el ratón está
-    /// dentro sin preguntarle a la GPU.
-    pub fn distancia(&self, c: Ctx, x: f32, y: f32) -> f32 {
-        match self {
-            Forma::Elipse { centro, radio, escala } => {
-                let (ex, ey) = (escala.0.evaluar(c), escala.1.evaluar(c));
-                let (qx, qy) = ((x - centro.0.evaluar(c)) / ex, (y - centro.1.evaluar(c)) / ey);
-                (qx.hypot(qy) - radio.evaluar(c)) * ex.min(ey)
-            }
-            Forma::Caja { centro, mitad, radio } => {
-                let (mx, my) = (mitad.0.evaluar(c), mitad.1.evaluar(c));
-                if mx < 0.5 || my < 0.5 {
-                    return f32::MAX;
-                }
-                let r = radio.evaluar(c);
-                let qx = (x - centro.0.evaluar(c)).abs() - mx + r;
-                let qy = (y - centro.1.evaluar(c)).abs() - my + r;
-                qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r
-            }
-        }
-    }
-}
+pub use crate::formas::Forma;
 
 #[derive(Clone, Debug)]
 pub struct Sombra {
@@ -245,11 +211,32 @@ pub struct Luz {
 
 pub type Color = [Expr; 3];
 
+#[derive(Clone, Debug)]
+pub enum Pintura {
+    Color(Color),
+    /// Un degradado de un punto a otro.
+    Lineal { de: Punto, a: Punto, c0: Color, c1: Color },
+}
+impl From<Color> for Pintura {
+    fn from(c: Color) -> Pintura {
+        Pintura::Color(c)
+    }
+}
+
+/// Girar todo lo que venga después alrededor de un punto: la cabeza entera, con
+/// sus ojos.
+#[derive(Clone, Debug)]
+pub struct Transformacion {
+    pub pivote: Punto,
+    pub giro: Expr,
+}
+
 pub fn color(r: f32, g: f32, b: f32) -> Color {
     [r.into(), g.into(), b.into()]
 }
 
-/// La lista de dibujo. Se recorre en orden, por píxel, en la GPU.
+/// La lista de dibujo. El render la convierte en elementos —un quad cada uno—
+/// y los pinta en orden.
 #[derive(Clone, Debug)]
 pub enum Instr {
     /// Empieza un cuerpo: a partir de aquí las formas se acumulan.
@@ -258,9 +245,12 @@ pub enum Instr {
     /// radio del mínimo suave; 0 es una unión seca).
     Forma { forma: Forma, fusion: Expr },
     /// Pinta el cuerpo acumulado: sombra, relleno, luz y filo.
-    Relleno { color: Color, alfa: Expr, filo: f32, luz: Option<Luz> },
-    /// Todo lo que venga después se recorta a esta forma. `None` lo quita.
+    Relleno { pintura: Pintura, alfa: Expr, filo: f32, luz: Option<Luz>, borde: Option<(Expr, Color)> },
+    /// Todo lo que venga después se recorta a esta forma, además de a las que
+    /// ya hubiera (hasta cuatro). `None` quita la última.
     Recorte(Option<(Forma, f32)>),
+    /// Todo lo que venga después gira con esto. `None` lo quita.
+    Transformar(Option<Transformacion>),
     /// Una forma suelta, de color plano.
     Plano { forma: Forma, color: Color, alfa: Expr },
     /// Un trozo del atlas de la escena, colocado en pantalla.

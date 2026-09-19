@@ -24,8 +24,9 @@
 - ✅ **Se probó contra la Marea real.** Cabe, con tres piezas que el boceto no tenía: hechos y sucesos, capas, gestos.
 - ✅ **Capas, gestos, hechos, sucesos y reglas en el runtime** (todavía escritos en Rust). Probado con la cara de Marea: el disco rojo aguanta buscar y confirmar mientras graba; al dejar de grabar, la lupa sale sola. Y Marea se abre, realza su botón y se cierra con la lógica bloqueada 5 s.
 - ⬜ Parser.
-- ⬜ Renderer por elementos, más primitivas, texto dinámico, componentes, layout, servicios: ver la nota 07.
+- ✅ **Renderer por elementos**: un quad por elemento con su caja. 600 formas cuestan 0,42 ms por frame frente a 3,66 ms del intérprete por píxel; 2000, 0,57 ms. Con él llegaron **aro/trazo, arco, segmento, giro** (propio y heredado), **degradado lineal, borde**, recortes anidados (hasta cuatro) y fundido real entre elementos.
+- ⬜ Superficies de verdad, más primitivas, texto dinámico, componentes, layout, servicios: ver la nota 07.
 
 ## Siguiente paso
 
-El punto 2 del orden de trabajo ([[pleamar · 07 Qué falta para igualar a Quickshell]]): **renderer por elementos** —un quad por elemento en vez de recorrer toda la lista en cada píxel—, con giro, trazo, degradado, anillo y arco, y superficies de verdad (varios monitores, escala). Las formas de ojos de Marea que hoy están hechas con trucos (la lupa son un aro falso y dos gotas; los arcos de contenta, un disco que tapa a otro) son la lista de la compra.
+Lo que queda del punto 2 de [[pleamar · 07 Qué falta para igualar a Quickshell]]: **superficies de verdad** —una por monitor, monitores que van y vienen, escala HiDPI y fraccional, tamaño según el contenido y región de entrada que siga a las formas—. Después, el punto 3: **texto dinámico**, imágenes e iconos.

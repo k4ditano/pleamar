@@ -79,25 +79,24 @@ impl Guion for Cara {
         let cuerpo = Forma::Elipse { centro: (CX.into(), cy.clone()), radio: R.into(), escala: (sx.e(), sy.e()) };
         e.pintar(Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 12.0), difusa: 34.0, alfa: 0.34 }) });
         e.pintar(Instr::Forma { forma: cuerpo.clone(), fusion: 0.0.into() });
-        e.pintar(Instr::Relleno {
-            color: color(0.082, 0.086, 0.086),
+        e.pintar(Instr::Relleno { pintura: color(0.082, 0.086, 0.086).into(),
             alfa: 1.0.into(),
             filo: 0.05,
             luz: Some(Luz { cantidad: 0.03, desde_y: (CY - R).into(), alto: R * 2.0 }),
+            borde: None,
         });
         e.pintar(Instr::Recorte(Some((cuerpo, 3.0))));
 
-        // Dónde cae cada ojo. El giro no rota nada todavía: sube un ojo y baja
-        // el otro, que a este tamaño se lee igual.
+        // La cara entera gira con la cabeza, alrededor del centro de la bolita.
+        e.pintar(Instr::Transformar(Some(Transformacion { pivote: (CX.into(), cy.clone()), giro: giro * (std::f32::consts::PI / 180.0) })));
         let mira = (mira_x * S + puntero_x, mira_y * S + puntero_y);
         let ojo_x = |lado: f32| CX + mira.0.clone() + hueco * (0.5 * S * lado);
-        let ojo_y = |lado: f32| cy.clone() + mira.1.clone() + hueco * giro * (0.5 * S * lado * std::f32::consts::PI / 180.0);
+        let ojo_y = |_lado: f32| cy.clone() + mira.1.clone();
         //  Una forma solo se ve con más de media presencia. Como las presencias
         //  de una capa suman uno, nunca hay dos a la vez: una se va y entra la
         //  otra, en vez de fundirse en un borrón.
         let ve = |p: Expr| p.suave(0.5, 1.0);
         let blanco = color(0.96, 0.97, 0.96);
-        let grafito = color(0.098, 0.102, 0.102);
 
         // ojos · las dos píldoras de siempre. Grabando, la izquierda se queda.
         let pildora = |lado: f32| Forma::Caja {
@@ -115,11 +114,13 @@ impl Guion for Cara {
             alfa: ve(p_rec.e()),
         });
 
-        // contenta · dos arcos: un disco blanco y otro del color del cuerpo que
-        // le come la mitad de abajo.
+        // contenta · dos arcos de verdad.
         for lado in [-1.0, 1.0] {
-            e.pintar(Instr::Plano { forma: Forma::circulo((ojo_x(lado), ojo_y(lado) + 2.0 * S), 5.6 * S), color: blanco.clone(), alfa: ve(p_contenta.e()) });
-            e.pintar(Instr::Plano { forma: Forma::circulo((ojo_x(lado), ojo_y(lado) + 5.4 * S), 5.9 * S), color: grafito.clone(), alfa: ve(p_contenta.e()) });
+            e.pintar(Instr::Plano {
+                forma: Forma::Arco { centro: (ojo_x(lado), ojo_y(lado) + 2.5 * S), radio: (4.6 * S).into(), apertura: 1.2.into(), grosor: (2.7 * S).into() },
+                color: blanco.clone(),
+                alfa: ve(p_contenta.e()),
+            });
         }
 
         // aviso · una admiración ámbar.
@@ -131,14 +132,16 @@ impl Guion for Cara {
         });
         e.pintar(Instr::Plano { forma: Forma::circulo((CX.into(), cy.clone() + 9.0 * S), 2.7 * S), color: ambar, alfa: ve(p_aviso.e()) });
 
-        // lupa · un aro y un mango hecho de dos gotas.
+        // lupa · un aro y su mango.
         let lx = CX + mira.0.clone() - 2.5 * S;
         let ly = cy.clone() + mira.1.clone() - 2.0 * S;
-        e.pintar(Instr::Plano { forma: Forma::circulo((lx.clone(), ly.clone()), 7.6 * S), color: blanco.clone(), alfa: ve(p_lupa.e()) });
-        e.pintar(Instr::Plano { forma: Forma::circulo((lx.clone(), ly.clone()), 5.0 * S), color: grafito, alfa: ve(p_lupa.e()) });
-        for d in [6.6, 9.2] {
-            e.pintar(Instr::Plano { forma: Forma::circulo((lx.clone() + d * S, ly.clone() + d * S), 2.1 * S), color: blanco.clone(), alfa: ve(p_lupa.e()) });
-        }
+        e.pintar(Instr::Plano { forma: Forma::aro((lx.clone(), ly.clone()), 6.2 * S, 2.6 * S), color: blanco.clone(), alfa: ve(p_lupa.e()) });
+        e.pintar(Instr::Plano {
+            forma: Forma::Segmento { de: (lx.clone() + 5.4 * S, ly.clone() + 5.4 * S), a: (lx + 9.6 * S, ly + 9.6 * S), grosor: (2.9 * S).into() },
+            color: blanco.clone(),
+            alfa: ve(p_lupa.e()),
+        });
+        e.pintar(Instr::Transformar(None));
         e.pintar(Instr::Recorte(None));
 
         e.comportamientos = vec![

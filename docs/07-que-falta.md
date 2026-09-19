@@ -26,10 +26,11 @@ Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
 | Rectángulo redondeado, elipse | ✅ |
 | Fundir formas (cuello de agua) | ✅ **y QtQuick no lo tiene** |
 | Sombra, luz, filo | ✅ |
-| Borde / trazo, degradados | ⬜ |
-| Anillo, arco, segmento, trazados libres (`Shape`, SVG) | ⬜ |
-| Giro, escala y traslación de un grupo | ⬜ (solo el estirado de la elipse) |
-| Opacidad de grupo, recortes anidados | 🟡 un nivel de recorte |
+| Borde / trazo, degradados | ✅ degradado lineal; falta radial |
+| Anillo, arco, segmento | ✅ |
+| Trazados libres (`Shape`, SVG) | ⬜ |
+| Giro, escala y traslación de un grupo | 🟡 giro de forma y de grupo; sin escala ni composición |
+| Opacidad de grupo, recortes anidados | 🟡 recortes anidados (hasta 4); sin opacidad de grupo |
 | **Texto dinámico**: fuentes, ajuste de línea, elipsis, emoji, RTL | ⬜ mapa de bits fijo, pintado una vez |
 | Imágenes (PNG/JPG/SVG), iconos del tema, GIF | ⬜ |
 | Desenfoque, máscaras, `MultiEffect` | ⬜ |
@@ -78,7 +79,7 @@ Todo ⬜: Hyprland (workspaces, ventanas, eventos), PipeWire, MPRIS, bandeja + s
 
 ## Las cuatro cosas que son arquitectura, no solo trabajo
 
-### 1. El renderer actual no escala
+### 1. El renderer actual no escala — ✅ hecho el 19 sep
 
 El shader recorre **toda** la lista de dibujo en **cada** píxel. Con 12 instrucciones va sobrado; con una lista de veinte notificaciones, cincuenta iconos y texto, no. Hay que pasar a **un quad por elemento** (o por `Cuerpo`), con su caja envolvente: cada píxel ejecuta solo las formas que le tocan, y el fundido se queda dentro de cada `Cuerpo`, que es donde tiene sentido. Es técnica conocida. **Conviene hacerlo antes de amontonar primitivas sobre el intérprete de ahora.**
 

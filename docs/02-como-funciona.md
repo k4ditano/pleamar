@@ -35,9 +35,39 @@ El ratón va **al render**, que es quien sabe qué hay debajo; a la lógica le l
 - **Reglas**: `Entra`, `Sale`, `Pulsa`, `Encima{durante}`, `Fuera{durante}`, `Quieto{durante}`, `Cada{a..b}`, `Al(suceso)` → efectos (`Animar`, `Hecho`, `Alternar`, `Suceso`, `Impulso`, `Gesto`). **Todo lo ejecuta el render.**
 - **Movimiento reducido** (`--movimiento-reducido`): los muelles se posan y cada gesto enseña, quieto, el fotograma que más se aparta de la base.
 
-## El shader (`forma.wgsl`)
+## El renderer: un quad por elemento (`render.rs`, `forma.wgsl`, `formas.rs`)
 
-Un intérprete. Por cada píxel recorre la lista: acumula distancias con signo, las funde, compone en alfa premultiplicado. No hay nada de Marea en él. Coste conocido: recorre **toda** la lista en **cada** píxel; con escenas grandes habrá que trocear por zonas de pantalla.
+Cada frame, el render recorre la lista de dibujo y la **compone** en dos tablas que sube a la GPU:
+
+- **formas**, con sus expresiones ya evaluadas (16 números cada una);
+- **elementos** (48 números): un *cuerpo* —una o varias formas fundidas, con su pintura, borde, luz y sombra— o un trozo del atlas. Cada uno lleva su **caja envolvente**, calculada en CPU con la misma geometría, ensanchada por la sombra y el fundido y recortada por sus recortes.
+
+Se pinta con **una sola llamada** instanciada: un quad por elemento, en orden, con mezcla premultiplicada. Un píxel solo ejecuta las formas del elemento que lo cubre. Lo invisible (`alfa` 0, cajas vacías) no genera ni quad.
+
+| Primitiva | Notas |
+| --- | --- |
+| `Elipse`, `Caja` | como antes |
+| `Arco` | como «∩»; `apertura` es medio ángulo en radianes |
+| `Segmento` | línea de extremos redondos |
+| `.trazo(grosor)` | solo el contorno: un círculo se vuelve un **aro** |
+| `.girada(ángulo)` | sobre su centro; positivo, sentido del reloj |
+| `Transformar` | gira todo lo que venga después alrededor de un pivote (la cabeza con sus ojos) |
+| `Recorte` | ahora es una **pila** (hasta cuatro): un hijo se recorta a su padre y a su abuelo |
+| `Pintura::Lineal`, `borde` | degradado entre dos puntos; borde interior del cuerpo |
+
+`formas.rs` tiene la geometría una sola vez para tres usos: codificar para la GPU, saber qué hay bajo el ratón y calcular cajas.
+
+**Medido** (RTX 2060, 720×300, `--escena enjambre --sin-vsync`, ms por frame):
+
+| formas | intérprete por píxel (antes) | por elementos |
+| --- | --- | --- |
+| 12 | 0,27 | 0,25 |
+| 60 | 0,53 | 0,28 |
+| 200 | 1,37 | 0,30 |
+| 600 | 3,66 | 0,42 |
+| 2000 | no cabía (tope 1024) | 0,57 |
+
+Ojo con lo que dice esta tabla: **el intérprete viejo no iba tan mal como se temía** a este tamaño de superficie; 600 formas seguían cabiendo de sobra en un frame. Donde se habría roto es a pantalla completa (9,6 veces más píxeles) o en una gráfica integrada. El nuevo, además, deja de tener tope.
 
 ## Reposo
 
@@ -59,7 +89,7 @@ Sale en `HDMI-A-1`. La gráfica de abajo es una barra por frame; la franja roja,
 ## Deudas conocidas
 
 - Las escenas se escriben en Rust y se compilan con el programa.
-- Sin layout, sin giro, solo dos primitivas.
+- Sin layout. Las transformaciones no se componen (solo cuenta la última) y solo hay giro, no escala de grupo.
 - El texto es un mapa de bits fijo.
 - Los primeros frames tras despertar no esperan al vsync: el reloj de animación debería ir con el tiempo de presentación.
 - Un frame de cada ~400 se cae a 33 ms. Sin investigar.
