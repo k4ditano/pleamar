@@ -162,6 +162,19 @@ Un `for` vale dentro de un `row` o `column` y también suelto, y dentro de una `
 
 ## Componentes, repeticiones y repartos
 
+**Un componente dice qué necesita.** Los parámetros pueden llevar tipo y valor por defecto, y los argumentos, nombre:
+
+```
+component MenuRow(r: record, chosen: event, tone: color = mint, width: number = 220) {
+    …
+    on press hit { emit chosen(r.index) }     // el suceso que se le pasó, se llame como se llame fuera
+}
+
+for r in rows { MenuRow(r, chosen: choose) }  // por posición y, desde donde se quiera, por nombre
+```
+
+Tipos: `number`, `color`, `text`, `record` (una ficha), `event` e `image`. Lo que falte, sobre o no sea del tipo es un fallo **donde se usa**, con la firma entera: `a «MenuRow» le falta «chosen» (un suceso): es MenuRow(r: record, chosen: event, tone: color = …, width: number = …)`. Sin tipo, un parámetro es lo que parezca el argumento, como hasta ahora.
+
 ```
 component Note(i) {                     // parámetros: números, colores, "textos", o el nombre de un texto vivo
     size: 360, 58                       // cuánto ocupa, para quien lo reparta
