@@ -15,8 +15,9 @@
 | [[pleamar · 05 Decisiones y preguntas abiertas]] | Lo decidido, con su porqué, y lo que falta por decidir |
 | [[pleamar · 06 Bocetos A-B-C]] | Las tres sintaxis que se compararon. Histórico. |
 | [[pleamar · 07 Qué falta para igualar a Quickshell]] | El inventario honesto, por tramos, y el orden de trabajo |
-| [[pleamar · 09 El lenguaje v0]] | **La gramática que ya funciona**, con palabras clave en inglés. La referencia |
+| [[pleamar · 09 El lenguaje v0]] | **La guía del lenguaje**: se lee de corrido, con el porqué de cada cosa |
 | [[pleamar · 10 La lógica en Luau]] | La frontera vista desde la lógica: qué puede hacer un `.luau`, y su caja de arena |
+| [[pleamar · 11 Referencia del lenguaje 0.1]] | **La referencia**: léxico, gramática en EBNF, cada elemento con lo que acepta, y el número de versión. Sus ejemplos se compilan con `./probar.sh` |
 | [[pleamar · 08 Limitaciones conocidas]] | Todo lo que está a medias, con su gravedad, para ir tachándolo |
 
 ## Estado (19 sep 2026)
@@ -44,8 +45,9 @@
 - ✅ **Modelos y `for`**: datos con forma que cruzan la frontera (`model rows max 14 { label: text; enabled: bool = true }`, `for r in rows { Row(r) }`, `model.rows = lista`). Las tres escenas con listas, reescritas sin un hueco a mano. Y **la primera batería de pruebas del lenguaje** (`pruebas/`, `./probar.sh`), que vigila también los mensajes de error.
 - ✅ **Textos con huecos**: `text "{n.title}{? · {n.body}}"`, con expresiones (`{volume * 100} %`), `upper`/`lower`, tramos que desaparecen si su texto está vacío, y fallos que señalan el carácter exacto dentro de la cadena.
 - ✅ **Varios ficheros**: `library` e `import`, con fallos que dicen en qué fichero y recarga en caliente de lo importado. `escenas/comun/` tiene la paleta y la fila de menú. La batería de pruebas del lenguaje va por 22.
+- ✅ **El lenguaje, por escrito**: la nota 11 es su referencia, versión **0.1** (`language 0.1`, `pleamar --version`), sacada del compilador y con sus ejemplos compilados en cada `./probar.sh` (29 escenas). Escribirla destapó dos huecos, ya cerrados: no había `==`, y `while` solo valía en dos reglas.
 - ⬜ ventanas normales y bloqueo de sesión, IME, ventanas normales y menús: ver la nota 07.
 
 ## Siguiente paso
 
-**Nada en rojo** en [[pleamar · 08 Limitaciones conocidas]]. **pleamar es un conjunto y un lenguaje**, y el lenguaje llevaba retraso: el tramo en curso es suyo. Hecho: modelos y `for`, textos con huecos, e `import`. Sigue: **tipos** (hechos `bool`, enumerados, fichas dentro de fichas: U4, G18), **componentes que digan qué necesitan** (G14, G23), **bibliotecas con lógica y permisos**, que es lo que convierte una biblioteca en un plugin (G22, U3), y **una gramática escrita con número de versión**, con la nota 09 como referencia y no como diario. Por debajo: copias que nazcan en marcha (G12), ventanas y bloqueo (S7), una instancia por monitor (S2), IME (E7). **Por probar con manos de verdad**: emergentes y menú de la bandeja (S11), el lanzador con su bind (E8), la rueda (E1), notificaciones y bandeja con k4 parado (B12, B14).
+**Nada en rojo** en [[pleamar · 08 Limitaciones conocidas]]. **pleamar es un conjunto y un lenguaje**, y el lenguaje llevaba retraso: el tramo en curso es suyo. Hecho: modelos y `for`, textos con huecos, `import`, y la referencia escrita con su versión. Sigue: **tipos** (hechos `bool`, enumerados, fichas dentro de fichas: U4, G18), **componentes que digan qué necesitan** (G14, G23), **bibliotecas con lógica y permisos**, que es lo que convierte una biblioteca en un plugin (G22, U3), y que la referencia **no se pueda desfasar** del compilador (G25). Por debajo: copias que nazcan en marcha (G12), ventanas y bloqueo (S7), una instancia por monitor (S2), IME (E7). **Por probar con manos de verdad**: emergentes y menú de la bandeja (S11), el lanzador con su bind (E8), la rueda (E1), notificaciones y bandeja con k4 parado (B12, B14).

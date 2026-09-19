@@ -1,4 +1,6 @@
-# El lenguaje, v0 — lo que ya funciona
+# El lenguaje — la guía
+
+> **Esto es la guía**: se lee de corrido y cuenta el porqué. La descripción exacta —gramática, cada elemento con lo que acepta, versión— está en [[pleamar · 11 Referencia del lenguaje 0.1]].
 
 **Estado:** implementado (`src/lenguaje/`). Un fichero `.plm` entra y sale la misma `Escena` que antes se escribía en Rust. [[pleamar · 03 El lenguaje - borrador 0]] era el boceto en castellano; **esto es lo que hay de verdad, con las palabras clave en inglés**. Aún sin nombre propio.
 
@@ -74,7 +76,7 @@ Números con unidad: `40`, `40px`, `34%` (= 0.34), `138deg` (a radianes), `320ms
 
 ## Expresiones
 
-`+ - * /`, paréntesis, `< > <= >=`, `and or not`, `true false`. Verdad es más de 0.5.
+`+ - * /`, paréntesis, `< > <= >= == !=`, `and or not`, `true false`. Verdad es más de 0.5.
 Funciones: `min`, `max`, `abs`, `clamp(x, a, b)`, `smooth(a, b, x)`, `mix(a, b, t)`, `if(cond, a, b)` y **`vel(prop)`** —la velocidad de un muelle, que solo el render conoce—.
 Valen como nombre: un `let`, un `prop`, un `fact`, una medida (`label.width`) y la presencia de una reclamación (`shape.rec`: 1 mientras gana).
 
@@ -231,6 +233,8 @@ on idle for 14s while not open { asleep = true }
 on confirmed             { play joy }
 every 2.5s..7s while awake { play yawn }
 ```
+
+Cualquier regla puede llevar `while expr` al final de su cabecera (`on press dot while armed { … }`): se mira en el momento de dispararse.
 
 Efectos: `hecho = expresión` (se evalúa al dispararse), `toggle hecho`, `emit suceso` o con carga `emit opened(i)`, `impulse prop velocidad`, `play gesto`, `focus campo` (le da el cursor de escribir), `blur`, y `prop: valor ~muelle after 70ms`.
 
