@@ -369,6 +369,19 @@ impl GuionLuau {
             }).collect();
             crate::plataforma::orden(&nombre, &args).map_err(mlua::Error::runtime)
         })?)?;
+        // Lo mismo, pero contesta: `sys.ask("tray.menu", key)` devuelve el menú.
+        let c = self.c.clone();
+        sys.set("ask", lua.create_function(move |lua, (nombre, args): (String, mlua::Variadic<Value>)| {
+            permiso_de_servicio(&c, &nombre)?;
+            let args: Vec<Valor> = args.iter().map(|v| match v {
+                Value::Boolean(b) => Valor::Si(*b),
+                Value::Integer(i) => Valor::Num(*i as f64),
+                Value::Number(n) => Valor::Num(*n),
+                Value::String(s) => Valor::Texto(s.to_string_lossy()),
+                _ => Valor::Nulo,
+            }).collect();
+            a_lua(lua, &crate::plataforma::consulta(&nombre, &args).map_err(mlua::Error::runtime)?)
+        })?)?;
         g.set("sys", sys)?;
 
         g.set("log", lua.create_function(|_, v: MultiValue| {

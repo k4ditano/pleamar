@@ -30,6 +30,8 @@ pub struct Dibujo {
     pub campos: Vec<CampoPuesto>,
     /// Grupos que se pintan aparte: qué elementos, y en qué capa.
     pub apartes: Vec<(Range<u32>, usize)>,
+    /// Los trozos de la escena que alguna emergente abierta está enseñando.
+    pub vistas: Vec<[f32; 4]>,
     avisado_de_recortes: bool,
 }
 
@@ -103,7 +105,11 @@ impl Dibujo {
 
     /// Un elemento solo existe si su caja, recortada, toca la pantalla.
     fn elemento(&mut self, tipo: f32, caja: [f32; 4], recortes: &[(usize, [f32; 4])], rellenar: impl FnOnce(&mut [f32])) {
-        let mut c = [caja[0].max(0.0), caja[1].max(0.0), caja[2].min(self.tam.0), caja[3].min(self.tam.1)];
+        // Lo que no cae en la superficie ni en ninguna emergente abierta, no existe.
+        let toca = |v: &[f32; 4]| caja[0] < v[2] && caja[2] > v[0] && caja[1] < v[3] && caja[3] > v[1];
+        let marco = [0.0, 0.0, self.tam.0, self.tam.1];
+        let marco = if toca(&marco) { marco } else { self.vistas.iter().copied().find(|v| toca(v)).unwrap_or(marco) };
+        let mut c = [caja[0].max(marco[0]), caja[1].max(marco[1]), caja[2].min(marco[2]), caja[3].min(marco[3])];
         for (_, r) in recortes {
             c = [c[0].max(r[0]), c[1].max(r[1]), c[2].min(r[2]), c[3].min(r[3])];
         }
@@ -398,6 +404,8 @@ pub struct NuevaLamina {
     /// Milihercios del monitor; 0 si no se sabe.
     pub mhz: i32,
     pub nombre: String,
+    /// Una emergente: cuál, qué trozo de la escena enseña (desde dónde) y cuánto mide.
+    pub vista: Option<(usize, (f32, f32), (f32, f32))>,
 }
 
 /// Una superficie de Wayland vista desde la GPU: su cadena de imágenes, a su
@@ -410,6 +418,7 @@ pub struct Lamina {
     pub escala: f32,
     /// La que espera a la pantalla y marca el ritmo; las demás no bloquean.
     pub marca_el_ritmo: bool,
+    pub vista: Option<(usize, (f32, f32), (f32, f32))>,
     superficie: wgpu::Surface<'static>,
     ventana: Box<dyn Ventana>,
     px: (u32, u32),
@@ -581,7 +590,7 @@ impl Gpu {
         });
         let (vistas_de_capa, grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, 1, 1);
         let mut l = Lamina {
-            id: n.id, nombre: n.nombre, mhz: n.mhz, escala: n.escala, marca_el_ritmo: true,
+            id: n.id, nombre: n.nombre, mhz: n.mhz, escala: n.escala, marca_el_ritmo: true, vista: n.vista,
             superficie: n.superficie, ventana: n.ventana, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas,
         };
         self.configurar(&mut l, tam);
@@ -590,6 +599,7 @@ impl Gpu {
 
     /// Al cambiar de escala, de tamaño o de papel en el ritmo.
     pub fn configurar(&self, l: &mut Lamina, tam: (f32, f32)) {
+        let tam = l.vista.map_or(tam, |v| v.2);
         let px = ((tam.0 * l.escala).round().max(1.0) as u32, (tam.1 * l.escala).round().max(1.0) as u32);
         self.superficie_configurar(l, px);
         if px != l.px {
@@ -659,6 +669,9 @@ impl Gpu {
     pub fn pintar(&self, l: &mut Lamina, d: &Dibujo, uniformes: &[f32]) -> bool {
         let mut u = uniformes.to_vec();
         u[3] = l.escala;
+        if let Some((_, origen, tam)) = l.vista {
+            (u[0], u[1], u[4], u[7]) = (tam.0, tam.1, origen.0, origen.1);
+        }
         self.cola.write_buffer(&l.uniformes, 0, bytemuck::cast_slice(&u));
         let marco = match l.superficie.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,

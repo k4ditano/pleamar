@@ -69,6 +69,8 @@ pub fn hilo(
     let mut primer_frame = true;
     let mut textos: Vec<String> = Vec::new();
     let mut repeticion: Option<(u32, u32)> = Some((400, 33));
+    // Cada emergente de la escena: si está abierta, dónde y con qué tamaño.
+    let mut emergentes: Vec<Option<[i32; 4]>> = Vec::new();
     let mut uniformes = [0f32; N_UNIFORMES];
     let mut tam = (720.0f32, 224.0f32);
     let mut region: Vec<[i32; 4]> = vec![[i32::MIN; 4]];
@@ -190,7 +192,7 @@ pub fn hilo(
                     let g = gpu.get_or_insert_with(|| Gpu::nueva(&instancia, &n.superficie));
                     // Una escena que pide «todo el ancho» mide lo que mida su monitor, y lo
                     // puede saber: `screen.width`.
-                    if escena.superficie.ancho == 0 {
+                    if escena.superficie.ancho == 0 && n.vista.is_none() {
                         tam.0 = n.tam.0 as f32;
                     }
                     for (k, (nombre, _)) in escena.hechos.iter().enumerate() {
@@ -233,6 +235,22 @@ pub fn hilo(
                     Some(i) => hechos[i] = v,
                     None => eprintln!("render · no conozco el hecho «{nombre}»"),
                 },
+                ARender::EmergenteCerrada(k) => {
+                    // Han pulsado fuera: primero se suelta lo que pintaba en ella, luego ella.
+                    laminas.retain(|l| l.vista.is_none_or(|v| v.0 != k));
+                    crate::plataforma::emergente(k, None);
+                    if let Some(g) = &gpu {
+                        repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
+                    }
+                    if let Some(abierta) = emergentes.get_mut(k) {
+                        *abierta = None;
+                    }
+                    if let Some(em) = escena.emergentes.get(k) {
+                        let h = em.abierta.0 as usize;
+                        hechos[h] = 0.0;
+                        let _ = a_logica.send(Evento::Hecho(escena.hechos[h].0, 0.0));
+                    }
+                }
                 ARender::Pregunta(nombre, a_quien) => {
                     let numero = |v: f32| if v.fract() == 0.0 { format!("{}", v as i64) } else { format!("{v}") };
                     let r = if let Some(i) = escena.hechos.iter().position(|h| h.0 == nombre) {
@@ -797,6 +815,33 @@ pub fn hilo(
             gesto = None;
         }
 
+        // Las emergentes: abiertas mientras su hecho sea verdad, donde y como digan
+        // sus expresiones. Si cambian de sitio o de tamaño estando abiertas, se rehacen.
+        emergentes.resize(escena.emergentes.len(), None);
+        dibujo.vistas.clear();
+        for (k, em) in escena.emergentes.iter().enumerate() {
+            let c = Ctx { props: &props, hechos: &hechos };
+            let quiere = (hechos[em.abierta.0 as usize] > 0.5 && !laminas.is_empty()).then(|| {
+                [em.en.0.evaluar(c).round() as i32, em.en.1.evaluar(c).round() as i32, em.tam.0.evaluar(c).round().max(1.0) as i32, em.tam.1.evaluar(c).round().max(1.0) as i32]
+            });
+            if quiere != emergentes[k] {
+                if emergentes[k].is_some() {
+                    laminas.retain(|l| l.vista.is_none_or(|v| v.0 != k));
+                    crate::plataforma::emergente(k, None);
+                    if let Some(g) = &gpu {
+                        repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
+                    }
+                }
+                if let Some(g) = quiere {
+                    crate::plataforma::emergente(k, Some((g, em.origen)));
+                }
+                emergentes[k] = quiere;
+            }
+            if let Some(g) = emergentes[k] {
+                dibujo.vistas.push([em.origen.0, em.origen.1, em.origen.0 + g[2] as f32, em.origen.1 + g[3] as f32]);
+            }
+        }
+
         // ── 3. pintar ───────────────────────────────────────────
         let bloqueada = logica_bloqueada.load(Ordering::Relaxed);
         let c = Ctx { props: &props, hechos: &hechos };
@@ -839,13 +884,15 @@ pub fn hilo(
             .collect();
         let cambia_la_region = cajas != region;
         if cambia_la_region {
-            for l in &laminas {
+            // Una emergente es toda suya: la región solo es cosa de las principales.
+            for l in laminas.iter().filter(|l| l.vista.is_none()) {
                 l.region_de_entrada(&cajas);
             }
             region = cajas;
         }
 
-        uniformes[..8].copy_from_slice(&[tam.0, tam.1, t_total, 1.0, if op.hud { 1.0 } else { 0.0 }, periodo_ms, if bloqueada { 1.0 } else { 0.0 }, 0.0]);
+        // El 4 y el 7 son el origen de la vista: cero en la principal; cada emergente pone el suyo.
+        uniformes[..8].copy_from_slice(&[tam.0, tam.1, t_total, 1.0, 0.0, periodo_ms, if bloqueada { 1.0 } else { 0.0 }, 0.0]);
         uniformes[8..].copy_from_slice(&historial);
         // La que marca el ritmo va la última: es la que espera a la pantalla.
         laminas.sort_by_key(|l| l.marca_el_ritmo);
@@ -915,7 +962,8 @@ pub fn hilo(
 /// presentan sin bloquear. Si esperasen todas, un monitor a 60 Hz frenaría a
 /// otro a 165.
 fn repartir_el_ritmo(g: &Gpu, laminas: &mut [Lamina], tam: (f32, f32), sin_vsync: bool) {
-    let rapida = laminas.iter().max_by_key(|l| l.mhz).map(|l| l.id);
+    // Una emergente nunca marca el ritmo: viene y va, y puede estar tapada.
+    let rapida = laminas.iter().filter(|l| l.vista.is_none()).max_by_key(|l| l.mhz).map(|l| l.id);
     for l in laminas.iter_mut() {
         let marca = !sin_vsync && Some(l.id) == rapida;
         if l.marca_el_ritmo != marca {

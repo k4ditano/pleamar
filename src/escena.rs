@@ -772,6 +772,22 @@ pub struct Escena {
     /// `keyboard: exclusive while open`: cuándo quiere el teclado.
     pub teclado_mientras: Option<Expr>,
     pub permisos: Permisos,
+    pub emergentes: Vec<Emergente>,
+}
+
+/// Una superficie que sale de la principal: un menú, una ficha. Lo que pinta
+/// es un trozo más de la escena —mismos muelles, mismas zonas, mismas reglas—,
+/// dibujado lejos, en `origen`; la superficie emergente es una ventana a ese trozo.
+#[derive(Clone, Debug)]
+pub struct Emergente {
+    pub nombre: &'static str,
+    /// Está abierta mientras este hecho sea verdad. Si el sistema la cierra
+    /// (han pulsado fuera), el render lo pone a falso.
+    pub abierta: HechoId,
+    /// Dónde sale, dentro de la superficie principal; y cuánto mide.
+    pub en: (Expr, Expr),
+    pub tam: (Expr, Expr),
+    pub origen: (f32, f32),
 }
 
 /// Lo que la lógica de esta escena puede tocar del sistema. **Sin declarar,
@@ -922,6 +938,8 @@ pub enum ARender {
     /// Cómo repite las teclas este usuario: a los cuántos ms empieza y cada cuántos
     /// sigue. `None`: las tiene sin repetición. Lo dice el sistema; si calla, 400 y 33.
     Repeticion(Option<(u32, u32)>),
+    /// El sistema ha cerrado una emergente: han pulsado fuera de ella.
+    EmergenteCerrada(usize),
     /// Desde fuera preguntan cuánto vale un hecho, un texto o una propiedad.
     Pregunta(&'static str, std::sync::mpsc::Sender<String>),
     /// Han soltado algo encima, arrastrado desde otra aplicación: (tipo, contenido).

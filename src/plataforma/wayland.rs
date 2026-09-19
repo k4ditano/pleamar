@@ -24,6 +24,10 @@ use smithay_client_toolkit::{
     },
     shell::{
         wlr_layer::{Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure},
+        xdg::{
+            popup::{Popup, PopupConfigure, PopupHandler},
+            XdgPositioner, XdgShell,
+        },
         WaylandSurface,
     },
 };
@@ -54,7 +58,8 @@ struct VentanaWayland {
     /// de serie de la última vez que entró: los dos los pone el hilo de Wayland.
     cursores: Arc<Mutex<Option<WpCursorShapeDeviceV1>>>,
     serie: Arc<AtomicU32>,
-    capa: LayerSurface,
+    /// Una emergente no tiene: el teclado es cosa de su madre.
+    capa: Option<LayerSurface>,
 }
 
 fn interactividad(t: Teclado) -> KeyboardInteractivity {
@@ -78,7 +83,9 @@ impl Ventana for VentanaWayland {
 
     /// Vale con el siguiente frame que se presente, como la región de entrada.
     fn teclado(&self, t: Teclado) {
-        self.capa.set_keyboard_interactivity(interactividad(t));
+        if let Some(capa) = &self.capa {
+            capa.set_keyboard_interactivity(interactividad(t));
+        }
     }
 
     fn cursor(&self, c: Cursor) {
@@ -231,6 +238,140 @@ impl Estado {
     }
 }
 
+// ── emergentes ────────────────────────────────────────────────────
+
+/// Lo que hace falta para abrir una emergente desde el hilo del render, que es
+/// quien sabe cuándo toca. Los objetos de Wayland se pueden usar desde cualquier
+/// hilo; lo que les pase después llega al de siempre, por `PopupHandler`.
+struct Emergentes {
+    qh: QueueHandle<Estado>,
+    compositor: CompositorState,
+    xdg: XdgShell,
+    conexion: Connection,
+    instancia: wgpu::Instance,
+    ventanillas: Option<WpViewporter>,
+    escalas: Option<WpFractionalScaleManagerV1>,
+    cursores: Arc<Mutex<Option<WpCursorShapeDeviceV1>>>,
+    serie: Arc<AtomicU32>,
+    /// De quién cuelga la próxima: la superficie donde se vio el ratón por última vez.
+    madre: Mutex<Option<Madre>>,
+    asiento: Mutex<Option<wl_seat::WlSeat>>,
+    /// La última pulsación: con ella se puede pedir que un clic fuera la cierre.
+    pulsacion: Mutex<Option<(u32, std::time::Instant)>>,
+    abiertas: Mutex<Vec<Abierta>>,
+    siguiente_id: AtomicU32,
+}
+
+#[derive(Clone)]
+struct Madre {
+    capa: LayerSurface,
+    escala: f32,
+    nombre: String,
+    mhz: i32,
+}
+
+struct Abierta {
+    k: usize,
+    id: u32,
+    origen: (f32, f32),
+    tam: (u32, u32),
+    // Por orden: primero se suelta lo que pinta, luego la superficie.
+    pendiente: Option<wgpu::Surface<'static>>,
+    ventanilla: Option<WpViewport>,
+    _escala: Option<WpFractionalScaleV1>,
+    madre: Madre,
+    popup: Popup,
+}
+
+static EMERGENTES: std::sync::OnceLock<Emergentes> = std::sync::OnceLock::new();
+
+pub fn emergente(k: usize, que: Option<([i32; 4], (f32, f32))>) {
+    let Some(e) = EMERGENTES.get() else { return };
+    let Some(([x, y, w, h], origen)) = que else {
+        e.abiertas.lock().unwrap().retain(|a| a.k != k);
+        let _ = e.conexion.flush();
+        return;
+    };
+    let Some(madre) = e.madre.lock().unwrap().clone() else { return };
+    let abrir = || -> Option<Abierta> {
+        let donde = XdgPositioner::new(&e.xdg).ok()?;
+        donde.set_size(w, h);
+        donde.set_anchor_rect(x, y, 1, 1);
+        {
+            use smithay_client_toolkit::reexports::protocols::xdg::shell::client::xdg_positioner::{Anchor, ConstraintAdjustment, Gravity};
+            donde.set_anchor(Anchor::TopLeft);
+            donde.set_gravity(Gravity::BottomRight);
+            // Si no cabe en la pantalla, que se deslice hasta que quepa.
+            donde.set_constraint_adjustment(ConstraintAdjustment::SlideX | ConstraintAdjustment::SlideY);
+        }
+        let wl = e.compositor.create_surface(&e.qh);
+        let popup = Popup::from_surface(None, &donde, &e.qh, wl, &e.xdg).ok()?;
+        madre.capa.get_popup(popup.xdg_popup());
+        // Si se abre por un clic de hace un momento, que un clic fuera la cierre.
+        if let (Some(asiento), Some((serie, cuando))) = (e.asiento.lock().unwrap().as_ref(), *e.pulsacion.lock().unwrap()) {
+            if cuando.elapsed() < std::time::Duration::from_millis(1500) {
+                popup.xdg_popup().grab(asiento, serie);
+            }
+        }
+        let id = 1000 + e.siguiente_id.fetch_add(1, Ordering::Relaxed);
+        let ventanilla = e.ventanillas.as_ref().map(|v| v.get_viewport(popup.wl_surface(), &e.qh, Mudo));
+        let escala = e.escalas.as_ref().map(|m| m.get_fractional_scale(popup.wl_surface(), &e.qh, EscalaDe(id)));
+        popup.wl_surface().commit();
+        let superficie = unsafe {
+            e.instancia
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: Some(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(NonNull::new(e.conexion.backend().display_ptr() as *mut _).unwrap()))),
+                    raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(NonNull::new(popup.wl_surface().id().as_ptr() as *mut _).unwrap())),
+                })
+                .ok()?
+        };
+        Some(Abierta { k, id, origen, tam: (w as u32, h as u32), pendiente: Some(superficie), ventanilla, _escala: escala, madre: madre.clone(), popup })
+    };
+    match abrir() {
+        Some(a) => e.abiertas.lock().unwrap().push(a),
+        None => eprintln!("emergente · el compositor no ha dejado abrirla"),
+    }
+    let _ = e.conexion.flush();
+}
+
+/// Ventanas normales no abrimos todavía (es lo que queda de S7), pero el
+/// protocolo de las emergentes viene en el mismo paquete y pide que esto exista.
+impl smithay_client_toolkit::shell::xdg::window::WindowHandler for Estado {
+    fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &smithay_client_toolkit::shell::xdg::window::Window) {}
+    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &smithay_client_toolkit::shell::xdg::window::Window, _: smithay_client_toolkit::shell::xdg::window::WindowConfigure, _: u32) {}
+}
+
+impl PopupHandler for Estado {
+    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, popup: &Popup, _: PopupConfigure) {
+        let Some(e) = EMERGENTES.get() else { return };
+        let mut abiertas = e.abiertas.lock().unwrap();
+        let Some(a) = abiertas.iter_mut().find(|a| a.popup.wl_surface() == popup.wl_surface()) else { return };
+        if let Some(v) = &a.ventanilla {
+            v.set_destination(a.tam.0 as i32, a.tam.1 as i32);
+        }
+        if let Some(superficie) = a.pendiente.take() {
+            let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
+                id: a.id,
+                superficie,
+                ventana: Box::new(VentanaWayland { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursores: e.cursores.clone(), serie: e.serie.clone(), capa: None }),
+                escala: a.madre.escala,
+                tam: a.tam,
+                mhz: a.madre.mhz,
+                nombre: format!("{} (emergente)", a.madre.nombre),
+                vista: Some((a.k, a.origen, (a.tam.0 as f32, a.tam.1 as f32))),
+            })));
+        }
+    }
+
+    /// Han pulsado fuera, o el compositor la ha quitado. El render suelta lo suyo y la cierra.
+    fn done(&mut self, _: &Connection, _: &QueueHandle<Self>, popup: &Popup) {
+        let Some(e) = EMERGENTES.get() else { return };
+        if let Some(a) = e.abiertas.lock().unwrap().iter().find(|a| a.popup.wl_surface() == popup.wl_surface()) {
+            let _ = self.a_render.send(ARender::EmergenteCerrada(a.k));
+        }
+    }
+}
+
 /// Pone las superficies que pida la escena y atiende a Wayland hasta que
 /// alguien cierre. Se queda con el hilo que la llama.
 pub fn atender(pide: Superficie, alto_extra: u32, instancia: wgpu::Instance, a_render: Sender<ARender>) {
@@ -263,6 +404,27 @@ pub fn atender(pide: Superficie, alto_extra: u32, instancia: wgpu::Instance, a_r
         salir: false,
         a_render,
     };
+    match XdgShell::bind(&globales, &qh) {
+        Ok(xdg) => {
+            let _ = EMERGENTES.set(Emergentes {
+                qh: qh.clone(),
+                compositor: estado.compositor.clone(),
+                xdg,
+                conexion: conexion.clone(),
+                instancia: estado.instancia.clone(),
+                ventanillas: estado.ventanillas.clone(),
+                escalas: estado.escalas.clone(),
+                cursores: estado.cursores.clone(),
+                serie: estado.serie.clone(),
+                madre: Mutex::default(),
+                asiento: Mutex::default(),
+                pulsacion: Mutex::default(),
+                abiertas: Mutex::default(),
+                siguiente_id: AtomicU32::new(0),
+            });
+        }
+        Err(_) => eprintln!("aviso: el compositor no tiene xdg-shell; no habrá superficies emergentes"),
+    }
     if estado.ventanillas.is_none() || estado.escalas.is_none() {
         eprintln!("aviso: el compositor no da escala fraccional; se pintará a la escala entera que diga");
     }
@@ -300,14 +462,19 @@ impl LayerShellHandler for Estado {
             v.set_destination(tam.0 as i32, tam.1 as i32);
         }
         if let Some((superficie, nombre, mhz)) = p.pendiente.take() {
+            if let Some(em) = EMERGENTES.get() {
+                // Mientras no se vea el ratón en ninguna, las emergentes cuelgan de la primera.
+                em.madre.lock().unwrap().get_or_insert_with(|| Madre { capa: p.capa.clone(), escala: p.escala, nombre: nombre.clone(), mhz });
+            }
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: p.id,
                 superficie,
-                ventana: Box::new(VentanaWayland { wl: p.capa.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: p.capa.clone() }),
+                ventana: Box::new(VentanaWayland { wl: p.capa.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: Some(p.capa.clone()) }),
                 escala: p.escala,
                 tam,
                 mhz,
                 nombre,
+                vista: None,
             })));
         }
     }
@@ -316,7 +483,24 @@ impl LayerShellHandler for Estado {
 impl PointerHandler for Estado {
     fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, eventos: &[PointerEvent]) {
         for e in eventos {
-            let (x, y) = (e.position.0 as f32, e.position.1 as f32);
+            let (mut x, mut y) = (e.position.0 as f32, e.position.1 as f32);
+            if let Some(em) = EMERGENTES.get() {
+                // Dentro de una emergente, el ratón está en el trozo de escena que ella enseña.
+                if let Some(a) = em.abiertas.lock().unwrap().iter().find(|a| a.popup.wl_surface() == &e.surface) {
+                    (x, y) = (x + a.origen.0, y + a.origen.1);
+                } else if let Some(p) = self.puestas.iter().find(|p| p.capa.wl_surface() == &e.surface) {
+                    let info = self.salidas.info(&p.salida);
+                    *em.madre.lock().unwrap() = Some(Madre {
+                        capa: p.capa.clone(),
+                        escala: p.escala,
+                        nombre: info.as_ref().and_then(|i| i.name.clone()).unwrap_or_default(),
+                        mhz: info.as_ref().and_then(|i| i.modes.iter().find(|m| m.current).map(|m| m.refresh_rate)).unwrap_or(0),
+                    });
+                }
+                if let PointerEventKind::Press { serial, .. } = e.kind {
+                    *em.pulsacion.lock().unwrap() = Some((serial, std::time::Instant::now()));
+                }
+            }
             match e.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                     if let PointerEventKind::Enter { serial } = e.kind {
@@ -466,6 +650,9 @@ impl SeatHandler for Estado {
     }
     fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
     fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, asiento: wl_seat::WlSeat, c: Capability) {
+        if let Some(em) = EMERGENTES.get() {
+            em.asiento.lock().unwrap().get_or_insert_with(|| asiento.clone());
+        }
         if c == Capability::Pointer && self.puntero.is_none() {
             self.puntero = self.asientos.get_pointer(qh, &asiento).ok();
             if let (Some(p), Some(m)) = (&self.puntero, &self.formas_de_cursor) {

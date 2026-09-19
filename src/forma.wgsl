@@ -8,7 +8,7 @@
 
 struct U {
     cab: vec4<f32>,    // ancho y alto lógicos, tiempo, escala (píxeles de verdad por píxel lógico)
-    hud: vec4<f32>,    // -, periodo en ms, lógica bloqueada, -
+    hud: vec4<f32>,    // origen x, periodo en ms, lógica bloqueada, origen y: desde dónde mira esta superficie la escena
     tiempos: array<vec4<f32>, 30>,
 };
 
@@ -72,7 +72,8 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> Salida 
     let c = elementos[i].caja;
     let p = mix(c.xy, c.zw, esquinas[v]);
     var s: Salida;
-    s.pos = vec4<f32>(p.x / u.cab.x * 2.0 - 1.0, 1.0 - p.y / u.cab.y * 2.0, 0.0, 1.0);
+    let q = p - u.hud.xw;
+    s.pos = vec4<f32>(q.x / u.cab.x * 2.0 - 1.0, 1.0 - q.y / u.cab.y * 2.0, 0.0, 1.0);
     s.elemento = i;
     return s;
 }
@@ -170,7 +171,7 @@ fn instrumentos(p: vec2<f32>) -> vec4<f32> {
 @fragment
 fn fs(e: Salida) -> @location(0) vec4<f32> {
     // La posición llega en píxeles de verdad; la escena piensa en lógicos.
-    let p = e.pos.xy / u.cab.w;
+    let p = e.pos.xy / u.cab.w + u.hud.xw;
     let el = elementos[e.elemento];
     let tipo = u32(el.cab.x);
     if (tipo == INSTRUMENTOS) { return instrumentos(p); }

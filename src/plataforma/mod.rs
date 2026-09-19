@@ -97,6 +97,31 @@ pub fn orden(nombre: &str, args: &[Valor]) -> Result<(), String> {
     Err(format!("este sistema no sabe hacer «{nombre}» todavía"))
 }
 
+/// Preguntarle algo a un servicio y esperar la respuesta: `tray.menu`, de quién.
+/// Puede tardar —hay otra aplicación al otro lado—, y por eso es cosa de la
+/// lógica, que puede esperar sin que se note.
+pub fn consulta(nombre: &str, args: &[Valor]) -> Result<Valor, String> {
+    #[cfg(target_os = "linux")]
+    if nombre.starts_with("tray.") {
+        return bandeja::consulta(nombre, args);
+    }
+    let _ = args;
+    Err(format!("este sistema no sabe contestar a «{nombre}» todavía"))
+}
+
+/// Abre o cierra la emergente número `k` de la escena: una superficie hija de
+/// la principal, en `[x, y, ancho, alto]` dentro de ella, que enseña la escena
+/// desde `origen`. La lámina le llega al render como las demás; si el sistema la
+/// cierra (han pulsado fuera), avisa con `ARender::EmergenteCerrada`.
+///
+/// En Wayland, un `xdg_popup`. En Windows será una ventana sin marco con
+/// `WS_EX_NOACTIVATE`; en macOS, un `NSPanel`.
+pub fn emergente(k: usize, que: Option<([i32; 4], (f32, f32))>) {
+    #[cfg(target_os = "linux")]
+    wayland::emergente(k, que);
+    let _ = (k, que);
+}
+
 /// Que un proceso que lanzamos no nos sobreviva, ni aunque nos maten a la
 /// fuerza. En Linux se lo pedimos al núcleo; en Windows será un Job Object.
 pub fn morir_con_el_padre(orden: &mut std::process::Command) {

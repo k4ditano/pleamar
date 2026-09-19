@@ -836,6 +836,7 @@ impl<'a> Obra<'a> {
                     *recortes += 1;
                 }
                 "group" => self.grupo_con_propiedades(n, n.cuerpo.as_deref().unwrap_or(&[]))?,
+                "popup" => self.emergente(n, &mut c)?,
                 "component" => self.declarar_componente(n, &mut c)?,
                 "repeat" => self.repetir(n, &mut c)?,
                 "row" | "column" => self.reparto(n, &mut c, palabra == "row")?,
@@ -907,6 +908,40 @@ impl<'a> Obra<'a> {
             self.bajo.pop();
             self.e.pintar(Instr::Transformar(None));
         }
+        Ok(())
+    }
+
+    /// `popup menu { at: x, y; size: w, h; open: menu_open; … }`: una superficie
+    /// hija. Lo de dentro se dibuja con (0, 0) en su esquina, como si fuera otra
+    /// escena; en realidad es un trozo de esta, puesto lejos.
+    fn emergente(&mut self, n: &'a Nodo, c: &mut Cur) -> R<()> {
+        let local = c.id("un nombre para la emergente")?;
+        let nombre = self.declarar(&local);
+        if !self.entornos.is_empty() || !self.bajo.is_empty() {
+            return Err(Fallo::en(n.linea, n.col, "una `popup` va en el nivel de la escena, no dentro de un grupo ni de un componente"));
+        }
+        let mut p = self.propiedades(n, &["at", "size", "open"])?;
+        let falta = |q: &str| Fallo::en(n.linea, n.col, format!("a esta `popup` le falta «{q}»"));
+        let en = self.punto(p.get_mut("at").ok_or_else(|| falta("at"))?)?;
+        let tam = self.punto(p.get_mut("size").ok_or_else(|| falta("size"))?)?;
+        let abierta = {
+            let c = p.get_mut("open").ok_or_else(|| falta("open"))?;
+            let h = self.global(&c.id("el hecho que la abre")?);
+            match self.hechos.get(&h) {
+                Some(h) => *h,
+                None => return self.desconocido(c, "ningún hecho", &h, self.hechos.keys().collect()),
+            }
+        };
+        // Cada una en su sitio, lejos de la superficie y de las demás.
+        let origen = (0.0, 10000.0 * (self.e.emergentes.len() + 1) as f32);
+        let t = Transformacion::en((origen.0.into(), origen.1.into()));
+        let t = Transformacion { mueve: (origen.0.into(), origen.1.into()), ..t };
+        self.e.pintar(Instr::Transformar(Some(t.clone())));
+        self.bajo.push(t);
+        self.grupo(n.cuerpo.as_deref().unwrap_or(&[]).iter());
+        self.bajo.pop();
+        self.e.pintar(Instr::Transformar(None));
+        self.e.emergentes.push(Emergente { nombre: fijo(&nombre), abierta, en, tam, origen });
         Ok(())
     }
 

@@ -218,6 +218,65 @@ pub fn servicio(avisar: Box<dyn Fn(Valor) + Send>) -> bool {
     }).is_ok()
 }
 
+// ── los menús ─────────────────────────────────────────────────────
+//
+// Otro acuerdo, `com.canonical.dbusmenu`: la aplicación publica su menú como un
+// árbol y se le dice qué se ha pulsado. Aquí solo se lee y se avisa; pintarlo es
+// cosa de la escena, que para eso tiene `popup`.
+
+const MENU: &str = "com.canonical.dbusmenu";
+
+fn menu_de(c: &Connection, clave: &str) -> Result<Proxy<'static>, String> {
+    let p = elemento(c, clave).ok_or("ese icono ya no está")?;
+    let ruta: zbus::zvariant::OwnedObjectPath = p.get_property("Menu").map_err(|_| "ese icono no tiene menú")?;
+    let (servicio, _) = partir(clave);
+    zbus::blocking::proxy::Builder::new(c).destination(servicio.to_owned()).map_err(|e| e.to_string())?.path(ruta).map_err(|e| e.to_string())?.interface(MENU).map_err(|e| e.to_string())?.cache_properties(CacheProperties::No).build().map_err(|e| e.to_string())
+}
+
+/// Un nodo del árbol llega como (id, propiedades, hijos), y cada hijo, envuelto
+/// en un variante, es otro igual.
+fn nodo(v: &zbus::zvariant::Value) -> Option<Valor> {
+    use zbus::zvariant::Value;
+    let v = if let Value::Value(dentro) = v { dentro } else { v };
+    let Value::Structure(s) = v else { return None };
+    let [Value::I32(id), Value::Dict(props), Value::Array(hijos)] = s.fields() else { return None };
+    let texto = |k: &str| props.get::<&str, &str>(&k).ok().flatten().map(str::to_owned);
+    let si = |k: &str| props.get::<&str, bool>(&k).ok().flatten();
+    if si("visible") == Some(false) {
+        return None;
+    }
+    let hijos: Vec<Valor> = hijos.iter().filter_map(nodo).collect();
+    // `_Archivo` marca la letra del atajo; `__` es un guion bajo de verdad.
+    let etiqueta = texto("label").unwrap_or_default().replace("__", "\u{1}").replace('_', "").replace('\u{1}', "_");
+    let marca = texto("toggle-type").filter(|t| !t.is_empty());
+    let mut m = vec![
+        ("id".to_owned(), Valor::Num(*id as f64)),
+        ("label".to_owned(), Valor::Texto(etiqueta)),
+        ("enabled".to_owned(), Valor::Si(si("enabled").unwrap_or(true))),
+        ("separator".to_owned(), Valor::Si(texto("type").as_deref() == Some("separator"))),
+        ("children".to_owned(), Valor::Lista(hijos)),
+    ];
+    if marca.is_some() {
+        m.push(("checked".to_owned(), Valor::Si(props.get::<&str, i32>(&"toggle-state").ok().flatten() == Some(1))));
+    }
+    Some(Valor::Mapa(m))
+}
+
+/// `sys.ask("tray.menu", key)` → `{ { id, label, enabled, separator, checked, children }, … }`
+pub fn consulta(que: &str, args: &[Valor]) -> Result<Valor, String> {
+    let c = CONEXION.get().ok_or("la bandeja no está en marcha: falta sys.watch(\"tray\", …)")?;
+    let ("tray.menu", [Valor::Texto(clave)]) = (que, args) else { return Err(format!("«{que}» no se pregunta así: tray.menu(key)")) };
+    let menu = menu_de(c, clave)?;
+    // Muchos no rellenan su menú hasta que se les dice que se va a enseñar.
+    let _ = menu.call_method("AboutToShow", &(0i32,));
+    let respuesta = menu.call_method("GetLayout", &(0i32, -1i32, Vec::<&str>::new())).map_err(|e| e.to_string())?;
+    let cuerpo = respuesta.body();
+    // De la raíz solo interesan sus hijos: ella misma no es nada que se pueda pulsar.
+    type Raiz = (i32, std::collections::HashMap<String, zbus::zvariant::OwnedValue>, Vec<zbus::zvariant::OwnedValue>);
+    let (_, (_, _, hijos)): (u32, Raiz) = cuerpo.deserialize().map_err(|e| format!("no entiendo el menú que ha mandado esa aplicación: {e}"))?;
+    Ok(Valor::Lista(hijos.iter().filter_map(|h| nodo(h)).collect()))
+}
+
 /// `tray.activate(key)` —el clic de siempre—, `tray.secondary(key)` —el del
 /// medio—, `tray.context(key)` —que la aplicación enseñe su menú, si sabe— y
 /// `tray.scroll(key, muescas)`.
@@ -231,7 +290,13 @@ pub fn orden(que: &str, args: &[Valor]) -> Result<(), String> {
         ("tray.secondary", []) => p.call_method("SecondaryActivate", &(0i32, 0i32)),
         ("tray.context", []) => p.call_method("ContextMenu", &(0i32, 0i32)),
         ("tray.scroll", [Valor::Num(d)]) => p.call_method("Scroll", &(*d as i32 * 120, "vertical")),
-        _ => return Err(format!("«{que}» no existe: tray.activate, tray.secondary, tray.context, tray.scroll")),
+        // Han elegido algo de su menú: el `id` es el que venía en `tray.menu`.
+        ("tray.menu_click", [Valor::Num(id)]) => {
+            let menu = menu_de(c, clave)?;
+            let ahora = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
+            return menu.call_method("Event", &(*id as i32, "clicked", zbus::zvariant::Value::I32(0), ahora)).map(|_| ()).map_err(|e| e.to_string());
+        }
+        _ => return Err(format!("«{que}» no existe: tray.activate, tray.secondary, tray.context, tray.scroll, tray.menu_click")),
     };
     hecho.map(|_| ()).map_err(|e| e.to_string())
 }
