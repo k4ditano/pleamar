@@ -88,7 +88,7 @@ impl Guion for Cara {
         e.pintar(Instr::Recorte(Some((cuerpo, 3.0))));
 
         // La cara entera gira con la cabeza, alrededor del centro de la bolita.
-        e.pintar(Instr::Transformar(Some(Transformacion { pivote: (CX.into(), cy.clone()), giro: giro * (std::f32::consts::PI / 180.0) })));
+        e.pintar(Instr::Transformar(Some(Transformacion::en((CX.into(), cy.clone())).giro(giro * (std::f32::consts::PI / 180.0)))));
         let mira = (mira_x * S + puntero_x, mira_y * S + puntero_y);
         let ojo_x = |lado: f32| CX + mira.0.clone() + hueco * (0.5 * S * lado);
         let ojo_y = |_lado: f32| cy.clone() + mira.1.clone();

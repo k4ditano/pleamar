@@ -39,7 +39,7 @@ use wayland_client::{
 };
 
 const AYUDA: &str = "pleamar [opciones]
-  --escena NOMBRE     marea (por defecto), isla, cara o enjambre (PLEAMAR_N formas)
+  --escena NOMBRE     marea (por defecto), isla, cara, muestrario o enjambre (PLEAMAR_N formas)
   --pantalla NOMBRE   monitor donde aparecer (por defecto HDMI-A-1)
   --bloqueo MS        lo que se bloquea la lógica tras cada decisión (600)
   --ingenuo           la lógica bloquea el hilo que pinta, como en QtQuick
@@ -172,6 +172,7 @@ fn main() {
         "marea" => Box::<escenas::marea::Marea>::default(),
         "isla" => Box::<escenas::isla::Isla>::default(),
         "cara" => Box::<escenas::cara::Cara>::default(),
+        "muestrario" => Box::<escenas::muestrario::Muestrario>::default(),
         "enjambre" => Box::<escenas::enjambre::Enjambre>::default(),
         otra => {
             eprintln!("no conozco la escena «{otra}»\n{AYUDA}");

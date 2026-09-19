@@ -192,7 +192,7 @@ operador!(Div, div, Entre);
 
 pub type Punto = (Expr, Expr);
 
-pub use crate::formas::Forma;
+pub use crate::formas::{Afin, Forma};
 
 #[derive(Clone, Debug)]
 pub struct Sombra {
@@ -223,12 +223,41 @@ impl From<Color> for Pintura {
     }
 }
 
-/// Girar todo lo que venga después alrededor de un punto: la cabeza entera, con
-/// sus ojos.
+/// Girar, escalar y mover todo lo que venga después, alrededor de un punto. Se
+/// compone con las que ya hubiera: la cabeza gira, y dentro de ella un ojo
+/// puede girar por su cuenta.
 #[derive(Clone, Debug)]
 pub struct Transformacion {
     pub pivote: Punto,
     pub giro: Expr,
+    pub escala: Punto,
+    pub mueve: Punto,
+}
+
+impl Transformacion {
+    pub fn en(pivote: Punto) -> Self {
+        Transformacion { pivote, giro: 0.0.into(), escala: (1.0.into(), 1.0.into()), mueve: (0.0.into(), 0.0.into()) }
+    }
+    pub fn giro(mut self, radianes: impl Into<Expr>) -> Self {
+        self.giro = radianes.into();
+        self
+    }
+    pub fn escala(mut self, x: impl Into<Expr>, y: impl Into<Expr>) -> Self {
+        self.escala = (x.into(), y.into());
+        self
+    }
+    pub fn mueve(mut self, x: impl Into<Expr>, y: impl Into<Expr>) -> Self {
+        self.mueve = (x.into(), y.into());
+        self
+    }
+    pub fn afin(&self, c: Ctx) -> Afin {
+        Afin::nueva(
+            (self.pivote.0.evaluar(c), self.pivote.1.evaluar(c)),
+            self.giro.evaluar(c),
+            (self.escala.0.evaluar(c), self.escala.1.evaluar(c)),
+            (self.mueve.0.evaluar(c), self.mueve.1.evaluar(c)),
+        )
+    }
 }
 
 pub fn color(r: f32, g: f32, b: f32) -> Color {
@@ -249,8 +278,13 @@ pub enum Instr {
     /// Todo lo que venga después se recorta a esta forma, además de a las que
     /// ya hubiera (hasta cuatro). `None` quita la última.
     Recorte(Option<(Forma, f32)>),
-    /// Todo lo que venga después gira con esto. `None` lo quita.
+    /// Todo lo que venga después se transforma con esto, además de con lo que
+    /// ya hubiera. `None` quita la última.
     Transformar(Option<Transformacion>),
+    /// Todo lo que venga después se pinta aparte y se funde como UNA cosa con
+    /// esta opacidad: lo de delante no deja ver lo de detrás a medio fundido.
+    /// `None` cierra el grupo.
+    Opacidad(Option<Expr>),
     /// Una forma suelta, de color plano.
     Plano { forma: Forma, color: Color, alfa: Expr },
     /// Un trozo del atlas de la escena, colocado en pantalla.
@@ -265,6 +299,8 @@ pub enum Comportamiento {
     Parpadeo { prop: PropId, cada: (f32, f32), dura: f32 },
     /// prop = amplitud · sin(frecuencia · t). Con amplitud 0 no cuesta nada.
     Onda { prop: PropId, frecuencia: f32, amplitud: Expr },
+    /// prop += por_segundo · dt, sin fin: una aguja que da vueltas.
+    Avance { prop: PropId, por_segundo: Expr },
     /// Dos propiedades que tiran hacia el puntero, con su propio muelle.
     Mirada { x: PropId, y: PropId, centro: Punto, alcance: (f32, f32), distancia: f32, reposo: Punto },
 }
@@ -288,6 +324,17 @@ pub struct Zona {
     pub id: &'static str,
     pub forma: Forma,
     pub activa: Expr,
+    /// Las transformaciones bajo las que vive, de fuera adentro: lo que se ve
+    /// girado se pulsa girado.
+    pub bajo: Vec<Transformacion>,
+}
+
+impl Zona {
+    pub fn contiene(&self, c: Ctx, x: f32, y: f32) -> bool {
+        let mut p = self.forma.aplanar(c);
+        p.afin = self.bajo.iter().fold(Afin::IDENTIDAD, |a, t| a.por(t.afin(c)));
+        p.distancia(x, y) < 0.0
+    }
 }
 
 // ── capas: quién gana ───────────────────────────────────────────
@@ -528,7 +575,10 @@ impl Escena {
         SucesoId(self.sucesos.len() as u16 - 1)
     }
     pub fn zona(&mut self, id: &'static str, forma: Forma, activa: impl Into<Expr>) -> ZonaId {
-        self.zonas.push(Zona { id, forma, activa: activa.into() });
+        self.zona_bajo(id, forma, activa, vec![])
+    }
+    pub fn zona_bajo(&mut self, id: &'static str, forma: Forma, activa: impl Into<Expr>, bajo: Vec<Transformacion>) -> ZonaId {
+        self.zonas.push(Zona { id, forma, activa: activa.into(), bajo });
         ZonaId(self.zonas.len() as u16 - 1)
     }
     /// Las reclamaciones van de más a menos prioridad; la última debería ser

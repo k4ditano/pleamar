@@ -15,6 +15,7 @@ cargo build --release
 ./target/release/pleamar                 # pasa el ratón por la bolita; botón derecho la cierra
 ./target/release/pleamar --escena isla   # otra escena, el mismo render
 ./target/release/pleamar --escena cara   # la cara de Marea: capas, gestos y su guion
+./target/release/pleamar --escena muestrario   # todo lo que el render sabe pintar, a la vista
 ./target/release/pleamar --demo          # abre y cierra sola
 ./target/release/pleamar --ingenuo       # lo mismo con la lógica en el hilo que pinta
 ```
@@ -64,6 +65,7 @@ El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
 | `logica.rs` | Donde corre un `Guion`: recibe eventos, declara transiciones y alarmas, y se bloquea a propósito. |
 | `escenas/marea.rs` | La bolita y su tarjeta: 12 propiedades, 12 instrucciones, 4 zonas. |
 | `escenas/isla.rs` | Una isla como la de k4 que suelta una gota. Su lógica no decide nada: dos capas y tres reglas. |
+| `escenas/muestrario.rs` | Degradado y borde, un reloj con tres transformaciones anidadas, una textura girada y fundir un grupo frente a fundir sus piezas. |
 | `escenas/cara.rs` | La cara de Marea: `capa forma` (rec > aviso > contenta > lupa > ojos) y tres de sus gestos, fotograma a fotograma. |
 | `texto.rs` | Texto pintado una vez a un atlas: el papel del «contenido de un plugin». |
 

@@ -155,6 +155,41 @@ pub fn hilo(
         multiview_mask: None,
         cache: None,
     });
+    // Las capas donde se pintan aparte los grupos con opacidad. Mientras se
+    // pinta EN una no se puede leer de ellas, así que ese rato se enlaza una
+    // de mentira.
+    let capas_de = |ancho: u32, alto: u32| {
+        let t = dispositivo.create_texture(&wgpu::TextureDescriptor {
+            label: Some("capas"),
+            size: wgpu::Extent3d { width: ancho, height: alto, depth_or_array_layers: MAX_CAPAS as u32 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: formato,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let todas = t.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
+        let cada: Vec<wgpu::TextureView> = (0..MAX_CAPAS as u32)
+            .map(|k| {
+                t.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: k,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                })
+            })
+            .collect();
+        let grupo = dispositivo.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &tuberia.get_bind_group_layout(1),
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&todas) }],
+        });
+        (cada, grupo)
+    };
+    let (vistas_de_capa, grupo_capas) = capas_de(ANCHO, ALTO);
+    let (_, grupo_sin_capas) = capas_de(1, 1);
+
     // El atlas cambia con la escena, y con él el grupo de enlaces.
     let enlazar = |atlas: &Lienzo| {
         let tam = wgpu::Extent3d { width: atlas.ancho as u32, height: atlas.alto as u32, depth_or_array_layers: 1 };
@@ -336,7 +371,7 @@ pub fn hilo(
         {
             let c = Ctx { props: &props, hechos: &hechos };
             for (k, (z, estaba)) in escena.zonas.iter().zip(dentro.iter_mut()).enumerate() {
-                let esta = z.activa.es_verdad(c) && puntero.is_some_and(|(x, y)| z.forma.distancia(c, x, y) < 0.0);
+                let esta = z.activa.es_verdad(c) && puntero.is_some_and(|(x, y)| z.contiene(c, x, y));
                 if esta != *estaba {
                     *estaba = esta;
                     bordes.push((esta, k));
@@ -541,6 +576,12 @@ pub fn hilo(
                     props[prop.0 as usize].fijar(a * (t_total * frecuencia).sin());
                     vivo |= a.abs() > 0.01;
                 }
+                Comportamiento::Avance { prop, por_segundo } => {
+                    let v = por_segundo.evaluar(Ctx { props: &props, hechos: &hechos });
+                    let a = &mut props[prop.0 as usize];
+                    a.fijar(a.x + v * dt);
+                    vivo |= v.abs() > 1e-4;
+                }
                 Comportamiento::Mirada { x, y, centro, alcance, distancia, reposo } => {
                     let c = Ctx { props: &props, hechos: &hechos };
                     let (mx, my) = match puntero {
@@ -643,11 +684,11 @@ pub fn hilo(
         };
         let vista = marco.texture.create_view(&Default::default());
         let mut codificador = dispositivo.create_command_encoder(&Default::default());
-        {
+        let pase_a = |codificador: &mut wgpu::CommandEncoder, destino: &wgpu::TextureView, capas: &wgpu::BindGroup, tramos: &[std::ops::Range<u32>]| {
             let mut pase = codificador.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &vista,
+                    view: destino,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
@@ -659,8 +700,22 @@ pub fn hilo(
             });
             pase.set_pipeline(&tuberia);
             pase.set_bind_group(0, &grupo, &[]);
-            pase.draw(0..6, 0..dibujo.n_elementos() as u32);
+            pase.set_bind_group(1, capas, &[]);
+            for t in tramos.iter().filter(|t| !t.is_empty()) {
+                pase.draw(0..6, t.clone());
+            }
+        };
+        // Primero los grupos con opacidad, cada uno a su capa…
+        let mut principal: Vec<std::ops::Range<u32>> = Vec::new();
+        let mut desde = 0u32;
+        for (tramo, capa) in &dibujo.apartes {
+            pase_a(&mut codificador, &vistas_de_capa[*capa], &grupo_sin_capas, std::slice::from_ref(tramo));
+            principal.push(desde..tramo.start);
+            desde = tramo.end;
         }
+        principal.push(desde..dibujo.n_elementos() as u32);
+        // …y luego todo lo demás, con las capas ya hechas entre medias.
+        pase_a(&mut codificador, &vista, &grupo_capas, &principal);
         cola.submit(Some(codificador.finish()));
         cola.present(marco);
 
@@ -769,8 +824,10 @@ impl Reproduccion {
     }
 }
 
-const POR_FORMA: usize = 16;
-const POR_ELEMENTO: usize = 48;
+const POR_FORMA: usize = 20;
+const POR_ELEMENTO: usize = 52;
+/// Cuántos grupos con opacidad pueden estar fundiéndose en el mismo frame.
+const MAX_CAPAS: usize = 4;
 const MAX_FORMAS: usize = 4096;
 const MAX_ELEMENTOS: usize = 2048;
 
@@ -781,6 +838,17 @@ const MAX_ELEMENTOS: usize = 2048;
 struct Dibujo {
     formas: Vec<f32>,
     elementos: Vec<f32>,
+    /// Grupos que se pintan aparte: qué elementos, y en qué capa.
+    apartes: Vec<(std::ops::Range<u32>, usize)>,
+}
+
+/// Un grupo con opacidad, mientras se va llenando.
+enum GrupoOpaco {
+    /// No hace falta capa: opaco del todo, o no quedan capas. Se multiplica y ya.
+    Multiplica(f32),
+    /// Invisible: nada de dentro se emite.
+    Oculto,
+    Capa { alfa: f32, indice: usize, primer_elemento: usize },
 }
 
 struct CuerpoAbierto {
@@ -830,15 +898,15 @@ impl Dibujo {
     fn componer(&mut self, instrs: &[Instr], c: Ctx, hud: bool) {
         self.formas.clear();
         self.elementos.clear();
+        self.apartes.clear();
         let mut recortes: Vec<(usize, [f32; 4])> = Vec::new();
-        let mut giros: Vec<((f32, f32), f32)> = Vec::new();
+        // Cada entrada es ya el producto de todas las de encima.
+        let mut giros: Vec<Afin> = Vec::new();
+        let mut opacos: Vec<GrupoOpaco> = Vec::new();
         let mut cuerpo: Option<CuerpoAbierto> = None;
-        let aplanar = |f: &Forma, giros: &[((f32, f32), f32)]| {
+        let aplanar = |f: &Forma, giros: &[Afin]| {
             let mut p = f.aplanar(c);
-            if let Some((pivote, angulo)) = giros.last() {
-                p.pivote = *pivote;
-                p.giro_heredado = *angulo;
-            }
+            p.afin = giros.last().copied().unwrap_or(Afin::IDENTIDAD);
             p
         };
         let color = |col: &Color| [col[0].evaluar(c), col[1].evaluar(c), col[2].evaluar(c)];
@@ -847,7 +915,43 @@ impl Dibujo {
             if self.formas.len() / POR_FORMA >= MAX_FORMAS - 8 {
                 break;
             }
+            let oculto = opacos.iter().any(|g| matches!(g, GrupoOpaco::Oculto));
+            // Lo que multiplica a cada elemento: los grupos que no tienen capa propia.
+            let veces: f32 = opacos.iter().map(|g| if let GrupoOpaco::Multiplica(a) = g { *a } else { 1.0 }).product();
+            let afin = giros.last().copied().unwrap_or(Afin::IDENTIDAD);
             match i {
+                Instr::Opacidad(Some(a)) => {
+                    let a = a.evaluar(c).clamp(0.0, 1.0);
+                    let dentro_de_capa = opacos.iter().any(|g| matches!(g, GrupoOpaco::Capa { .. }));
+                    opacos.push(if a <= 0.001 {
+                        GrupoOpaco::Oculto
+                    } else if a >= 0.999 || dentro_de_capa || self.apartes.len() >= MAX_CAPAS {
+                        GrupoOpaco::Multiplica(a)
+                    } else {
+                        GrupoOpaco::Capa { alfa: a, indice: self.apartes.len(), primer_elemento: self.n_elementos() }
+                    });
+                    if let Some(GrupoOpaco::Capa { indice, primer_elemento, .. }) = opacos.last() {
+                        self.apartes.push((*primer_elemento as u32..*primer_elemento as u32, *indice));
+                    }
+                }
+                Instr::Opacidad(None) => {
+                    if let Some(GrupoOpaco::Capa { alfa, indice, primer_elemento }) = opacos.pop() {
+                        let fin = self.n_elementos();
+                        self.apartes[indice].0 = primer_elemento as u32..fin as u32;
+                        // La caja del grupo es la unión de las de dentro.
+                        let caja = (primer_elemento..fin).fold(None, |u, k| {
+                            let e = &self.elementos[k * POR_ELEMENTO + 4..k * POR_ELEMENTO + 8];
+                            Some(unir(u, [e[0], e[1], e[2], e[3]]))
+                        });
+                        if let Some(caja) = caja {
+                            self.elemento(2.0, caja, &[], |e| {
+                                e[1] = indice as f32;
+                                e[3] = alfa * veces;
+                            });
+                        }
+                    }
+                }
+                _ if oculto => {}
                 Instr::Grupo { sombra } => {
                     cuerpo = Some(CuerpoAbierto { primera: self.formas.len() / POR_FORMA, n: 0, caja: None, holgura: 0.0, sombra: sombra.clone() })
                 }
@@ -873,8 +977,9 @@ impl Dibujo {
                         let d = s.difusa + 2.0;
                         caja = unir(Some(caja), [caja[0] + s.desplazada.0 - d, caja[1] + s.desplazada.1 - d, caja[2] + s.desplazada.0 + d, caja[3] + s.desplazada.1 + d]);
                     }
-                    let a = alfa.evaluar(c).clamp(0.0, 1.0);
+                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
                     self.elemento(0.0, caja, &recortes, |e| {
+                        afin.codificar(&mut e[44..52]);
                         e[1] = g.primera as f32;
                         e[2] = g.n as f32;
                         e[3] = a;
@@ -901,7 +1006,7 @@ impl Dibujo {
                     });
                 }
                 Instr::Plano { forma, color: col, alfa } => {
-                    let a = alfa.evaluar(c).clamp(0.0, 1.0);
+                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
                     if a <= 0.001 {
                         continue; // lo invisible no ocupa ni un quad
                     }
@@ -910,6 +1015,7 @@ impl Dibujo {
                     let k = self.forma(p, 0.0);
                     let rgb = color(col);
                     self.elemento(0.0, [b[0] - 2.0, b[1] - 2.0, b[2] + 2.0, b[3] + 2.0], &recortes, |e| {
+                        afin.codificar(&mut e[44..52]);
                         e[1] = k as f32;
                         e[2] = 1.0;
                         e[3] = a;
@@ -917,24 +1023,18 @@ impl Dibujo {
                     });
                 }
                 Instr::Textura { destino, uv, alfa } => {
-                    let a = alfa.evaluar(c).clamp(0.0, 1.0);
+                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
                     if a <= 0.001 {
                         continue;
                     }
                     let d = [destino.0.evaluar(c), destino.1.evaluar(c), destino.2.evaluar(c), destino.3.evaluar(c)];
-                    let mut caja = [d[0], d[1], d[0] + d[2], d[1] + d[3]];
-                    let giro = giros.last().copied();
-                    if giro.is_some() {
-                        // Girada, la caja exacta no vale: la pantalla entera, que el recorte acotará.
-                        caja = [0.0, 0.0, ANCHO as f32, ALTO as f32];
-                    }
-                    self.elemento(1.0, caja, &recortes, |e| {
+                    // Girada o no, su caja es la de sus cuatro esquinas transformadas.
+                    let caja = afin.caja([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
+                    self.elemento(1.0, [caja[0] - 1.0, caja[1] - 1.0, caja[2] + 1.0, caja[3] + 1.0], &recortes, |e| {
+                        afin.codificar(&mut e[44..52]);
                         e[3] = a;
                         e[36..40].copy_from_slice(&d);
                         e[40..44].copy_from_slice(uv);
-                        if let Some((pivote, angulo)) = giro {
-                            e[44..47].copy_from_slice(&[pivote.0, pivote.1, angulo]);
-                        }
                     });
                 }
                 Instr::Recorte(Some((forma, margen))) => {
@@ -948,14 +1048,17 @@ impl Dibujo {
                 Instr::Recorte(None) => {
                     recortes.pop();
                 }
-                Instr::Transformar(Some(t)) => giros.push(((t.pivote.0.evaluar(c), t.pivote.1.evaluar(c)), t.giro.evaluar(c))),
+                Instr::Transformar(Some(t)) => {
+                    let propia = t.afin(c);
+                    giros.push(afin.por(propia));
+                }
                 Instr::Transformar(None) => {
                     giros.pop();
                 }
             }
         }
         if hud {
-            self.elemento(9.0, [0.0, 190.0, ANCHO as f32, ALTO as f32], &[], |_| {});
+            self.elemento(9.0, [0.0, 190.0, ANCHO as f32, ALTO as f32], &[], |e| Afin::IDENTIDAD.codificar(&mut e[44..52]));
         }
         // Un almacén vacío no se puede enlazar ni escribir.
         if self.formas.is_empty() {

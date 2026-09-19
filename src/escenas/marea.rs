@@ -72,6 +72,10 @@ impl Guion for Marea {
             radio: 9.0.into(),
         };
         e.pintar(Instr::Recorte(Some((panel, 1.0))));
+        //  El contenido se funde como una sola cosa: a medio aparecer, el botón
+        //  no se transparenta a través de su propio rótulo.
+        e.pintar(Instr::Opacidad(Some(visible)));
+        let visible: Expr = 1.0.into();
         e.pintar(Instr::Plano {
             forma: caja_en(110.0, 151.0, 84.0.into(), 23.0.into()),
             color: color(0.18, 0.184, 0.184),
@@ -88,6 +92,7 @@ impl Guion for Marea {
             uv: [0.0, 0.0, 1.0, 1.0],
             alfa: visible,
         });
+        e.pintar(Instr::Opacidad(None));
 
         // Los ojos: dos píldoras recortadas a la cara.
         let abierto = (parpado * (1.0 - sueno)).max(0.14);

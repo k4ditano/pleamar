@@ -27,7 +27,7 @@ El ratón va **al render**, que es quien sabe qué hay debajo; a la lógica le l
 | `Plano` | Una forma suelta de color plano |
 | `Textura` | Un trozo del atlas, colocado en pantalla |
 
-- **Comportamientos** que el render lleva solo: `Parpadeo`, `Onda`, `Mirada`.
+- **Comportamientos** que el render lleva solo: `Parpadeo`, `Onda`, `Avance` (una aguja que da vueltas), `Mirada`.
 - **Zonas**: una forma con nombre y una condición `activa`.
 - **Hechos y sucesos**: la frontera. La lógica manda `Hecho("grabando", sí)`, `Suceso("confirmado")` o `Gesto("asentir")`, y nada más. Los hechos se leen en las expresiones (`Expr::H`), con `y`, `o`, `no`, `mayor`.
 - **Capas**: reclamaciones en orden de prioridad — `mientras <expr>`, `N ms tras <suceso>`, `desde … hasta`, o por defecto. Gana la primera que se cumple. Cada reclamación tiene una **presencia** (una propiedad que va a 1 cuando gana), para pintar según quién mande, y puede **fijar** propiedades con su muelle y su retraso: eso es una coreografía.
@@ -51,7 +51,8 @@ Se pinta con **una sola llamada** instanciada: un quad por elemento, en orden, c
 | `Segmento` | línea de extremos redondos |
 | `.trazo(grosor)` | solo el contorno: un círculo se vuelve un **aro** |
 | `.girada(ángulo)` | sobre su centro; positivo, sentido del reloj |
-| `Transformar` | gira todo lo que venga después alrededor de un pivote (la cabeza con sus ojos) |
+| `Transformar` | gira, escala y mueve todo lo que venga después alrededor de un pivote. Es una **pila que se compone**: son matrices afines que se multiplican, así que un giro dentro de un grupo que escala dentro de otro que gira hace lo que se espera. Las zonas del ratón pueden vivir bajo las mismas transformaciones (`zona_bajo`) |
+| `Opacidad` | todo lo de dentro se pinta **aparte, en una capa**, y se funde como una sola cosa. Sin capa, fundir pieza a pieza deja ver lo de detrás a través de lo de delante. Solo gasta capa mientras está a medio fundir (ni a 0 ni a 1); hasta cuatro a la vez |
 | `Recorte` | ahora es una **pila** (hasta cuatro): un hijo se recorta a su padre y a su abuelo |
 | `Pintura::Lineal`, `borde` | degradado entre dos puntos; borde interior del cuerpo |
 
@@ -79,6 +80,7 @@ Si ninguna propiedad se mueve y ningún comportamiento está vivo, el render no 
 ./target/release/pleamar                 # Marea; botón derecho la cierra
 ./target/release/pleamar --escena isla   # la isla
 ./target/release/pleamar --escena cara   # la cara de Marea: capas y gestos, con su guion
+./target/release/pleamar --escena muestrario   # degradado, borde, transformaciones anidadas, textura girada, opacidad de grupo
 ./target/release/pleamar --demo --segundos 9
 ./target/release/pleamar --ingenuo       # la lógica bloquea al render, como QtQuick
 ./target/release/pleamar --raton "360,90@500 500,172@1100 pulsa@3200 fuera@4500"
@@ -89,7 +91,10 @@ Sale en `HDMI-A-1`. La gráfica de abajo es una barra por frame; la franja roja,
 ## Deudas conocidas
 
 - Las escenas se escriben en Rust y se compilan con el programa.
-- Sin layout. Las transformaciones no se componen (solo cuenta la última) y solo hay giro, no escala de grupo.
+- Sin layout.
+- Un grupo con opacidad dentro de otro no tiene capa propia: multiplica. Y si hay más de cuatro fundiéndose a la vez, los que sobran también multiplican.
+- Con escala distinta en cada eje, el suavizado del borde es aproximado.
+- El degradado y la luz viven en el espacio del grupo, no en el de la forma: si la forma gira *por sí misma* (`.girada`), el degradado no gira con ella.
 - El texto es un mapa de bits fijo.
 - Los primeros frames tras despertar no esperan al vsync: el reloj de animación debería ir con el tiempo de presentación.
 - Un frame de cada ~400 se cae a 33 ms. Sin investigar.

@@ -16,11 +16,12 @@ struct Forma {
     a: vec4<f32>,      // tipo, fusión, trazo (0 = rellena), -
     b: vec4<f32>,      // centro x, y · media anchura, media altura (segmento: vector hasta el otro extremo)
     c: vec4<f32>,      // radio, giro, escala x, escala y (arco: radio, giro, media apertura, -)
-    t: vec4<f32>,      // transformación heredada: pivote x, y, giro, -
+    t0: vec4<f32>,     // lo heredado, ya invertido: de pantalla a local (matriz 2×2)…
+    t1: vec4<f32>,     // …su traslación, y cuánto estira las distancias
 };
 
 struct Elemento {
-    cab: vec4<f32>,       // tipo, primera forma, nº de formas, alfa
+    cab: vec4<f32>,       // tipo, primera forma (o nº de capa), nº de formas, alfa
     caja: vec4<f32>,      // x0, y0, x1, y1
     color0: vec4<f32>,    // r, g, b, filo
     color1: vec4<f32>,    // r, g, b, degradado (0 no, 1 lineal)
@@ -31,7 +32,8 @@ struct Elemento {
     recortes: vec4<f32>,  // hasta cuatro formas a las que se recorta (-1 = ninguna)
     destino: vec4<f32>,   // textura: x, y, ancho, alto
     uv: vec4<f32>,
-    t: vec4<f32>,         // transformación de la textura: pivote x, y, giro, -
+    t0: vec4<f32>,        // de pantalla a local, como en las formas
+    t1: vec4<f32>,
 };
 
 const ELIPSE: u32 = 0u;
@@ -41,6 +43,7 @@ const SEGMENTO: u32 = 3u;
 
 const CUERPO: u32 = 0u;
 const TEXTURA: u32 = 1u;
+const CAPA: u32 = 2u;
 const INSTRUMENTOS: u32 = 9u;
 
 const LEJOS: f32 = 1e6;
@@ -50,6 +53,8 @@ const LEJOS: f32 = 1e6;
 @group(0) @binding(2) var<storage, read> elementos: array<Elemento>;
 @group(0) @binding(3) var atlas: texture_2d<f32>;
 @group(0) @binding(4) var muestreo: sampler;
+// Los grupos con opacidad se pintan aparte, aquí, y se funden de una vez.
+@group(1) @binding(0) var capas: texture_2d_array<f32>;
 
 struct Salida {
     @builtin(position) pos: vec4<f32>,
@@ -68,6 +73,10 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> Salida 
     s.pos = vec4<f32>(p.x / u.cab.x * 2.0 - 1.0, 1.0 - p.y / u.cab.y * 2.0, 0.0, 1.0);
     s.elemento = i;
     return s;
+}
+
+fn a_local(p: vec2<f32>, t0: vec4<f32>, t1: vec4<f32>) -> vec2<f32> {
+    return vec2<f32>(dot(t0.xy, p), dot(t0.zw, p)) + t1.xy;
 }
 
 fn girar(p: vec2<f32>, pivote: vec2<f32>, angulo: f32) -> vec2<f32> {
@@ -92,7 +101,7 @@ fn min_suave(a: f32, b: f32, k: f32) -> f32 {
 fn distancia(k: u32, punto: vec2<f32>) -> f32 {
     let f = formas[k];
     // Primero lo heredado del grupo, luego el giro propio sobre su centro.
-    let p = girar(girar(punto, f.t.xy, f.t.z), f.b.xy, f.c.y) - f.b.xy;
+    let p = girar(a_local(punto, f.t0, f.t1), f.b.xy, f.c.y) - f.b.xy;
     var d = LEJOS;
     switch u32(f.a.x) {
         case ELIPSE: {
@@ -118,7 +127,8 @@ fn distancia(k: u32, punto: vec2<f32>) -> f32 {
     if (f.a.z > 0.0 && d < LEJOS * 0.5) {
         if (u32(f.a.x) == ARCO || u32(f.a.x) == SEGMENTO) { d = d - f.a.z * 0.5; } else { d = abs(d) - f.a.z * 0.5; }
     }
-    return d;
+    if (d > LEJOS * 0.5) { return d; }
+    return d * f.t1.z;
 }
 
 fn cubre(d: f32) -> f32 { return 1.0 - smoothstep(-0.75, 0.75, d); }
@@ -166,8 +176,12 @@ fn fs(e: Salida) -> @location(0) vec4<f32> {
     if (alfa <= 0.001) { discard; }
 
     var c = vec4<f32>(0.0);
+    if (tipo == CAPA) {
+        return textureLoad(capas, vec2<i32>(p), i32(el.cab.y), 0) * alfa;
+    }
+    let local = a_local(p, el.t0, el.t1);
     if (tipo == TEXTURA) {
-        let q = girar(p, el.t.xy, el.t.z);
+        let q = local;
         let uv01 = (q - el.destino.xy) / max(el.destino.zw, vec2<f32>(1.0));
         if (uv01.x < 0.0 || uv01.x > 1.0 || uv01.y < 0.0 || uv01.y > 1.0) { discard; }
         return textureSampleLevel(atlas, muestreo, mix(el.uv.xy, el.uv.zw, uv01), 0.0) * alfa;
@@ -189,10 +203,10 @@ fn fs(e: Salida) -> @location(0) vec4<f32> {
     var tono = el.color0.rgb;
     if (el.color1.w > 0.5) {
         let eje = el.linea.zw - el.linea.xy;
-        let t = clamp(dot(p - el.linea.xy, eje) / max(dot(eje, eje), 0.0001), 0.0, 1.0);
+        let t = clamp(dot(local - el.linea.xy, eje) / max(dot(eje, eje), 0.0001), 0.0, 1.0);
         tono = mix(el.color0.rgb, el.color1.rgb, t);
     }
-    let luz = clamp(1.0 - (p.y - el.luz.y) / max(el.luz.z, 1.0), 0.0, 1.0) * el.luz.x;
+    let luz = clamp(1.0 - (local.y - el.luz.y) / max(el.luz.z, 1.0), 0.0, 1.0) * el.luz.x;
     tono += vec3<f32>(luz) + vec3<f32>(el.color0.w) * smoothstep(-2.2, -0.4, d);
     c = sobre(c, tono, cubre(d) * alfa);
     if (el.luz.w > 0.0) {

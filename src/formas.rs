@@ -4,6 +4,81 @@
 
 use crate::escena::{Ctx, Expr, Punto};
 
+/// Una transformación afín: p' = M·p + t. Las de un grupo y las de sus padres
+/// se multiplican, así que girar algo dentro de algo que escala hace lo que se
+/// espera.
+#[derive(Clone, Copy, Debug)]
+pub struct Afin {
+    pub m: [f32; 4],
+    pub t: [f32; 2],
+}
+
+impl Afin {
+    pub const IDENTIDAD: Afin = Afin { m: [1.0, 0.0, 0.0, 1.0], t: [0.0, 0.0] };
+
+    /// Alrededor de un pivote: primero escala, luego gira, luego mueve.
+    /// Radianes, y positivo es en el sentido del reloj (la y crece hacia abajo).
+    pub fn nueva(pivote: (f32, f32), giro: f32, escala: (f32, f32), mueve: (f32, f32)) -> Afin {
+        let (s, c) = giro.sin_cos();
+        let m = [c * escala.0, -s * escala.1, s * escala.0, c * escala.1];
+        let t = [
+            pivote.0 + mueve.0 - (m[0] * pivote.0 + m[1] * pivote.1),
+            pivote.1 + mueve.1 - (m[2] * pivote.0 + m[3] * pivote.1),
+        ];
+        Afin { m, t }
+    }
+
+    /// `self ∘ o`: se aplica `o` y después `self`.
+    pub fn por(self, o: Afin) -> Afin {
+        let (a, b) = (self.m, o.m);
+        Afin {
+            m: [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3]],
+            t: [a[0] * o.t[0] + a[1] * o.t[1] + self.t[0], a[2] * o.t[0] + a[3] * o.t[1] + self.t[1]],
+        }
+    }
+
+    pub fn inversa(self) -> Afin {
+        let m = self.m;
+        let det = m[0] * m[3] - m[1] * m[2];
+        let det = if det.abs() < 1e-6 { 1e-6 } else { det };
+        let i = [m[3] / det, -m[1] / det, -m[2] / det, m[0] / det];
+        Afin { m: i, t: [-(i[0] * self.t[0] + i[1] * self.t[1]), -(i[2] * self.t[0] + i[3] * self.t[1])] }
+    }
+
+    pub fn aplicar(self, x: f32, y: f32) -> (f32, f32) {
+        (self.m[0] * x + self.m[1] * y + self.t[0], self.m[2] * x + self.m[3] * y + self.t[1])
+    }
+
+    /// Cuánto estira las distancias. Exacto si la escala es igual en los dos
+    /// ejes; si no, una media que basta para el suavizado del borde.
+    pub fn factor(self) -> f32 {
+        (self.m[0] * self.m[3] - self.m[1] * self.m[2]).abs().sqrt()
+    }
+
+    pub fn es_identidad(self) -> bool {
+        self.m == Afin::IDENTIDAD.m && self.t == Afin::IDENTIDAD.t
+    }
+
+    /// La caja que contiene a otra una vez transformada.
+    pub fn caja(self, c: [f32; 4]) -> [f32; 4] {
+        if self.es_identidad() {
+            return c;
+        }
+        let e = [self.aplicar(c[0], c[1]), self.aplicar(c[2], c[1]), self.aplicar(c[0], c[3]), self.aplicar(c[2], c[3])];
+        let (mut r0, mut r1) = (e[0], e[0]);
+        for p in e {
+            r0 = (r0.0.min(p.0), r0.1.min(p.1));
+            r1 = (r1.0.max(p.0), r1.1.max(p.1));
+        }
+        [r0.0, r0.1, r1.0, r1.1]
+    }
+
+    pub fn codificar(self, s: &mut [f32]) {
+        let i = self.inversa();
+        s[..8].copy_from_slice(&[i.m[0], i.m[1], i.m[2], i.m[3], i.t[0], i.t[1], self.factor(), 0.0]);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Forma {
     Elipse { centro: Punto, radio: Expr, escala: Punto },
@@ -36,7 +111,7 @@ impl Forma {
     }
 
     pub fn aplanar(&self, c: Ctx) -> Plana {
-        let mut p = Plana { tipo: 0, cx: 0.0, cy: 0.0, mx: 0.0, my: 0.0, radio: 0.0, giro: 0.0, ex: 1.0, ey: 1.0, trazo: 0.0, pivote: (0.0, 0.0), giro_heredado: 0.0 };
+        let mut p = Plana { tipo: 0, cx: 0.0, cy: 0.0, mx: 0.0, my: 0.0, radio: 0.0, giro: 0.0, ex: 1.0, ey: 1.0, trazo: 0.0, afin: Afin::IDENTIDAD };
         match self {
             Forma::Elipse { centro, radio, escala } => {
                 (p.cx, p.cy) = (centro.0.evaluar(c), centro.1.evaluar(c));
@@ -74,6 +149,7 @@ impl Forma {
         p
     }
 
+    #[allow(dead_code)]
     /// La misma distancia que calcula el shader, para saber si el ratón está
     /// dentro sin preguntarle a la GPU.
     pub fn distancia(&self, c: Ctx, x: f32, y: f32) -> f32 {
@@ -96,8 +172,8 @@ pub struct Plana {
     pub ex: f32,
     pub ey: f32,
     pub trazo: f32,
-    pub pivote: (f32, f32),
-    pub giro_heredado: f32,
+    /// Lo heredado del grupo y de sus padres, ya multiplicado.
+    pub afin: Afin,
 }
 
 fn girar(x: f32, y: f32, pivote: (f32, f32), angulo: f32) -> (f32, f32) {
@@ -111,7 +187,7 @@ fn girar(x: f32, y: f32, pivote: (f32, f32), angulo: f32) -> (f32, f32) {
 
 impl Plana {
     pub fn distancia(&self, x: f32, y: f32) -> f32 {
-        let (x, y) = girar(x, y, self.pivote, self.giro_heredado);
+        let (x, y) = self.afin.inversa().aplicar(x, y);
         let (x, y) = girar(x, y, (self.cx, self.cy), self.giro);
         let (px, py) = (x - self.cx, y - self.cy);
         let mut d = match self.tipo {
@@ -136,7 +212,7 @@ impl Plana {
         if self.trazo > 0.0 {
             d = if self.tipo >= 2 { d - self.trazo * 0.5 } else { d.abs() - self.trazo * 0.5 };
         }
-        d
+        d * self.afin.factor()
     }
 
     /// Para recortar con un margen hacia dentro.
@@ -174,23 +250,17 @@ impl Plana {
             let r = hx.hypot(hy);
             (hx, hy) = (r, r);
         }
-        let (mut cx, mut cy) = (self.cx, self.cy);
-        if self.giro_heredado != 0.0 {
-            // Girar el punto de muestreo por −θ es girar la forma por +θ.
-            (cx, cy) = girar(cx, cy, self.pivote, -self.giro_heredado);
-            let r = hx.hypot(hy);
-            (hx, hy) = (r, r);
-        }
-        Some([cx - hx - medio, cy - hy - medio, cx + hx + medio, cy + hy + medio])
+        let local = [self.cx - hx - medio, self.cy - hy - medio, self.cx + hx + medio, self.cy + hy + medio];
+        Some(self.afin.caja(local))
     }
 
     pub fn codificar(&self, fusion: f32, s: &mut [f32]) {
         let (c2, c3) = if self.tipo == 2 { (self.ex, 0.0) } else { (self.ex, self.ey) };
-        s.copy_from_slice(&[
+        s[..12].copy_from_slice(&[
             self.tipo as f32, fusion, self.trazo, 0.0,
             self.cx, self.cy, self.mx, self.my,
             self.radio, self.giro, c2, c3,
-            self.pivote.0, self.pivote.1, self.giro_heredado, 0.0,
         ]);
+        self.afin.codificar(&mut s[12..20]);
     }
 }

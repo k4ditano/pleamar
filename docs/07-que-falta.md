@@ -29,8 +29,8 @@ Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
 | Borde / trazo, degradados | ✅ degradado lineal; falta radial |
 | Anillo, arco, segmento | ✅ |
 | Trazados libres (`Shape`, SVG) | ⬜ |
-| Giro, escala y traslación de un grupo | 🟡 giro de forma y de grupo; sin escala ni composición |
-| Opacidad de grupo, recortes anidados | 🟡 recortes anidados (hasta 4); sin opacidad de grupo |
+| Giro, escala y traslación de un grupo | ✅ afines que se componen; el ratón acierta bajo ellas |
+| Opacidad de grupo, recortes anidados | ✅ capa intermedia (hasta 4 a la vez); recortes anidados (hasta 4) |
 | **Texto dinámico**: fuentes, ajuste de línea, elipsis, emoji, RTL | ⬜ mapa de bits fijo, pintado una vez |
 | Imágenes (PNG/JPG/SVG), iconos del tema, GIF | ⬜ |
 | Desenfoque, máscaras, `MultiEffect` | ⬜ |
