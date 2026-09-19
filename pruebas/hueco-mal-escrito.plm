@@ -1,0 +1,11 @@
+// espera: fallo «es un número, y `upper` es para textos»
+scene BadHole {
+    surface { size: 300, 100 }
+    fact volume = 0.5
+    text who = "Lucía"
+    text "Hola, {who}: {volumen * 100} %" { at: 10, 20; size: 13; color: #fff }
+    text "sin cerrar {who" { at: 10, 40; size: 13; color: #fff }
+    text "una } suelta" { at: 10, 60; size: 13; color: #fff }
+    text "{upper(volume)}" { at: 10, 80; size: 13; color: #fff }
+    text "{}" { at: 10, 90; size: 13; color: #fff }
+}

@@ -45,7 +45,7 @@ scene Bar {
         follow on = if(ws.active > i - 0.5 and ws.active < i + 0.5, 1, 0)
 
         box hit { from: 0, 0; size: 28, 26; corner: 9; color: mix(#2b2d2d, mint, on); opacity: 30% + on * 70% + hot * 35%; cursor: pointer }
-        text number(i) { at: 14, 12.5; anchor: center; size: 12.5; weight: 600; color: mix(ink, #121f1a, on) }
+        text "{i}" { at: 14, 12.5; anchor: center; size: 12.5; weight: 600; color: mix(ink, #121f1a, on) }
         //  Un punto debajo si tiene ventanas y no estás en él.
         ellipse { at: 14, 22; radius: 1.6 * ws.$i.busy * (1 - on); color: ink; opacity: 65% }
 
@@ -98,7 +98,7 @@ scene Bar {
         }
         //  Con ancho fijo: si la píldora cambiase de tamaño con cada cifra, la barrita
         //  se movería debajo del ratón mientras la arrastras.
-        text number(volume * 100, 0, " %") { size: 12.5; weight: 500; width: 42; align: right; color: ink; opacity: 80% }
+        text "{volume * 100} %" { size: 12.5; weight: 500; width: 42; align: right; color: ink; opacity: 80% }
     }
 
     //  La escena mueve la barrita en el acto —el dedo no espera a nadie— y le

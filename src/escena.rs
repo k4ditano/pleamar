@@ -355,6 +355,59 @@ pub enum Contenido {
     Numero(Expr, u8, String),
     /// Lo que valga ahora mismo un texto vivo: lo cambia la lógica.
     Vivo(TextoId),
+    /// Un texto con huecos: `"{r.title} · {volume * 100} %"`. Se monta en el render,
+    /// cada vez que cambie cualquiera de sus partes.
+    Plantilla(Vec<Trozo>),
+}
+
+#[derive(Clone, Debug)]
+pub enum Trozo {
+    Fijo(String),
+    /// Un texto vivo, tal cual o pasado a mayúsculas o minúsculas.
+    Vivo(TextoId, Letras),
+    /// Una expresión, con tantos decimales.
+    Numero(Expr, u8),
+    /// `{? · {r.body}}`: un tramo que solo está si ninguno de sus textos está vacío.
+    Opcional(Vec<Trozo>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Letras {
+    Igual,
+    Mayusculas,
+    Minusculas,
+}
+
+impl Trozo {
+    /// Escribe el tramo. Devuelve si estaba entero: si ningún texto vivo salió vacío.
+    pub fn escribir(trozos: &[Trozo], c: Ctx, textos: &[String], en: &mut String) -> bool {
+        use std::fmt::Write;
+        let mut entero = true;
+        for t in trozos {
+            match t {
+                Trozo::Fijo(s) => en.push_str(s),
+                Trozo::Vivo(id, letras) => {
+                    let s = textos.get(id.0 as usize).map_or("", String::as_str);
+                    entero &= !s.is_empty();
+                    match letras {
+                        Letras::Igual => en.push_str(s),
+                        Letras::Mayusculas => en.push_str(&s.to_uppercase()),
+                        Letras::Minusculas => en.push_str(&s.to_lowercase()),
+                    }
+                }
+                Trozo::Numero(e, decimales) => {
+                    let _ = write!(en, "{:.*}", *decimales as usize, e.evaluar(c));
+                }
+                Trozo::Opcional(dentro) => {
+                    let desde = en.len();
+                    if !Trozo::escribir(dentro, c, textos, en) {
+                        en.truncate(desde);
+                    }
+                }
+            }
+        }
+        entero
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

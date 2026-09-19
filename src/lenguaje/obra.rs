@@ -122,6 +122,8 @@ struct Entorno {
     exprs: HashMap<String, Expr>,
     colores: HashMap<String, Color>,
     cadenas: HashMap<String, String>,
+    /// Las cadenas con huecos, ya resueltas donde se escribieron: `Chip("{n.app}")`.
+    contenidos: HashMap<String, Contenido>,
     alias: HashMap<String, String>,
     /// De esos nombres, los que tienen partes: `label.width` es de la medida `label`.
     con_partes: std::collections::HashSet<String>,
@@ -1058,11 +1060,133 @@ impl<'a> Obra<'a> {
         Ok(())
     }
 
+    // ── textos con huecos ───────────────────────────────────────
+
+    /// `"Descartar"` es un texto fijo; `"{r.title} · {volume * 100, 1} %"`, una plantilla.
+    fn contenido_de(&self, s: &str, donde: &Ficha) -> R<Contenido> {
+        if !s.contains('{') && !s.contains('}') {
+            return Ok(Contenido::Fijo(s.to_owned()));
+        }
+        let letras: Vec<char> = s.chars().collect();
+        let mut i = 0;
+        let trozos = self.trozos(&letras, &mut i, false, donde)?;
+        Ok(match trozos.as_slice() {
+            [] => Contenido::Fijo(String::new()),
+            [Trozo::Fijo(t)] => Contenido::Fijo(t.clone()),
+            _ => Contenido::Plantilla(trozos),
+        })
+    }
+
+    /// Hasta el final, o hasta la `}` que cierra un tramo opcional.
+    fn trozos(&self, s: &[char], i: &mut usize, dentro: bool, donde: &Ficha) -> R<Vec<Trozo>> {
+        // Dónde señalar si algo falla: la comilla, más lo andado (si no hay saltos de línea, exacto).
+        let aqui = |i: usize| (donde.linea, donde.col + 1 + i);
+        let mut fuera = Vec::new();
+        let mut fijo = String::new();
+        while *i < s.len() {
+            match (s[*i], s.get(*i + 1)) {
+                // Dos seguidas son una de verdad.
+                ('{', Some('{')) | ('}', Some('}')) => {
+                    fijo.push(s[*i]);
+                    *i += 2;
+                }
+                ('}', _) if dentro => {
+                    *i += 1;
+                    if !fijo.is_empty() { fuera.push(Trozo::Fijo(fijo)) }
+                    return Ok(fuera);
+                }
+                ('}', _) => {
+                    let (l, c) = aqui(*i);
+                    return Err(Fallo::en(l, c, "esta `}` no cierra nada. Si es una llave de verdad, escríbela dos veces: `}}`"));
+                }
+                ('{', Some('?')) => {
+                    if !fijo.is_empty() { fuera.push(Trozo::Fijo(std::mem::take(&mut fijo))) }
+                    let abre = *i;
+                    *i += 2;
+                    let opcional = self.trozos(s, i, true, donde)?;
+                    if s.get(*i - 1) != Some(&'}') || *i > s.len() {
+                        let (l, c) = aqui(abre);
+                        return Err(Fallo::en(l, c, "a este tramo `{? …}` le falta su `}`"));
+                    }
+                    fuera.push(Trozo::Opcional(opcional));
+                }
+                ('{', _) => {
+                    if !fijo.is_empty() { fuera.push(Trozo::Fijo(std::mem::take(&mut fijo))) }
+                    let abre = *i;
+                    let Some(cierra) = s[abre..].iter().position(|c| *c == '}').map(|k| abre + k) else {
+                        let (l, c) = aqui(abre);
+                        return Err(Fallo::en(l, c, "a este hueco le falta su `}`. Si es una llave de verdad, escríbela dos veces: `{{`"));
+                    };
+                    let fuente: String = s[abre + 1..cierra].iter().collect();
+                    fuera.push(self.hueco(&fuente, aqui(abre + 1))?);
+                    *i = cierra + 1;
+                }
+                (c, _) => {
+                    fijo.push(c);
+                    *i += 1;
+                }
+            }
+        }
+        if dentro {
+            // Se acabó el texto sin cerrar el tramo: lo dirá quien lo abrió.
+            *i = s.len() + 1;
+        }
+        if !fijo.is_empty() { fuera.push(Trozo::Fijo(fijo)) }
+        Ok(fuera)
+    }
+
+    /// Lo de dentro de un hueco: un texto vivo (`r.title`, `upper(r.app)`) o una
+    /// expresión con sus decimales (`volume * 100, 1`).
+    fn hueco(&self, fuente: &str, (linea, col): (usize, usize)) -> R<Trozo> {
+        let mut fichas = super::fichas::trocear(fuente).map_err(|f| Fallo::en(linea, col + f.col.saturating_sub(1), f.mensaje))?;
+        // El final de línea que pone el troceador aquí no significa nada.
+        fichas.retain(|f| !matches!(f.f, F::Linea));
+        for f in &mut fichas {
+            (f.linea, f.col) = (linea, col + f.col.saturating_sub(1));
+        }
+        let mut c = Cur::de(&fichas, linea, col);
+        if fichas.is_empty() {
+            return c.fallo("un hueco vacío: dentro va el nombre de un texto o una expresión");
+        }
+        let es_texto = |o: &Self, n: &str| o.textos.get(&o.global(n)).copied();
+        // upper(nombre) · lower(nombre)
+        if let (Some(F::Id(f)), Some(F::Sim("("))) = (c.mira(), fichas.get(1).map(|x| &x.f)) {
+            let letras = match f.as_str() {
+                "upper" => Some(Letras::Mayusculas),
+                "lower" => Some(Letras::Minusculas),
+                _ => None,
+            };
+            if let Some(letras) = letras {
+                c.i += 2;
+                let nombre = c.id("el nombre de un texto")?;
+                let Some(t) = es_texto(self, &nombre) else {
+                    let g = self.global(&nombre);
+                    if self.hechos.contains_key(&g) || self.props.contains_key(&g) {
+                        return c.fallo(format!("«{nombre}» es un número, y `{f}` es para textos"));
+                    }
+                    return self.desconocido(&c, "ningún texto", &nombre, self.textos.keys().collect());
+                };
+                c.exige_sim(")")?;
+                c.nada_mas()?;
+                return Ok(Trozo::Vivo(t, letras));
+            }
+        }
+        if let (Some(F::Id(n)), 1) = (c.mira(), fichas.len()) {
+            if let Some(t) = es_texto(self, n) {
+                return Ok(Trozo::Vivo(t, Letras::Igual));
+            }
+        }
+        let e = self.expr(&mut c)?;
+        let decimales = if c.sim(",") { c.num()? as u8 } else { 0 };
+        c.nada_mas()?;
+        Ok(Trozo::Numero(e, decimales))
+    }
+
     /// `text notice.title { at: …; size: 20 }` o `text "Descartar" { … }`
     fn texto(&mut self, n: &Nodo) -> R<()> {
         let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
         let contenido = match c.mira() {
-            Some(F::Cadena(s)) => Contenido::Fijo(s.clone()),
+            Some(F::Cadena(s)) => self.contenido_de(s, &c.f[c.i])?,
             // `text number(volume * 100, 0, " %")`: un número que sale de una expresión.
             Some(F::Id(n)) if n == "number" && matches!(c.f.get(c.i + 1).map(|x| &x.f), Some(F::Sim("("))) => {
                 c.i += 2;
@@ -1073,6 +1197,9 @@ impl<'a> Obra<'a> {
                 Contenido::Numero(e, decimales, detras)
             }
             // Un parámetro de componente que vale un texto entre comillas.
+            Some(F::Id(nombre)) if self.entornos.iter().any(|e| e.contenidos.contains_key(nombre)) => {
+                self.entornos.iter().rev().find_map(|e| e.contenidos.get(nombre)).unwrap().clone()
+            }
             Some(F::Id(nombre)) if self.entornos.iter().any(|e| e.cadenas.contains_key(nombre)) => {
                 Contenido::Fijo(self.entornos.iter().rev().find_map(|e| e.cadenas.get(nombre)).unwrap().clone())
             }
@@ -1442,6 +1569,10 @@ impl<'a> Obra<'a> {
                 let solo = matches!(sigue, Some(F::Sim(",")) | Some(F::Sim(")")));
                 match c.mira() {
                     Some(F::Cadena(t)) => {
+                        // Los huecos hablan de los nombres de aquí, no de los de dentro del componente.
+                        if let plantilla @ Contenido::Plantilla(_) = self.contenido_de(t, &c.f[c.i])? {
+                            env.contenidos.insert(p.clone(), plantilla);
+                        }
                         env.cadenas.insert(p.clone(), t.clone());
                         c.i += 1;
                     }

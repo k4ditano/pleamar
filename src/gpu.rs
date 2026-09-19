@@ -334,6 +334,12 @@ impl Dibujo {
                             numero = format!("{:.*}{detras}", *decimales as usize, e.evaluar(c));
                             numero.as_str()
                         }
+                        Contenido::Plantilla(trozos) => {
+                            let mut montado = String::new();
+                            Trozo::escribir(trozos, c, textos, &mut montado);
+                            numero = montado;
+                            numero.as_str()
+                        }
                     };
                     // Se encarga aunque no se vea: cuando aparezca, que ya esté.
                     let clave = Clave::de(texto, estilo, ancho.as_ref().map(|w| w.evaluar(c)));

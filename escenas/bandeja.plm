@@ -45,15 +45,9 @@ scene Tray {
         }
         //  La raya dice cuánta prisa tiene.
         box { from: 0, 14; size: 3, 30; corner: 1.5; color: mix(mint, #e8776a, max(n.urgency - 1, 0)) }
-        text n.app { at: 16, 19; anchor: left center; size: 10.5; color: ink; opacity: 55% }
-        //  El título, y a su lado lo que dice: el cuerpo empieza donde el título acabe.
-        group {
-            clip box { from: 12, 24; size: 336, 28 }
-            row { at: 16, 28; gap: 8; align: center
-                text n.title { size: 14.5; weight: 500; color: ink }
-                text n.body  { size: 13.5; color: ink; opacity: 60% }
-            }
-        }
+        text "{upper(n.app)}" { at: 16, 19; anchor: left center; size: 10.5; color: ink; opacity: 55% }
+        //  El título y, si lo trae, lo que dice. Sin cuerpo, tampoco hay « · ».
+        text "{n.title}{? · {n.body}}" { at: 16, 38; anchor: left center; size: 14.5; weight: 500; width: 328; lines: 1; color: ink }
 
         on enter hit { lit: 1 ~quick }
         on leave hit { lit: 0 ~quick }
