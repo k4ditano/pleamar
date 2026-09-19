@@ -17,6 +17,8 @@ wgpu = "30"
 
 # Lo de cada sistema, solo en ese sistema. El núcleo no depende de nada de esto.
 [target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+zbus = "5"
 raw-window-handle = "0.6"
 smithay-client-toolkit = "0.21"
 wayland-client = { version = "0.31", features = ["system"] }

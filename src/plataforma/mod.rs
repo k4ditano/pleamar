@@ -39,11 +39,23 @@ pub enum Valor {
 ///  · `workspaces` → `{ active = 3, list = { { id, name, windows, monitor }, … } }`
 ///  · `window`     → `{ title, class }`
 ///  · `apps`       → `{ { name, exec, icon }, … }`, una vez
+///  · `audio`      → `{ volume = 0.54, muted = false }`
+///  · `battery`    → `{ present, percent, charging }`
+///  · `network`    → `{ online, kind = "wired" | "wifi" | "none", name, strength }`
+///  · `media`      → `{ playing, title, artist, album, player }`, o `{ player = "" }` si no suena nada
 pub fn servicio(nombre: &str, avisar: Box<dyn Fn(Valor) + Send>) -> bool {
     #[cfg(target_os = "linux")]
     if nombre == "apps" {
         // Leer cientos de ficheros no es cosa de un instante: en su hilo.
         return std::thread::Builder::new().name("apps".into()).spawn(move || avisar(escritorio::aplicaciones())).is_ok();
+    }
+    #[cfg(target_os = "linux")]
+    match nombre {
+        "audio" => return sistema::audio(avisar),
+        "battery" => return sistema::bateria(avisar),
+        "network" => return sistema::red(avisar),
+        "media" => return mpris::servicio(avisar),
+        _ => {}
     }
     #[cfg(target_os = "linux")]
     if hyprland::esta() {
@@ -60,11 +72,36 @@ pub fn orden(nombre: &str, args: &[Valor]) -> Result<(), String> {
         return escritorio::lanzar(o);
     }
     #[cfg(target_os = "linux")]
+    if nombre.starts_with("audio.") {
+        return sistema::audio_orden(nombre, args);
+    }
+    #[cfg(target_os = "linux")]
+    if nombre.starts_with("media.") {
+        return mpris::orden(nombre, args);
+    }
+    #[cfg(target_os = "linux")]
     if hyprland::esta() {
         return hyprland::orden(nombre, args);
     }
     let _ = args;
     Err(format!("este sistema no sabe hacer «{nombre}» todavía"))
+}
+
+/// Que un proceso que lanzamos no nos sobreviva, ni aunque nos maten a la
+/// fuerza. En Linux se lo pedimos al núcleo; en Windows será un Job Object.
+pub fn morir_con_el_padre(orden: &mut std::process::Command) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        // Solo llama a `prctl`, que es de las que se pueden usar entre `fork` y `exec`.
+        unsafe {
+            orden.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            });
+        }
+    }
+    let _ = orden;
 }
 
 /// Órdenes desde fuera: un atajo global del compositor, un script, otra
@@ -162,6 +199,10 @@ pub trait Ventana: Send {
 mod escritorio;
 #[cfg(target_os = "linux")]
 mod hyprland;
+#[cfg(target_os = "linux")]
+mod mpris;
+#[cfg(target_os = "linux")]
+mod sistema;
 #[cfg(target_os = "linux")]
 mod wayland;
 #[cfg(target_os = "linux")]

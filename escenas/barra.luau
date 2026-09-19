@@ -31,36 +31,19 @@ sys.watch("window", function(w) text.title = w.title end)
 
 on("go", function(i) sys.call("workspaces.focus", i) end)
 
--- ── el volumen: una orden que no acaba, y otra que contesta ──────
-local waiting = false
-local function volume()
-    waiting = false
-    run("wpctl", { "get-volume", "@DEFAULT_AUDIO_SINK@" }, function(out)
-        local v = tonumber(out:match("([%d%.]+)"))
-        if v then fact.volume = v end
-        fact.muted = out:find("MUTED") ~= nil
-    end)
+-- ── el volumen: un servicio, el mismo en todos los sistemas ──────
+if not sys.watch("audio", function(a)
+    fact.volume = a.volume
+    fact.muted = a.muted
+end) then
+    log("este sistema no cuenta su volumen todavía")
 end
-volume()
---  `pactl subscribe` escribe una línea por cada cosa que cambia en el audio, y
---  al mover el volumen son muchas: se junta lo de 40 ms en una sola pregunta.
-spawn("pactl", { "subscribe" }, function(line)
-    if line:find("sink") and not waiting then
-        waiting = true
-        after(40, volume)
-    end
-end)
 
 -- ── y en la otra dirección: lo que se pide desde la barra ────────
-local sink = "@DEFAULT_AUDIO_SINK@"
+on("volume_step", function(notches) sys.call("audio.step", 0.05 * notches) end)
 
-on("volume_step", function(notches)
-    local step = string.format("%d%%%s", 5 * math.abs(notches), notches > 0 and "+" or "-")
-    run("wpctl", { "set-volume", "-l", "1.0", sink, step })
-end)
-
---  Arrastrando llegan sesenta por segundo, y cada uno sería un proceso: se
---  guarda el último y se manda como mucho uno cada 50 ms.
+--  Arrastrando llegan sesenta por segundo: se guarda el último y se manda como
+--  mucho uno cada 50 ms.
 local wanted, sending = nil, false
 on("volume_set", function(v)
     wanted = v
@@ -68,8 +51,8 @@ on("volume_set", function(v)
     sending = true
     after(50, function()
         sending = false
-        run("wpctl", { "set-volume", sink, string.format("%.2f", wanted) })
+        sys.call("audio.volume", wanted)
     end)
 end)
 
-on("mute", function() run("wpctl", { "set-mute", sink, "toggle" }) end)
+on("mute", function() sys.call("audio.mute") end)

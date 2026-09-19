@@ -271,10 +271,11 @@ impl GuionLuau {
         let (c, a_logica) = (self.c.clone(), self.a_logica.clone());
         g.set("spawn", lua.create_function(move |_, (orden, args, f): (String, Option<Vec<String>>, Function)| {
             use std::io::BufRead;
-            let mut hijo = std::process::Command::new(&orden)
-                .args(args.unwrap_or_default())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
+            let mut lanzar = std::process::Command::new(&orden);
+            lanzar.args(args.unwrap_or_default()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+            // Si al programa lo matan, esto se va con él.
+            crate::plataforma::morir_con_el_padre(&mut lanzar);
+            let mut hijo = lanzar
                 .spawn()
                 .map_err(|e| mlua::Error::runtime(format!("no puedo lanzar «{orden}»: {e}")))?;
             let salida = hijo.stdout.take();
