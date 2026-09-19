@@ -90,7 +90,9 @@ Lo único del programa que sabe qué es Wayland. Una plataforma pone las superfi
 
 Lo que pasa en el sistema llega a la lógica por `plataforma::servicio(nombre, avisar)`: un hilo que escucha y avisa con un `Valor` —un JSON en pequeño: nulo, sí/no, número, texto, lista, mapa— que Luau recibe como tabla. `plataforma::orden(nombre, args)` es el camino de vuelta. Hoy contesta Hyprland, hablado por sus dos sockets con `std` y nada más: uno para preguntar y mandar (`j/workspaces`, `dispatch …`), otro por el que cuenta lo que pasa. Un sistema sin ese servicio dice que no lo tiene.
 
-Además de Hyprland: `plataforma/sistema.rs` (audio, batería y red: un hilo por servicio, que solo avisa si algo cambia) y `plataforma/mpris.rs` (lo que suena, por D-Bus con `zbus`, escuchando señales). Todo lo que se lanza pasa por `plataforma::morir_con_el_padre`: en Linux, `PR_SET_PDEATHSIG`.
+Además de Hyprland: `plataforma/sistema.rs` (audio, batería y red: un hilo por servicio, que solo avisa si algo cambia) y `plataforma/mpris.rs` (lo que suena, por D-Bus con `zbus`, escuchando señales). Dos servicios no escuchan sino que **son** el servidor, los dos con `zbus`: `plataforma/avisos.rs` (las notificaciones: quien tenga el nombre `org.freedesktop.Notifications` las recibe, y si ya es de otro el servicio dice que no está) y `plataforma/bandeja.rs` (la bandeja: vigía si nadie lo es, anfitrión del vigía que haya si lo hay). Lo que hay que decirle al bus fuera de la llamada que lo provocó —una señal, una caducidad— lo hace un hilo aparte, por un canal.
+
+Todo lo que se lanza pasa por `plataforma::morir_con_el_padre`: en Linux, `PR_SET_PDEATHSIG`.
 
 ## Superficies (`plataforma/wayland.rs`, `gpu.rs`)
 

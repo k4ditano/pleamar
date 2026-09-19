@@ -39,8 +39,9 @@
 - ✅ **Superficies de verdad**: una por monitor —y por los que se enchufen después—, escala fraccional (probada a 2 y a 1,5 en un monitor virtual), y una región de entrada que sigue a las zonas: lo transparente deja pasar el clic. La escena declara su superficie (tamaño, ancla, nivel, margen, reserva).
 - ✅ **Servicios del sistema de verdad**: `audio`, `battery`, `network` y `media` (MPRIS), con los mismos nombres y tablas en todos los sistemas; la barra ya no llama a `pactl`. Lo que se lanza muere con el programa aunque lo maten. Y cuatro limitaciones menos: medidas de un reparto legibles antes de declararlo, **imágenes que elige la lógica** (`image … = from un_texto`: el lanzador tiene iconos), `--decir … "get nombre"` que contesta, y la repetición de tecla del sistema.
 - ✅ **Permisos para la lógica** (`permissions { run: …; services: … }`: sin declarar, nada) y **un render sin topes**: los almacenes de la tarjeta crecen solos (6000 formas a 17 ms).
-- ⬜ notificaciones y bandeja, IME, ventanas normales y menús: ver la nota 07.
+- ✅ **Notificaciones y bandeja**: `notifications` (pleamar es el servidor; `escenas/bandeja` enseña las de verdad) y `tray` (con los iconos de Telegram y ChatGPT pintados desde sus píxeles). Con esto B1 queda cerrado: audio, batería, red, música, aplicaciones, escritorios, ventana, notificaciones y bandeja.
+- ⬜ menús de la bandeja, IME, ventanas normales y menús: ver la nota 07.
 
 ## Siguiente paso
 
-Lo que queda rojo en [[pleamar · 08 Limitaciones conocidas]]: **notificaciones y bandeja** (B1: ser servidor de D-Bus); es lo único. Y por debajo, plugins con permisos que apruebe el usuario (U1, U3), una instancia de escena por monitor (S2), el IME (E7) y que `audio` y `network` dejen de lanzar procesos (B8). **Por probar con manos de verdad**: el lanzador con su bind y el teclado exclusivo (E8).
+Lo que queda rojo en [[pleamar · 08 Limitaciones conocidas]]: **los menús de la bandeja** (B10), que piden superficies emergentes (S7). Por debajo: plugins con permisos que apruebe el usuario (U1, U3), una instancia de escena por monitor (S2), el IME (E7) y que `audio` y `network` dejen de lanzar procesos (B8). **Por probar con manos de verdad**: el lanzador con su bind y el teclado exclusivo (E8), y las notificaciones y la bandeja con k4 parado (B12, B14).

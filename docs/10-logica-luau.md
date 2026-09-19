@@ -57,6 +57,10 @@ Un nombre mal escrito es un error al momento, con sugerencia: `la escena no tien
 | `network` | `{ online, kind = "wired" \| "wifi" \| "none", name, strength }` | Linux: la ruta por defecto, `/proc/net/wireless` e `iw` |
 | `media` | `{ playing, title, artist, album, player }`; sin reproductores, `player = ""` | Linux: MPRIS por D-Bus (`zbus`), sin preguntar a cada rato |
 | `sys.call("media.toggle")` · `("media.next")` · `("media.previous")` | al reproductor que se está contando | |
+| `notifications` | `{ { id, app, title, body, icon, urgency, actions = { { key, label } } }, … }`, la más nueva primero. **Devuelve `false` si otro programa ya las recibe**: solo puede ser uno | Linux: pleamar es el servidor de `org.freedesktop.Notifications` |
+| `sys.call("notifications.dismiss", id)` · `("notifications.invoke", id, "default")` · `("notifications.clear")` | descartar, pulsar uno de sus botones (la aplicación se entera), vaciar | |
+| `tray` | `{ { key, id, title, status, icon, menu }, … }`; `icon` es un nombre o una ruta, tal cual para `image … = from` | Linux: `StatusNotifierItem`. Vigía si no hay otro; si lo hay, anfitrión del suyo |
+| `sys.call("tray.activate", key)` · `("tray.secondary", key)` · `("tray.context", key)` · `("tray.scroll", key, 1)` | el clic, el del medio, que enseñe su menú (si sabe), la rueda | |
 | `apps` | `{ { name, exec, icon }, … }`, por orden alfabético | Linux: los `.desktop` de `XDG_DATA_DIRS` (sin los ocultos ni los de terminal) |
 | `sys.call("apps.launch", exec)` | lanzar una, suelta del programa | Linux: `setsid -f sh -c` |
 
