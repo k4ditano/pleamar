@@ -221,7 +221,7 @@ Un componente puede tener **varios huecos** (`children header`, `children footer
 ```
 column inside { at: 14, 40; gap: 5
     children
-    between { box { size: 272, 1; color: ink; opacity: 12% } }   // solo entre los que estén
+    between i { box { size: 272, 1; color: ink; opacity: if(i == 1, 50%, 12%) } }   // solo entre los que estén; `i`: entre quiénes
 }
 text "· {inside.count}" { … }
 ```

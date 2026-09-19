@@ -1,4 +1,4 @@
-// espera: fallo «`between` lleva dentro una sola cosa»
+// espera: fallo «un `between` con varias cosas tiene que decir cuánto ocupa»
 scene X {
     surface { size: 100, 100 }
     row { at: 0, 0; box { size: 4, 4; color: #fff }; between { box { size: 1, 4; color: #fff }; box { size: 1, 4; color: #fff } } }

@@ -82,7 +82,7 @@ tipo_param   = "number" | "bool" | "color" | "text" | "record" | "event" | "imag
 copia        = Nombre [ "(" [ argumentos ] ")" ] [ "{" { propiedad_de | sentencia } "}" ] ;   (* las sentencias son sus hijos *)
 hijos        = "children" [ nombre ] [ "{" { propiedad_de } "}" ] ;                          (* solo dentro de un componente *)
 bloque_hueco = nombre "{" { sentencia } "}" ;                                                (* en una copia: lo que va al hueco de ese nombre *)
-separador    = "between" "{" dibujo | estructura "}" ;                                       (* solo dentro de un reparto; una sola cosa *)
+separador    = "between" [ nombre ] "{" { propiedad_de | sentencia } "}" ;                   (* solo dentro de un reparto; con varias cosas, lleva `size:` *)
 argumentos   = argumento { "," argumento } { "," nombre ":" argumento }
              | nombre ":" argumento { "," nombre ":" argumento } ;
 argumento    = expr | color | texto | nombre ;
@@ -216,7 +216,7 @@ Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sug
 
 `row` y `column` colocan a sus hijos uno detrás de otro: el sitio de cada uno es una expresión, así que si uno crece o desaparece, los demás se mueven. Con `~muelle` en la cabecera, viajan a su sitio en vez de saltar. Cada hijo tiene que saber cuánto ocupa: una forma con `size` o `radius`, un texto (se mide solo), una imagen, un `group` o un componente con `size:`, otro reparto, o `space n`. `show: expr` en un hijo decide si está: ocupa y se ve, o ni lo uno ni lo otro.
 
-`between { box { size: 272, 1; color: ink } }` pone eso **entre cada dos hijos que estén**: si uno desaparece, su raya también, y nunca queda una al principio ni al final. Lleva dentro una sola cosa (varias, en un `group` con `size:`). Un reparto con nombre publica, además de `lista.width` y `lista.height`, **`lista.count`**: cuántos hijos están ahora mismo. Los tres se pueden leer también antes de donde se declara.
+`between { box { size: 272, 1; color: ink } }` pone eso **entre cada dos hijos que estén**: si uno desaparece, su raya también, y nunca queda una al principio ni al final. **No abre otro hueco**: va centrada en el `gap` que ya hay entre sus vecinos, así que la distancia entre dos hijos es el `gap` más lo que ocupe ella. Con una sola cosa dentro, esa cosa dice cuánto ocupa; con varias, el `between` hace de grupo y lo dice él (`between { size: 10, 12; … }`). `between i { … }` le da su posición —1 tras el primer hijo, 2 tras el segundo…—, para que la primera pueda ser distinta: `opacity: if(i == 1, 50%, 12%)`. Un reparto con nombre publica, además de `lista.width` y `lista.height`, **`lista.count`**: cuántos hijos están ahora mismo. Los tres se pueden leer también antes de donde se declara.
 
 ## 10. Componentes, `repeat`, `for`
 
@@ -256,7 +256,7 @@ Card("Avisos") {
 }
 ```
 
-Dentro de un `row` o `column`, cada hijo ocupa su sitio en el reparto (y un `repeat` o un `for` de fuera se despliega como los de dentro); suelto, `children { move: x, y }` es un grupo. **Los hijos se leen con los nombres de quien los escribió**: un componente ni ve ni pisa lo que le meten, y un parámetro suyo no tapa nada de fuera. **Varios huecos, con nombre.** Un componente tiene como mucho un `children` sin nombre y los que quiera con él: `children header`, `children footer`. En la copia, un bloque con ese nombre es lo que va a ese hueco, y lo demás va al que no lo tiene:
+Dentro de un `row` o `column`, cada hijo ocupa su sitio en el reparto (y un `repeat` o un `for` de fuera se despliega como los de dentro); suelto, `children { move: x, y }` es un grupo. **Los hijos se leen con los nombres de quien los escribió**: un componente ni ve ni pisa lo que le meten, y un parámetro suyo no tapa nada de fuera. **Varios huecos, con nombre.** Un componente tiene como mucho un `children` sin nombre y los que quiera con él: `children header`, `children footer`. En la copia, un bloque con ese nombre es lo que va a ese hueco —**aunque la escena tenga un componente que se llame igual: dentro de la copia, gana el hueco**—, y lo demás va al que no lo tiene. Un hueco no se puede llamar como una palabra del lenguaje.
 
 ```
 Panel {

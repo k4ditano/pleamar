@@ -995,6 +995,8 @@ impl<'a> Obra<'a> {
                 "group" => self.grupo_con_propiedades(n, n.cuerpo.as_deref().unwrap_or(&[]))?,
                 "popup" => self.emergente(n, &mut c)?,
                 "children" => self.hijos_de_fuera(n)?,
+                // Dentro de un reparto, con varias cosas, hace de grupo; suelto no es nada.
+                "between" if self.en_hueco => self.grupo_con_propiedades(n, n.cuerpo.as_deref().unwrap_or(&[]))?,
                 "between" => return Err(Fallo::en(n.linea, n.col, "`between` solo vale dentro de un `row` o un `column`: es lo que va entre cada dos hijos")),
                 "component" => self.declarar_componente(n, &mut c)?,
                 "repeat" => self.repetir(n, &mut c)?,
@@ -1796,6 +1798,9 @@ impl<'a> Obra<'a> {
         }
         let mut huecos = Vec::new();
         huecos_de(n.cuerpo.as_deref().unwrap_or(&[]), &mut huecos);
+        if let Some(palabra) = huecos.iter().find(|h| voz::SENTENCIAS.contains(&h.as_str())) {
+            return Err(Fallo::en(n.linea, n.col, format!("un hueco no se puede llamar «{palabra}», que es una palabra del lenguaje: en la copia, `{palabra} {{ … }}` ya significa otra cosa")));
+        }
         if let Some(repetido) = huecos.iter().enumerate().find(|(k, h)| huecos[..*k].contains(h)).map(|(_, h)| h.clone()) {
             let cual = if repetido.is_empty() { "un solo `children` sin nombre".to_owned() } else { format!("un solo hueco «{repetido}»") };
             return Err(Fallo::en(n.linea, n.col, format!("un componente tiene {cual}: ponle nombre al otro (`children footer`)")));
@@ -2027,7 +2032,7 @@ impl<'a> Obra<'a> {
             let Entrada::Nodo(x) = e else { continue };
             // `header { … }`: un bloque con el nombre de un hueco es lo que va en ese hueco.
             let bloque = match (x.cabeza.as_slice(), &x.cuerpo) {
-                ([Ficha { f: F::Id(p), .. }], Some(_)) if !voz::SENTENCIAS.contains(&p.as_str()) && !self.componentes.contains_key(p) => Some(p.clone()),
+                ([Ficha { f: F::Id(p), .. }], Some(_)) if huecos_que_hay.contains(p) || (!voz::SENTENCIAS.contains(&p.as_str()) && !self.componentes.contains_key(p)) => Some(p.clone()),
                 _ => None,
             };
             match bloque {
@@ -2207,22 +2212,38 @@ impl<'a> Obra<'a> {
             candidatas: std::ops::Range<usize>,
             tam: (Expr, Expr),
             visible: Expr,
+            /// Es lo que va entre dos hijos, no un hijo.
+            separa: bool,
         }
         let nivel = self.bajo.len();
         let mut puestos: Vec<Puesto> = Vec::new();
-        // `between { … }`: lo que va entre cada dos hijos que estén. Tiene que llevar una sola cosa.
-        let mut separador: Option<&'a Nodo> = None;
+        // `between { … }`: lo que va entre cada dos hijos que estén.
+        let mut separador: Option<(&'a Nodo, Option<String>)> = None;
         for e in n.cuerpo.as_deref().unwrap_or(&[]) {
             let Entrada::Nodo(x) = e else { continue };
             if !matches!(x.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "between") {
                 continue;
             }
-            let dentro: Vec<&'a Nodo> = x.cuerpo.as_deref().unwrap_or(&[]).iter().filter_map(|e| if let Entrada::Nodo(y) = e { Some(y) } else { None }).collect();
-            match (dentro.as_slice(), separador, x.cabeza.len()) {
-                ([una], None, 1) => separador = Some(*una),
-                (_, Some(_), _) => return Err(Fallo::en(x.linea, x.col, "un reparto tiene un solo `between`")),
-                _ => return Err(Fallo::en(x.linea, x.col, "`between` lleva dentro una sola cosa, que es lo que se repite: `between { box { size: 200, 1; color: ink } }`. Si son varias, en un `group` con `size:`")),
+            if separador.is_some() {
+                return Err(Fallo::en(x.linea, x.col, "un reparto tiene un solo `between`"));
             }
+            // `between i { … }`: dentro, `i` es entre quiénes está: 1 tras el primer hijo, 2 tras el segundo…
+            let contador = match x.cabeza.as_slice() {
+                [_] => None,
+                [_, Ficha { f: F::Id(v), .. }] => Some(v.clone()),
+                _ => return Err(Fallo::en(x.linea, x.col, "tras `between` solo puede ir un nombre para su posición: `between i { … }`")),
+            };
+            let cuerpo = x.cuerpo.as_deref().unwrap_or(&[]);
+            let dentro: Vec<&'a Nodo> = cuerpo.iter().filter_map(|e| if let Entrada::Nodo(y) = e { Some(y) } else { None }).collect();
+            let con_tamano = cuerpo.iter().any(|e| matches!(e, Entrada::Prop { nombre, .. } if nombre == "size"));
+            separador = Some(match (dentro.as_slice(), con_tamano) {
+                // Una sola cosa, que dice ella cuánto ocupa.
+                ([una], false) => (*una, contador),
+                // Varias (o una con su sitio alrededor): el `between` hace de grupo, y dice cuánto ocupa.
+                ([_, ..], true) => (x, contador),
+                ([], _) => return Err(Fallo::en(x.linea, x.col, "un `between` vacío no separa nada: `between { box { size: 200, 1; color: ink } }`")),
+                _ => return Err(Fallo::en(x.linea, x.col, "un `between` con varias cosas tiene que decir cuánto ocupa: `between { size: 200, 9; … }`")),
+            });
         }
         // Los hijos van saliendo de una cola: tras cada uno (menos el primero) se cuela su separador,
         // que se ve si ese hijo está y alguno de los de antes también.
@@ -2313,15 +2334,19 @@ impl<'a> Obra<'a> {
                     c.visible = Some(match c.visible.take() { Some(v) => v * esta.clone(), None => esta.clone() });
                 }
             }
-            let puesto = Puesto { instr, candidatas: desde..self.candidatas.len(), tam, visible };
+            let puesto = Puesto { instr, candidatas: desde..self.candidatas.len(), tam, visible, separa: forzada.is_some() };
             match forzada {
                 // Un separador se pinta después de su hijo, pero su sitio es justo antes.
                 Some(_) => puestos.insert(puestos.len() - 1, puesto),
                 None => {
                     let presencia = esta.unwrap_or(Expr::K(1.0));
-                    if let (Some(sep), Some(antes)) = (separador, presencias.iter().cloned().reduce(|a, b| a + b)) {
+                    if let (Some((sep, contador)), Some(antes)) = (&separador, presencias.iter().cloned().reduce(|a, b| a + b)) {
                         self.copias += 1;
-                        let env = Entorno { sufijo: format!("#between{}", self.copias), ..Default::default() };
+                        let mut env = Entorno { sufijo: format!("#between{}", self.copias), ..Default::default() };
+                        if let Some(v) = contador {
+                            env.exprs.insert(v.clone(), Expr::K(presencias.len() as f32));
+                        }
+                        let sep = *sep;
                         cola.push_front((sep, vec![env], Some(presencia.clone() * antes.min(Expr::K(1.0)))));
                     }
                     presencias.push(presencia);
@@ -2338,7 +2363,8 @@ impl<'a> Obra<'a> {
         let maximo = puestos.iter().fold(Expr::K(0.0), |m, p| m.max(ancho(p) * p.visible.clone()));
         let mut corrido = relleno.clone();
         for (k, p) in puestos.iter().enumerate() {
-            let mut a_lo_largo = corrido.clone();
+            // Un separador no abre otro hueco: se pone en medio del que ya hay entre sus vecinos.
+            let mut a_lo_largo = if p.separa { corrido.clone() - hueco.clone() * 0.5 } else { corrido.clone() };
             if let Some(m) = muelle {
                 // El hueco es un destino: el hijo va hacia él con el muelle del reparto.
                 self.copias += 1;
@@ -2355,7 +2381,7 @@ impl<'a> Obra<'a> {
                 c.bajo[nivel].mueve = mueve.clone();
             }
             let ultimo = k + 1 == puestos.len();
-            corrido = corrido + (largo(p) + if ultimo { Expr::K(0.0) } else { hueco.clone() }) * p.visible.clone();
+            corrido = corrido + (largo(p) + if ultimo || p.separa { Expr::K(0.0) } else { hueco.clone() }) * p.visible.clone();
         }
         let total_largo = corrido + relleno.clone();
         let total_ancho = maximo + relleno * 2.0;

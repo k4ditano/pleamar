@@ -1,0 +1,37 @@
+// espera: bien
+language 0.1
+// `between` con su posición (`between i`), con varias cosas (hace de grupo, con
+// `size:`), y un hueco que se llama como un componente de la escena.
+scene BetweenWhole {
+    surface { size: 320, 200 }
+    let ink = #f5f7f5
+    fact second = true
+
+    component header { size: 40, 10; box { from: 0, 0; size: 40, 10; color: #e86a9a } }
+    component Panel {
+        size: 300, 30 + rows.height
+        row top { at: 10, 6; children header }
+        column rows { at: 10, 24; gap: 12
+            children
+            //  La primera raya, tras la cabecera de la lista, más fuerte que las demás.
+            between i { box { size: 280, 1; color: ink; opacity: if(i == 1, 50%, 12%) } }
+        }
+    }
+
+    column { at: 10, 10; gap: 16
+        Panel {
+            header { text "el hueco, no el componente" { size: 12; color: ink } }
+            text "uno" { size: 13; color: ink }
+            text "dos" { size: 13; color: ink; show: second }
+            text "tres" { size: 13; color: ink }
+        }
+        row dots { gap: 20
+            repeat k in 0..3 { ellipse { radius: 6; color: #9ed6bd } }
+            between { size: 10, 12
+                box { from: 4, 0; size: 2, 12; color: ink; opacity: 30% }
+                ellipse { at: 5, 6; radius: 2.5; color: #e8c07a }
+            }
+        }
+        header
+    }
+}

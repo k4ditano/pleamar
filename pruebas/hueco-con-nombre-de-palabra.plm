@@ -1,0 +1,5 @@
+// espera: fallo «un hueco no se puede llamar «text», que es una palabra del lenguaje»
+scene X {
+    surface { size: 100, 100 }
+    component Bad { size: 10, 10; row { at: 0, 0; children text } }
+}
