@@ -602,6 +602,10 @@ impl Lamina {
     pub fn region_de_entrada(&self, cajas: &[[i32; 4]]) {
         self.ventana.region_de_entrada(cajas);
     }
+
+    pub fn cursor(&self, c: Cursor) {
+        self.ventana.cursor(c);
+    }
 }
 
 pub const N_UNIFORMES: usize = 8 + 120;

@@ -96,8 +96,8 @@ impl Guion for Isla {
         ]);
 
         let z = e.zona("isla", isla, 1.0);
-        e.regla(Disparador::Entra(z), vec![Efecto::Hecho(encima, 1.0)]);
-        e.regla(Disparador::Sale(z), vec![Efecto::Hecho(encima, 0.0)]);
+        e.regla(Disparador::Entra(z), vec![Efecto::Hecho(encima, 1.0.into())]);
+        e.regla(Disparador::Sale(z), vec![Efecto::Hecho(encima, 0.0.into())]);
         e.regla(Disparador::Pulsa(z), vec![Efecto::Alternar(suelta)]);
 
         e.superficie = Superficie { alto: 140, ..Default::default() };

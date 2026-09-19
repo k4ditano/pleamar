@@ -109,6 +109,7 @@ struct Candidata {
     activa: Option<Expr>,
     bajo: Vec<Transformacion>,
     forzada: bool,
+    cursor: Cursor,
 }
 
 /// Lo que vale dentro de un componente o de una vuelta de `repeat`: sus
@@ -175,7 +176,8 @@ pub fn levantar(arbol: &[Entrada]) -> Result<Escena, Vec<Fallo>> {
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
-    for n in ["screen.width", "screen.height"] {
+    // …y lo que una regla puede leer del ratón mientras se dispara.
+    for n in ["screen.width", "screen.height", "pointer.x", "pointer.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel"] {
         let h = o.e.hecho(n, 0.0);
         o.hechos.insert(n.into(), h);
     }
@@ -545,7 +547,7 @@ impl<'a> Obra<'a> {
         let clase = c.id("una forma: ellipse, box, arc o line")?;
         let nombre = if c.acabo() { None } else { Some(c.id("un nombre para la forma")?) };
         c.nada_mas()?;
-        let comunes = ["rotate", "stroke", "color", "opacity", "blend", "active", "show"];
+        let comunes = ["rotate", "stroke", "color", "opacity", "blend", "active", "show", "cursor"];
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let propias: &[&str] = match clase.as_str() {
             "ellipse" => &["at", "radius", "scale"],
@@ -583,6 +585,10 @@ impl<'a> Obra<'a> {
         let color = match p.get_mut("color") {
             Some(c) => Some(self.color(c)?),
             None => None,
+        };
+        let cursor = match p.get_mut("cursor") {
+            Some(c) => leer_cursor(c)?,
+            None => Cursor::Normal,
         };
         let mut tam: Option<(Expr, Expr)> = None;
         let mut forma = match clase.as_str() {
@@ -622,7 +628,7 @@ impl<'a> Obra<'a> {
         // las que se pinta. Si lo es o no se decide al final: ver `zonas_de_verdad`.
         if let Some(nombre) = &nombre {
             let nombre = &self.declarar(nombre);
-            self.candidatas.push(Candidata { nombre: nombre.clone(), forma: forma.clone(), activa: active, bajo: self.bajo.clone(), forzada: false });
+            self.candidatas.push(Candidata { nombre: nombre.clone(), forma: forma.clone(), activa: active, bajo: self.bajo.clone(), forzada: false, cursor });
         }
         Ok(FormaLeida { forma, color, opacidad: opacity, fusion: blend, tam })
     }
@@ -1046,7 +1052,7 @@ impl<'a> Obra<'a> {
     }
 
     fn superficie(&mut self, n: &Nodo) -> R<()> {
-        let mut p = self.propiedades(n, &["size", "anchor", "margin", "level", "reserve", "screens"])?;
+        let mut p = self.propiedades(n, &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard"])?;
         let s = &mut self.e.superficie;
         if let Some(c) = p.get_mut("size") {
             // `size: full, 36`: todo el ancho del monitor.
@@ -1083,6 +1089,14 @@ impl<'a> Obra<'a> {
                 "top" => Nivel::Encima,
                 "overlay" => Nivel::SobreTodo,
                 _ => return c.fallo("los niveles son background, bottom, top y overlay"),
+            };
+        }
+        if let Some(c) = p.get_mut("keyboard") {
+            s.teclado = match c.id("none, on_demand o exclusive")?.as_str() {
+                "none" => Teclado::Nunca,
+                "on_demand" => Teclado::AlPulsar,
+                "exclusive" => Teclado::Siempre,
+                _ => return c.fallo("el teclado se pide con none, on_demand (al pulsar) o exclusive (todo para ella)"),
             };
         }
         if let Some(c) = p.get_mut("reserve") {
@@ -1328,7 +1342,11 @@ impl<'a> Obra<'a> {
         };
         let muelle = if c.sim("~") { Some(self.muelle(c)?) } else { None };
         c.nada_mas()?;
-        let mut p = self.propiedades(n, &["at", "anchor", "gap", "padding", "align", "fill", "corner", "show", "opacity"])?;
+        let mut p = self.propiedades(n, &["at", "anchor", "gap", "padding", "align", "fill", "corner", "show", "opacity", "cursor"])?;
+        let cursor_del_reparto = match p.get_mut("cursor") {
+            Some(c) => leer_cursor(c)?,
+            None => Cursor::Normal,
+        };
         self.en_hueco = false;
         let origen = match p.get_mut("at") {
             Some(c) => self.punto(c)?,
@@ -1341,6 +1359,7 @@ impl<'a> Obra<'a> {
             }
         };
         let (hueco, relleno, esquina) = (una(self, "gap", 0.0)?, una(self, "padding", 0.0)?, una(self, "corner", 0.0)?);
+        let esquina_de_zona = esquina.clone();
         let alinea = match p.get_mut("align") {
             Some(c) => match c.id("start, center o end")?.as_str() {
                 "start" => 0.0,
@@ -1509,9 +1528,17 @@ impl<'a> Obra<'a> {
         }
         self.bajo.pop();
         self.e.pintar(Instr::Transformar(None));
-        // Con nombre, su tamaño se puede usar más abajo: `bar.width`.
+        // Con nombre, su tamaño se puede usar más abajo (`bar.width`), y su caja
+        // entera es una zona si alguna regla la nombra. Va debajo de las de sus
+        // hijos: la rueda sobre el reparto no le quita el clic a lo de dentro.
         if let Some(nombre) = nombre {
             let nombre = self.declarar(&nombre);
+            let mut bajo = self.bajo.clone();
+            if let Instr::Transformar(Some(t)) = &self.e.instrs[instr_base] {
+                bajo.push(t.clone());
+            }
+            let caja = Forma::Caja { centro: (tam.0.clone() * 0.5, tam.1.clone() * 0.5), mitad: (tam.0.clone() * 0.5, tam.1.clone() * 0.5), radio: esquina_de_zona };
+            self.candidatas.insert(candidatas_base, Candidata { nombre: nombre.clone(), forma: caja, activa: None, bajo, forzada: false, cursor: cursor_del_reparto });
             let destino = match self.entornos.last_mut() {
                 Some(e) => &mut e.exprs,
                 None => &mut self.lets,
@@ -1571,6 +1598,7 @@ impl<'a> Obra<'a> {
         for k in std::mem::take(&mut self.candidatas) {
             if k.forzada || k.activa.is_some() || nombradas.contains(&k.nombre) {
                 let z = self.e.zona_bajo(fijo(&k.nombre), k.forma, k.activa.unwrap_or(Expr::K(1.0)), k.bajo);
+                self.e.zonas[z.0 as usize].cursor = k.cursor;
                 self.zonas.insert(k.nombre, z);
             }
         }
@@ -1585,9 +1613,28 @@ impl<'a> Obra<'a> {
             let b = if c.sim("..") { c.dur()?.as_secs_f32() } else { a };
             Disparador::Cada { entre: (a, b), mientras: mientras(self, c)? }
         } else {
-            let que = c.id("qué tiene que pasar: press, enter, leave, hover, away, idle, o un suceso")?;
+            let que = c.id("qué tiene que pasar: press, release, scroll, drag, hold, key, enter, leave, hover, away, idle, o un suceso")?;
             match que.as_str() {
-                "press" => Disparador::Pulsa(self.zona(c)?),
+                // `on press orb`, o con otro botón: `on press right orb`.
+                "press" => {
+                    if c.palabra("right") {
+                        self.e.superficie.derecho_cierra = false;
+                        Disparador::PulsaCon(self.zona(c)?, 1)
+                    } else if c.palabra("middle") {
+                        Disparador::PulsaCon(self.zona(c)?, 2)
+                    } else {
+                        Disparador::Pulsa(self.zona(c)?)
+                    }
+                }
+                "release" => Disparador::Suelta(self.zona(c)?),
+                "scroll" => Disparador::Rueda(self.zona(c)?),
+                "drag" => Disparador::Arrastra(self.zona(c)?),
+                "hold" => {
+                    let zona = self.zona(c)?;
+                    c.exige_palabra("for")?;
+                    Disparador::Mantiene { zona, durante: c.dur()? }
+                }
+                "key" => Disparador::Tecla(c.id("el nombre de una tecla: Escape, Return, a…")?),
                 "enter" => Disparador::Entra(self.zona(c)?),
                 "leave" => Disparador::Sale(self.zona(c)?),
                 "hover" | "away" => {
@@ -1642,8 +1689,8 @@ impl<'a> Obra<'a> {
                             c.i -= 1;
                             let h = self.hecho(&mut c)?;
                             c.exige_sim("=")?;
-                            let v = if c.palabra("true") { 1.0 } else if c.palabra("false") { 0.0 } else { c.num()? };
-                            Efecto::Hecho(h, v)
+                            // Una expresión, que se evalúa al dispararse: `level = clamp(local.x / 64, 0, 1)`.
+                            Efecto::Hecho(h, self.expr(&mut c)?)
                         }
                     });
                     c.nada_mas()?;
@@ -1781,6 +1828,17 @@ impl<'a> Obra<'a> {
         self.gestos.insert(nombre, g);
         Ok(())
     }
+}
+
+fn leer_cursor(c: &mut Cur) -> R<Cursor> {
+    Ok(match c.id("un cursor")?.as_str() {
+        "default" => Cursor::Normal,
+        "pointer" => Cursor::Mano,
+        "text" => Cursor::Texto,
+        "grab" => Cursor::Agarrar,
+        "grabbing" => Cursor::Agarrando,
+        _ => return c.fallo("los cursores son default, pointer, text, grab y grabbing"),
+    })
 }
 
 struct FormaLeida {

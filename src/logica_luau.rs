@@ -393,6 +393,15 @@ impl Guion for GuionLuau {
             Evento::Entra(z) => self.avisar(&format!("enter:{z}"), Value::Nil),
             Evento::Sale(z) => self.avisar(&format!("leave:{z}"), Value::Nil),
             Evento::Pulsa(z) => self.avisar(&format!("press:{z}"), Value::Nil),
+            Evento::Suelta(z) => self.avisar(&format!("release:{z}"), Value::Nil),
+            Evento::Rueda(z, d) => self.avisar(&format!("scroll:{z}"), numero(d)),
+            Evento::Tecla(nombre, escribe) => {
+                let Some(lua) = &self.lua else { return };
+                let quienes = self.c.lock().unwrap().manejadores.get("key").cloned().unwrap_or_default();
+                if let Ok(n) = lua.create_string(&nombre) {
+                    quienes.iter().for_each(|f| self.llamar(f, (n.clone(), escribe.clone())));
+                }
+            }
             Evento::Demo => self.avisar("demo", Value::Nil),
             Evento::Hecho(n, v) => {
                 self.c.lock().unwrap().hechos.insert(n.to_owned(), v as f64);

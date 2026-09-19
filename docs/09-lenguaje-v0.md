@@ -32,7 +32,7 @@ Números con unidad: `40`, `40px`, `34%` (= 0.34), `138deg` (a radianes), `320ms
 
 | Sentencia | Qué es |
 | --- | --- |
-| `surface { size: 720, 224; anchor: top; margin: 40; level: top; reserve: 0; screens: "HDMI-A-1" }` | La ventana que pide. `size: full, 44` es todo el ancho del monitor; cuánto es se lee en `screen.width`. `anchor`: top, bottom, left, right, top_left…, center. `level`: background, bottom, top, overlay. `screens: all` o una lista |
+| `surface { size: 720, 224; anchor: top; margin: 40; level: top; reserve: 0; screens: "HDMI-A-1" }` | La ventana que pide. `size: full, 44` es todo el ancho del monitor; cuánto es se lee en `screen.width`. `anchor`: top, bottom, left, right, top_left…, center. `level`: background, bottom, top, overlay. `screens: all` o una lista. `keyboard: none | on_demand | exclusive` |
 | `prop orb.x = 360 ~lively` | Una propiedad animada: un muelle. Sin `~`, `lively` |
 | `pose eyes = 14` | Una propiedad de la pose: la que un gesto lleva de la mano |
 | `fact open = false` | Algo que es verdad un rato. Lo ponen la lógica y las reglas |
@@ -138,16 +138,28 @@ Gana la primera reclamación que se cumple; cuando deja de cumplirse se ve la si
 
 ```
 on press view            { open = false; impulse orb.y -620; emit view_event }
+on press right dot       { emit menu }               // o `middle`
+on release dot           { r: 30 ~lively }           // se suelta lo que se pulsó ahí, esté donde esté ya el ratón
+on hold dot for 500ms    { emit held }               // lleva ese rato pulsada
 on enter view            { glow: 1 ~quick }          // el :hover de CSS
 on leave view            { glow: 0 ~quick }
 on hover orb for 320ms   { open = true }
 on away whole for 420ms  { open = false }            // estuvo encima y lleva ese rato fuera
+on scroll sound          { emit volume_step(wheel) } // la rueda, en cualquier zona que tenga debajo
+on drag track            { volume = clamp(local.x / 64, 0, 1) }   // se mueve con el botón puesto
+on key Escape            { open = false }            // la superficie tiene que pedir teclado: `keyboard: on_demand`
 on idle for 14s while not open { asleep = true }
 on confirmed             { play joy }
 every 2.5s..7s while awake { play yawn }
 ```
 
-Efectos: `hecho = true|false|n`, `toggle hecho`, `emit suceso` o con carga `emit opened(i)`, `impulse prop velocidad`, `play gesto`, y `prop: valor ~muelle after 70ms`.
+Efectos: `hecho = expresión` (se evalúa al dispararse), `toggle hecho`, `emit suceso` o con carga `emit opened(i)`, `impulse prop velocidad`, `play gesto`, y `prop: valor ~muelle after 70ms`.
+
+**Lo que una regla puede leer del ratón**, como si fueran hechos: `pointer.x`, `pointer.y` (en la superficie), `local.x`, `local.y` (**dentro de la zona**: en un reparto, (0, 0) es la esquina del hueco, esté donde esté en pantalla), `drag.dx`, `drag.dy` (desde que se pulsó) y `wheel` (muescas; positivo, hacia arriba). Un arrastre sigue aunque el ratón se salga de la zona, hasta soltar.
+
+Una forma puede llevar `cursor: pointer | text | grab | grabbing`. **Un `row` o `column` con nombre es también una zona** —su caja entera, debajo de las de sus hijos—: así la rueda vale en toda una píldora.
+
+> Ojo con lo que se arrastra dentro de un reparto anclado: si algo de dentro cambia de ancho mientras tanto (un «54 %» que pasa a «100 %»), el reparto se recoloca y la zona se mueve debajo del ratón. Dale ancho fijo a lo que cambie (`width: 42; align: right`).
 
 ## Lo que lleva sola
 

@@ -61,6 +61,8 @@ pub fn orden(nombre: &str, args: &[Valor]) -> Result<(), String> {
 pub trait Ventana: Send {
     /// Por dónde entra el ratón: solo por estas cajas, en píxeles lógicos.
     fn region_de_entrada(&self, cajas: &[[i32; 4]]);
+    /// Qué cursor se ve mientras el ratón esté encima.
+    fn cursor(&self, c: crate::escena::Cursor);
 }
 
 #[cfg(target_os = "linux")]

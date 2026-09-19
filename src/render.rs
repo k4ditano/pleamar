@@ -85,6 +85,10 @@ pub fn hilo(
     // Lo que emite un fotograma se atiende en el frame siguiente.
     let mut sucesos_tardios: Vec<SucesoId> = Vec::new();
     let mut puntero: Option<(f32, f32)> = None;
+    // Lo que se está arrastrando: qué zona, y dónde estaba el ratón al pulsar.
+    let mut arrastre: Option<(usize, (f32, f32), Instant)> = None;
+    let mut cursor_puesto = Cursor::Normal;
+    let mut ultimo_puntero: Option<(f32, f32)> = None;
     let mut ultima_actividad = Instant::now();
     let mut azar = Azar(0x9E3779B97F4A7C15);
     let inicio = Instant::now();
@@ -100,7 +104,10 @@ pub fn hilo(
     loop {
         // ── 1. lo que ha llegado ────────────────────────────────
         let mut bloquear = None;
-        let mut pulsado = false;
+        // (qué botón, si baja o sube), las muescas de rueda y las teclas de este frame.
+        let mut botones: Vec<(u8, bool)> = Vec::new();
+        let mut rueda = 0.0f32;
+        let mut teclas: Vec<String> = Vec::new();
         // (cuál, si viene de la lógica)
         let mut sucesos: Vec<(usize, bool, Option<f32>)> = sucesos_tardios.drain(..).map(|s| (s.0 as usize, false, None)).collect();
         let mut gestos_pedidos: Vec<usize> = Vec::new();
@@ -229,9 +236,18 @@ pub fn hilo(
                     puntero = p;
                     ultima_actividad = Instant::now();
                 }
-                ARender::Pulsar => {
-                    pulsado = true;
+                ARender::Boton(b, abajo) => {
+                    botones.push((b, abajo));
                     ultima_actividad = Instant::now();
+                }
+                ARender::Rueda(d) => {
+                    rueda += d;
+                    ultima_actividad = Instant::now();
+                }
+                ARender::Tecla(nombre, escribe) => {
+                    ultima_actividad = Instant::now();
+                    let _ = a_logica.send(Evento::Tecla(nombre.clone(), escribe));
+                    teclas.push(nombre);
                 }
                 ARender::Salir => {
                     ciclo.cerrar();
@@ -271,9 +287,70 @@ pub fn hilo(
             }
         }
         // La de más arriba es la última declarada.
-        let pulsada = if pulsado { dentro.iter().rposition(|d| *d) } else { None };
-        if let Some(k) = pulsada {
-            let _ = a_logica.send(Evento::Pulsa(escena.zonas[k].id));
+        let encima = dentro.iter().rposition(|d| *d);
+        let (mut pulsada, mut pulsada_con, mut soltada) = (None, None, None);
+        for (boton, abajo) in &botones {
+            match (*boton, *abajo) {
+                (0, true) => {
+                    pulsada = encima;
+                    if let (Some(k), Some(p)) = (encima, puntero) {
+                        arrastre = Some((k, p, ahora));
+                        let _ = a_logica.send(Evento::Pulsa(escena.zonas[k].id));
+                    }
+                }
+                (0, false) => {
+                    if let Some((k, _, _)) = arrastre.take() {
+                        soltada = Some(k);
+                        if let Some(z) = escena.zonas.get(k) {
+                            let _ = a_logica.send(Evento::Suelta(z.id));
+                        }
+                    }
+                }
+                (b, true) => pulsada_con = encima.map(|k| (k, b)),
+                _ => {}
+            }
+        }
+        let arrastrada = match (arrastre, puntero) {
+            (Some((k, _, _)), Some(p)) if ultimo_puntero != Some(p) => Some(k),
+            _ => None,
+        };
+        ultimo_puntero = puntero;
+        // La rueda no es solo de la zona de más arriba: vale para cualquiera que tenga
+        // debajo, que una píldora entera quiere la rueda aunque dentro haya un botón.
+        if rueda != 0.0 {
+            if let Some(k) = encima {
+                let _ = a_logica.send(Evento::Rueda(escena.zonas[k].id, rueda));
+            }
+        }
+
+        // Lo que una regla puede leer del ratón: dónde está, dónde dentro de la zona
+        // que tiene entre manos, cuánto lleva arrastrado y cuánto ha girado la rueda.
+        {
+            let foco = arrastre.map(|a| a.0).or(encima);
+            let (px, py) = puntero.unwrap_or((0.0, 0.0));
+            let local = foco.and_then(|k| escena.zonas.get(k)).map_or((px, py), |z| z.a_local(Ctx { props: &props, hechos: &hechos }, px, py));
+            let (dx, dy) = arrastre.map_or((0.0, 0.0), |(_, o, _)| (px - o.0, py - o.1));
+            for (k, (nombre, _)) in escena.hechos.iter().enumerate() {
+                match *nombre {
+                    "pointer.x" => hechos[k] = px,
+                    "pointer.y" => hechos[k] = py,
+                    "local.x" => hechos[k] = local.0,
+                    "local.y" => hechos[k] = local.1,
+                    "drag.dx" => hechos[k] = dx,
+                    "drag.dy" => hechos[k] = dy,
+                    "wheel" => hechos[k] = rueda,
+                    _ => {}
+                }
+            }
+        }
+
+        // El cursor, el de la zona que tenga encima.
+        let quiere = arrastre.map(|a| a.0).or(encima).and_then(|k| escena.zonas.get(k)).map_or(Cursor::Normal, |z| z.cursor);
+        if quiere != cursor_puesto {
+            cursor_puesto = quiere;
+            for l in &laminas {
+                l.cursor(quiere);
+            }
         }
 
         // Reglas: todo esto ocurre aquí, esté la lógica como esté.
@@ -284,6 +361,15 @@ pub fn hilo(
                     Disparador::Entra(z) => bordes.contains(&(true, z.0 as usize)),
                     Disparador::Sale(z) => bordes.contains(&(false, z.0 as usize)),
                     Disparador::Pulsa(z) => pulsada == Some(z.0 as usize),
+                    Disparador::PulsaCon(z, b) => pulsada_con == Some((z.0 as usize, *b)),
+                    Disparador::Suelta(z) => soltada == Some(z.0 as usize),
+                    Disparador::Rueda(z) => rueda != 0.0 && dentro[z.0 as usize],
+                    Disparador::Arrastra(z) => arrastrada == Some(z.0 as usize),
+                    Disparador::Mantiene { zona, durante } => {
+                        let puesta = arrastre.is_some_and(|(k, _, _)| k == zona.0 as usize);
+                        e.esperar(puesta, *durante, ahora, &mut citas)
+                    }
+                    Disparador::Tecla(t) => teclas.iter().any(|x| x == t),
                     Disparador::Encima { zona, durante } => {
                         e.esperar(dentro[zona.0 as usize], *durante, ahora, &mut citas)
                     }
@@ -339,6 +425,7 @@ pub fn hilo(
                     // Un hecho que cambia una regla se le cuenta a la lógica, que si no
                     // se quedaría creyendo lo que ella misma dijo la última vez.
                     Efecto::Hecho(h, v) => {
+                        let v = v.evaluar(Ctx { props: &props, hechos: &hechos });
                         hechos[h.0 as usize] = v;
                         let _ = a_logica.send(Evento::Hecho(escena.hechos[h.0 as usize].0, v));
                     }

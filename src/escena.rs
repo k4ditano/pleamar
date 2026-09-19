@@ -75,11 +75,24 @@ pub struct Superficie {
     /// Cuánto sitio le reserva el compositor: las ventanas no lo pisan.
     pub reserva: i32,
     pub pantallas: Pantallas,
+    pub teclado: Teclado,
+    /// Mientras ninguna regla use el botón derecho, cierra el programa.
+    pub derecho_cierra: bool,
+}
+
+/// Si la superficie quiere el teclado. `AlPulsar` es lo normal en un panel con
+/// algo que escribir; `Siempre` se lo queda entero, como un lanzador.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum Teclado {
+    #[default]
+    Nunca,
+    AlPulsar,
+    Siempre,
 }
 
 impl Default for Superficie {
     fn default() -> Self {
-        Superficie { ancho: 720, alto: 224, ancla: Ancla::Arriba, margen: [40, 0, 0, 0], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Estas(vec!["HDMI-A-1".into()]) }
+        Superficie { ancho: 720, alto: 224, ancla: Ancla::Arriba, margen: [40, 0, 0, 0], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Estas(vec!["HDMI-A-1".into()]), teclado: Teclado::Nunca, derecho_cierra: true }
     }
 }
 
@@ -462,6 +475,16 @@ pub fn ir(prop: PropId, a: impl Into<Expr>, muelle: Muelle, retraso_ms: u64) -> 
     Transicion { prop, a: a.into(), muelle, retraso: Duration::from_millis(retraso_ms) }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum Cursor {
+    #[default]
+    Normal,
+    Mano,
+    Texto,
+    Agarrar,
+    Agarrando,
+}
+
 /// Una región sensible: una forma con nombre. El render hace el hit-test con
 /// la misma fórmula con la que pinta.
 #[derive(Clone, Debug)]
@@ -469,6 +492,8 @@ pub struct Zona {
     pub id: &'static str,
     pub forma: Forma,
     pub activa: Expr,
+    /// Qué cursor se pone al pasar por encima.
+    pub cursor: Cursor,
     /// Las transformaciones bajo las que vive, de fuera adentro: lo que se ve
     /// girado se pulsa girado.
     pub bajo: Vec<Transformacion>,
@@ -480,6 +505,12 @@ impl Zona {
         let mut p = self.forma.aplanar(c);
         p.afin = self.bajo.iter().fold(Afin::IDENTIDAD, |a, t| a.por(t.afin(c)));
         p.caja()
+    }
+
+    /// Un punto de la pantalla, visto desde dentro: en un reparto, (0, 0) es la
+    /// esquina del hueco. Es lo que una regla lee en `local.x`.
+    pub fn a_local(&self, c: Ctx, x: f32, y: f32) -> (f32, f32) {
+        self.bajo.iter().fold(Afin::IDENTIDAD, |a, t| a.por(t.afin(c))).inversa().aplicar(x, y)
     }
 
     pub fn contiene(&self, c: Ctx, x: f32, y: f32) -> bool {
@@ -636,7 +667,21 @@ pub struct Gesto {
 pub enum Disparador {
     Entra(ZonaId),
     Sale(ZonaId),
+    /// El botón izquierdo.
     Pulsa(ZonaId),
+    /// Otro botón: 1 es el derecho y 2 el del medio.
+    PulsaCon(ZonaId, u8),
+    /// Se suelta lo que se pulsó aquí, esté donde esté ya el ratón.
+    Suelta(ZonaId),
+    /// La rueda, encima. Cuánto, en `wheel`: +1 por muesca hacia arriba.
+    Rueda(ZonaId),
+    /// El ratón se mueve con el botón puesto desde que se pulsó aquí. Dónde, en
+    /// `local.x` y `local.y`; cuánto desde que se pulsó, en `drag.dx` y `drag.dy`.
+    Arrastra(ZonaId),
+    /// Lleva este rato pulsada.
+    Mantiene { zona: ZonaId, durante: Duration },
+    /// Una tecla, por su nombre: `Escape`, `Return`, `a`.
+    Tecla(String),
     /// El ratón lleva este rato encima.
     Encima { zona: ZonaId, durante: Duration },
     /// Ha estado encima y lleva este rato fuera.
@@ -651,7 +696,9 @@ pub enum Disparador {
 #[derive(Clone, Debug)]
 pub enum Efecto {
     Animar(Transicion),
-    Hecho(HechoId, f32),
+    /// Un hecho pasa a valer lo que valga la expresión en ese momento. Puede
+    /// leer lo del ratón: `level = clamp(local.x / 64, 0, 1)`.
+    Hecho(HechoId, Expr),
     /// De sí a no y de no a sí.
     Alternar(HechoId),
     /// Un suceso, con una carga si se quiere: `emit opened(i)`. Se evalúa al dispararse.
@@ -745,7 +792,7 @@ impl Escena {
         self.zona_bajo(id, forma, activa, vec![])
     }
     pub fn zona_bajo(&mut self, id: &'static str, forma: Forma, activa: impl Into<Expr>, bajo: Vec<Transformacion>) -> ZonaId {
-        self.zonas.push(Zona { id, forma, activa: activa.into(), bajo });
+        self.zonas.push(Zona { id, forma, activa: activa.into(), cursor: Cursor::Normal, bajo });
         ZonaId(self.zonas.len() as u16 - 1)
     }
     /// Las reclamaciones van de más a menos prioridad; la última debería ser
@@ -815,7 +862,12 @@ pub enum ARender {
     Suceso(&'static str),
     Gesto(&'static str),
     Puntero(Option<(f32, f32)>),
-    Pulsar,
+    /// 0 es el izquierdo, 1 el derecho, 2 el del medio.
+    Boton(u8, bool),
+    /// Muescas de rueda: positivo, hacia arriba.
+    Rueda(f32),
+    /// El nombre de la tecla y lo que escribe, si escribe algo.
+    Tecla(String, Option<String>),
     Salir,
 }
 
@@ -824,6 +876,9 @@ pub enum Evento {
     Entra(&'static str),
     Sale(&'static str),
     Pulsa(&'static str),
+    Suelta(&'static str),
+    Rueda(&'static str, f32),
+    Tecla(String, Option<String>),
     Alarma(&'static str),
     /// Un suceso de la escena que sale hacia la lógica, con su carga si la trae.
     Suceso(&'static str, Option<f32>),

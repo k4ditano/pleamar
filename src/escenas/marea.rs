@@ -184,15 +184,15 @@ impl Guion for Marea {
         //  Todo esto lo ejecuta el render. Con la lógica muerta, Marea se abre,
         //  se cierra, se duerme y realza su botón igual.
         use Disparador::*;
-        e.regla(Entra(z_orbe), vec![Efecto::Hecho(dormida, 0.0)]);
-        e.regla(Encima { zona: z_orbe, durante: ms(320) }, vec![Efecto::Hecho(abierta, 1.0)]);
+        e.regla(Entra(z_orbe), vec![Efecto::Hecho(dormida, 0.0.into())]);
+        e.regla(Encima { zona: z_orbe, durante: ms(320) }, vec![Efecto::Hecho(abierta, 1.0.into())]);
         e.regla(Pulsa(z_orbe), vec![Efecto::Alternar(abierta)]);
-        e.regla(Fuera { zona: conjunto, durante: ms(420) }, vec![Efecto::Hecho(abierta, 0.0)]);
+        e.regla(Fuera { zona: conjunto, durante: ms(420) }, vec![Efecto::Hecho(abierta, 0.0.into())]);
         e.regla(Entra(z_ver), vec![Efecto::Animar(ir(boton, 1.0, Muelle::RAPIDO, 0))]);
         e.regla(Sale(z_ver), vec![Efecto::Animar(ir(boton, 0.0, Muelle::RAPIDO, 0))]);
-        e.regla(Pulsa(z_descartar), vec![Efecto::Hecho(abierta, 0.0)]);
-        e.regla(Pulsa(z_ver), vec![Efecto::Hecho(abierta, 0.0), Efecto::Impulso(orbe_y, -620.0), Efecto::Suceso(ver_evento, None)]);
-        e.regla(Quieto { durante: ms(14_000), mientras: abierta.e().no() }, vec![Efecto::Hecho(dormida, 1.0)]);
+        e.regla(Pulsa(z_descartar), vec![Efecto::Hecho(abierta, 0.0.into())]);
+        e.regla(Pulsa(z_ver), vec![Efecto::Hecho(abierta, 0.0.into()), Efecto::Impulso(orbe_y, -620.0), Efecto::Suceso(ver_evento, None)]);
+        e.regla(Quieto { durante: ms(14_000), mientras: abierta.e().no() }, vec![Efecto::Hecho(dormida, 1.0.into())]);
 
         e
     }

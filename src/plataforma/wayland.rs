@@ -12,7 +12,8 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
-        pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
+        pointer::{cursor_shape::CursorShapeManager, PointerEvent, PointerEventKind, PointerHandler},
         Capability, SeatHandler, SeatState,
     },
     shell::{
@@ -20,7 +21,10 @@ use smithay_client_toolkit::{
         WaylandSurface,
     },
 };
+use smithay_client_toolkit::reexports::protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{Shape, WpCursorShapeDeviceV1};
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 use smithay_client_toolkit::dispatch2::Dispatch2;
 use smithay_client_toolkit::reexports::protocols::wp::fractional_scale::v1::client::{
@@ -39,6 +43,10 @@ use wayland_client::{
 struct VentanaWayland {
     wl: wl_surface::WlSurface,
     compositor: CompositorState,
+    /// Para cambiar el cursor hace falta el «dispositivo» del puntero y el número
+    /// de serie de la última vez que entró: los dos los pone el hilo de Wayland.
+    cursores: Arc<Mutex<Option<WpCursorShapeDeviceV1>>>,
+    serie: Arc<AtomicU32>,
 }
 
 impl Ventana for VentanaWayland {
@@ -49,6 +57,18 @@ impl Ventana for VentanaWayland {
             }
             // Se aplica con el siguiente frame que se presente.
             self.wl.set_input_region(Some(region.wl_region()));
+        }
+    }
+
+    fn cursor(&self, c: Cursor) {
+        if let Some(d) = self.cursores.lock().unwrap().as_ref() {
+            d.set_shape(self.serie.load(Ordering::Relaxed), match c {
+                Cursor::Normal => Shape::Default,
+                Cursor::Mano => Shape::Pointer,
+                Cursor::Texto => Shape::Text,
+                Cursor::Agarrar => Shape::Grab,
+                Cursor::Agarrando => Shape::Grabbing,
+            });
         }
     }
 }
@@ -83,6 +103,10 @@ struct Estado {
     puestas: Vec<Puesta>,
     siguiente_id: u32,
     puntero: Option<wl_pointer::WlPointer>,
+    teclado: Option<wayland_client::protocol::wl_keyboard::WlKeyboard>,
+    formas_de_cursor: Option<CursorShapeManager>,
+    cursores: Arc<Mutex<Option<WpCursorShapeDeviceV1>>>,
+    serie: Arc<AtomicU32>,
     salir: bool,
     a_render: Sender<ARender>,
 }
@@ -148,7 +172,11 @@ impl Estado {
             capa.set_margin(m[0] + k as i32 * (alto as i32 + 12), m[1], m[2], m[3]);
             capa.set_size(p.ancho, alto);
             capa.set_exclusive_zone(p.reserva);
-            capa.set_keyboard_interactivity(KeyboardInteractivity::None);
+            capa.set_keyboard_interactivity(match p.teclado {
+                Teclado::Nunca => KeyboardInteractivity::None,
+                Teclado::AlPulsar => KeyboardInteractivity::OnDemand,
+                Teclado::Siempre => KeyboardInteractivity::Exclusive,
+            });
             let id = self.siguiente_id;
             self.siguiente_id += 1;
             // Con ventanilla, el tamaño lógico es fijo y los píxeles de verdad los
@@ -203,6 +231,10 @@ pub fn atender(pide: Superficie, alto_extra: u32, instancia: wgpu::Instance, a_r
         puestas: Vec::new(),
         siguiente_id: 0,
         puntero: None,
+        teclado: None,
+        formas_de_cursor: CursorShapeManager::bind(&globales, &qh).ok(),
+        cursores: Arc::default(),
+        serie: Arc::default(),
         salir: false,
         a_render,
     };
@@ -246,7 +278,7 @@ impl LayerShellHandler for Estado {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: p.id,
                 superficie,
-                ventana: Box::new(VentanaWayland { wl: p.capa.wl_surface().clone(), compositor: self.compositor.clone() }),
+                ventana: Box::new(VentanaWayland { wl: p.capa.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone() }),
                 escala: p.escala,
                 tam,
                 mhz,
@@ -262,6 +294,9 @@ impl PointerHandler for Estado {
             let (x, y) = (e.position.0 as f32, e.position.1 as f32);
             match e.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
+                    if let PointerEventKind::Enter { serial } = e.kind {
+                        self.serie.store(serial, Ordering::Relaxed);
+                    }
                     // El ratón va al render, que es quien sabe qué hay debajo;
                     // a la lógica le llega ya con nombre.
                     let _ = self.a_render.send(ARender::Puntero(Some((x, y))));
@@ -269,18 +304,53 @@ impl PointerHandler for Estado {
                 PointerEventKind::Leave { .. } => {
                     let _ = self.a_render.send(ARender::Puntero(None));
                 }
-                PointerEventKind::Press { button, .. } => {
-                    if button == 0x111 {
+                PointerEventKind::Press { button, .. } | PointerEventKind::Release { button, .. } => {
+                    let abajo = matches!(e.kind, PointerEventKind::Press { .. });
+                    // BTN_LEFT, BTN_RIGHT, BTN_MIDDLE
+                    let boton = match button {
+                        0x110 => 0,
+                        0x111 => 1,
+                        0x112 => 2,
+                        _ => continue,
+                    };
+                    // Mientras una escena no le dé uso al botón derecho, cierra: es la
+                    // salida de emergencia de un prototipo sin teclado.
+                    if boton == 1 && abajo && self.pide.derecho_cierra {
                         self.salir = true;
-                    } else {
-                        let _ = self.a_render.send(ARender::Puntero(Some((x, y))));
-                        let _ = self.a_render.send(ARender::Pulsar);
+                        continue;
+                    }
+                    let _ = self.a_render.send(ARender::Puntero(Some((x, y))));
+                    let _ = self.a_render.send(ARender::Boton(boton, abajo));
+                }
+                PointerEventKind::Axis { vertical, horizontal, .. } => {
+                    // Muescas de rueda, positivo hacia arriba. Una rueda de verdad manda
+                    // 120 por muesca; un panel táctil, píxeles.
+                    let muescas = |a: &smithay_client_toolkit::seat::pointer::AxisScroll| {
+                        if a.value120 != 0 { a.value120 as f32 / 120.0 } else if a.discrete != 0 { a.discrete as f32 } else { a.absolute as f32 / 15.0 }
+                    };
+                    let d = -(muescas(&vertical) + muescas(&horizontal));
+                    if d != 0.0 {
+                        let _ = self.a_render.send(ARender::Rueda(d));
                     }
                 }
-                _ => {}
             }
         }
     }
+}
+
+impl KeyboardHandler for Estado {
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[Keysym]) {}
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {}
+    fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, e: KeyEvent) {
+        // El nombre de la tecla, como lo llama xkb: `Escape`, `Return`, `a`.
+        let nombre = e.keysym.name().map(|n| n.trim_start_matches("XK_").to_owned()).unwrap_or_else(|| format!("{:#x}", e.keysym.raw()));
+        let _ = self.a_render.send(ARender::Tecla(nombre, e.utf8.filter(|t| !t.chars().any(char::is_control))));
+    }
+    fn repeat_key(&mut self, c: &Connection, qh: &QueueHandle<Self>, k: &wayland_client::protocol::wl_keyboard::WlKeyboard, s: u32, e: KeyEvent) {
+        self.press_key(c, qh, k, s, e);
+    }
+    fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
+    fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, _: Modifiers, _: RawModifiers, _: u32) {}
 }
 
 impl SeatHandler for Estado {
@@ -291,6 +361,12 @@ impl SeatHandler for Estado {
     fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, asiento: wl_seat::WlSeat, c: Capability) {
         if c == Capability::Pointer && self.puntero.is_none() {
             self.puntero = self.asientos.get_pointer(qh, &asiento).ok();
+            if let (Some(p), Some(m)) = (&self.puntero, &self.formas_de_cursor) {
+                *self.cursores.lock().unwrap() = Some(m.get_shape_device(p, qh));
+            }
+        }
+        if c == Capability::Keyboard && self.teclado.is_none() && self.pide.teclado != Teclado::Nunca {
+            self.teclado = self.asientos.get_keyboard(qh, &asiento, None).ok();
         }
     }
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, _: Capability) {}

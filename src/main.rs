@@ -31,7 +31,7 @@ const AYUDA: &str = "pleamar [opciones]
   --bloqueo MS        lo que se bloquea la lógica tras cada decisión (600)
   --ingenuo           la lógica bloquea el hilo que pinta, como en QtQuick
   --demo              abre y cierra sola, sin ratón
-  --raton GUION       ratón de mentira: «360,90@1000 pulsa@2500 fuera@4000» (ms)
+  --raton GUION       ratón de mentira: «360,90@1000 pulsa@2500 baja@… sube@… rueda+@… fuera@4000» (ms)
   --segundos N        salir sola al cabo de N segundos
   --margen PX         margen superior, en vez del de la escena
   --sin-hud           sin la gráfica de frames
@@ -159,8 +159,17 @@ fn main() {
                 let (que, cuando) = paso.split_once('@').expect("--raton: falta @ms");
                 let cuando = Duration::from_millis(cuando.parse().expect("--raton: ms"));
                 std::thread::sleep(cuando.saturating_sub(inicio.elapsed()));
+                // Cada paso se dice, para saber a qué responde lo que venga detrás.
+                println!("ratón  · {que}");
                 let _ = match que {
-                    "pulsa" => tx.send(ARender::Pulsar),
+                    // Un clic entero: bajar y subir.
+                    "pulsa" => tx.send(ARender::Boton(0, true)).and_then(|_| tx.send(ARender::Boton(0, false))),
+                    "baja" => tx.send(ARender::Boton(0, true)),
+                    "sube" => tx.send(ARender::Boton(0, false)),
+                    "derecho" => tx.send(ARender::Boton(1, true)).and_then(|_| tx.send(ARender::Boton(1, false))),
+                    t if t.starts_with("tecla:") => tx.send(ARender::Tecla(t[6..].to_owned(), None)),
+                    "rueda+" => tx.send(ARender::Rueda(1.0)),
+                    "rueda-" => tx.send(ARender::Rueda(-1.0)),
                     "fuera" => tx.send(ARender::Puntero(None)),
                     xy => {
                         let (x, y) = xy.split_once(',').expect("--raton: x,y");

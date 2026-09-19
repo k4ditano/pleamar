@@ -15,7 +15,8 @@ emit("confirmed")                         -- que ha pasado algo
 play("joy")                               -- pedir un gesto (la escena lo concederá o no, según su clase)
 
 on("view_event", function(n) … end)       -- un suceso que la escena deja salir (`event x ->`), con su carga
-on("press:view", …)  on("enter:orb", …)  on("leave:orb", …)
+on("press:view", …)  on("release:view", …)  on("enter:orb", …)  on("leave:orb", …)
+on("scroll:sound", function(notches) … end)   on("key", function(name, text) … end)
 on("layer:card", function(claim) … end)   -- una capa cambió de manos
 on("fact:open", function(v) … end)        -- una REGLA de la escena cambió un hecho
 on("demo", …)                             -- el tic de `--demo`

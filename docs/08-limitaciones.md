@@ -29,8 +29,6 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | B4 | **Sin probar**: `reserve` distinto de 0 (que las ventanas le dejen sitio a la barra). Y al recargar en caliente no se aplica: hay que relanzarla (G7) | ⚪ | Que lo pruebe Abel subiendo `reserve` a 50; y reconfigurar la superficie al recargar |
 | B5 | Si al programa lo matan con una señal, lo que dejó corriendo (`pactl subscribe`) queda huérfano. Al salir por las buenas sí se para | 🟡 | En `plataforma/`: `PR_SET_PDEATHSIG` en Linux, un Job Object en Windows; y atender `SIGTERM` para salir por las buenas |
 | B6 | La barra tarda ~420 ms en su primer frame, frente a ~170 de Marea | ⚪ | Medir qué: probablemente los 27 textos y el icono, que el taller hace en serie |
-| B7 | No se puede cambiar el volumen desde la barra: falta la rueda (S6) | 🟡 | S6 |
-
 ### La lógica (Luau)
 
 | # | Limitación | Gravedad | Cómo se arregla |
@@ -86,12 +84,17 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 
 | # | Limitación | Gravedad | Cómo se arregla |
 | --- | --- | --- | --- |
+| E1 | **Rueda, botones, arrastre, mantener, teclas y cursor están probados con el guion de mentira**, que entra por el render. El lado de Wayland —que las muescas lleguen con su signo, que el cursor cambie, que el teclado llegue con `on_demand`— no lo ha visto nadie con un ratón de verdad | 🟡 | Que lo pruebe Abel en la barra: rueda sobre el volumen, arrastrar la barrita, el altavoz, y la manita sobre los escritorios |
+| E2 | **No hay dónde escribir.** Las teclas llegan como sucesos, pero no existe un campo de texto: ni cursor de texto, ni selección, ni portapapeles, ni IME. Tampoco se exponen los modificadores (Ctrl, Mayús) | 🔴 | Un elemento `input` sobre `cosmic-text` (que ya sabe editar), `zwp_text_input_v3` para el IME en Wayland, y `on key Ctrl+K`. Sin esto no hay lanzador ni buscador |
+| E3 | Sin arrastrar y soltar entre aplicaciones, sin atajos globales, y sin «cerrar al pulsar fuera» | 🟡 | `wl_data_device` para soltar; los atajos y el foco, por el compositor (`hyprland-global-shortcuts`, `hyprland-focus-grab`), detrás de `plataforma/` |
+| E4 | La rueda suma lo vertical y lo horizontal, y un panel táctil se convierte en muescas a ojo (15 px por muesca) | ⚪ | `wheel.x` y `wheel.y` aparte, y desplazamiento continuo en píxeles para las listas |
+| E5 | El botón derecho cierra el programa mientras la escena no lo use | ⚪ | Es la salida de emergencia del prototipo. Se irá cuando haya una orden para cerrar |
+| E6 | Una zona que se arrastra dentro de un reparto anclado se mueve bajo el ratón si el reparto cambia de tamaño. Hoy se evita a mano, dando ancho fijo a lo que cambie | ⚪ | `min_width:` en los hijos, o congelar el reparto mientras dura un arrastre |
 | S1 | El tamaño de la superficie lo declara la escena y es fijo | 🟡 | Hoy se esquiva declarándola grande: la región de entrada deja pasar el clic. De verdad: que la escena pueda cambiar su `Superficie` y la plataforma la reconfigure |
 | S2 | Todas las superficies pintan **la misma escena con el mismo estado**. No hay una instancia por monitor | 🟡 | Es del lenguaje: `per screen { … }`, con propiedades y hechos propios por instancia |
 | S3 | **Sin probar en dos monitores de verdad a distinto ritmo** (165 y 60 Hz) | 🟡 | `--pantalla todas` cuando a Abel le venga bien verlo en DP-3 |
 | S4 | La región de entrada son las **cajas** de las zonas, no sus formas | ⚪ | Aproximar cada forma con unos cuantos rectángulos |
 | S5 | **La mirada solo sigue al ratón dentro de las zonas.** Fuera, Wayland ya no nos cuenta dónde está | 🟡 | Un hecho `pointer.global` que en Linux venga del IPC del compositor. En Windows y macOS es una llamada |
-| S6 | Sin teclado, rueda, arrastrar, mantener pulsado ni forma del cursor. El botón derecho cierra el programa | 🔴 | Ampliar `Disparador` (`Rueda`, `Arrastra`, `Tecla`) y la interfaz de plataforma. Es lo siguiente después del parser |
 | S7 | Sin ventanas normales, menús emergentes ni bloqueo de sesión | 🟡 | Más variantes de `Superficie`. En Wayland, `xdg_popup` y `ext-session-lock` |
 | S8 | Si el compositor no da `Mailbox` ni `Immediate`, las láminas secundarias se frenan entre sí | ⚪ | Un hilo de presentación por lámina |
 | S9 | Si la GPU se reinicia o se pierde el dispositivo, no se recupera | ⚪ | Atender `device lost` y rehacer `Gpu` y láminas; el estado de la escena no vive ahí, así que no se pierde nada |
@@ -142,3 +145,5 @@ La regla: **todo lo de sistema vive detrás de `src/plataforma/`**, y el núcleo
 | 2026-09-19 | Una superficie tenía un ancho fijo → `size: full, 44` y `screen.width` |
 | 2026-09-19 | Lo que la lógica dejaba corriendo sobrevivía al programa (un `pactl subscribe` huérfano) → se para al salir y al recargar |
 | 2026-09-19 | **B4 (casi)** · Probado por Abel con su ratón y sus teclas: pulsar un escritorio lleva a él, el volumen y el silencio se reflejan al momento, el título sigue a la ventana, y el clic atraviesa lo transparente de la barra (que era también lo que quedaba por ver de la región de entrada) |
+| 2026-09-19 | **S6** · Sin rueda, arrastrar, mantener, otros botones, teclas ni cursor → `on scroll`, `on drag`, `on release`, `on hold … for`, `on press right`, `on key`, `cursor:`, `keyboard:`; lo del ratón se lee en `local.x`, `drag.dx`, `wheel`; un hecho puede valer una expresión |
+| 2026-09-19 | **B7** · No se podía cambiar el volumen desde la barra → rueda sobre la píldora, arrastrar la barrita, pulsar el altavoz. La escena mueve la barrita en el acto y la lógica manda `wpctl`, como mucho uno cada 50 ms |

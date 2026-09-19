@@ -55,9 +55,9 @@ Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
 | --- | --- |
 | Encima, fuera, pulsar | ✅ con hit-test exacto sobre la forma |
 | Realce sin pasar por la lógica | ✅ **y QtQuick no lo garantiza** |
-| Botones del ratón, rueda, arrastrar, mantener pulsado | ⬜ (el derecho cierra el programa) |
-| Forma del cursor | ⬜ |
-| Teclado, foco, atajos | ⬜ |
+| Botones del ratón, rueda, arrastrar, mantener pulsado | ✅ |
+| Forma del cursor | ✅ `cursor:` |
+| Teclado, foco, atajos | 🟡 teclas como sucesos (`on key Escape`); sin modificadores ni atajos globales |
 | Entrada de texto, selección, portapapeles, IME | ⬜ |
 | Arrastrar y soltar (Marea lo usa) | ⬜ |
 | Atajos globales, captura de foco para cerrar al pulsar fuera | ⬜ |

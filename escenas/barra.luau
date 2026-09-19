@@ -50,3 +50,26 @@ spawn("pactl", { "subscribe" }, function(line)
         after(40, volume)
     end
 end)
+
+-- ── y en la otra dirección: lo que se pide desde la barra ────────
+local sink = "@DEFAULT_AUDIO_SINK@"
+
+on("volume_step", function(notches)
+    local step = string.format("%d%%%s", 5 * math.abs(notches), notches > 0 and "+" or "-")
+    run("wpctl", { "set-volume", "-l", "1.0", sink, step })
+end)
+
+--  Arrastrando llegan sesenta por segundo, y cada uno sería un proceso: se
+--  guarda el último y se manda como mucho uno cada 50 ms.
+local wanted, sending = nil, false
+on("volume_set", function(v)
+    wanted = v
+    if sending then return end
+    sending = true
+    after(50, function()
+        sending = false
+        run("wpctl", { "set-volume", sink, string.format("%.2f", wanted) })
+    end)
+end)
+
+on("mute", function() run("wpctl", { "set-mute", sink, "toggle" }) end)
