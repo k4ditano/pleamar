@@ -35,7 +35,7 @@ pub struct Contexto {
 #[allow(dead_code)] // animar e impulso siguen ahí para guiones que aún manden intenciones sueltas
 impl Contexto {
     pub fn animar(&self, prop: PropId, a: f32, muelle: Muelle, retraso_ms: u64) {
-        let t = Transicion { prop, a, muelle, retraso: Duration::from_millis(retraso_ms) };
+        let t = Transicion { prop, a: a.into(), muelle, retraso: Duration::from_millis(retraso_ms) };
         let _ = self.tx.send(ARender::Orden(Orden::Animar(t)));
     }
 

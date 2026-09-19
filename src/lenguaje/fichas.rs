@@ -43,12 +43,16 @@ pub fn trocear(fuente: &str) -> Result<Vec<Ficha>, Fallo> {
                 i += fin + 2;
             } else if ch == '#' {
                 let hex: String = c[i + 1..].iter().take_while(|x| x.is_ascii_hexdigit()).collect();
-                if hex.len() != 6 {
-                    return Err(Fallo::en(n + 1, col, "un color son seis cifras hexadecimales: #151616"));
-                }
+                // #151616, o el atajo de tres cifras: #fff es #ffffff.
+                let largo = hex.len();
+                let hex: String = match largo {
+                    6 => hex,
+                    3 => hex.chars().flat_map(|c| [c, c]).collect(),
+                    _ => return Err(Fallo::en(n + 1, col, "un color son seis cifras hexadecimales (#151616) o tres (#fff)")),
+                };
                 let v = |k: usize| u8::from_str_radix(&hex[k..k + 2], 16).unwrap() as f32 / 255.0;
                 poner(F::Color([v(0), v(2), v(4)]));
-                i += 7;
+                i += largo + 1;
             } else if ch.is_ascii_digit() || (ch == '.' && c.get(i + 1).is_some_and(|x| x.is_ascii_digit())) {
                 let mut j = i;
                 while j < c.len() && (c[j].is_ascii_digit() || (c[j] == '.' && c.get(j + 1) != Some(&'.'))) {

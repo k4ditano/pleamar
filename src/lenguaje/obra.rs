@@ -1,7 +1,9 @@
 //! Del árbol a la escena: qué significa cada nodo, y si los nombres existen.
 //!
-//! Se lee de arriba abajo y una sola vez: lo que se usa tiene que estar
-//! declarado más arriba. A cambio, cada fallo sabe su línea.
+//! Se lee en cuatro vueltas, para que el orden en que se escribe sea el que le
+//! convenga a quien lee y no al programa: primero lo que se declara; luego los
+//! nombres (`let`) y las capas; luego el dibujo, y al final las reglas, que ya
+//! pueden nombrar cualquier forma. Solo un `let` tiene que ir antes de quien lo usa.
 
 use super::arbol::{Entrada, Nodo};
 use super::fichas::{Ficha, F};
@@ -12,10 +14,8 @@ use std::time::Duration;
 
 type R<T> = Result<T, Fallo>;
 
-/// Los nombres viven lo que el programa. Cada recarga pierde unos bytes; está
-/// apuntado como limitación.
 fn fijo(s: &str) -> &'static str {
-    Box::leak(s.to_owned().into_boxed_str())
+    internar(s)
 }
 
 /// Un cursor sobre las fichas de una cabecera o de un valor.
@@ -101,7 +101,17 @@ impl<'a> Cur<'a> {
     }
 }
 
-struct Obra {
+/// Una forma con nombre: será zona si alguna regla la nombra, si se declaró
+/// con `zone` o si lleva `active`.
+struct Candidata {
+    nombre: String,
+    forma: Forma,
+    activa: Option<Expr>,
+    bajo: Vec<Transformacion>,
+    forzada: bool,
+}
+
+struct Obra<'a> {
     e: Escena,
     props: HashMap<String, PropId>,
     hechos: HashMap<String, HechoId>,
@@ -112,39 +122,74 @@ struct Obra {
     gestos: HashMap<String, GestoId>,
     zonas: HashMap<String, ZonaId>,
     lets: HashMap<String, Expr>,
+    colores: HashMap<String, Color>,
     muelles: HashMap<String, Muelle>,
+    candidatas: Vec<Candidata>,
+    /// Las reglas se dejan para el final: así pueden nombrar formas que se
+    /// pintan más abajo.
+    reglas: Vec<&'a Nodo>,
+    fallos: Vec<Fallo>,
     /// Las transformaciones bajo las que se está pintando: una zona las hereda.
     bajo: Vec<Transformacion>,
 }
 
-pub fn levantar(arbol: &[Entrada]) -> R<Escena> {
+pub fn levantar(arbol: &[Entrada]) -> Result<Escena, Vec<Fallo>> {
     let escena = match arbol {
         [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "scene") => n,
-        _ => return Err(Fallo::en(1, 1, "un fichero es una escena: `scene Nombre { … }`")),
+        _ => return Err(vec![Fallo::en(1, 1, "un fichero es una escena: `scene Nombre { … }`")]),
     };
     let mut o = Obra {
         e: Escena::default(),
         props: HashMap::new(), hechos: HashMap::new(), sucesos: HashMap::new(), textos: HashMap::new(), imagenes: HashMap::new(),
-        medidas: HashMap::new(), gestos: HashMap::new(), zonas: HashMap::new(), lets: HashMap::new(),
+        medidas: HashMap::new(), gestos: HashMap::new(), zonas: HashMap::new(), lets: HashMap::new(), colores: HashMap::new(),
         muelles: [("lively", Muelle::VIVO), ("calm", Muelle::SERENO), ("quick", Muelle::RAPIDO), ("slow", Muelle::LENTO), ("eyes", Muelle::OJOS), ("pose", Muelle::POSE)]
             .into_iter().map(|(n, m)| (n.to_owned(), m)).collect(),
-        bajo: Vec::new(),
+        bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
     };
     // Un suceso que siempre existe: lo dispara `--demo`, para escenas sin ratón.
     let demo = o.e.suceso("demo");
     o.sucesos.insert("demo".into(), demo);
-    let cuerpo = escena.cuerpo.as_ref().ok_or_else(|| Fallo::en(escena.linea, escena.col, "a la escena le falta su bloque `{ … }`"))?;
-    o.grupo(cuerpo)?;
-    Ok(o.e)
+    let Some(cuerpo) = escena.cuerpo.as_ref() else {
+        return Err(vec![Fallo::en(escena.linea, escena.col, "a la escena le falta su bloque `{ … }`")]);
+    };
+    // Cuatro vueltas: declaraciones; nombres y capas; dibujo; reglas.
+    for vuelta in 0..3 {
+        let de_esta: Vec<&Entrada> = cuerpo.iter().filter(|e| vuelta_de(e) == vuelta).collect();
+        o.grupo(de_esta.into_iter());
+    }
+    o.zonas_de_verdad();
+    for n in std::mem::take(&mut o.reglas) {
+        let mut c = Cur::de(&n.cabeza, n.linea, n.col);
+        let palabra = c.id("on o every").unwrap_or_default();
+        if let Err(f) = o.regla(n, &palabra, &mut c) {
+            o.fallos.push(f);
+        }
+    }
+    if o.fallos.is_empty() { Ok(o.e) } else { Err(o.fallos) }
 }
 
-impl Obra {
+/// En qué vuelta se lee cada sentencia del nivel de la escena.
+fn vuelta_de(e: &Entrada) -> u8 {
+    let Entrada::Nodo(n) = e else { return 2 };
+    let es_asignacion = matches!(n.cabeza.get(2).map(|x| &x.f), Some(F::Sim("=")));
+    match n.cabeza.first().map(|f| &f.f) {
+        Some(F::Id(p)) => match p.as_str() {
+            "surface" | "spring" | "prop" | "pose" | "fact" | "event" | "measure" => 0,
+            "text" | "image" if es_asignacion => 0,
+            "let" | "layer" => 1,
+            _ => 2,
+        },
+        _ => 2,
+    }
+}
+
+impl<'a> Obra<'a> {
     // ── nombres ─────────────────────────────────────────────────
 
     fn desconocido<T>(&self, c: &Cur, que: &str, nombre: &str, conocidos: Vec<&String>) -> R<T> {
         let pista = parecido(nombre, conocidos.into_iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
         let (l, col) = c.f.get(c.i.saturating_sub(1)).map_or(c.fin, |x| (x.linea, x.col));
-        Err(Fallo::en(l, col, format!("no hay {que} que se llame «{nombre}».{pista} Lo que se usa tiene que estar declarado más arriba.")))
+        Err(Fallo::en(l, col, format!("no hay {que} que se llame «{nombre}».{pista} Un `let` tiene que ir antes de quien lo usa; lo demás, donde quieras.")))
     }
 
     fn prop(&self, c: &mut Cur) -> R<PropId> {
@@ -359,6 +404,10 @@ impl Obra {
                 c.i += 1;
                 Ok(color(k[0], k[1], k[2]))
             }
+            Some(F::Id(n)) if self.colores.contains_key(n) => {
+                c.i += 1;
+                Ok(self.colores[n].clone())
+            }
             Some(F::Id(m)) if m == "mix" => {
                 c.i += 1;
                 c.exige_sim("(")?;
@@ -372,13 +421,13 @@ impl Obra {
                 let [b0, b1, b2] = b;
                 Ok([a0.clone() + (b0 - a0) * t.clone(), a1.clone() + (b1 - a1) * t.clone(), a2.clone() + (b2 - a2) * t])
             }
-            _ => c.fallo("aquí esperaba un color, como #151616"),
+            _ => c.fallo("aquí esperaba un color: #151616, el nombre de uno, o mix(#a, #b, cuánto)"),
         }
     }
 
     // ── el bloque de un nodo, visto como propiedades ────────────
 
-    fn propiedades<'a>(&self, n: &'a Nodo, validas: &[&str]) -> R<HashMap<&'a str, Cur<'a>>> {
+    fn propiedades<'n>(&self, n: &'n Nodo, validas: &[&str]) -> R<HashMap<&'n str, Cur<'n>>> {
         let mut m = HashMap::new();
         for e in n.cuerpo.as_deref().unwrap_or(&[]) {
             if let Entrada::Prop { nombre, valor, linea, col } = e {
@@ -459,11 +508,10 @@ impl Obra {
         if let Some(w) = stroke {
             forma = forma.trazo(w);
         }
-        // Una forma con nombre es también una zona: se puede pulsar, y el ratón
-        // entra por ella. Hereda las transformaciones bajo las que se pinta.
+        // Una forma con nombre puede ser una zona, con las transformaciones bajo
+        // las que se pinta. Si lo es o no se decide al final: ver `zonas_de_verdad`.
         if let Some(nombre) = &nombre {
-            let z = self.e.zona_bajo(fijo(nombre), forma.clone(), active.unwrap_or(Expr::K(1.0)), self.bajo.clone());
-            self.zonas.insert(nombre.clone(), z);
+            self.candidatas.push(Candidata { nombre: nombre.clone(), forma: forma.clone(), activa: active, bajo: self.bajo.clone(), forzada: false });
         }
         Ok(FormaLeida { forma, color, opacidad: opacity, fusion: blend })
     }
@@ -471,10 +519,25 @@ impl Obra {
     // ── lo que se pinta ─────────────────────────────────────────
 
     /// Un grupo: sus propiedades (transformación, opacidad) y sus hijos en orden.
-    fn grupo(&mut self, entradas: &[Entrada]) -> R<()> {
+    fn grupo(&mut self, entradas: impl Iterator<Item = &'a Entrada>) {
         let mut recortes = 0;
         for e in entradas {
             let Entrada::Nodo(n) = e else { continue };
+            // Un fallo no para la lectura: se apunta y se sigue, para decirlos todos.
+            if let Err(f) = self.sentencia(n, &mut recortes) {
+                if self.fallos.len() < 8 {
+                    self.fallos.push(f);
+                }
+            }
+        }
+        // Un recorte vale hasta el final de su grupo.
+        for _ in 0..recortes {
+            self.e.pintar(Instr::Recorte(None));
+        }
+    }
+
+    fn sentencia(&mut self, n: &'a Nodo, recortes: &mut usize) -> R<()> {
+        {
             let mut c = Cur::de(&n.cabeza, n.linea, n.col);
             let palabra = c.id("una declaración")?;
             match palabra.as_str() {
@@ -538,6 +601,20 @@ impl Obra {
                 "let" => {
                     let nombre = c.id("un nombre")?;
                     c.exige_sim("=")?;
+                    // `let mint = #9ed6bd`: un color con nombre.
+                    let es_color = match (c.mira(), c.f.get(c.i + 2).map(|x| &x.f)) {
+                        (Some(F::Color(_)), _) => true,
+                        (Some(F::Id(m)), Some(F::Color(_))) if m == "mix" => true,
+                        (Some(F::Id(m)), Some(F::Id(k))) if m == "mix" && self.colores.contains_key(k) => true,
+                        (Some(F::Id(k)), _) if self.colores.contains_key(k) => true,
+                        _ => false,
+                    };
+                    if es_color {
+                        let k = self.color(&mut c)?;
+                        c.nada_mas()?;
+                        self.colores.insert(nombre, k);
+                        return Ok(());
+                    }
                     let e = self.expr(&mut c)?;
                     c.nada_mas()?;
                     self.lets.insert(nombre, e);
@@ -545,6 +622,9 @@ impl Obra {
                 "zone" => {
                     // Una forma que no se pinta: solo es sensible.
                     self.forma(n, 1)?;
+                    if let Some(c) = self.candidatas.last_mut() {
+                        c.forzada = true;
+                    }
                 }
                 "body" => self.cuerpo(n)?,
                 "ellipse" | "box" | "arc" | "line" => {
@@ -558,11 +638,11 @@ impl Obra {
                     let desde = c.i;
                     let f = self.forma(n, desde)?;
                     self.e.pintar(Instr::Recorte(Some((f.forma, margen))));
-                    recortes += 1;
+                    *recortes += 1;
                 }
                 "group" => self.grupo_con_propiedades(n)?,
                 "layer" => self.capa(n, &mut c)?,
-                "on" | "every" => self.regla(n, &palabra, &mut c)?,
+                "on" | "every" => self.reglas.push(n),
                 "blink" | "wave" | "spin" | "follow" | "look" => self.comportamiento(&palabra, &mut c)?,
                 "gesture" | "posture" => self.gesto(n, &palabra, &mut c)?,
                 otra => {
@@ -572,14 +652,10 @@ impl Obra {
                 }
             }
         }
-        // Un recorte vale hasta el final de su grupo.
-        for _ in 0..recortes {
-            self.e.pintar(Instr::Recorte(None));
-        }
         Ok(())
     }
 
-    fn grupo_con_propiedades(&mut self, n: &Nodo) -> R<()> {
+    fn grupo_con_propiedades(&mut self, n: &'a Nodo) -> R<()> {
         let mut p = self.propiedades(n, &["pivot", "rotate", "scale", "move", "opacity"])?;
         let mut t = Transformacion::en((0.0.into(), 0.0.into()));
         let mut transforma = false;
@@ -610,7 +686,7 @@ impl Obra {
         if let Some(o) = &opacidad {
             self.e.pintar(Instr::Opacidad(Some(o.clone())));
         }
-        self.grupo(n.cuerpo.as_deref().unwrap_or(&[]))?;
+        self.grupo(n.cuerpo.as_deref().unwrap_or(&[]).iter());
         if opacidad.is_some() {
             self.e.pintar(Instr::Opacidad(None));
         }
@@ -914,11 +990,32 @@ impl Obra {
             return Err(Fallo::en(linea, col, format!("no hay ninguna propiedad que se llame «{nombre}».{pista}")));
         };
         let mut c = Cur::de(valor, linea, col);
-        let a = c.num()?;
+        let a = self.expr(&mut c)?;
         let muelle = if c.sim("~") { self.muelle(&mut c)? } else { Muelle::VIVO };
         let retraso = if c.palabra("after") { c.dur()? } else { Duration::ZERO };
         c.nada_mas()?;
         Ok(Transicion { prop, a, muelle, retraso })
+    }
+
+    // ── zonas ───────────────────────────────────────────────────
+
+    /// De las formas con nombre, son zonas las que alguna regla nombra, las
+    /// declaradas con `zone` y las que llevan `active`. Las demás tenían nombre
+    /// solo para leerse mejor, y no tienen por qué parar el clic. Se crean en el
+    /// orden en que se escribieron: la de más abajo en el fichero queda encima.
+    fn zonas_de_verdad(&mut self) {
+        let nombradas: std::collections::HashSet<&str> = self
+            .reglas
+            .iter()
+            .flat_map(|n| n.cabeza.iter())
+            .filter_map(|f| if let F::Id(s) = &f.f { Some(s.as_str()) } else { None })
+            .collect();
+        for k in std::mem::take(&mut self.candidatas) {
+            if k.forzada || k.activa.is_some() || nombradas.contains(k.nombre.as_str()) {
+                let z = self.e.zona_bajo(fijo(&k.nombre), k.forma, k.activa.unwrap_or(Expr::K(1.0)), k.bajo);
+                self.zonas.insert(k.nombre, z);
+            }
+        }
     }
 
     // ── reglas ──────────────────────────────────────────────────
@@ -1099,7 +1196,7 @@ impl Obra {
                     return Err(Fallo::en(*linea, *col, format!("«{nombre}» no es de la pose: un gesto solo lleva de la mano lo que se declaró con `pose`")));
                 }
                 let mut c = Cur::de(valor, *linea, *col);
-                foto.valores.push((prop, c.num()?));
+                foto.valores.push((prop, self.expr(&mut c)?));
                 c.nada_mas()?;
             }
             fotogramas.push(foto);

@@ -366,14 +366,16 @@ pub fn hilo(
                     let _ = a_logica.send(Evento::GestoRechazado(nuevo.nombre));
                     continue;
                 }
-                gesto = Some(Reproduccion::empezar(g, nuevo, &escena.pose, &props, ahora, op.reducido));
+                gesto = Some(Reproduccion::empezar(g, nuevo, &escena.pose, Ctx { props: &props, hechos: &hechos }, ahora, op.reducido));
             }
         }
 
         pendientes.retain(|(cuando, t)| {
             if *cuando <= ahora {
+                // El destino se calcula ahora, no cuando se declaró.
+                let destino = t.a.evaluar(Ctx { props: &props, hechos: &hechos });
                 let a = &mut props[t.prop.0 as usize];
-                a.objetivo = t.a;
+                a.objetivo = destino;
                 a.muelle = t.muelle;
                 if op.reducido {
                     a.posar();
@@ -417,7 +419,8 @@ pub fn hilo(
                 }
                 for t in &r.fija {
                     if primera_vez {
-                        props[t.prop.0 as usize].fijar(t.a);
+                        let v = t.a.evaluar(Ctx { props: &props, hechos: &hechos });
+                        props[t.prop.0 as usize].fijar(v);
                     } else {
                         pendientes.push((ahora + t.retraso, t.clone()));
                     }
@@ -490,7 +493,7 @@ pub fn hilo(
             let c = Ctx { props: &props, hechos: &hechos };
             if let Some((g, _)) = escena.posturas.iter().find(|(_, e)| e.es_verdad(c)) {
                 let k = g.0 as usize;
-                gesto = Some(Reproduccion::empezar(k, &escena.gestos[k], &escena.pose, &props, ahora, op.reducido));
+                gesto = Some(Reproduccion::empezar(k, &escena.gestos[k], &escena.pose, Ctx { props: &props, hechos: &hechos }, ahora, op.reducido));
             }
         }
 
@@ -512,7 +515,7 @@ pub fn hilo(
                 }
                 // Llegó: lo que venga parte de donde este termina.
                 for (k, p) in escena.pose.iter().enumerate() {
-                    r.desde[k] = r.destino(f, *p, &props);
+                    r.desde[k] = r.destino(r.fotograma, *p, &props);
                 }
                 r.inicio += Duration::from_millis((f.ms + f.aguanta) as u64);
                 r.fotograma += 1;
@@ -534,7 +537,7 @@ pub fn hilo(
                 let f = &g.fotogramas[r.fotograma];
                 let t = if f.ms == 0 { 1.0 } else { (ahora - r.inicio).as_secs_f32() * 1000.0 / f.ms as f32 };
                 let avance = if r.quieta.is_some() { 1.0 } else { f.curva.aplicar(t) };
-                let de = r.quieta.map_or(f, |q| &g.fotogramas[q]);
+                let de = r.quieta.unwrap_or(r.fotograma);
                 for (k, p) in escena.pose.iter().enumerate() {
                     let hasta = r.destino(de, *p, &props);
                     let a = &mut props[p.0 as usize];
@@ -715,23 +718,24 @@ struct Reproduccion {
     desde: Vec<f32>,
     /// Con movimiento reducido: el fotograma que se enseña, quieto, todo el rato.
     quieta: Option<usize>,
+    valores: Vec<Vec<(PropId, f32)>>,
 }
 
 impl Reproduccion {
-    fn empezar(k: usize, g: &Gesto, pose: &[PropId], props: &[Animada], ahora: Instant, reducido: bool) -> Self {
+    fn empezar(k: usize, g: &Gesto, pose: &[PropId], c: Ctx, ahora: Instant, reducido: bool) -> Self {
+        let props = c.props;
+        // Los valores de cada fotograma se fijan al empezar.
+        let valores: Vec<Vec<(PropId, f32)>> = g.fotogramas.iter().map(|f| f.valores.iter().map(|(p, e)| (*p, e.evaluar(c))).collect()).collect();
         // La cara quieta de un gesto es el fotograma que más se aparta de la base.
         let quieta = reducido.then(|| {
-            let puntos = |f: &Fotograma| -> f32 {
-                f.valores.iter().map(|(p, v)| (v - props[p.0 as usize].objetivo).abs() / props[p.0 as usize].objetivo.abs().max(1.0)).sum()
-            };
-            (0..g.fotogramas.len()).max_by(|a, b| puntos(&g.fotogramas[*a]).total_cmp(&puntos(&g.fotogramas[*b]))).unwrap_or(0)
+            let puntos = |f: &Vec<(PropId, f32)>| -> f32 { f.iter().map(|(p, v)| (v - props[p.0 as usize].objetivo).abs() / props[p.0 as usize].objetivo.abs().max(1.0)).sum() };
+            (0..valores.len()).max_by(|a, b| puntos(&valores[*a]).total_cmp(&puntos(&valores[*b]))).unwrap_or(0)
         });
-        Reproduccion { gesto: k, fotograma: 0, inicio: ahora, desde: pose.iter().map(|p| props[p.0 as usize].x).collect(), quieta }
+        Reproduccion { gesto: k, fotograma: 0, inicio: ahora, desde: pose.iter().map(|p| props[p.0 as usize].x).collect(), quieta, valores }
     }
 
-    /// Adónde lleva este fotograma a una propiedad: a lo que diga, o a su base.
-    fn destino(&self, f: &Fotograma, p: PropId, props: &[Animada]) -> f32 {
-        f.valores.iter().find(|(q, _)| *q == p).map_or(props[p.0 as usize].objetivo, |(_, v)| *v)
+    /// Adónde lleva un fotograma a una propiedad: a lo que diga, o a su base.
+    fn destino(&self, fotograma: usize, p: PropId, props: &[Animada]) -> f32 {
+        self.valores[fotograma].iter().find(|(q, _)| *q == p).map_or(props[p.0 as usize].objetivo, |(_, v)| *v)
     }
 }
-

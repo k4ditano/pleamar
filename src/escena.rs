@@ -13,6 +13,22 @@
 use std::ops::{Add, Div, Mul, Sub};
 use std::time::Duration;
 
+/// Los nombres de una escena viven lo que el programa, pero cada uno una sola
+/// vez: recargar el mismo fichero cien veces no gasta más que la primera.
+pub fn internar(s: &str) -> &'static str {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    static TABLA: Mutex<Option<HashSet<&'static str>>> = Mutex::new(None);
+    let mut t = TABLA.lock().unwrap();
+    let tabla = t.get_or_insert_with(HashSet::new);
+    if let Some(ya) = tabla.get(s) {
+        return ya;
+    }
+    let nuevo: &'static str = Box::leak(s.to_owned().into_boxed_str());
+    tabla.insert(nuevo);
+    nuevo
+}
+
 // ── dónde vive la escena ────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -433,13 +449,14 @@ pub enum Comportamiento {
 #[derive(Clone, Debug)]
 pub struct Transicion {
     pub prop: PropId,
-    pub a: f32,
+    /// Adónde. Una expresión, que se evalúa cuando le llega la hora: `center - 220`.
+    pub a: Expr,
     pub muelle: Muelle,
     pub retraso: Duration,
 }
 
-pub fn ir(prop: PropId, a: f32, muelle: Muelle, retraso_ms: u64) -> Transicion {
-    Transicion { prop, a, muelle, retraso: Duration::from_millis(retraso_ms) }
+pub fn ir(prop: PropId, a: impl Into<Expr>, muelle: Muelle, retraso_ms: u64) -> Transicion {
+    Transicion { prop, a: a.into(), muelle, retraso: Duration::from_millis(retraso_ms) }
 }
 
 /// Una región sensible: una forma con nombre. El render hace el hit-test con
@@ -579,7 +596,9 @@ pub struct Fotograma {
     pub aguanta: u32,
     pub curva: Curva,
     /// Lo que no se nombra vuelve a su pose base.
-    pub valores: Vec<(PropId, f32)>,
+    /// Expresiones, que se evalúan al empezar el gesto: así un mismo gesto
+    /// puede señalar a un lado u otro según un hecho.
+    pub valores: Vec<(PropId, Expr)>,
     pub emite: Option<SucesoId>,
 }
 
@@ -587,8 +606,8 @@ pub fn foto(ms: u32, curva: Curva) -> Fotograma {
     Fotograma { ms, aguanta: 0, curva, valores: vec![], emite: None }
 }
 impl Fotograma {
-    pub fn con(mut self, p: PropId, v: f32) -> Self {
-        self.valores.push((p, v));
+    pub fn con(mut self, p: PropId, v: impl Into<Expr>) -> Self {
+        self.valores.push((p, v.into()));
         self
     }
     pub fn aguanta(mut self, ms: u32) -> Self {
@@ -693,7 +712,7 @@ impl Escena {
     /// Dos propiedades de solo lectura —ancho y alto— que el render rellena con
     /// lo que mida un texto.
     pub fn medida(&mut self, nombre: &'static str) -> (PropId, PropId) {
-        let n = |sufijo: &str| -> &'static str { Box::leak(format!("{nombre}.{sufijo}").into_boxed_str()) };
+        let n = |sufijo: &str| internar(&format!("{nombre}.{sufijo}"));
         (self.prop(n("ancho"), 0.0), self.prop(n("alto"), 0.0))
     }
     pub fn texto_vivo(&mut self, nombre: &'static str, inicial: &str) -> TextoId {
@@ -731,8 +750,7 @@ impl Escena {
         let presencias: Vec<PropId> = reclamaciones
             .iter()
             .map(|r| {
-                // El nombre vive lo que el programa: una fuga pequeña y una sola vez por escena.
-                let n: &'static str = Box::leak(format!("capa.{nombre}.{}", r.nombre).into_boxed_str());
+                let n = internar(&format!("capa.{nombre}.{}", r.nombre));
                 self.props.push((n, 0.0, muelle));
                 PropId(self.props.len() as u16 - 1)
             })

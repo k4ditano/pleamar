@@ -9,7 +9,11 @@ use std::time::Duration;
 /// Lee y levanta una escena. El fallo viene ya con su línea y su flecha.
 pub fn leer(ruta: &str) -> Result<Escena, String> {
     let fuente = std::fs::read_to_string(ruta).map_err(|e| format!("{ruta}: {e}"))?;
-    crate::lenguaje::leer(&fuente).map_err(|f| f.con_fuente(ruta, &fuente))
+    crate::lenguaje::leer(&fuente).map_err(|fallos| {
+        let n = fallos.len();
+        let texto: Vec<String> = fallos.iter().map(|f| f.con_fuente(ruta, &fuente)).collect();
+        format!("{}\n{}", texto.join("\n\n"), if n == 1 { "un fallo".to_owned() } else { format!("{n} fallos") })
+    })
 }
 
 pub struct DeFichero {

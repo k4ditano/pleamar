@@ -31,9 +31,10 @@ impl Fallo {
     }
 }
 
-pub fn leer(fuente: &str) -> Result<Escena, Fallo> {
-    let fichas = fichas::trocear(fuente)?;
-    let arbol = arbol::arbol(&fichas)?;
+/// Devuelve la escena, o todos los fallos que se hayan podido encontrar.
+pub fn leer(fuente: &str) -> Result<Escena, Vec<Fallo>> {
+    let fichas = fichas::trocear(fuente).map_err(|f| vec![f])?;
+    let arbol = arbol::arbol(&fichas).map_err(|f| vec![f])?;
     obra::levantar(&arbol)
 }
 
