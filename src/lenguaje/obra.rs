@@ -1604,7 +1604,10 @@ impl<'a> Obra<'a> {
                 c.exige_sim(",")?;
                 let difusa = c.num()?;
                 c.exige_sim(",")?;
-                Some(Sombra { desplazada: (dx, dy), difusa, alfa: c.num()? })
+                let alfa = c.num()?;
+                //  Y de qué color, si se dice: `shadow: 0, 0, 18, 55%, mint`.
+                let color = if c.sim(",") { Some(self.color(c)?) } else { None };
+                Some(Sombra { desplazada: (dx, dy), difusa, alfa, color })
             }
             None => None,
         };

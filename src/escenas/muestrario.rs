@@ -24,7 +24,7 @@ impl Guion for Muestrario {
         let tinta = color(0.07, 0.075, 0.08);
 
         // Un fondo oscuro para que todo se lea sobre cualquier escritorio.
-        e.pintar(Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 8.0), difusa: 24.0, alfa: 0.3 }) });
+        e.pintar(Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 8.0), difusa: 24.0, alfa: 0.3, color: None }) });
         e.pintar(Instr::Forma { forma: Forma::Caja { centro: (360.0.into(), 186.0.into()), mitad: (350.0.into(), 176.0.into()), radio: 22.0.into() }, fusion: 0.0.into() });
         e.pintar(Instr::Relleno { pintura: tinta.clone().into(), alfa: 0.94.into(), filo: 0.04, luz: None, borde: None });
 

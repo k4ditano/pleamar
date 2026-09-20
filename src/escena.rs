@@ -348,6 +348,12 @@ pub struct Sombra {
     pub desplazada: (f32, f32),
     pub difusa: f32,
     pub alfa: f32,
+    /// De qué color. Negra si no se dice, que es lo que una sombra es sobre
+    /// papel; sobre un escritorio de ventanas oscuras, una sombra negra no
+    /// tiene nada que oscurecer y lo que separa una cosa del fondo es un halo
+    /// claro. Por eso se puede decir, y por eso es una expresión: puede ir
+    /// cambiando de halo a sombra según lo que haya debajo.
+    pub color: Option<Color>,
 }
 
 /// Un degradado vertical de claridad, para que el cuerpo no sea plano.

@@ -262,7 +262,8 @@ fn fs(e: Salida) -> @location(0) vec4<f32> {
         if (con_sombra) { d_sombra = min_suave(d_sombra, distancia(primera + k, p - el.sombra.xy), fusion); }
     }
     if (con_sombra) {
-        c = sobre(c, vec3<f32>(0.0), el.sombra.w * alfa * (1.0 - smoothstep(-8.0, el.sombra.z, d_sombra)));
+        // Su color son los tres huecos de `color1`; sin decir nada, negra.
+        c = sobre(c, el.color1.rgb, el.sombra.w * alfa * (1.0 - smoothstep(-8.0, el.sombra.z, d_sombra)));
     }
     var tono = el.color0.rgb;
     if (el.color1.w > 0.5) {

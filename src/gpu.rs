@@ -322,6 +322,11 @@ impl Dibujo {
                         }
                         if let Some(s) = &g.sombra {
                             e[28..32].copy_from_slice(&[s.desplazada.0, s.desplazada.1, s.difusa, s.alfa]);
+                            //  Su color va en los tres huecos de `color1`, que
+                            //  solo usaba el cuarto para decir si hay degradado.
+                            if let Some(col) = &s.color {
+                                e[12..15].copy_from_slice(&color(col));
+                            }
                         }
                     });
                 }

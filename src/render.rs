@@ -1303,7 +1303,7 @@ fn banda_de_fallo(mensaje: &str, ancho: f32) -> Vec<Instr> {
         radio: r.into(),
     };
     vec![
-        Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 6.0), difusa: 18.0, alfa: 0.45 }) },
+        Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 6.0), difusa: 18.0, alfa: 0.45, color: None }) },
         Instr::Forma { forma: caja(8.0, ancho - 16.0, 10.0), fusion: 0.0.into() },
         Instr::Relleno { pintura: color(0.18, 0.05, 0.06).into(), alfa: 1.0.into(), filo: 0.05, luz: None, borde: None },
         // Una pestaña del color de los errores, a la izquierda: se lee antes que el texto.

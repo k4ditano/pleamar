@@ -79,7 +79,7 @@ impl Guion for Cara {
         // ── el dibujo ────────────────────────────────────────────
         let cy = CY + sube * S;
         let cuerpo = Forma::Elipse { centro: (CX.into(), cy.clone()), radio: R.into(), escala: (sx.e(), sy.e()) };
-        e.pintar(Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 12.0), difusa: 34.0, alfa: 0.34 }) });
+        e.pintar(Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 12.0), difusa: 34.0, alfa: 0.34, color: None }) });
         e.pintar(Instr::Forma { forma: cuerpo.clone(), fusion: 0.0.into() });
         e.pintar(Instr::Relleno { pintura: color(0.082, 0.086, 0.086).into(),
             alfa: 1.0.into(),

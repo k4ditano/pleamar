@@ -54,7 +54,7 @@ impl Guion for Marea {
         };
 
         // El cuerpo: bolita y tarjeta fundidas por un cuello de agua.
-        e.pintar(Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 10.0), difusa: 30.0, alfa: 0.34 }) });
+        e.pintar(Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 10.0), difusa: 30.0, alfa: 0.34, color: None }) });
         e.pintar(Instr::Forma { forma: orbe.clone(), fusion: 0.0.into() });
         e.pintar(Instr::Forma { forma: panel.clone(), fusion: fusion * panel_w.e().suave(0.0, 40.0) });
         e.pintar(Instr::Relleno { pintura: color(0.082, 0.086, 0.086).into(),
