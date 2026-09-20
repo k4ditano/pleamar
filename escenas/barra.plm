@@ -13,8 +13,9 @@ scene Bar {
         screens: "HDMI-A-1"
     }
 
-    //  Lo que `barra.luau` puede tocar del sistema. Sin declarar, nada.
-    permissions { services: "workspaces", "window", "audio" }
+    //  Lo que `barra.luau` puede tocar del sistema. Sin declarar, nada; y escuchar no es
+    //  mandar: `"audio"` deja saber el volumen, `"audio.*"` deja cambiarlo.
+    permissions { services: "workspaces", "workspaces.focus", "window", "audio", "audio.*" }
 
 
     // ── lo que cuenta la lógica ──────────────────────────────────

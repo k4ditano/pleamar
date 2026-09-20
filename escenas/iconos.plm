@@ -8,7 +8,7 @@ import "comun/menu.plm"
 scene TrayIcons {
     surface { size: 420, 52; anchor: top; margin: 60; screens: "HDMI-A-1" }
     //  Lo que `iconos.luau` puede tocar: la bandeja, y nada más.
-    permissions { services: "tray" }
+    permissions { services: "tray", "tray.*" }
 
 
     // ── la frontera: dos listas que pone la lógica ───────────────

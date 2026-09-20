@@ -16,7 +16,7 @@ scene Launcher {
     }
 
     //  Lo que `lanzador.luau` puede tocar: saber qué aplicaciones hay, y lanzar una de ellas.
-    permissions { services: "apps" }
+    permissions { services: "apps", "apps.launch" }
 
 
     // ── la frontera ──────────────────────────────────────────────

@@ -12,6 +12,7 @@ mod lenguaje;
 mod logica;
 #[cfg(feature = "luau")]
 mod logica_luau;
+mod permisos;
 mod plataforma;
 mod render;
 mod texto;
@@ -26,6 +27,8 @@ const AYUDA: &str = "pleamar [opciones]
   --escena NOMBRE     un fichero de escena (.plm), que se recarga solo al guardarlo; o una de las
                       escritas en Rust: marea (por defecto), isla, cara, muestrario, enjambre
   --comprobar FICHERO lee una escena, dice si está bien y sale
+  --aprobar ESCENA    enseña lo que piden los plugins de una escena y pregunta si se les aprueba
+                      (con --si detrás, no pregunta). Sin aprobar, un plugin corre sin tocar el sistema
   --gramatica         las palabras que el lenguaje acepta, tal como las consulta el compilador
   --version           la versión del programa y la del lenguaje que entiende
   --decir [ESCENA] ORDEN   le dice algo a una escena en marcha y sale. Órdenes:
@@ -81,6 +84,11 @@ fn args() -> Args {
             "--version" => {
                 println!("pleamar {} · lenguaje {}.{}", env!("CARGO_PKG_VERSION"), lenguaje::VERSION.0, lenguaje::VERSION.1);
                 std::process::exit(0);
+            }
+            "--aprobar" => {
+                let escena = valor();
+                let si_a_todo = std::env::args().any(|a| a == "--si");
+                std::process::exit(permisos::preguntar(&escena, si_a_todo));
             }
             "--gramatica" => {
                 print!("{}", lenguaje::vocabulario::como_texto());

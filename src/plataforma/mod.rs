@@ -97,6 +97,20 @@ pub fn orden(nombre: &str, args: &[Valor]) -> Result<(), String> {
     Err(format!("este sistema no sabe hacer «{nombre}» todavía"))
 }
 
+/// Dónde guarda pleamar lo que tiene que recordar de una vez para otra —qué plugins se
+/// han aprobado—: la carpeta de ajustes de cada sistema.
+pub fn carpeta_de_ajustes() -> std::path::PathBuf {
+    let de = |v: &str| std::env::var_os(v).filter(|x| !x.is_empty()).map(std::path::PathBuf::from);
+    let base = if cfg!(target_os = "windows") {
+        de("APPDATA")
+    } else if cfg!(target_os = "macos") {
+        de("HOME").map(|h| h.join("Library/Application Support"))
+    } else {
+        de("XDG_CONFIG_HOME").or_else(|| de("HOME").map(|h| h.join(".config")))
+    };
+    base.unwrap_or_else(std::env::temp_dir).join("pleamar")
+}
+
 /// Preguntarle algo a un servicio y esperar la respuesta: `tray.menu`, de quién.
 /// Puede tardar —hay otra aplicación al otro lado—, y por eso es cosa de la
 /// lógica, que puede esperar sin que se note.

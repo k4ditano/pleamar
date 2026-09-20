@@ -7,7 +7,7 @@ import "comun/paleta.plm"
 scene Tray {
     surface { size: 720, 430; anchor: top; margin: 40; screens: "HDMI-A-1" }
     //  Lo que `bandeja.luau` puede tocar: ser quien recibe las notificaciones.
-    permissions { services: "notifications" }
+    permissions { services: "notifications", "notifications.*" }
 
 
     // ── la frontera con la lógica ────────────────────────────────

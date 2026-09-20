@@ -70,6 +70,8 @@ struct Compartido {
     sucesos: std::collections::HashSet<String>,
     /// Si es la lógica de un plugin, cómo se llama: para que los errores hablen de él y no de la escena.
     plugin: Option<String>,
+    /// Pide permisos que nadie le ha aprobado: corre sin ninguno, y los errores dicen por qué.
+    sin_aprobar: bool,
     /// Hasta cuándo puede correr lo que está corriendo.
     limite: Option<Instant>,
 }
@@ -194,8 +196,17 @@ fn de_numero(lua: &Lua, tipo: Option<&crate::escena::TipoDeHecho>, v: f64) -> ml
 }
 
 fn en_claro(p: &crate::escena::Permisos) -> String {
-    let lista = |l: &[String]| if l.is_empty() { "ninguno".to_owned() } else { l.join(", ") };
-    format!("órdenes: {} · servicios: {}", lista(&p.ordenes), lista(&p.servicios))
+    crate::permisos::en_claro(p)
+}
+
+/// Por qué no, dicho a quien toca: la escena lo declara; un plugin lo declara y además se lo aprueban.
+fn denegado(c: &Mutex<Compartido>, para_que: &str, como: &str) -> mlua::Error {
+    let c = c.lock().unwrap();
+    mlua::Error::runtime(match &c.plugin {
+        None => format!("la escena no da permiso para {para_que}. Si debe poder, decláralo en el .plm: permissions {{ {como} }}"),
+        Some(p) if c.sin_aprobar => format!("el plugin «{p}» quiere {para_que}, pero nadie le ha aprobado sus permisos: corre sin ninguno. Para verlos y decidir: pleamar --aprobar ESCENA"),
+        Some(p) => format!("el plugin «{p}» no tiene permiso para {para_que}. Si debe poder, decláralo en su .plm (los de la escena no le valen): permissions {{ {como} }}"),
+    })
 }
 
 /// ¿Puede esta lógica lanzar esa orden? Sin declarar, no; y el error dice qué escribir.
@@ -203,20 +214,24 @@ fn permiso_de_orden(c: &Mutex<Compartido>, orden: &str) -> mlua::Result<()> {
     if c.lock().unwrap().permisos.ordenes.iter().any(|o| o == orden) {
         return Ok(());
     }
-    let quien = c.lock().unwrap().plugin.as_ref().map_or("la escena no da permiso".to_owned(), |p| format!("el plugin «{p}» no tiene permiso"));
-    let donde = if c.lock().unwrap().plugin.is_some() { "en su .plm (los de la escena no le valen)" } else { "en el .plm" };
-    Err(mlua::Error::runtime(format!("{quien} para lanzar «{orden}». Si debe poder, decláralo {donde}: permissions {{ run: \"{orden}\" }}")))
+    Err(denegado(c, &format!("lanzar «{orden}»"), &format!("run: \"{orden}\"")))
 }
 
-/// Lo mismo para un servicio: `audio.step` es del servicio `audio`.
-fn permiso_de_servicio(c: &Mutex<Compartido>, nombre: &str) -> mlua::Result<()> {
+/// Lo mismo para un servicio. **Escuchar no es mandar**: `services: "audio"` deja saber el
+/// volumen (`sys.watch`, `sys.ask`); para cambiarlo hace falta `"audio.volume"`, o `"audio.*"`.
+fn permiso_de_servicio(c: &Mutex<Compartido>, nombre: &str, manda: bool) -> mlua::Result<()> {
     let servicio = nombre.split('.').next().unwrap_or(nombre);
-    if c.lock().unwrap().permisos.servicios.iter().any(|s| s == servicio) {
+    let tiene = |que: &str| c.lock().unwrap().permisos.servicios.iter().any(|s| s == que);
+    if manda {
+        if tiene(nombre) || tiene(&format!("{servicio}.*")) {
+            return Ok(());
+        }
+        return Err(denegado(c, &format!("pedirle «{nombre}» al sistema"), &format!("services: \"{nombre}\"  (o \"{servicio}.*\" para todo lo de {servicio})")));
+    }
+    if tiene(servicio) || tiene(&format!("{servicio}.*")) {
         return Ok(());
     }
-    let quien = c.lock().unwrap().plugin.as_ref().map_or("la escena no da permiso".to_owned(), |p| format!("el plugin «{p}» no tiene permiso"));
-    let donde = if c.lock().unwrap().plugin.is_some() { "en su .plm (los de la escena no le valen)" } else { "en el .plm" };
-    Err(mlua::Error::runtime(format!("{quien} para usar el servicio «{servicio}». Si debe poder, decláralo {donde}: permissions {{ services: \"{servicio}\" }}")))
+    Err(denegado(c, &format!("usar el servicio «{servicio}»"), &format!("services: \"{servicio}\"")))
 }
 
 /// Un dato del sistema, como lo ve Luau: tablas, números, textos.
@@ -330,6 +345,10 @@ impl GuionLuau {
                     let _ = h.kill();
                 }
             }
+        }
+        // Se dice antes de cargar: si el script tropieza con un permiso que no tiene, que se sepa por qué.
+        if let (Some(p), true) = (&self.prefijo, self.c.lock().unwrap().sin_aprobar) {
+            println!("lógica · plugin «{p}» · ⚠ SIN APROBAR: corre sin poder tocar el sistema. Para ver qué pide y decidir: pleamar --aprobar {}", self.escena);
         }
         // Una escena puede no tener lógica propia y sí plugins que la tengan.
         if self.prefijo.is_none() && !std::path::Path::new(&self.logica).is_file() {
@@ -586,7 +605,7 @@ impl GuionLuau {
         let sys = lua.create_table()?;
         let (c, a_logica) = (self.c.clone(), self.a_logica.clone());
         sys.set("watch", lua.create_function(move |_, (nombre, f): (String, Function)| {
-            permiso_de_servicio(&c, &nombre)?;
+            permiso_de_servicio(&c, &nombre, false)?;
             let primero = {
                 let mut c = c.lock().unwrap();
                 let v = c.vigias.entry(nombre.clone()).or_default();
@@ -603,7 +622,7 @@ impl GuionLuau {
         })?)?;
         let c = self.c.clone();
         sys.set("call", lua.create_function(move |_, (nombre, args): (String, mlua::Variadic<Value>)| {
-            permiso_de_servicio(&c, &nombre)?;
+            permiso_de_servicio(&c, &nombre, true)?;
             let args: Vec<Valor> = args.iter().map(|v| match v {
                 Value::Boolean(b) => Valor::Si(*b),
                 Value::Integer(i) => Valor::Num(*i as f64),
@@ -616,7 +635,7 @@ impl GuionLuau {
         // Lo mismo, pero contesta: `sys.ask("tray.menu", key)` devuelve el menú.
         let c = self.c.clone();
         sys.set("ask", lua.create_function(move |lua, (nombre, args): (String, mlua::Variadic<Value>)| {
-            permiso_de_servicio(&c, &nombre)?;
+            permiso_de_servicio(&c, &nombre, false)?;
             let args: Vec<Valor> = args.iter().map(|v| match v {
                 Value::Boolean(b) => Valor::Si(*b),
                 Value::Integer(i) => Valor::Num(*i as f64),
@@ -682,7 +701,8 @@ impl Guion for GuionLuau {
         self.conocer(&e, e.permisos.clone());
         self.plugins = e.plugins.iter().enumerate().map(|(k, p)| {
             let plugin = self.de_plugin(p, k);
-            plugin.conocer(&e, p.permisos.clone());
+            plugin.conocer(&e, crate::permisos::los_que_valen(p));
+            plugin.c.lock().unwrap().sin_aprobar = !crate::permisos::aprobado(p);
             plugin
         }).collect();
         e
@@ -752,12 +772,13 @@ impl Guion for GuionLuau {
                         Some(i) => self.plugins.remove(i),
                         None => {
                             let mut nuevo = self.de_plugin(p, k + 100);
-                            nuevo.evento(Evento::EscenaNueva(hechos.clone(), textos.clone(), p.permisos.clone(), modelos.clone(), tipos.clone(), Vec::new(), sucesos.clone()), ctx);
+                            nuevo.evento(Evento::EscenaNueva(hechos.clone(), textos.clone(), crate::permisos::los_que_valen(p), modelos.clone(), tipos.clone(), Vec::new(), sucesos.clone()), ctx);
                             nuevo.cargar();
                             nuevo
                         }
                     };
-                    plugin.evento(Evento::EscenaNueva(hechos.clone(), textos.clone(), p.permisos.clone(), modelos.clone(), tipos.clone(), Vec::new(), sucesos.clone()), ctx);
+                    plugin.c.lock().unwrap().sin_aprobar = !crate::permisos::aprobado(p);
+                    plugin.evento(Evento::EscenaNueva(hechos.clone(), textos.clone(), crate::permisos::los_que_valen(p), modelos.clone(), tipos.clone(), Vec::new(), sucesos.clone()), ctx);
                     siguen.push(plugin);
                 }
                 for mut fuera in std::mem::replace(&mut self.plugins, siguen) {
