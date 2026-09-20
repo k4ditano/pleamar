@@ -64,13 +64,19 @@ struct Lectura {
     estrictos: Vec<usize>,
     /// Cada biblioteca: el número de su fichero, su nombre, y su lógica si tiene un `.luau` al lado.
     bibliotecas: Vec<obra::Biblioteca>,
+    /// Lo que un editor tiene abierto y todavía no ha guardado: gana al disco.
+    abiertos_de_fuera: Vec<(PathBuf, String)>,
 }
 
 impl Lectura {
     /// Trocea y agrupa un fichero, con su número metido en las líneas.
     fn abrir(&mut self, ruta: &Path) -> Result<Vec<arbol::Entrada>, Fallo> {
         let k = self.ficheros.len();
-        let fuente = std::fs::read_to_string(ruta).map_err(|e| Fallo::en(0, 0, format!("cannot read {}: {e}", ruta.display())))?;
+        let suyo = ruta.canonicalize().unwrap_or_else(|_| ruta.to_owned());
+        let fuente = match self.abiertos_de_fuera.iter().find(|(r, _)| *r == suyo) {
+            Some((_, t)) => t.clone(),
+            None => std::fs::read_to_string(ruta).map_err(|e| Fallo::en(0, 0, format!("cannot read {}: {e}", ruta.display())))?,
+        };
         self.ficheros.push((ruta.to_owned(), fuente));
         let aqui = |mut f: Fallo| { f.linea += k * POR_FICHERO; f };
         let mut fichas = fichas::trocear(&self.ficheros[k].1).map_err(aqui)?;
@@ -166,7 +172,41 @@ fn version_pedida(mut entradas: Vec<arbol::Entrada>) -> Result<Vec<arbol::Entrad
 /// ficheros de los que está hecha —para vigilarlos—, o los fallos ya con su fichero,
 /// su línea y su flecha.
 pub fn leer_fichero(ruta: &str) -> Result<(Escena, Vec<PathBuf>), String> {
-    let mut l = Lectura::default();
+    leer_con(ruta, Vec::new()).map_err(|(fallos, ficheros)| {
+        let n = fallos.len();
+        let texto: Vec<String> = fallos.iter().map(|f| f.con_fuente(&ficheros)).collect();
+        format!("{}\n{}", texto.join("\n\n"), if n == 1 { "one error".to_owned() } else { format!("{n} errors") })
+    })
+}
+
+/// Un aviso para quien escribe, tal cual: en qué fichero, dónde, y qué pasa.
+/// Es lo que el servidor de lenguaje le manda al editor mientras se teclea.
+pub struct Aviso {
+    pub fichero: PathBuf,
+    pub linea: usize,
+    pub col: usize,
+    pub mensaje: String,
+}
+
+/// Compila sin pintar nada y devuelve lo que esté mal. `abiertos` son los ficheros
+/// que un editor tiene a medio escribir: lo que diga ahí gana a lo que haya en disco.
+pub fn revisar(ruta: &str, abiertos: Vec<(PathBuf, String)>) -> Vec<Aviso> {
+    match leer_con(ruta, abiertos) {
+        Ok(_) => Vec::new(),
+        Err((fallos, ficheros)) => fallos
+            .into_iter()
+            .map(|f| Aviso {
+                fichero: ficheros.get(f.linea / POR_FICHERO).map_or_else(|| PathBuf::from(ruta), |(r, _)| r.clone()),
+                linea: f.linea % POR_FICHERO,
+                col: f.col,
+                mensaje: f.mensaje,
+            })
+            .collect(),
+    }
+}
+
+fn leer_con(ruta: &str, abiertos: Vec<(PathBuf, String)>) -> Result<(Escena, Vec<PathBuf>), (Vec<Fallo>, Vec<(PathBuf, String)>)> {
+    let mut l = Lectura { abiertos_de_fuera: abiertos, ..Default::default() };
     let principal = Path::new(ruta).canonicalize().unwrap_or_else(|_| PathBuf::from(ruta));
     let levantada = (|| {
         l.abiertos.push(principal.clone());
@@ -191,11 +231,7 @@ pub fn leer_fichero(ruta: &str) -> Result<(Escena, Vec<PathBuf>), String> {
     }
     match levantada {
         Ok(e) => Ok((e, l.ficheros.into_iter().map(|(r, _)| r).collect())),
-        Err(fallos) => {
-            let n = fallos.len();
-            let texto: Vec<String> = fallos.iter().map(|f| f.con_fuente(&l.ficheros)).collect();
-            Err(format!("{}\n{}", texto.join("\n\n"), if n == 1 { "one error".to_owned() } else { format!("{n} errors") }))
-        }
+        Err(fallos) => Err((fallos, l.ficheros)),
     }
 }
 

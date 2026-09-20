@@ -631,6 +631,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
+documented: surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture import scene library language
 services: clock clock.seconds audio battery network media window
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
@@ -651,6 +652,10 @@ layout.align: start center end
 ```
 
 `properties.shape` son las comunes a `ellipse`, `box`, `arc` y `line`; `properties.layout`, las de `row` y `column`.
+
+## 17.1. En el editor
+
+`pleamar --lsp` es un servidor de lenguaje por la entrada y la salida, con **este mismo compilador** detrás: los fallos con su sitio mientras se escribe, qué palabras valen aquí, y qué significa la que está bajo el cursor. `pleamar --resaltado vim` y `--resaltado vscode` escriben el fichero de sintaxis, sacado del vocabulario de arriba. Los dos, y cómo se instalan, están en `editor/`.
 
 ## 18. Lo que esta versión no tiene
 

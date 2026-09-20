@@ -29,12 +29,34 @@ if ! diff -q "$ejemplos/escrito.txt" "$ejemplos/de-verdad.txt" > /dev/null; then
 fi
 n=$((n + 1))
 
+# Cada sentencia tiene que poder explicarse en el editor: `--lsp` la enseña al pasar por encima.
+sin_ayuda=""
+explicadas=$(grep "^documented: " "$ejemplos/de-verdad.txt")
+for palabra in $(grep "^statements: " "$ejemplos/de-verdad.txt" | cut -d' ' -f2-); do
+    case " $explicadas " in *" $palabra "*) ;; *) sin_ayuda="$sin_ayuda $palabra" ;; esac
+done
+if [ -n "$sin_ayuda" ]; then
+    echo "✗ sentencias que el editor no sabe explicar (voz::AYUDA):$sin_ayuda"
+    mal=$((mal + 1))
+fi
+n=$((n + 1))
+
+# Y el resaltado que se reparte en editor/ tiene que ser el que sale del vocabulario de ahora.
+for par in "vim:editor/plm.vim" "vscode:editor/plm.tmLanguage.json"; do
+    ./target/release/pleamar --resaltado "${par%%:*}" > "$ejemplos/resaltado.txt"
+    if ! diff -q "$ejemplos/resaltado.txt" "${par#*:}" > /dev/null; then
+        echo "✗ ${par#*:} se quedó atrás: hazlo otra vez con \`pleamar --resaltado ${par%%:*}\`"
+        mal=$((mal + 1))
+    fi
+    n=$((n + 1))
+done
+
 # Y cada palabra del vocabulario tiene que salir en alguna prueba: una que nadie usa es una que nadie vigila.
 cat pruebas/*.plm pruebas/comun/*.plm escenas/*.plm escenas/comun/*.plm "$ejemplos"/*.plm > "$ejemplos/todo.txt"
 sin_uso=""
 while IFS= read -r linea; do
     lista=${linea%%:*}
-    case "$lista" in language|units) continue ;; esac
+    case "$lista" in language|units|documented) continue ;; esac
     for palabra in ${linea#*: }; do
         grep -qw -- "$palabra" "$ejemplos/todo.txt" || sin_uso="$sin_uso $lista/$palabra"
     done

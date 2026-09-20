@@ -7,6 +7,7 @@
 mod escena;
 mod escenas;
 mod formas;
+mod lsp;
 mod gpu;
 mod lenguaje;
 mod logica;
@@ -30,6 +31,9 @@ const AYUDA: &str = "pleamar [options]
   --aprobar SCENE     shows what the plugins of a scene ask for, and asks whether to approve them
                       (with --si after it, it does not ask). Unapproved, a plugin runs touching nothing
   --gramatica         the words the language accepts, exactly as the compiler consults them
+  --lsp               a language server on stdio: mistakes as you type, what fits here, and what
+                      each word means. For any editor that speaks LSP
+  --resaltado EDITOR  writes the syntax file for 'vim' or 'vscode', made from the vocabulary
   --version           the version of the program and of the language it understands
   --decir [SCENE] CMD says something to a running scene and exits. Commands:
                       «emit event [n]», «fact name value», «text name whatever it says», «focus input», «get name» (answers), «quit»
@@ -94,6 +98,12 @@ fn args() -> Args {
                 print!("{}", lenguaje::vocabulario::como_texto());
                 std::process::exit(0);
             }
+            // El editor: los fallos mientras se escribe, y el resaltado.
+            "--lsp" => {
+                lsp::servir();
+                std::process::exit(0);
+            }
+            "--resaltado" => std::process::exit(lsp::resaltado(&valor())),
             "--comprobar" => {
                 let ruta = valor();
                 std::process::exit(match escenas::de_fichero::leer(&ruta) {

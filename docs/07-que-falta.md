@@ -82,6 +82,8 @@ Para no perderlo de vista, porque es la razón de que esto exista:
 
 ## 3.1. Lo que además salió de aquí
 
+**El editor sabe el lenguaje**: `pleamar --lsp` da los fallos mientras se escribe, con el mismo compilador que lee la escena, y `--resaltado` escribe la sintaxis desde el vocabulario. Quickshell tiene el tooling de QML, que es mucho más viejo y más completo; esto es pequeño, pero no puede desfasarse.
+
 **Una lista de cinco mil filas cuesta lo que dieciséis**, y se escribe en la escena: `content:` dice lo que mide de verdad, `for … from` numera las copias desde donde toca, y el desplazamiento es una propiedad que una regla puede llevar donde quiera. En Quickshell eso es `ListView`, que virtualiza él solo pero se lleva su propio hilo de instanciación por delante.
 
 **Un camino es una forma más**, no una isla: `Shape` en QtQuick es un motor aparte (triangula y pinta con otro camino de render), así que no se funde con lo de alrededor ni tiene sombra de balde. Aquí es la misma distancia con signo que un círculo, y `blend` lo funde con lo que tenga al lado.
@@ -90,6 +92,6 @@ Para no perderlo de vista, porque es la razón de que esto exista:
 
 ## 4. En qué orden
 
-1. Copias que nazcan en marcha (G12).
-2. Resaltado y LSP para escribir esto en un editor.
+1. Que el servidor de lenguaje sepa de nombres: completar los hechos y los componentes de la escena, e ir a donde se declaran (G9).
+2. Copias que nazcan y mueran solas (G12), y arrastrar una lista.
 3. Ventanas normales, bloqueo de sesión, IME.
