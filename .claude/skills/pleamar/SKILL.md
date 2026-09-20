@@ -93,6 +93,29 @@ scene Name {
   `--comprobar`.
 - **Zones are what catch the mouse.** A named shape only becomes a zone if a rule
   names it, if it carries `active`, or if it is declared with `zone`.
+- **A press goes to the zone declared LAST**, not to the smallest one. So a
+  grace zone —the big invisible rectangle that keeps a panel open while the
+  pointer crosses a gap— goes **before** what it wraps, or it swallows every
+  click inside it. This is the mistake that repeats: in marea-plm it happened
+  five times, always the same way, and every time it looked like "the button
+  does nothing".
+- **A loose `clip` reaches further than it looks**: it clips everything after it
+  until the next named `surface`, not until the end of the block it seems to
+  belong to. Something written further down comes out clipped to a shape that
+  may be closed —that is, it does not come out at all—. Inside a `group`, it
+  ends with the group.
+- **A shadow is black unless you say otherwise** (`shadow: dx, dy, blur, alpha,
+  colour`), and on a desktop of dark windows a black shadow has nothing to
+  darken: it reads as a dirty ring around the thing it was meant to lift. What a
+  small shape usually needs there is its own `rim`, which is light **inside** the
+  silhouette and touches nothing behind it. Everything about a shadow is an
+  expression, so it can show up only when there is something to cast one:
+  `shadow: 0, 2 * open, 12 * open, 32% * open`.
+- **An svg is `figure`, not `image`.** `image` rasterises it into an atlas —a
+  sticker: it melts into nothing, it cannot be tinted by parts nor animated by
+  layers—. `figure hat = file "hat.svg"` reads the same file as paths, and
+  `figure hat.brim { … }` draws one layer (the `id` of its group in the file) in
+  its place inside the piece, so two layers drawn apart still fit together.
 - **Permissions are per service and listening is not commanding**:
   `services: "audio"` lets the logic know the volume; changing it needs
   `"audio.volume"` or `"audio.*"`.
@@ -125,8 +148,18 @@ pleamar --escena x.plm --segundos 8          # closes itself after 8 seconds
 pleamar --escena x.plm --pantalla HDMI-A-1   # on a chosen monitor
 pleamar --escena x.plm --raton "160,20@800 pulsa@1400 sube@1500"  # a pretend mouse
 pleamar --decir x "fact open true"           # talk to a running scene
+pleamar --decir x "emit arrives"             # …or fire one of its events
 pleamar --escena x.plm --bloqueo 2000        # stall the logic on purpose
+pleamar --escena x.plm --registrar open,card # what those are worth on every frame
+pleamar --escena x.plm --movimiento-reducido # springs settle, nothing loops
 ```
+
+**Do not say an animation lasts what it was asked to last without measuring
+it.** `--registrar name,other > log.tsv` prints `ms<tab>value…` once per frame,
+and that is how a duration is checked against its contract. It says at the start
+which names it could not find, with the ones that look like them: inside a
+component's copy they carry their mark (`px#Hat2`). How to read those logs, in
+`measuring.md`.
 
 Never drive the real mouse or keyboard to test a scene: `--raton` exists for
 that, and `--decir` reaches anything the logic can hear.

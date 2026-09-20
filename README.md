@@ -44,7 +44,9 @@ The numbers, how they were taken and what to watch out for: `marea-plm/MEDIDAS.m
   yours. In Quickshell, a piece of foreign config is JavaScript with everything
   you can do.
 - **Shapes that melt into each other**, with shadow, rim, light and gradients, no
-  layers and no tricks: underneath it is all signed distance.
+  layers and no tricks: underneath it is all signed distance. An svg comes in
+  the same way —as paths, by layers—, so a piece drawn in Inkscape melts into
+  what carries it instead of sitting on top of it like a sticker.
 - **Cross-platform by design:** everything system-specific behind
   `src/plataforma/`, and `./portable.sh` checks it still builds for Windows and
   macOS.
@@ -113,6 +115,7 @@ A `.plm` file is a scene: what is seen, and how it reacts.
 | `service audio { volume: number; muted: bool }` | a system service, by name, with no logic |
 | `model rows max 14 { label: text }` · `for r in rows { … }` | a list the logic fills |
 | `box`, `ellipse`, `arc`, `line`, `path`, `text`, `image`, `input` | what gets drawn |
+| `figure hat = file "hat.svg"` | an svg **as geometry**: its layers are paths, so they melt, tint and turn |
 | `body { color/gradient/rim/light/shadow }` | several shapes melted into one silhouette |
 | `row` / `column` | layout, with gap, padding, alignment, `view:` to scroll and `wrap:` for a grid |
 | `component Row(r: record) { … }` | something to copy, with typed parameters and named slots |

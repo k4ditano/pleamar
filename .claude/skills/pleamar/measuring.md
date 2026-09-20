@@ -41,6 +41,50 @@ For Quickshell, `QSG_RENDER_TIMING=1` makes Qt print one line per frame with
 `polish`, `sync`, `render` and `swap`, plus `perWindowFrameDelta`. Count the
 lines to get frames per second, average the numbers to get the cost of a frame.
 
+## Checking an animation against its contract
+
+The other kind of measuring, and the one that gets used daily: not what it
+costs, but **whether it lasts what it says**. `--registrar` prints the value of
+properties, facts and live texts once per frame:
+
+```sh
+pleamar --escena bolita.plm --sin-hud --bloqueo 0 --segundos 8 \
+        --registrar calma,dibuja,capsula > log.tsv
+```
+
+```
+record · there is nothing called 'px' · there is px#Hat2, px#Mug4
+ms	calma	dibuja	capsula
+1528.3	0.0000	0.0000	0.0000
+1545.0	0.1220	0.0000	0.0000
+```
+
+- The names are the ones the scene declares. **Inside a component's copy they
+  carry their mark** (`px#Hat2`), which is why it says what there is when it
+  cannot find one.
+- Driving it: `--raton "360,30@400 pulsa@1500"` for the pointer, `--decir` from
+  another shell for facts and events. Both are exact in time; the real mouse is
+  not.
+- Reading it: `grep -P '^[\d.]+\t' log.tsv | awk …`. What is usually wanted is
+  when something crosses 1 % and 99 % of its travel, because a spring declared
+  `~320ms` is one that reaches 99 % at 320 ms.
+
+```sh
+grep -P '^[\d.]+\t' log.tsv | awk -F'\t' '
+  {t=$1+0; v=$2+0; if(v>0.01 && a==0) a=t; if(a>0 && v>=0.99 && b==0) b=t}
+  END{printf "1%%→99%%: %.0f ms\n", b-a}'
+```
+
+And two traps worth knowing:
+
+- A one-frame spring (`~16ms`) used **to be able to measure** something adds its
+  own lag: at 1 200 px/s that is 33 px. If what is wanted is the drawn value and
+  it comes from an expression, register what it is made of and do the sum in
+  `awk` instead of adding a property that changes the answer.
+- With nothing moving, pleamar **sleeps**: a log with 32 rows in five seconds is
+  not a stutter, it is the scene being still. Compare frame counts only between
+  two runs that are both animating.
+
 ## Restarting someone's bar without losing it
 
 Save its environment and its command line **before** killing it, and put it back

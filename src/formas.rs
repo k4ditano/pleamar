@@ -111,7 +111,12 @@ pub enum Paso {
 
 /// Cuántos puntos puede tener un camino ya aplanado. Cada píxel de su caja los
 /// recorre todos: es el precio de que sea exacto.
-pub const MAX_PUNTOS: usize = 64;
+/// Cuántos puntos tiene un camino una vez partidas sus curvas. Lo que cuesta
+/// es por píxel cubierto: cada uno recorre los puntos del camino que lo tapa,
+/// y un accesorio ocupa cuarenta píxeles de lado. 64 era de cuando los caminos
+/// se escribían a mano; un SVG de verdad —un gorro dibujado en Inkscape— pasa
+/// de ahí sin ser complicado.
+pub const MAX_PUNTOS: usize = 192;
 
 impl Forma {
     pub fn circulo(centro: Punto, radio: impl Into<Expr>) -> Forma {
