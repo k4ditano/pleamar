@@ -73,10 +73,6 @@ Y lo que usan del objeto `Quickshell`: `env` (82), `shellPath` (32), `screens` (
 
 128 usos. En pleamar todo se despliega al cargar. Para un menú que casi nunca se abre, o una lista de 200, eso es trabajo y memoria por nada.
 
-### 🔴 Los mensajes están en castellano
-
-113 mensajes de error. Quien no lea castellano se queda con medio pleamar: las palabras clave son inglesas, pero lo que le dice cuando se equivoca, no. Antes de traducir hay que decidir si pleamar habla inglés o si los mensajes llevan clave y se eligen por `LANG`; hacerlo dos veces cuesta el doble (G5).
-
 ### 🟡 Lo que no se ha probado con manos de verdad
 
 El teclado exclusivo, el clic fuera de una emergente, el arrastre real, la rueda, y las notificaciones y la bandeja en la sesión de verdad (con k4 parado). Están en la nota 08 como E1, E8, S11, B12 y B14.
@@ -90,7 +86,7 @@ Ventanas normales y bloqueo de sesión (S7); `ScreencopyView`; un reloj como ser
 Para no perderlo de vista, porque es la razón de que esto exista:
 
 - **El render anima solo.** Con la lógica bloqueada 600 ms, 38 frames a ~17 ms; QtQuick, en el mismo ensayo, un hueco de 600 ms. La lógica no puede hacer tartamudear la pantalla, por mal escrita que esté.
-- **Todo se comprueba al cargar.** Un nombre mal escrito es un fallo con fichero, línea, flecha y «¿querías decir…?», no un `undefined` en marcha.
+- **Todo se comprueba al cargar.** Un nombre mal escrito es un fallo con fichero, línea, flecha y «did you mean…?», no un `undefined` en marcha.
 - **Un lenguaje que no puede colgarse:** sin bucles libres ni recursión. Lo declarado termina siempre.
 - **Plugins con contrato:** frontera propia bajo su nombre, hilo propio, y permisos que **aprueba quien los usa** (`pleamar --aprobar`). En Quickshell, un trozo de configuración de otro es JavaScript con todos tus permisos.
 - **Formas que se funden**, con sombra, filo y luz, sin capas ni trucos: es SDF.
@@ -99,7 +95,6 @@ Para no perderlo de vista, porque es la razón de que esto exista:
 ## 4. En qué orden
 
 1. **Una escena por pantalla con su estado** (`per screen`): lo que queda para una barra de verdad en dos monitores.
-2. **Decidir el idioma de los mensajes** y traducirlos: es lo que separa esto de «solo lo uso yo».
-3. **Ficheros** como servicio, y un **reloj** como servicio.
-4. **Caminos** (`path`), y copias que nazcan en marcha (G12).
-5. Ventanas normales, bloqueo de sesión, IME.
+2. **Ficheros** como servicio, y un **reloj** como servicio.
+3. **Caminos** (`path`), y copias que nazcan en marcha (G12).
+4. Ventanas normales, bloqueo de sesión, IME.

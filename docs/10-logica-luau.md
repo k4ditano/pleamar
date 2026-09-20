@@ -41,9 +41,9 @@ log("lo que sea", 42)
 busy(600)                                 -- trabajo de mentira, para ver que al render le da igual
 ```
 
-**Los hechos tienen tipo**, el que les dio la escena: un sí o no se lee y se escribe con `true` y `false`; un enumerado (`fact mode: low | normal | critical`), con el nombre de su valor; lo demás, números. `on("fact:mode", function(m) … end)` recibe lo mismo. Un valor que no existe es un error que dice cuáles hay: `«mode» no puede valer «critcal». ¿Querías decir «critical»?`
+**Los hechos tienen tipo**, el que les dio la escena: un sí o no se lee y se escribe con `true` y `false`; un enumerado (`fact mode: low | normal | critical`), con el nombre de su valor; lo demás, números. `on("fact:mode", function(m) … end)` recibe lo mismo. Un valor que no existe es un error que dice cuáles hay: `'mode' cannot be 'critcal'. Did you mean 'critical'?`
 
-Un nombre mal escrito es un error al momento, con sugerencia: `la escena no tiene ningún hecho «opne». ¿Querías decir «open»?`
+Un nombre mal escrito es un error al momento, con sugerencia: `the scene has no fact called 'opne'. Did you mean 'open'?`
 
 ## Los servicios del sistema
 
@@ -76,9 +76,9 @@ Al salir, el programa para todo lo que la lógica dejó corriendo; al recargar l
 
 Una biblioteca con un `.luau` al lado es un plugin (ver [[pleamar · 11 Referencia del lenguaje 0.1]], §5). Su lógica es un script como cualquier otro, con tres diferencias:
 
-- **Solo ve lo suyo.** `text.now` es el `Clock.now` de la escena; `fact.secret`, si `secret` es de la escena, no existe: `el plugin «Nosy» no tiene ningún hecho «secret». Un plugin solo ve lo que declara su biblioteca`. Lo mismo con `model`, `emit` y lo que escucha: `on("tapped", …)` es `Clock.tapped`, y `on("key", …)` no oye nada.
-- **Sus permisos los aprueba quien lo usa.** `pleamar --aprobar escena.plm` enseña lo que pide cada plugin y pregunta; sin aprobar, corre sin ninguno (`el plugin «Clock» quiere lanzar «date», pero nadie le ha aprobado sus permisos`), y si su código o lo que pide cambia, vuelve a estar sin aprobar.
-- **Sus permisos son los de su `.plm`**, no los de la escena que lo usa: `el plugin «Nosy» no tiene permiso para lanzar «sh». Si debe poder, decláralo en su .plm (los de la escena no le valen)`.
+- **Solo ve lo suyo.** `text.now` es el `Clock.now` de la escena; `fact.secret`, si `secret` es de la escena, no existe: `plugin 'Nosy' has no fact called 'secret'. A plugin only sees what its library declares`. Lo mismo con `model`, `emit` y lo que escucha: `on("tapped", …)` es `Clock.tapped`, y `on("key", …)` no oye nada.
+- **Sus permisos los aprueba quien lo usa.** `pleamar --aprobar escena.plm` enseña lo que pide cada plugin y pregunta; sin aprobar, corre sin ninguno (`plugin 'Clock' wants to run 'date', but nobody has approved its permissions`), y si su código o lo que pide cambia, vuelve a estar sin aprobar.
+- **Sus permisos son los de su `.plm`**, no los de la escena que lo usa: `plugin 'Nosy' has no permission to run 'sh'. If it should be able to, declare it in its own .plm (the scene's do not count)`.
 - **No pide gestos ni mueve el cursor de escribir**: eso es de la escena. Si quiere que pase algo, emite un suceso suyo, y la escena decide (`on Clock.tapped { play nod }`).
 
 Cada plugin tiene su propio estado de Luau —su memoria, sus temporizadores, sus procesos— **y su propio hilo**: uno que se atasque no frena a los demás ni a la lógica de la escena. La escena puede no tener lógica ninguna.
@@ -93,7 +93,7 @@ La caja de arena cierra `io` y `os`; lo que queda abierto al sistema son `run`, 
 permissions { run: "date";  services: "workspaces", "workspaces.focus", "window", "audio", "audio.*" }
 ```
 
-Sin declarar, nada. **Escuchar no es mandar**: `"audio"` deja usar `sys.watch` y `sys.ask`; para `sys.call("audio.volume", …)` hace falta `"audio.volume"`, o `"audio.*"` para todo lo de ese servicio. Una orden o un servicio que no esté ahí es un error al momento, que dice qué escribir: `la escena no da permiso para lanzar «sh». Si debe poder, decláralo en el .plm: permissions { run: "sh" }`. Está en la escena y no en el script para que se lea de un vistazo, antes de ejecutar nada; al arrancar se imprime (`lógica · permisos · órdenes: date · servicios: ninguno`), y al recargar la escena se aplican los nuevos. `apps.launch` solo lanza aplicaciones que el servicio `apps` haya contado.
+Sin declarar, nada. **Escuchar no es mandar**: `"audio"` deja usar `sys.watch` y `sys.ask`; para `sys.call("audio.volume", …)` hace falta `"audio.volume"`, o `"audio.*"` para todo lo de ese servicio. Una orden o un servicio que no esté ahí es un error al momento, que dice qué escribir: `the scene gives no permission to run 'sh'. If it should be able to, declare it in the .plm: permissions { run: "sh" }`. Está en la escena y no en el script para que se lea de un vistazo, antes de ejecutar nada; al arrancar se imprime (`lógica · permisos · órdenes: date · servicios: ninguno`), y al recargar la escena se aplican los nuevos. `apps.launch` solo lanza aplicaciones que el servicio `apps` haya contado.
 
 ## La caja de arena
 

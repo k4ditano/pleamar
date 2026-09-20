@@ -51,8 +51,9 @@
 - ✅ **Plugins**: una biblioteca con su `.luau` al lado, con su frontera bajo su nombre (`Clock.now`), su propio estado de Luau —que solo ve lo suyo— y sus propios permisos. Probado con un plugin hostil. `escenas/plugins/reloj` es el primero.
 - ✅ **Plugins de los que fiarse**: sus permisos los aprueba quien los usa (`pleamar --aprobar`; sin aprobar, corren sin ninguno), cada uno en su hilo, con `require`, y pueden traer sus gestos, capas e imágenes. Y el compilador comprueba los enumerados.
 - ✅ **Varias ventanas en un proceso** (`surface panel { … }`), **listas que se corren con la rueda** (`view:`), **servicios que no dependen de Hyprland** (`ext-workspace`, `wlr-foreign-toplevel`) y el núcleo sin nada de una shell concreta.
-- ⬜ una escena por pantalla con su estado, el idioma de los mensajes, ventanas normales, IME, ventanas normales y menús: ver la nota 07.
+- ✅ **Los mensajes hablan inglés**: los 210 que ve quien usa pleamar, con sus «did you mean…?».
+- ⬜ una escena por pantalla con su estado, ventanas normales, IME, ventanas normales y menús: ver la nota 07.
 
 ## Siguiente paso
 
-**El rumbo:** esto es **una alternativa a Quickshell**, no el motor de una shell concreta. La vara de medir es [[pleamar · 07 Qué falta para igualar a Quickshell]], medida contra configuraciones de verdad. En rojo: una escena por pantalla con su estado (S2), y **el idioma de los mensajes** (G5: 113 en castellano; hay que decidir antes de traducir). Después: ficheros y reloj como servicios, caminos (`path`), copias que nazcan en marcha (G12), ventanas y bloqueo (S7), IME (E7). **Por probar con manos de verdad**: emergentes y menú de la bandeja (S11), el lanzador con su bind (E8), la rueda (E1), notificaciones y bandeja con k4 parado (B12, B14).
+**El rumbo:** esto es **una alternativa a Quickshell**, no el motor de una shell concreta. La vara de medir es [[pleamar · 07 Qué falta para igualar a Quickshell]], medida contra configuraciones de verdad. En rojo: una escena por pantalla con su estado (S2). Después: ficheros y reloj como servicios, caminos (`path`), copias que nazcan en marcha (G12), ventanas y bloqueo (S7), IME (E7). **Por probar con manos de verdad**: emergentes y menú de la bandeja (S11), el lanzador con su bind (E8), la rueda (E1), notificaciones y bandeja con k4 parado (B12, B14).

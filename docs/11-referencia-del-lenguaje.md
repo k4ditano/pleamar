@@ -16,7 +16,7 @@ El lenguaje tiene número propio, aparte del programa: **0.1**. El primero cambi
 language 0.1
 ```
 
-Si pide un primer número distinto, o un segundo mayor que el que entiende el programa, es un fallo al cargar —`este fichero pide el lenguaje 0.7, y este pleamar entiende el 0.1`— y no una escena a medias. Sin esa línea, se lee con lo que haya. Mientras el primero sea 0, nada está prometido: es un lenguaje que aún se está haciendo.
+Si pide un primer número distinto, o un segundo mayor que el que entiende el programa, es un fallo al cargar —`this file asks for language 0.7, and this pleamar understands 0.1`— y no una escena a medias. Sin esa línea, se lee con lo que haya. Mientras el primero sea 0, nada está prometido: es un lenguaje que aún se está haciendo.
 
 ## 2. Lo que garantiza
 
@@ -148,7 +148,7 @@ color        = "#" hex | nombre | "mix" "(" color "," color "," expr ")" ;
 
 **Un fichero es una escena o una biblioteca.** Una escena se abre; una biblioteca se importa. `import "ruta.plm"` va antes de `scene` o `library`, y la ruta es relativa **al fichero que importa**. Una biblioteca importada por dos caminos se lee una vez; un círculo es un fallo que dice su camino. Una biblioteca solo declara: `let`, `spring` y `component`. Lo importado se comporta como si estuviera escrito al principio de la escena.
 
-**`library Nombre strict { … }`**: sus componentes solo pueden leer lo que piden por parámetro, lo que ellos declaran, lo de su biblioteca (y lo que esta importe), y los nombres que siempre existen. Leer un hecho, un color o un suceso de la escena sin pedirlo es un fallo al cargar —`«Nosy» es de una biblioteca strict y lee «secret», que es de la escena, sin pedirlo`—: así una biblioteca de otro no depende de cómo se llamen las cosas en tu escena, ni las toca. Sin `strict`, un componente ve todo lo de quien lo usa, que es lo cómodo para las bibliotecas propias.
+**`library Nombre strict { … }`**: sus componentes solo pueden leer lo que piden por parámetro, lo que ellos declaran, lo de su biblioteca (y lo que esta importe), y los nombres que siempre existen. Leer un hecho, un color o un suceso de la escena sin pedirlo es un fallo al cargar —`'Nosy' belongs to a `strict` library and reads 'secret', which is the scene's, without asking for it`—: así una biblioteca de otro no depende de cómo se llamen las cosas en tu escena, ni las toca. Sin `strict`, un componente ve todo lo de quien lo usa, que es lo cómodo para las bibliotecas propias.
 
 **Un plugin es una biblioteca con su lógica al lado**: `reloj.plm` y `reloj.luau`. Puede declarar, además, su propia frontera —`fact`, `text`, `model`, `event`— y sus `permissions`:
 
@@ -315,7 +315,7 @@ Con `view:`, hacia fuera ocupa lo que se ve, no lo que lleva dentro.
 | `gesture` | el nombre de un gesto | `play nombre` |
 | `spring` | el nombre de un muelle, o `spring(170, 12)` | `~nombre` |
 
-Así un componente de biblioteca no da por hecho que la escena tenga un suceso que se llame de cierta manera: lo pide. Los argumentos van **por posición y luego, si se quiere, por nombre** (`Row(r, choose, height: 40)`); desde el primero con nombre, todos con nombre. Los que tienen valor por defecto se pueden omitir, y van al final. Lo que falte, sobre, se repita o no sea del tipo es un fallo donde se usa, que enseña la firma entera: `a «Row» le falta «chosen» (un suceso): es Row(r: record, chosen: event, tone: color = …)`. El valor por defecto se lee donde se usa el componente, así que `= mint` es el `mint` de esa escena.
+Así un componente de biblioteca no da por hecho que la escena tenga un suceso que se llame de cierta manera: lo pide. Los argumentos van **por posición y luego, si se quiere, por nombre** (`Row(r, choose, height: 40)`); desde el primero con nombre, todos con nombre. Los que tienen valor por defecto se pueden omitir, y van al final. Lo que falte, sobre, se repita o no sea del tipo es un fallo donde se usa, que enseña la firma entera: `'Row' is missing 'chosen' (an event): it is Row(r: record, chosen: event, tone: color = …)`. El valor por defecto se lee donde se usa el componente, así que `= mint` es el `mint` de esa escena.
 
 Sin tipo (`component Dot(tone)`), el parámetro es lo que parezca el argumento: es como se escribían antes, y sigue valiendo.
 
@@ -345,9 +345,9 @@ Panel {
 }
 ```
 
-Un hueco que no existe es un fallo que dice cuáles hay (`«Panel» no tiene ningún hueco «heder»: tiene header, footer. ¿Querías decir «header»?`), y meterle algo a un componente sin `children` también: no un silencio.
+Un hueco que no existe es un fallo que dice cuáles hay (`'Panel' has no slot called 'heder': it has header, footer. Did you mean 'header'?`), y meterle algo a un componente sin `children` también: no un silencio.
 
-Un fallo **dentro** de un componente dice también desde dónde se usó —`(dentro de «Badge», puesto en escena.plm:6)`—, porque a menudo lo que está mal es lo que se le pasó.
+Un fallo **dentro** de un componente dice también desde dónde se usó —`(inside 'Badge', used at escena.plm:6)`—, porque a menudo lo que está mal es lo que se le pasó.
 
 `repeat i in 0..5 { … }` despliega cinco vueltas al cargar (512 como mucho); dentro, `i` es un número y `$i` se sustituye en los nombres.
 

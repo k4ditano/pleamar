@@ -39,7 +39,7 @@ scene TrayIcons {
 
 Los `import` van antes de `scene` (o de `library`), y la ruta es relativa **al fichero que importa**, no a desde dónde se lance. Una biblioteca **solo declara** —`let`, `spring` y `component`—: lo que se pinta, lo que se mueve y la frontera con la lógica son de la escena. Lo importado se comporta como si estuviera escrito al principio de la escena, así que un componente de biblioteca ve los hechos, los sucesos y los colores de quien lo usa.
 
-Dos componentes con el mismo nombre no conviven (`ya hay un componente «Dot», en paleta.plm:4`); un círculo de imports se dice con su camino; y **un fallo dice en qué fichero está**, también si está dentro de una biblioteca. Guardar una biblioteca recarga en caliente las escenas que la usan.
+Dos componentes con el mismo nombre no conviven (`there is already a component 'Dot', at paleta.plm:4`); un círculo de imports se dice con su camino; y **un fallo dice en qué fichero está**, también si está dentro de una biblioteca. Guardar una biblioteca recarga en caliente las escenas que la usan.
 
 **Un plugin es una biblioteca con su lógica al lado** (`reloj.plm` + `reloj.luau`): declara su frontera y sus permisos, que viven aparte de los de la escena.
 
@@ -145,7 +145,7 @@ Chip("{notes.total} nuevos", mint)                   // y entra en un componente
 Lo monta el render, cada vez que cambie cualquiera de sus partes: un texto que pone la lógica, un hecho, una propiedad con su muelle (`"{progress * 100} %"` sube solo). Dentro de un hueco vale todo lo que vale en una expresión, y los nombres se resuelven donde está escrita la cadena, no donde se use. Un fallo dentro de una cadena señala su carácter exacto:
 
 ```
-6:25: no hay nada que se llame «volumen». ¿Querías decir «volume»?
+6:25: there is nothing called 'volumen'. Did you mean 'volume'?
    6 |     text "Hola, {who}: {volumen * 100} %" { … }
                                ^
 ```
@@ -190,7 +190,7 @@ component MenuRow(r: record, chosen: event, tone: color = mint, width: number = 
 for r in rows { MenuRow(r, chosen: choose) }  // por posición y, desde donde se quiera, por nombre
 ```
 
-Tipos: `number`, `bool`, `color`, `text`, `record` (una ficha), `event`, `image`, `gesture` y `spring`. Lo que falte, sobre o no sea del tipo es un fallo **donde se usa**, con la firma entera: `a «MenuRow» le falta «chosen» (un suceso): es MenuRow(r: record, chosen: event, tone: color = …, width: number = …)`. Sin tipo, un parámetro es lo que parezca el argumento, como hasta ahora.
+Tipos: `number`, `bool`, `color`, `text`, `record` (una ficha), `event`, `image`, `gesture` y `spring`. Lo que falte, sobre o no sea del tipo es un fallo **donde se usa**, con la firma entera: `'MenuRow' is missing 'chosen' (an event): it is MenuRow(r: record, chosen: event, tone: color = …, width: number = …)`. Sin tipo, un parámetro es lo que parezca el argumento, como hasta ahora.
 
 ```
 component Note(i) {                     // parámetros: números, colores, "textos", o el nombre de un texto vivo
@@ -383,7 +383,7 @@ Un gesto solo corta a otro de su clase o inferior. Lo que un fotograma no nombra
 Con línea, columna, el trozo de fichero y, si se parece a algo, una sugerencia. **Se dicen todos los que se encuentren** (hasta ocho), no solo el primero:
 
 ```
-marea.plm:91:28: no hay nada que se llame «pannel.h». ¿Querías decir «panel.h»?
+marea.plm:91:28: there is nothing called 'pannel.h'. Did you mean 'panel.h'?
   91 |             size: panel.w, pannel.h
                                   ^
 ```
