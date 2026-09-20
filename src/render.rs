@@ -542,6 +542,17 @@ pub fn hilo(
                 _ => {}
             }
         }
+        // La salida de emergencia de un prototipo —el botón derecho cierra— no
+        // puede pisarle el botón a una escena que lo usa. Quien sabe si ha caído
+        // encima de algo es esto, que es lo que mira las zonas: si debajo del
+        // puntero no había ninguna, cierra; si había, el clic es de la escena.
+        // La plataforma ya cierra por su cuenta cuando NINGUNA superficie usa el
+        // derecho, y entonces esto ni se ejecuta.
+        if escena.superficies.iter().any(|s| !s.derecho_cierra) && encima.is_none()
+            && botones.iter().any(|(b, abajo)| *b == 1 && *abajo)
+        {
+            crate::plataforma::pedir_salir();
+        }
         let arrastrada = match (arrastre, puntero) {
             (Some((k, _, _)), Some(p)) if ultimo_puntero != Some(p) => Some(k),
             _ => None,

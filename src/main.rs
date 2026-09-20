@@ -51,7 +51,7 @@ const AYUDA: &str = "pleamar [options]
                       contract: «--registrar lid,body.y --segundos 20 > log.tsv»
   --sin-vsync         paint without waiting for the screen, to measure what a frame costs
   --movimiento-reducido  springs settle at once and gestures show their still face
-Right-click on it to close it.";
+Right-click closes it, unless the scene has something under the pointer that uses it.";
 
 struct Args {
     escena: String,

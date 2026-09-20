@@ -551,9 +551,15 @@ pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance
     if estado.puestas.is_empty() {
         eprintln!("warning: none of the monitors asked for ({:?}) is plugged in; waiting for one to appear", estado.pide.iter().map(|s| &s.pantallas).collect::<Vec<_>>());
     }
-    while !estado.salir {
+    while !estado.salir && !SALIDA.load(std::sync::atomic::Ordering::Relaxed) {
         eventos.blocking_dispatch(&mut estado).unwrap();
     }
+}
+
+/// Lo pide el render cuando un clic derecho no lo ha querido nadie.
+static SALIDA: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn pedir_salir() {
+    SALIDA.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 impl Estado {
@@ -662,7 +668,9 @@ impl PointerHandler for Estado {
                         _ => continue,
                     };
                     // Mientras una escena no le dé uso al botón derecho, cierra: es la
-                    // salida de emergencia de un prototipo sin teclado.
+                    // salida de emergencia de un prototipo sin teclado. Si alguna
+                    // superficie sí lo usa, la decisión es del render —él sabe si el
+                    // clic ha caído encima de algo—, y vuelve por `pedir_salir`.
                     if boton == 1 && abajo && self.pide.iter().all(|s| s.derecho_cierra) {
                         self.salir = true;
                         continue;

@@ -517,7 +517,7 @@ The names of a slot are resolved where the string is written, not where it is us
 
 | Trigger | When |
 | --- | --- |
-| `press zone` · `press right zone` · `press middle zone` | it is pressed. Using `right` in any rule removes the prototype's emergency exit (the right button closes) |
+| `press zone` · `press right zone` · `press middle zone` | it is pressed. Where a scene uses `right`, the prototype's emergency exit (the right button closes) only fires where the click lands on no zone at all |
 | `release zone` | what was pressed there is released, wherever the mouse is by then |
 | `hold zone for 500ms` | it has been held down that long |
 | `enter zone` · `leave zone` | the mouse enters or leaves |

@@ -195,6 +195,17 @@ pub fn anclar(cual: usize, ancla: crate::escena::Ancla) {
     let _ = (cual, ancla);
 }
 
+/// La salida de emergencia de un prototipo: el botón derecho cierra **si no ha
+/// caído encima de nada de la escena**. Quien lo sabe es el render, que es quien
+/// mira las zonas, así que lo pide desde allí y el bucle de la plataforma lo ve
+/// en el siguiente suceso —que es el de soltar el botón, un milisegundo más
+/// tarde—. Cuando ninguna superficie usa el derecho, la plataforma cierra sola
+/// y esto no hace falta.
+pub fn pedir_salir() {
+    #[cfg(target_os = "linux")]
+    wayland::pedir_salir();
+}
+
 /// Que un proceso que lanzamos no nos sobreviva, ni aunque nos maten a la
 /// fuerza. En Linux se lo pedimos al núcleo; en Windows será un Job Object.
 pub fn morir_con_el_padre(orden: &mut std::process::Command) {
