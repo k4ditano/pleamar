@@ -2047,6 +2047,24 @@ impl<'a> Obra<'a> {
                 _ => unreachable!(),
             };
         }
+        // `kind: window`: una ventana normal, que el compositor decora y coloca. Lo
+        // que es de un panel —ancla, nivel, reserva, monitor— no le vale.
+        if let Some(c) = p.get_mut("kind") {
+            if c.una_de(voz::CLASES_DE_SUPERFICIE, "what kind of surface this is")? == "window" {
+                s.ventana = Some(String::new());
+            }
+        }
+        if let Some(c) = p.get_mut("title") {
+            let titulo = c.cadena()?;
+            c.nada_mas()?;
+            match &mut s.ventana {
+                Some(t) => *t = titulo,
+                None => return Err(Fallo::en(n.linea, n.col, "only a window has a title: add `kind: window`")),
+            }
+        }
+        if s.ventana.is_some() && s.ancho == 0 {
+            return Err(Fallo::en(n.linea, n.col, "a window says how wide it is: `full` is for a panel, which is as wide as its monitor"));
+        }
         if let Some(c) = p.get_mut("keyboard") {
             s.teclado = match c.una_de(voz::TECLADOS, "how the keyboard is asked for")?.as_str() {
                 "none" => Teclado::Nunca,

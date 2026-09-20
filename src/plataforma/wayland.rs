@@ -26,6 +26,7 @@ use smithay_client_toolkit::{
         wlr_layer::{Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure},
         xdg::{
             popup::{Popup, PopupConfigure, PopupHandler},
+            window::{Window, WindowConfigure, WindowDecorations, WindowHandler},
             XdgPositioner, XdgShell,
         },
         WaylandSurface,
@@ -101,12 +102,35 @@ impl Ventana for VentanaWayland {
     }
 }
 
+/// Cómo pide una superficie su sitio: pegada a un borde del monitor, o como una
+/// ventana normal, que el compositor decora y coloca.
+#[derive(Clone)]
+enum Concha {
+    Capa(LayerSurface),
+    Ventana(Window),
+}
+
+impl Concha {
+    fn wl(&self) -> &wl_surface::WlSurface {
+        match self {
+            Concha::Capa(c) => c.wl_surface(),
+            Concha::Ventana(v) => v.wl_surface(),
+        }
+    }
+    fn capa(&self) -> Option<&LayerSurface> {
+        match self {
+            Concha::Capa(c) => Some(c),
+            Concha::Ventana(_) => None,
+        }
+    }
+}
+
 /// Una superficie puesta en un monitor.
 struct Puesta {
     id: u32,
     /// Qué superficie de la escena es.
     cual: usize,
-    capa: LayerSurface,
+    concha: Concha,
     salida: wl_output::WlOutput,
     /// Para pintar a una escala que no sea entera.
     ventanilla: Option<WpViewport>,
@@ -116,6 +140,8 @@ struct Puesta {
     escala: f32,
     /// Se le entrega al render cuando el compositor la configura.
     pendiente: Option<(wgpu::Surface<'static>, String, i32)>,
+    /// Lo que mide ahora: una ventana la estira quien quiera.
+    tam: (u32, u32),
 }
 
 struct Estado {
@@ -168,6 +194,20 @@ impl Dispatch2<WpFractionalScaleV1, Estado> for EscalaDe {
 impl Estado {
     /// Cuántas superficies de esta clase van en este monitor. `k` es el número del
     /// monitor, por orden de aparición: es lo que reparte `screens: each`.
+    /// La superficie de wgpu que pinta sobre una de Wayland.
+    fn superficie_de(&self, wl: &wl_surface::WlSurface) -> wgpu::Surface<'static> {
+        unsafe {
+            self.instancia
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: Some(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
+                        NonNull::new(self.conexion.backend().display_ptr() as *mut _).unwrap(),
+                    ))),
+                    raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(NonNull::new(wl.id().as_ptr() as *mut _).unwrap())),
+                })
+                .expect("the graphics surface could not be created")
+        }
+    }
+
     fn quiere_en(s: &Superficie, nombre: &str, k: usize) -> usize {
         match &s.pantallas {
             Pantallas::Todas => 1,
@@ -190,6 +230,10 @@ impl Estado {
             let p = &self.pide[cual];
             // El HUD solo va debajo de la principal.
             let alto = p.alto + if cual == 0 { self.alto_extra } else { 0 };
+            // Una ventana normal no se pone por monitor: la coloca el compositor.
+            if p.ventana.is_some() && self.puestas.iter().any(|x| x.cual == cual) {
+                continue;
+            }
             let wl = self.compositor.create_surface(qh);
             let nivel = match p.nivel {
                 Nivel::Fondo => Layer::Background,
@@ -197,6 +241,22 @@ impl Estado {
                 Nivel::Encima => Layer::Top,
                 Nivel::SobreTodo => Layer::Overlay,
             };
+            // `kind: window`: una ventana de las normales, con su título y su marco.
+            if let (Some(titulo), Some(em)) = (&p.ventana, EMERGENTES.get()) {
+                let ventana = em.xdg.create_window(wl, WindowDecorations::RequestServer, qh);
+                ventana.set_title(if titulo.is_empty() { "pleamar" } else { titulo });
+                ventana.set_app_id("pleamar");
+                ventana.set_min_size(Some((p.ancho, alto)));
+                let id = self.siguiente_id;
+                self.siguiente_id += 1;
+                ventana.commit();
+                let concha = Concha::Ventana(ventana);
+                let ventanilla = self.ventanillas.as_ref().map(|v| v.get_viewport(concha.wl(), qh, Mudo));
+                let escala = self.escalas.as_ref().map(|m| m.get_fractional_scale(concha.wl(), qh, EscalaDe(id)));
+                let superficie = self.superficie_de(concha.wl());
+                self.puestas.push(Puesta { id, cual, concha, salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, tam: (0, 0), pendiente: Some((superficie, nombre.clone(), mhz)) });
+                continue;
+            }
             let capa = self.capas.create_layer_surface(qh, wl, nivel, Some("pleamar"), Some(salida));
             capa.set_anchor(match p.ancla {
                 Ancla::Arriba => Anchor::TOP,
@@ -224,19 +284,8 @@ impl Estado {
             let ventanilla = self.ventanillas.as_ref().map(|v| v.get_viewport(capa.wl_surface(), qh, Mudo));
             let escala = self.escalas.as_ref().map(|m| m.get_fractional_scale(capa.wl_surface(), qh, EscalaDe(id)));
             capa.commit();
-            let superficie = unsafe {
-                self.instancia
-                    .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                        raw_display_handle: Some(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
-                            NonNull::new(self.conexion.backend().display_ptr() as *mut _).unwrap(),
-                        ))),
-                        raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(
-                            NonNull::new(capa.wl_surface().id().as_ptr() as *mut _).unwrap(),
-                        )),
-                    })
-                    .expect("the graphics surface could not be created")
-            };
-            self.puestas.push(Puesta { id, cual, capa, salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, pendiente: Some((superficie, nombre.clone(), mhz)) });
+            let superficie = self.superficie_de(capa.wl_surface());
+            self.puestas.push(Puesta { id, cual, concha: Concha::Capa(capa), salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, tam: (0, 0), pendiente: Some((superficie, nombre.clone(), mhz)) });
             }
         }
     }
@@ -347,9 +396,18 @@ pub fn emergente(k: usize, que: Option<([i32; 4], (f32, f32))>) {
 
 /// Ventanas normales no abrimos todavía (es lo que queda de S7), pero el
 /// protocolo de las emergentes viene en el mismo paquete y pide que esto exista.
-impl smithay_client_toolkit::shell::xdg::window::WindowHandler for Estado {
-    fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &smithay_client_toolkit::shell::xdg::window::Window) {}
-    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &smithay_client_toolkit::shell::xdg::window::Window, _: smithay_client_toolkit::shell::xdg::window::WindowConfigure, _: u32) {}
+impl WindowHandler for Estado {
+    /// Han pulsado la cruz. Se cierra esa; si era la última, se acaba.
+    fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, v: &Window) {
+        self.se_fue(&v.wl_surface().clone());
+        if self.puestas.is_empty() {
+            self.salir = true;
+        }
+    }
+    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, v: &Window, conf: WindowConfigure, _: u32) {
+        let tam = (conf.new_size.0.map_or(0, |x| x.get()), conf.new_size.1.map_or(0, |x| x.get()));
+        self.configurada(&v.wl_surface().clone(), tam);
+    }
 }
 
 impl PopupHandler for Estado {
@@ -454,35 +512,41 @@ pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance
     }
 }
 
-impl LayerShellHandler for Estado {
-    /// El compositor la ha cerrado: casi siempre, porque su monitor se ha ido.
-    fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, capa: &LayerSurface) {
-        if let Some(p) = self.puestas.iter().find(|p| &p.capa == capa) {
+impl Estado {
+    /// Una superficie se cerró: su monitor se fue, o alguien cerró la ventana.
+    fn se_fue(&mut self, wl: &wl_surface::WlSurface) {
+        if let Some(p) = self.puestas.iter().find(|p| p.concha.wl() == wl) {
             let _ = self.a_render.send(ARender::LaminaFuera(p.id));
         }
-        self.puestas.retain(|p| &p.capa != capa);
+        self.puestas.retain(|p| p.concha.wl() != wl);
     }
-    /// Hasta que el compositor no la configura no se le puede pegar nada:
-    /// es ahora cuando pasa a manos del render.
-    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, capa: &LayerSurface, conf: LayerSurfaceConfigure, _: u32) {
-        let Some(p) = self.puestas.iter_mut().find(|p| &p.capa == capa) else { return };
+
+    /// Hasta que el compositor no la configura no se le puede pegar nada: es ahora
+    /// cuando pasa a manos del render. Vale igual para un panel y para una ventana.
+    fn configurada(&mut self, wl: &wl_surface::WlSurface, nuevo: (u32, u32)) {
+        let Some(p) = self.puestas.iter_mut().find(|p| p.concha.wl() == wl) else { return };
         let suya = &self.pide[p.cual];
         let pedido = (suya.ancho, suya.alto + if p.cual == 0 { self.alto_extra } else { 0 });
         let origen = suya.origen;
         // Lo que el compositor haya dado; si dice 0, lo que se pidió.
-        let tam = (if conf.new_size.0 > 0 { conf.new_size.0 } else { pedido.0 }, if conf.new_size.1 > 0 { conf.new_size.1 } else { pedido.1 });
+        let tam = (if nuevo.0 > 0 { nuevo.0 } else { pedido.0 }, if nuevo.1 > 0 { nuevo.1 } else { pedido.1 });
         if let Some(v) = &p.ventanilla {
             v.set_destination(tam.0 as i32, tam.1 as i32);
         }
+        // Ya estaba entregada y ha cambiado de tamaño: alguien ha estirado la ventana.
+        if p.pendiente.is_none() && p.tam != tam {
+            let _ = self.a_render.send(ARender::TamLamina(p.id, (tam.0 as f32, tam.1 as f32)));
+        }
+        p.tam = tam;
         if let Some((superficie, nombre, mhz)) = p.pendiente.take() {
-            if let Some(em) = EMERGENTES.get() {
+            if let (Some(em), Some(capa)) = (EMERGENTES.get(), p.concha.capa()) {
                 // Mientras no se vea el ratón en ninguna, las emergentes cuelgan de la primera.
-                em.madre.lock().unwrap().get_or_insert_with(|| Madre { capa: p.capa.clone(), escala: p.escala, nombre: nombre.clone(), mhz });
+                em.madre.lock().unwrap().get_or_insert_with(|| Madre { capa: capa.clone(), escala: p.escala, nombre: nombre.clone(), mhz });
             }
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: p.id,
                 superficie,
-                ventana: Box::new(VentanaWayland { wl: p.capa.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: Some(p.capa.clone()) }),
+                ventana: Box::new(VentanaWayland { wl: p.concha.wl().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: p.concha.capa().cloned() }),
                 escala: p.escala,
                 tam,
                 mhz,
@@ -490,6 +554,15 @@ impl LayerShellHandler for Estado {
                 vista: gpu::Vista { superficie: p.cual, emergente: None, origen, tam: (tam.0 as f32, tam.1 as f32) },
             })));
         }
+    }
+}
+
+impl LayerShellHandler for Estado {
+    fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, capa: &LayerSurface) {
+        self.se_fue(capa.wl_surface());
+    }
+    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, capa: &LayerSurface, conf: LayerSurfaceConfigure, _: u32) {
+        self.configurada(&capa.wl_surface().clone(), conf.new_size);
     }
 }
 
@@ -501,17 +574,20 @@ impl PointerHandler for Estado {
                 // Dentro de una emergente, el ratón está en el trozo de escena que ella enseña.
                 if let Some(a) = em.abiertas.lock().unwrap().iter().find(|a| a.popup.wl_surface() == &e.surface) {
                     (x, y) = (x + a.origen.0, y + a.origen.1);
-                } else if let Some(p) = self.puestas.iter().find(|p| p.capa.wl_surface() == &e.surface) {
+                } else if let Some(p) = self.puestas.iter().find(|p| p.concha.wl() == &e.surface) {
                     let info = self.salidas.info(&p.salida);
                     // El ratón sobre una superficie está en el trozo del plano que ella enseña.
                     let origen = self.pide[p.cual].origen;
                     (x, y) = (x + origen.0, y + origen.1);
-                    *em.madre.lock().unwrap() = Some(Madre {
-                        capa: p.capa.clone(),
-                        escala: p.escala,
-                        nombre: info.as_ref().and_then(|i| i.name.clone()).unwrap_or_default(),
-                        mhz: info.as_ref().and_then(|i| i.modes.iter().find(|m| m.current).map(|m| m.refresh_rate)).unwrap_or(0),
-                    });
+                    // Las emergentes cuelgan de una capa: de una ventana normal, todavía no.
+                    if let Some(capa) = p.concha.capa() {
+                        *em.madre.lock().unwrap() = Some(Madre {
+                            capa: capa.clone(),
+                            escala: p.escala,
+                            nombre: info.as_ref().and_then(|i| i.name.clone()).unwrap_or_default(),
+                            mhz: info.as_ref().and_then(|i| i.modes.iter().find(|m| m.current).map(|m| m.refresh_rate)).unwrap_or(0),
+                        });
+                    }
                 }
                 if let PointerEventKind::Press { serial, .. } = e.kind {
                     *em.pulsacion.lock().unwrap() = Some((serial, std::time::Instant::now()));
@@ -693,7 +769,7 @@ impl CompositorHandler for Estado {
         if self.escalas.is_some() && self.ventanillas.is_some() {
             return;
         }
-        if let Some(p) = self.puestas.iter_mut().find(|p| p.capa.wl_surface() == wl) {
+        if let Some(p) = self.puestas.iter_mut().find(|p| p.concha.wl() == wl) {
             wl.set_buffer_scale(escala);
             p.escala = escala as f32;
             let _ = self.a_render.send(ARender::Escala(p.id, escala as f32));

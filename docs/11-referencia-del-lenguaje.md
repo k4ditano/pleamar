@@ -283,7 +283,14 @@ text mon.$screen.title { … }
 repeat i in 1..10 { Desk(i, mon.$screen.active) { show: ws.$i.there } }
 ```
 
-**`surface`**: `size: ancho, alto` (`full` como ancho es todo el monitor) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` · `margin: n` o `arriba, derecha, abajo, izquierda` · `level:` `background` `bottom` `top` `overlay` · `reserve: n` (el sitio que las ventanas le dejan) · `screens: all` o `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, y con `while expr` solo lo pide mientras sea verdad.
+**Una ventana de las normales.** `kind: window` pide una ventana con su marco y su cruz, de las que el compositor coloca, en vez de un panel pegado a un borde; `title:` es lo que enseña. Lo que es de un panel —`anchor`, `level`, `reserve`, `screens`, `margin`— no le vale, y **`screen.width` y `screen.height` son lo que mide ella**, no su monitor: cambian cuando alguien la estira, así que una ventana se dibuja contra ellos.
+
+```
+surface { size: 460, 320;  kind: window;  title: "pleamar · ajustes" }
+box { from: 0, 0;  size: screen.width, screen.height;  color: coal }
+```
+
+**`surface`**: `size: ancho, alto` (`full` como ancho es todo el monitor) · `kind:` `panel` `window` · `title:` (solo una ventana) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` · `margin: n` o `arriba, derecha, abajo, izquierda` · `level:` `background` `bottom` `top` `overlay` · `reserve: n` (el sitio que las ventanas le dejan) · `screens: all` o `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, y con `while expr` solo lo pide mientras sea verdad.
 
 ## 7. Expresiones
 
@@ -619,7 +626,7 @@ Esto es la salida de `pleamar --gramatica`, copiada. No es una segunda lista: so
 language: 0.1
 statements: surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
 library: let spring component permissions fact text model service event image prop pose gesture posture layer
-properties.surface: size anchor margin level reserve screens keyboard open
+properties.surface: size anchor margin level reserve screens keyboard open kind title
 properties.permissions: run services
 properties.shape: rotate stroke color opacity blend active show cursor
 properties.ellipse: at radius scale
@@ -661,6 +668,7 @@ units: px % deg ms s
 cursors: default pointer text grab grabbing
 surface.anchor: top bottom left right top_left top_right bottom_left bottom_right center
 surface.level: background bottom top overlay
+surface.kind: panel window
 surface.keyboard: none on_demand exclusive
 text.align: left center right
 layout.align: start center end

@@ -192,13 +192,20 @@ pub fn hilo(
                     let g = gpu.get_or_insert_with(|| Gpu::nueva(&instancia, &n.superficie));
                     // Una escena que pide «todo el ancho» mide lo que mida su monitor, y lo
                     // puede saber: `screen.width`.
-                    if escena.superficie().ancho == 0 && n.vista.superficie == 0 && n.vista.emergente.is_none() {
+                    // Una ventana mide lo que el compositor le haya dado, y puede cambiar.
+                    let es_ventana = escena.superficie().ventana.is_some();
+                    let suya = n.vista.superficie == 0 && n.vista.emergente.is_none();
+                    if (escena.superficie().ancho == 0 || es_ventana) && suya {
                         tam.0 = n.tam.0 as f32;
                     }
+                    if es_ventana && suya {
+                        tam.1 = n.tam.1 as f32;
+                    }
+                    let alto = if es_ventana { n.tam.1 as f32 } else { escena.superficie().alto as f32 };
                     for (k, (nombre, _)) in escena.hechos.iter().enumerate() {
                         match *nombre {
                             "screen.width" => hechos[k] = tam.0,
-                            "screen.height" => hechos[k] = escena.superficie().alto as f32,
+                            "screen.height" => hechos[k] = alto,
                             _ => {}
                         }
                     }
@@ -245,6 +252,28 @@ pub fn hilo(
                     }
                 }
                 ARender::Taller(p) => letras.recibir(*p),
+                // Una ventana que alguien estira: la lámina cambia, y con ella lo que la
+                // escena lee en `screen.width` y `screen.height`.
+                ARender::TamLamina(id, nuevo) => {
+                    if let (Some(g), Some(l)) = (&gpu, laminas.iter_mut().find(|l| l.id == id)) {
+                        if l.vista.tam != nuevo {
+                            l.vista.tam = nuevo;
+                            g.configurar(l, tam);
+                            if l.vista.superficie == 0 && l.vista.emergente.is_none() && escena.superficie().ventana.is_some() {
+                                // Lo que se pinta fuera de la superficie no existe: si la
+                                // ventana crece, el marco tiene que crecer con ella.
+                                tam = nuevo;
+                                for (k, (nombre, _)) in escena.hechos.iter().enumerate() {
+                                    match *nombre {
+                                        "screen.width" => hechos[k] = nuevo.0,
+                                        "screen.height" => hechos[k] = nuevo.1,
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 ARender::Escala(id, e) => {
                     if let (Some(g), Some(l)) = (&gpu, laminas.iter_mut().find(|l| l.id == id)) {
                         if (l.escala - e).abs() > 0.001 {

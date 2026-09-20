@@ -1,0 +1,46 @@
+// Una ventana de las normales: con su título, su marco y su cruz, y la coloca el
+// compositor. `kind: window` es lo único que la distingue de un panel.
+//
+// Como la puede estirar cualquiera, lo que dibuja va contra `screen.width` y
+// `screen.height`, que para una ventana son lo que mide ella ahora mismo.
+
+import "comun/paleta.plm"
+
+scene Window {
+    surface { size: 460, 320; kind: window; title: "pleamar · una ventana" }
+
+    prop on = 0 ~calm
+    fact listo = false
+    let w = screen.width
+    let h = screen.height
+
+    body {
+        gradient: radial w / 2, 0 radius max(w, h), #1d2320, #121313
+        box { from: 0, 0; size: w, h }
+    }
+
+    column { at: 30, 34; gap: 8
+        text "Una ventana de las normales" { size: 18; weight: 600; color: ink }
+        text "la estira quien quiera: esto se mide contra lo que mide ella" { size: 11.5; color: ink; opacity: 45% }
+    }
+
+    //  Pegado abajo a la derecha, como en cualquier diálogo.
+    group {
+        size: 150, 38
+        zone box hit { at: w - 100, h - 40; size: 160, 38; corner: 12; cursor: pointer }
+        box { at: w - 100, h - 40; size: 160, 38; corner: 12; color: mix(#232727, mint, on) }
+        text "de acuerdo" { at: w - 100, h - 40; anchor: center; size: 13; weight: 500; color: mix(ink, #10221b, on) }
+    }
+    //  Y una raya que cruza la ventana entera, mida lo que mida.
+    path {
+        at: 30, 96
+        stroke: 1.5
+        color: mint
+        move 0, 0
+        line w - 60, 0
+    }
+    text "{screen.width} × {screen.height}" { at: 30, h - 34; size: 11; color: ink; opacity: 30% }
+
+    follow on = if(listo, 1, 0)
+    on press hit { toggle listo }
+}

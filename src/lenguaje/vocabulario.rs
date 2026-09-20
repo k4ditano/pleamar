@@ -17,7 +17,7 @@ pub const DE_BIBLIOTECA: &[&str] = &["let", "spring", "component", "permissions"
 
 /// Qué propiedades acepta cada elemento. `shape` son las comunes a todas las formas.
 pub const PROPIEDADES: &[(&str, &[&str])] = &[
-    ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open"]),
+    ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title"]),
     ("permissions", &["run", "services"]),
     ("shape", &["rotate", "stroke", "color", "opacity", "blend", "active", "show", "cursor"]),
     ("ellipse", &["at", "radius", "scale"]),
@@ -127,6 +127,8 @@ pub const UNIDADES: &[&str] = &["px", "%", "deg", "ms", "s"];
 pub const CURSORES: &[&str] = &["default", "pointer", "text", "grab", "grabbing"];
 pub const ANCLAS_DE_SUPERFICIE: &[&str] = &["top", "bottom", "left", "right", "top_left", "top_right", "bottom_left", "bottom_right", "center"];
 pub const NIVELES: &[&str] = &["background", "bottom", "top", "overlay"];
+/// Qué clase de ventana pide una superficie: pegada a un borde, o de las normales.
+pub const CLASES_DE_SUPERFICIE: &[&str] = &["panel", "window"];
 pub const TECLADOS: &[&str] = &["none", "on_demand", "exclusive"];
 pub const ALINEADOS_DE_TEXTO: &[&str] = &["left", "center", "right"];
 pub const ALINEADOS_DE_REPARTO: &[&str] = &["start", "center", "end"];
@@ -169,6 +171,7 @@ pub fn como_texto() -> String {
     linea("cursors", CURSORES);
     linea("surface.anchor", ANCLAS_DE_SUPERFICIE);
     linea("surface.level", NIVELES);
+    linea("surface.kind", CLASES_DE_SUPERFICIE);
     linea("surface.keyboard", TECLADOS);
     linea("text.align", ALINEADOS_DE_TEXTO);
     linea("layout.align", ALINEADOS_DE_REPARTO);

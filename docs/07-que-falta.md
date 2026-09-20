@@ -42,7 +42,7 @@ Tipos instanciados, con las veces que aparecen entre las dos configuraciones:
 | `SystemClock` | 2 | ✅ servicio `clock`, y `service clock as now { … }` sin lógica ninguna |
 | `ScreencopyView` | 2 | ⬜ ver lo que hay en una pantalla o en una ventana |
 | `NotificationServer` | 2 | ✅ servicio `notifications` |
-| `FloatingWindow` | 2 | ⬜ ventanas normales |
+| `FloatingWindow` | 2 | ✅ `kind: window`, con su título; y lo que dibuja se mide contra lo que mide ella |
 | `WlSessionLock` | 1 | ⬜ bloqueo de sesión |
 | `LazyLoader` | 1 | ⬜ · §2 |
 | `GlobalShortcut` | 1 | 🟡 un bind del compositor que llama a `--decir` |
@@ -67,7 +67,7 @@ El teclado exclusivo, el clic fuera de una emergente, el arrastre real, la rueda
 
 ### ⚪ Lo demás
 
-Ventanas normales y bloqueo de sesión (S7); `ScreencopyView`; IME (E7).
+Bloqueo de sesión (S7); `ScreencopyView`; IME (E7).
 
 ## 3. Lo que pleamar tiene y Quickshell no
 

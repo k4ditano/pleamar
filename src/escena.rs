@@ -86,6 +86,9 @@ pub struct Superficie {
     /// Arriba, derecha, abajo, izquierda.
     pub margen: [i32; 4],
     pub nivel: Nivel,
+    /// Si es una ventana normal —de las que el compositor decora y coloca— en vez de
+    /// un panel pegado al borde: cómo se titula. Sin esto, es un panel.
+    pub ventana: Option<String>,
     /// Cuánto sitio le reserva el compositor: las ventanas no lo pisan.
     pub reserva: i32,
     pub pantallas: Pantallas,
@@ -109,7 +112,7 @@ pub enum Teclado {
 impl Default for Superficie {
     fn default() -> Self {
         // Neutra: todo el ancho, arriba, en todos los monitores. Lo que pida la escena manda.
-        Superficie { nombre: String::new(), instancia: 0, origen: (0.0, 0.0), abierta: None, ancho: 0, alto: 40, ancla: Ancla::Arriba, margen: [0; 4], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Todas, teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
+        Superficie { nombre: String::new(), instancia: 0, origen: (0.0, 0.0), abierta: None, ventana: None, ancho: 0, alto: 40, ancla: Ancla::Arriba, margen: [0; 4], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Todas, teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
     }
 }
 
@@ -1121,6 +1124,8 @@ pub enum ARender {
     /// El taller ha terminado algo: una maqueta, unas imágenes.
     Taller(Box<crate::texto::Paquete>),
     Escala(u32, f32),
+    /// Una superficie ha cambiado de tamaño: una ventana que alguien estira.
+    TamLamina(u32, (f32, f32)),
     Orden(Orden),
     /// La frontera: la lógica cuenta lo que pasa, y nada más.
     Hecho(&'static str, f32),
