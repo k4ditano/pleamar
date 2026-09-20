@@ -305,9 +305,40 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
     // Cuatro vueltas: declaraciones; nombres y capas; dibujo; reglas.
     for vuelta in 0..3 {
         o.vuelta = vuelta;
+        // Las superficies ya se conocen: si alguna se repite por monitor, sus repartos
+        // con nombre tienen una medida por copia (`desks#screen1.width`).
+        if vuelta == 1 {
+            let instancias: Vec<usize> = o.e.superficies.iter().filter(|s| matches!(s.pantallas, Pantallas::Numero(_))).map(|s| s.instancia).collect();
+            for k in instancias {
+                o.entornos.push(o.ambito_de_pantalla(k));
+                o.adelantar_medidas(cuerpo);
+                o.entornos.pop();
+            }
+        }
         // Una `surface` se lee dos veces: en la 0 sus propiedades, y en la 2 lo que dibuja.
         let de_esta: Vec<&Entrada> = cuerpo.iter().filter(|e| vuelta_de(e) == vuelta || (vuelta == 2 && es_superficie(e))).collect();
-        o.grupo(de_esta.into_iter());
+        // El dibujo suelto es de la superficie de la escena. Si esa se repite por monitor
+        // (`screens: each`), se repite con ella: una copia por pantalla, con lo suyo.
+        let copias: Vec<(f32, f32, usize)> = if vuelta == 2 {
+            o.e.superficies.iter().filter(|s| s.nombre.is_empty() && matches!(s.pantallas, Pantallas::Numero(_))).map(|s| (s.origen.0, s.origen.1, s.instancia)).collect()
+        } else {
+            Vec::new()
+        };
+        if copias.is_empty() {
+            o.grupo(de_esta.into_iter());
+            continue;
+        }
+        for (ox, oy, k) in copias {
+            let marca = o.reglas.len();
+            o.entornos.push(o.ambito_de_pantalla(k));
+            let t = Transformacion { mueve: (ox.into(), oy.into()), ..Transformacion::en((0.0.into(), 0.0.into())) };
+            o.e.pintar(Instr::Transformar(Some(t.clone())));
+            o.bajo.push(t);
+            o.grupo(de_esta.clone().into_iter());
+            o.bajo.pop();
+            o.e.pintar(Instr::Transformar(None));
+            o.cerrar_ambito(marca);
+        }
     }
     o.zonas_de_verdad();
     for (n, entornos) in std::mem::take(&mut o.reglas) {
@@ -1040,10 +1071,18 @@ impl<'a> Obra<'a> {
                     let v = c.num()?;
                     let muelle = if c.sim("~") { self.muelle(&mut c)? } else if palabra == "pose" { Muelle::POSE } else { Muelle::VIVO };
                     c.nada_mas()?;
-                    let p = self.e.prop_con(fijo(&nombre), v, muelle);
-                    if palabra == "pose" {
-                        self.e.pose.push(p);
-                    }
+                    let p = match self.props.get(&nombre) {
+                        // Ya declarada: es la misma. Pasa cuando un `repeat` con declaraciones
+                        // cae dentro de algo que se repite, como una superficie por monitor.
+                        Some(ya) => *ya,
+                        None => {
+                            let p = self.e.prop_con(fijo(&nombre), v, muelle);
+                            if palabra == "pose" {
+                                self.e.pose.push(p);
+                            }
+                            p
+                        }
+                    };
                     self.props.insert(nombre, p);
                 }
                 "fact" => {
@@ -1062,22 +1101,36 @@ impl<'a> Obra<'a> {
                         None => if c.palabra("true") { (1.0, Some(TipoDeHecho::Bool)) } else if c.palabra("false") { (0.0, Some(TipoDeHecho::Bool)) } else { (if c.sim("-") { -c.num()? } else { c.num()? }, None) },
                     };
                     c.nada_mas()?;
-                    let h = self.e.hecho(fijo(&nombre), v);
-                    if let Some(t) = tipo {
-                        self.e.tipos.push((nombre.clone(), t));
-                    }
+                    let h = match self.hechos.get(&nombre) {
+                        Some(ya) => *ya,
+                        None => {
+                            if let Some(t) = tipo {
+                                self.e.tipos.push((nombre.clone(), t));
+                            }
+                            self.e.hecho(fijo(&nombre), v)
+                        }
+                    };
                     self.hechos.insert(nombre, h);
                 }
                 "event" => {
                     let nombre = self.declarar(&c.id("a name for the event")?);
-                    let s = if c.sim("->") { self.e.suceso_que_sale(fijo(&nombre)) } else { self.e.suceso(fijo(&nombre)) };
+                    let sale = c.sim("->");
                     c.nada_mas()?;
+                    let s = match self.sucesos.get(&nombre) {
+                        Some(ya) => *ya,
+                        None if sale => self.e.suceso_que_sale(fijo(&nombre)),
+                        None => self.e.suceso(fijo(&nombre)),
+                    };
                     self.sucesos.insert(nombre, s);
                 }
                 "text" if matches!(c.f.get(2).map(|x| &x.f), Some(F::Sim("="))) => {
                     let nombre = self.declarar(&c.id("a name for the text")?);
                     c.exige_sim("=")?;
-                    let t = self.e.texto_vivo(fijo(&nombre), &c.cadena()?);
+                    let valor = c.cadena()?;
+                    let t = match self.textos.get(&nombre) {
+                        Some(ya) => *ya,
+                        None => self.e.texto_vivo(fijo(&nombre), &valor),
+                    };
                     self.textos.insert(nombre, t);
                 }
                 "image" if matches!(c.f.get(2).map(|x| &x.f), Some(F::Sim("="))) => {
@@ -1930,7 +1983,13 @@ impl<'a> Obra<'a> {
             let base = self.e.superficies[cual].clone();
             for k in 1..tope {
                 self.siguiente_origen += 10000.0;
-                self.e.superficies.push(Superficie { instancia: k, origen: (0.0, self.siguiente_origen), pantallas: Pantallas::Numero(k), ..base.clone() });
+                let copia = Superficie { instancia: k, origen: (0.0, self.siguiente_origen), pantallas: Pantallas::Numero(k), ..base.clone() };
+                // Las de la principal van juntas al principio: la primera sigue siendo la principal.
+                if base.nombre.is_empty() {
+                    self.e.superficies.insert(k, copia);
+                } else {
+                    self.e.superficies.push(copia);
+                }
             }
             // Lo que el render cuenta de cada monitor, y cuántos hay.
             for k in 0..tope {

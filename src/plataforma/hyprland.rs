@@ -31,6 +31,13 @@ fn json(orden: &str) -> Option<serde_json::Value> {
 
 fn escritorios() -> Valor {
     let activo = json("j/activeworkspace").and_then(|v| v["id"].as_f64()).unwrap_or(0.0);
+    // Cada monitor tiene el suyo: es lo que necesita una barra por pantalla.
+    let activos_por_monitor: Vec<f64> = json("j/monitors")
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|m| m["activeWorkspace"]["id"].as_f64())
+        .collect();
     let mut lista: Vec<(i64, Valor)> = json("j/workspaces")
         .and_then(|v| v.as_array().cloned())
         .unwrap_or_default()
@@ -44,6 +51,8 @@ fn escritorios() -> Valor {
                     ("name".into(), Valor::Texto(w["name"].as_str().unwrap_or("").to_owned())),
                     ("windows".into(), Valor::Num(w["windows"].as_f64().unwrap_or(0.0))),
                     ("monitor".into(), Valor::Texto(w["monitor"].as_str().unwrap_or("").to_owned())),
+                    // Si es el activo de su monitor, no solo el de todo el sistema.
+                    ("active".into(), Valor::Si(activos_por_monitor.contains(&(id as f64)))),
                 ]))
             })
         })

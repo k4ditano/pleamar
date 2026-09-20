@@ -217,7 +217,17 @@ pub fn hilo(
                             }
                         }
                     }
-                    println!("render · surface {} on {} · {}×{} · scale {} · {:.0} Hz", n.id, n.nombre, n.tam.0, n.tam.1, n.escala, n.mhz as f32 / 1000.0);
+                    {
+                        // Qué superficie de la escena es, no solo el número de lámina: con
+                        // `screens: each` hay varias iguales y conviene saber cuál cayó dónde.
+                        let cual = escena.superficies.get(n.vista.superficie).map_or(String::new(), |s| match (s.nombre.as_str(), s.instancia) {
+                            ("", 0) => String::new(),
+                            ("", k) => format!(" · copy {k}"),
+                            (nombre, 0) => format!(" · {nombre}"),
+                            (nombre, k) => format!(" · {nombre} copy {k}"),
+                        });
+                        println!("render · surface {} on {} · {}×{} · scale {} · {:.0} Hz{cual}", n.id, n.nombre, n.tam.0, n.tam.1, n.escala, n.mhz as f32 / 1000.0);
+                    }
                     laminas.push(g.lamina(*n, tam));
                     // Cuántos monitores están enseñando algo ahora mismo.
                     if let Some(i) = escena.hechos.iter().position(|h| h.0 == "screens.count") {

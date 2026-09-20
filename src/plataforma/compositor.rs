@@ -87,6 +87,8 @@ impl Estado {
                 // Cuántas ventanas tiene no lo dice este protocolo.
                 ("windows".into(), Valor::Num(0.0)),
                 ("monitor".into(), Valor::Texto(e.monitor.clone())),
+                // Si es el activo de su monitor: lo que necesita una barra por pantalla.
+                ("active".into(), Valor::Si(e.activo)),
             ])).collect())),
         ]);
         let huella = format!("{v:?}");

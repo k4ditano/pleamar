@@ -11,6 +11,33 @@ every(1000, tick)
 
 -- ── los escritorios y la ventana: un servicio de la plataforma ───
 --  `sys.watch` dice si este sistema lo tiene. Si no, la barra sale sin ellos.
+-- Una ficha por monitor: su escritorio activo y la ventana que tiene delante. Cada
+-- copia de la barra (`screens: each`) enseña la suya.
+local monitores, escritorios, activo_global, titulo = {}, {}, 0, ""
+
+local function repartir()
+    local fichas = {}
+    for k = 0, 3 do
+        local donde = monitores[k]
+        if not donde then break end
+        local suyo, con_foco = 1, false
+        for _, d in ipairs(escritorios) do
+            if d.monitor == donde and d.active then
+                suyo = d.id
+                con_foco = d.id == activo_global
+            end
+        end
+        -- El título es de quien tiene el foco: las demás barras no enseñan ventana ajena.
+        fichas[k + 1] = { active = suyo, title = con_foco and titulo or "" }
+    end
+    model.mon = fichas
+end
+
+-- Cuál es cada copia lo dice el render en cuanto pone su superficie.
+for k = 0, 3 do
+    on("text:screen." .. k .. ".name", function(nombre) monitores[k] = nombre; repartir() end)
+end
+
 local has = sys.watch("workspaces", function(w)
     local there, busy = {}, {}
     for _, d in ipairs(w.list) do
@@ -21,13 +48,15 @@ local has = sys.watch("workspaces", function(w)
         fact["ws." .. i .. ".there"] = there[i] or i == w.active
         fact["ws." .. i .. ".busy"] = busy[i] or false
     end
-    fact["ws.active"] = w.active
+    escritorios, activo_global = w.list, w.active
+    repartir()
 end)
 if not has then
-    log("este sistema no cuenta sus escritorios: la barra sale sin ellos")
+    log("this system does not report its workspaces: the bar comes without them")
 end
 
-sys.watch("window", function(w) text.title = w.title end)
+sys.watch("window", function(w) titulo = w.title; repartir() end)
+
 
 on("go", function(i) sys.call("workspaces.focus", i) end)
 
