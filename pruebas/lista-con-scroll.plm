@@ -11,6 +11,7 @@ scene Scrolling {
     column list {
         at: 16, 16
         view: 250, 208
+        step: 40          // lo que corre por muesca
         gap: 6
         for r in rows { Row(r) }
     }
