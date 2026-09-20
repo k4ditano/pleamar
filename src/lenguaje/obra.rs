@@ -201,6 +201,8 @@ struct Parametro {
 
 struct Obra<'a> {
     e: Escena,
+    /// Repartos que se desplazan: su zona, su propiedad, hasta dónde, cuánto por muesca y con qué muelle.
+    scrolls: Vec<(String, PropId, Expr, Expr, Muelle)>,
     /// Superficies cuyo `open:` se resuelve al final: (cuál, el hecho, dónde está escrito).
     superficies_pendientes: Vec<(usize, String, (usize, usize))>,
     /// Los nombres de los ficheros de los que está hecha, para decir dónde está algo.
@@ -284,7 +286,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
             otro => unreachable!("«{otro}» está en el vocabulario, pero no tiene rigidez ni freno"),
         })).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
-        superficies_pendientes: Vec::new(), ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), vuelta: 0, siguiente_origen: 0.0, valores: HashMap::new(), ambiguos: Default::default(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
+        scrolls: Vec::new(), superficies_pendientes: Vec::new(), ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), vuelta: 0, siguiente_origen: 0.0, valores: HashMap::new(), ambiguos: Default::default(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
@@ -2401,6 +2403,15 @@ impl<'a> Obra<'a> {
             Some(c) => Some(self.color(c)?),
             None => None,
         };
+        // `view: 300, 200`: lo que se ve. Lo de dentro puede ser más largo, y se desplaza.
+        let vista = match p.get_mut("view") {
+            Some(c) => Some(self.punto(c)?),
+            None => None,
+        };
+        let paso = match p.get_mut("step") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(60.0),
+        };
         let opacidad = match p.get_mut("opacity") {
             Some(c) => Some(self.expr(c)?),
             None => None,
@@ -2451,6 +2462,19 @@ impl<'a> Obra<'a> {
             /// Es lo que va entre dos hijos, no un hijo.
             separa: bool,
         }
+        // Lo que se ve es una ventana a lo que hay: se recorta, y lo de dentro va corrido.
+        let desplaza = vista.as_ref().map(|(vw, vh)| {
+            self.copias += 1;
+            let prop = self.e.prop_con(fijo(&format!("·corrido{}", self.copias)), 0.0, muelle.unwrap_or(Muelle::RAPIDO));
+            let caja = Forma::Caja { centro: (vw.clone() * 0.5, vh.clone() * 0.5), mitad: (vw.clone() * 0.5, vh.clone() * 0.5), radio: esquina.clone() };
+            self.e.pintar(Instr::Recorte(Some((caja, 0.0))));
+            let corrido = Expr::K(0.0) - prop.e();
+            let mueve = if fila { (corrido, Expr::K(0.0)) } else { (Expr::K(0.0), corrido) };
+            let t = Transformacion { mueve, ..Transformacion::en((0.0.into(), 0.0.into())) };
+            self.e.pintar(Instr::Transformar(Some(t.clone())));
+            self.bajo.push(t);
+            prop
+        });
         let nivel = self.bajo.len();
         let mut puestos: Vec<Puesto> = Vec::new();
         // `between { … }`: lo que va entre cada dos hijos que estén.
@@ -2621,7 +2645,9 @@ impl<'a> Obra<'a> {
         }
         let total_largo = corrido + relleno.clone();
         let total_ancho = maximo + relleno * 2.0;
-        let tam = if fila { (total_largo, total_ancho) } else { (total_ancho, total_largo) };
+        let contenido = if fila { (total_largo, total_ancho) } else { (total_ancho, total_largo) };
+        // Con `view:`, hacia fuera ocupa lo que se ve, no lo que lleva dentro.
+        let tam = vista.clone().unwrap_or_else(|| contenido.clone());
 
         if let (Some(k), Some(color)) = (sitio_del_fondo, fondo) {
             self.e.instrs[k] = Instr::Plano {
@@ -2638,6 +2664,11 @@ impl<'a> Obra<'a> {
             for c in &mut self.candidatas[candidatas_base..] {
                 c.bajo[nivel_base].mueve = mueve.clone();
             }
+        }
+        if desplaza.is_some() {
+            self.bajo.pop();
+            self.e.pintar(Instr::Transformar(None));
+            self.e.pintar(Instr::Recorte(None));
         }
         if opacidad.is_some() {
             self.e.pintar(Instr::Opacidad(None));
@@ -2657,7 +2688,14 @@ impl<'a> Obra<'a> {
                 bajo.push(t.clone());
             }
             let caja = Forma::Caja { centro: (tam.0.clone() * 0.5, tam.1.clone() * 0.5), mitad: (tam.0.clone() * 0.5, tam.1.clone() * 0.5), radio: esquina_de_zona };
-            self.candidatas.insert(candidatas_base, Candidata { nombre: nombre.clone(), forma: caja, activa: None, visible: None, bajo, forzada: false, cursor: cursor_del_reparto });
+            self.candidatas.insert(candidatas_base, Candidata { nombre: nombre.clone(), forma: caja, activa: None, visible: None, bajo, forzada: desplaza.is_some(), cursor: cursor_del_reparto });
+            if let Some(prop) = &desplaza {
+                // La rueda sobre él lo corre, sin pasarse de lo que hay. La regla se crea al
+                // final, cuando ya se sabe qué formas con nombre son zonas de verdad.
+                let visible = if fila { tam.0.clone() } else { tam.1.clone() };
+                let hasta = (if fila { contenido.0.clone() } else { contenido.1.clone() } - visible).max(Expr::K(0.0));
+                self.scrolls.push((nombre.clone(), *prop, hasta, paso.clone(), muelle.unwrap_or(Muelle::RAPIDO)));
+            }
             let destino = match self.entornos.last_mut() {
                 Some(e) => &mut e.exprs,
                 None => &mut self.lets,
@@ -2665,6 +2703,12 @@ impl<'a> Obra<'a> {
             destino.insert(format!("{nombre}.width"), tam.0.clone());
             destino.insert(format!("{nombre}.height"), tam.1.clone());
             destino.insert(format!("{nombre}.count"), cuantos.clone());
+            // Con `view:`: cuánto hay de verdad, y por dónde va.
+            let largo_del_contenido = if fila { contenido.0.clone() } else { contenido.1.clone() };
+            destino.insert(format!("{nombre}.content"), largo_del_contenido);
+            if let Some(prop) = &desplaza {
+                destino.insert(format!("{nombre}.scroll"), prop.e());
+            }
             // Quien lo leyó antes de este punto leyó la propiedad adelantada: aquí se rellena.
             for (parte, a) in [("width", &tam.0), ("height", &tam.1), ("count", &cuantos)] {
                 if let Some(prop) = self.props.get(&format!("{nombre}.{parte}")).copied() {
@@ -3009,6 +3053,13 @@ impl<'a> Obra<'a> {
                 self.e.zonas[z.0 as usize].cursor = k.cursor;
                 self.zonas.insert(k.nombre, z);
             }
+        }
+        // Y las reglas de los repartos que se desplazan, ahora que sus zonas existen.
+        let rueda = self.hechos["wheel"].e();
+        for (nombre, prop, hasta, paso, muelle) in std::mem::take(&mut self.scrolls) {
+            let Some(zona) = self.zonas.get(&nombre).copied() else { continue };
+            let a = (prop.e() - rueda.clone() * paso).max(Expr::K(0.0)).min(hasta);
+            self.e.regla(Disparador::Rueda(zona), vec![Efecto::Animar(Transicion { prop, a, muelle, retraso: Duration::ZERO })]);
         }
     }
 

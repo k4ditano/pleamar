@@ -271,7 +271,7 @@ Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sug
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `show` |
 | `group` | `pivot` · `rotate` · `scale: s` o `sx, sy` · `move: dx, dy` · `opacity` (se funden como una sola cosa) · `size` (para quien lo reparta) · `show` |
 | `popup` | `at` (dentro de la superficie) · `size` · `open:` un hecho |
-| `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` |
+| `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `view: w, h` · `step` |
 
 `anchor` de un texto: `left` `center` `right` y `top` `center` `bottom`, uno o los dos (`anchor: left center`). De un reparto: `left` `center` `right` y `top` `middle` `bottom` —sin ancla, `at` es su esquina de arriba a la izquierda—. `cursor:` `default` `pointer` `text` `grab` `grabbing`.
 
@@ -282,6 +282,18 @@ Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sug
 ## 9. Repartos
 
 `row` y `column` colocan a sus hijos uno detrás de otro: el sitio de cada uno es una expresión, así que si uno crece o desaparece, los demás se mueven. Con `~muelle` en la cabecera, viajan a su sitio en vez de saltar. Cada hijo tiene que saber cuánto ocupa: una forma con `size` o `radius`, un texto (se mide solo), una imagen, un `group` o un componente con `size:`, otro reparto, o `space n`. `show: expr` en un hijo decide si está: ocupa y se ve, o ni lo uno ni lo otro.
+
+**Listas más largas que su hueco.** `view: w, h` dice lo que se ve; lo de dentro puede ser más largo y **se corre con la rueda**, recortado y sin pasarse de lo que hay. `step:` es cuánto por muesca (60 por defecto), y el muelle del reparto es con el que viaja. Además de `width`, `height` y `count`, publica `list.content` —cuánto hay— y `list.scroll` —por dónde va—, que es lo que hace falta para pintar una barrita al lado:
+
+```
+column list { at: 16, 16;  view: 250, 208;  gap: 6
+    for r in rows { Row(r) }
+}
+box { from: 276, 16 + list.scroll / max(list.content, 1) * 208
+      size: 4, 208 * 208 / max(list.content, 208);  corner: 2;  color: ink;  opacity: 35% }
+```
+
+Con `view:`, hacia fuera ocupa lo que se ve, no lo que lleva dentro.
 
 `between { box { size: 272, 1; color: ink } }` pone eso **entre cada dos hijos que estén**: si uno desaparece, su raya también, y nunca queda una al principio ni al final. **No abre otro hueco**: va centrada en el `gap` que ya hay entre sus vecinos, así que la distancia entre dos hijos es el `gap` más lo que ocupe ella. Con una sola cosa dentro, esa cosa dice cuánto ocupa; con varias, el `between` hace de grupo y lo dice él (`between { size: 10, 12; … }`). `between i { … }` le da su posición —1 tras el primer hijo, 2 tras el segundo…—, para que la primera pueda ser distinta: `opacity: if(i == 1, 50%, 12%)`. Un reparto con nombre publica, además de `lista.width` y `lista.height`, **`lista.count`**: cuántos hijos están ahora mismo. Los tres se pueden leer también antes de donde se declara.
 
@@ -535,7 +547,7 @@ properties.input: at width size weight color opacity family placeholder selectio
 properties.group: pivot rotate scale move opacity size show
 properties.popup: at size open
 properties.children: move
-properties.layout: at anchor gap padding align fill corner show opacity cursor
+properties.layout: at anchor gap padding align fill corner show opacity cursor view step
 functions: min max abs clamp smooth mix if vel
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop
