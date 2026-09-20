@@ -2,10 +2,13 @@
 # Pasa cada escena de pruebas/ por `--comprobar` y mira que ocurra lo que su primera línea espera.
 cd "$(dirname "$0")" || exit 1
 cargo build --release --quiet || exit 1
-# Los ejemplos completos de la referencia (los bloques ```plm) también se comprueban:
-# si la nota miente, esto falla.
+# Los ejemplos completos de la documentación (los bloques ```plm) también se
+# comprueban: si el README, la guía, las recetas o la referencia mienten, esto falla.
 ejemplos=$(mktemp -d)
-awk -v dir="$ejemplos" '/^```plm$/ { k++; dentro = 1; next } /^```$/ { dentro = 0 } dentro { print > (dir "/referencia-" k ".plm") }' docs/11-referencia-del-lenguaje.md
+for nota in README.md docs/11-referencia-del-lenguaje.md docs/guide.md docs/recipes.md; do
+    corto=$(basename "$nota" .md)
+    awk -v dir="$ejemplos" -v de="$corto" '/^```plm$/ { k++; dentro = 1; next } /^```$/ { dentro = 0 } dentro { print > (dir "/" de "-" k ".plm") }' "$nota"
+done
 mal=0; n=0
 for f in pruebas/*.plm escenas/*.plm "$ejemplos"/*.plm; do
     n=$((n + 1))

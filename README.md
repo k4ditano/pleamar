@@ -1,161 +1,192 @@
 # pleamar
 
-**Una alternativa a [Quickshell](https://quickshell.outfoxxed.me): escribir el
-escritorio —barras, lanzadores, notificaciones, bandeja— en un lenguaje
-declarativo propio, sobre un runtime en Rust.**
+**An alternative to [Quickshell](https://quickshell.outfoxxed.me): write the
+desktop — bars, launchers, notifications, tray, menus — in a declarative language
+of its own, on top of a Rust runtime.**
 
-La idea de fondo: **animar no debería depender de la lógica**. La vista declara
-transiciones («el ancho va a 406 con este muelle, dentro de 70 ms») y un hilo de
-render las recorre a la cadencia de la pantalla, pase lo que pase en el hilo que
-decide. Es lo que hace Core Animation en iOS, y lo que QtQuick —y por tanto
-Quickshell— no puede hacer con un `Behavior` o un `SpringAnimation`. Con la
-lógica bloqueada 600 ms, aquí salen 38 frames a ~17 ms; en el mismo ensayo en
-QML, un hueco de 600 ms.
+The idea underneath: **animation should not depend on logic**. The scene declares
+what moves and with which spring, and a render thread walks it at the screen's
+pace, whatever happens in the thread that decides things. With the logic blocked
+for 600 ms, 38 frames come out at 17 ms each; in the same test on QtQuick, a
+600 ms hole.
 
-Y lo demás que sale de escribirlo en Rust con un lenguaje propio: todos los
-nombres se comprueban al cargar, nada de lo declarado puede colgarse, y un
-plugin de otro corre con los permisos que le apruebes, no con los tuyos.
+## The quick comparison
 
-Qué falta para igualar a Quickshell, medido contra configuraciones de verdad:
-`docs/07-que-falta.md`. Las escenas `marea` y `cara` son bancos de ensayo: la
-prueba de esfuerzo inicial fue caber una shell existente.
+The same bar, written twice: in Quickshell (`proyecto-marea`, 370 QML files) and
+in pleamar (`marea-plm`, one `.plm` and one `.luau`). Both running at once, both
+freshly started, same 60 Hz monitor, on an RTX 2060.
+
+| | Quickshell | pleamar |
+| --- | --- | --- |
+| real memory (PSS) | 336 MB | **81 MB** |
+| time to first frame | 1876 ms | **175 ms** |
+| frames per second while animating | ~24 | **60** |
+| CPU per painted frame | 0.257 % | **0.083 %** |
+| CPU with nothing moving | never drops | **0.3 %** |
+| opening a panel | 6.2 % → 12.3 %, and 9.5 % after closing it | 4.4 % → 4.9 %, and back to 4.5 % |
+
+On raw CPU, with both animating, the difference is 20 %: **4.96 % against
+6.17 %**. That is what it is, and it should be said before the pretty numbers.
+What changes the picture is that pleamar is painting **two and a half times more
+frames** while spending less, and that when nothing moves it **sleeps**.
+
+The numbers, how they were taken and what to watch out for: `marea-plm/MEDIDAS.md`.
+
+## What comes out of building it this way
+
+- **The renderer animates on its own.** Springs, layers, gestures and rules are
+  its job. The logic reports what happens and nothing else; if it stalls, the
+  screen never finds out.
+- **Everything is checked on load.** A misspelled name is an error with file,
+  line, arrow and "did you mean…?", not an `undefined` at runtime.
+- **Nothing declared can hang:** no free loops, no recursion.
+- **Someone else's plugin runs with the permissions you approve**, not with
+  yours. In Quickshell, a piece of foreign config is JavaScript with everything
+  you can do.
+- **Shapes that melt into each other**, with shadow, rim, light and gradients, no
+  layers and no tricks: underneath it is all signed distance.
+- **Cross-platform by design:** everything system-specific behind
+  `src/plataforma/`, and `./portable.sh` checks it still builds for Windows and
+  macOS.
+
+## A whole scene
+
+```plm
+language 0.1
+scene Clock {
+    surface { size: 240, 96; anchor: top; margin: 12 }
+    permissions { services: "clock" }
+
+    //  The time comes from the system: not a single line of logic here.
+    service clock as now { time: text = "--:--"; date: text }
+
+    prop hot = 0 ~quick
+
+    body {
+        color: #151616
+        rim: 6%
+        shadow: 0, 6, 18, 35%
+        box { from: 0, 0; size: 240, 96; corner: 20 }
+    }
+    text now.time { at: 120, 44; anchor: center; size: 34; color: #f5f7f5 }
+    text now.date { at: 120, 72; anchor: center; size: 12; color: #9ed6bd; opacity: 45% + hot * 55% }
+
+    zone box whole { from: 0, 0; size: 240, 96; corner: 20 }
+    on enter whole { hot: 1 }
+    on leave whole { hot: 0 }
+}
+```
+
+`pleamar --escena clock.plm`. Save the file and it reloads without losing
+whatever was in motion.
+
+## Getting started
 
 ```sh
 cargo build --release
-./target/release/pleamar --escena escenas/barra.plm   # una barra de verdad: escritorios, ventana, hora y volumen
-./target/release/pleamar --escena escenas/con-plugin.plm # una escena sin lógica propia con un plugin: un reloj que se pone la hora solo
-./target/release/pleamar --escena escenas/iconos.plm  # la bandeja del sistema; botón derecho sobre un icono abre su menú
-./target/release/pleamar --escena escenas/lanzador.plm # un lanzador; se abre con: pleamar --decir lanzador "emit toggle"
-./target/release/pleamar --escena escenas/marea.plm   # una escena escrita en el lenguaje; se recarga al guardarla
-./target/release/pleamar --comprobar escenas/cara.plm # la lee, dice si está bien, y sale
-./probar.sh                                           # las pruebas del lenguaje, y los ejemplos de su referencia (docs/11)
-./target/release/pleamar                 # pasa el ratón por la bolita; botón derecho la cierra
-./target/release/pleamar --escena isla   # otra escena, el mismo render
-./target/release/pleamar --escena cara   # la cara de Marea: capas, gestos y su guion
-./target/release/pleamar --escena muestrario   # todo lo que el render sabe pintar, a la vista
-./target/release/pleamar --demo          # abre y cierra sola
-./target/release/pleamar --ingenuo       # lo mismo con la lógica en el hilo que pinta
+./target/release/pleamar --escena escenas/barra.plm       # a bar: workspaces, window, time and volume
+./target/release/pleamar --escena escenas/lista-larga.plm # five thousand rows in sixteen copies
+./target/release/pleamar --escena escenas/caminos.plm     # paths, curves and gradients
+./target/release/pleamar --escena escenas/ventana.plm     # a normal window, with its frame
+./target/release/pleamar --escena escenas/iconos.plm      # the system tray; right-click opens an icon's menu
+./target/release/pleamar --escena escenas/ajustes.plm     # saves what you pick in its own folder
+./target/release/pleamar --comprobar escenas/barra.plm    # reads it, says whether it is fine, exits
+./probar.sh                                               # the language tests, and the examples in its reference
 ```
 
-Sale en `HDMI-A-1`. `--pantalla todas` la pone en cada monitor —y en los que se
-enchufen después—; `--pantalla A,B` en los que digas. `--bloqueo MS` cambia lo que se
-atasca la lógica tras cada decisión; por defecto 600 ms de espera activa.
-`--raton "360,90@500 pulsa@3200 fuera@4500"` mueve un ratón de mentira y cuenta
-cada evento que le llega a la lógica: sirve para ensayar sin tocar el de verdad.
+Options used daily: `--pantalla A,B` (which monitors), `--decir` (talk to it from
+outside, or from a compositor shortcut), `--raton "360,90@500 pulsa@3200"` (a
+pretend mouse, to rehearse without touching the real one), `--bloqueo MS` (stall
+the logic on purpose and watch the screen carry on).
 
-## El lenguaje
+## The language in five minutes
 
-Una escena se escribe en un fichero `.plm` —palabras clave en inglés— y no hace
-falta Rust: `escenas/marea.plm` es Marea entera, `escenas/cara.plm` su cara con
-capas y gestos, y `escenas/bandeja.plm` una lista de avisos hecha con
-componentes, `repeat` y reparto, donde cada aviso va a su hueco con un muelle. Los errores salen al cargar, con línea,
-flecha y «¿querías decir…?»; al guardar, la escena se recarga sin perder valores,
-velocidades, hechos ni textos. La referencia está en `docs/09-lenguaje-v0.md`.
-
-```
-layer shape ~quick {
-    rec    while recording
-    happy  for 620ms after confirmed
-    eyes
-}
-on hover orb for 320ms { open = true }
-```
-
-## La lógica
-
-Si al lado de `marea.plm` hay un `marea.luau`, esa es su lógica: Luau en una caja
-de arena —sin `io`, con tope de memoria, y cortada si un manejador no acaba en
-2 s—, en su propio hilo, que el render no espera nunca. Solo puede lo que cruza
-la frontera: `fact.open = true`, `text["notice.title"] = …`, `emit`, `play`, y
-oír (`on("view_event", …)`, `on("press:view", …)`), más temporizadores y `run`
-para órdenes del sistema. También se recarga al guardarla. Referencia en
-`docs/10-logica-luau.md`.
-
-## Una escena son datos
-
-El render no sabe qué es una bolita. Recibe una `Escena` y la interpreta:
-
-- **Propiedades** con nombre (`orbe.x`, `panel.ancho`…). Cada una es un muelle.
-  Si la escena se sustituye, las que se llaman igual conservan valor y velocidad.
-- **Expresiones** puras sobre ellas (`orbe_x + 62.0`, `fusion * panel_w.suave(0, 40)`,
-  incluso `orbe_x.vel()`). Son lo que sería un binding: como no tienen efectos,
-  el render las evalúa cuando quiere, sin preguntar a nadie.
-- **Instrucciones de dibujo**, en orden: `Grupo`, `Forma` (elipse o caja, fundida
-  con lo anterior por un mínimo suave), `Relleno`, `Recorte`, `Transformar`,
-  `Plano`, `Textura`. El render la compone cada frame en elementos con su caja
-  envolvente y los pinta de una sola llamada; no hay nada de Marea en él.
-- **Hechos y sucesos**: la única frontera con la lógica. Ella cuenta lo que pasa
-  (`grabando = sí`, `confirmado`); no toca formas, poses ni temporizadores.
-- **Capas**: un hueco que muchos reclaman, en orden de prioridad. Gana la primera
-  reclamación que se cumple; cuando deja de cumplirse se ve la siguiente, sola.
-  Una reclamación puede fijar propiedades con su muelle y su retraso: eso es una
-  coreografía, y lo que en otros sitios se llama estado.
-- **Gestos**: fotogramas con curva sobre las propiedades de pose, con clase
-  (`Estado > Pedido > Reflejo > Postura > Ambiente`): uno solo corta a otro de
-  su clase o inferior.
-- **Reglas** que ejecuta el render: `Encima{320 ms}`, `Fuera{420 ms}`, `Pulsa`,
-  `Quieto{14 s}`… → poner un hecho, alternarlo, emitir, impulsar, pedir un gesto.
-- **Comportamientos** que el render lleva solo: `Parpadeo`, `Onda`, `Mirada`.
-- **Zonas** sensibles al ratón. Lo que declaran en `al_entrar` y `al_salir` lo
-  ejecuta el render en el acto —el `:hover` de CSS—, y a la lógica le llega un
-  evento con nombre: `Entra("ver")`, `Pulsa("orbe")`. La lógica ya no sabe de
-  coordenadas.
+A `.plm` file is a scene: what is seen, and how it reacts.
 
 | | |
 | --- | --- |
-| `main.rs` | Arranca los tres hilos y le deja el suyo a la plataforma. |
-| `gpu.rs` | El dispositivo, las láminas —una por superficie, cada una a su escala y con su ritmo— y la composición de la lista de dibujo en elementos. |
-| `escena.rs` | El contrato: propiedades, expresiones, instrucciones, comportamientos, zonas. |
-| `render.rs` | Intérprete. Dueño de los muelles y del reloj; quieto, no pinta ni un frame. |
-| `forma.wgsl` | Un quad por elemento: cada píxel solo ejecuta las formas del elemento que lo cubre. |
-| `formas.rs` | La geometría, una vez, para tres usos: la GPU, el ratón y las cajas. Elipse, caja, arco, segmento, trazo y giro. |
-| `logica.rs` | Donde corre un `Guion`: recibe eventos, declara transiciones y alarmas, y se bloquea a propósito. |
-| `logica_luau.rs` | La lógica de una escena de fichero: Luau en caja de arena, con la frontera y nada más. |
-| `lenguaje/` | Del texto a la escena: `fichas` trocea, `arbol` agrupa sin saber qué significa nada, y `obra` le da sentido y comprueba los nombres. |
-| `escenas/marea.rs` | La bolita y su tarjeta: 12 propiedades, 12 instrucciones, 4 zonas. |
-| `escenas/isla.rs` | Una isla como la de k4 que suelta una gota. Su lógica no decide nada: dos capas y tres reglas. |
-| `escenas/muestrario.rs` | Degradado y borde, un reloj con tres transformaciones anidadas, una textura girada y fundir un grupo frente a fundir sus piezas. |
-| `escenas/cara.rs` | La cara de Marea: `capa forma` (rec > aviso > contenta > lupa > ojos) y tres de sus gestos, fotograma a fotograma. |
-| `texto.rs` | Texto de verdad (`cosmic-text`: formas, líneas, emoji) e imágenes (SVG, PNG, JPEG), en un atlas a la escala del monitor. |
-| `plataforma/` | Lo único que sabe del sistema: Wayland para las ventanas, Hyprland por sus sockets para los servicios (`sys.watch("workspaces", …)`). `./portable.sh` comprueba que todo lo demás compila para Windows y macOS. |
+| `surface { size: full, 44; anchor: top }` | the window it asks for. Several per scene, and `kind: window` for a normal one |
+| `fact open = false` · `text title = "…"` | what the logic may report. Typed too: `fact mode: low \| normal \| critical` |
+| `prop x = 360 ~calm` | something that moves. Every property is a spring |
+| `service audio { volume: number; muted: bool }` | a system service, by name, with no logic |
+| `model rows max 14 { label: text }` · `for r in rows { … }` | a list the logic fills |
+| `box`, `ellipse`, `arc`, `line`, `path`, `text`, `image`, `input` | what gets drawn |
+| `body { color/gradient/rim/light/shadow }` | several shapes melted into one silhouette |
+| `row` / `column` | layout, with gap, padding, alignment, `view:` to scroll and `wrap:` for a grid |
+| `component Row(r: record) { … }` | something to copy, with typed parameters and named slots |
+| `on press hit { open = true }` · `every 2s { … }` | rules, run by the renderer |
+| `follow`, `blink`, `wave`, `spin`, `look` | movement that carries itself |
+| `layer`, `gesture`, `posture` | who wins a slot, and timelines |
+| `permissions { run: "date"; services: "audio" }` | undeclared, the logic cannot |
 
-La gráfica de abajo es una barra por frame; la franja roja es el tiempo que la
-lógica estuvo bloqueada, y el piloto de la izquierda, su estado ahora.
+The full reference, with its grammar and its checked examples, is in
+[`docs/11-referencia-del-lenguaje.md`](docs/11-referencia-del-lenguaje.md). To
+start from zero, [`docs/guide.md`](docs/guide.md); to copy and paste,
+[`docs/recipes.md`](docs/recipes.md).
 
-## Lo que se midió (19 sep 2026, RTX 2060, pantalla a 60 Hz)
+## The logic
 
-Abrir la tarjeta con la lógica bloqueada 600 ms justo al empezar:
+If there is a `barra.luau` next to `barra.plm`, that is its logic: Luau in a
+sandbox, on its own thread, which the renderer never waits for. It can only cross
+the boundary the scene declares — `fact.open = true`, `text.title = …`,
+`model.rows = {…}`, `emit`, and listening with `on(…)` — plus timers, `sys` for
+services and `run` for system commands, all behind permissions. Reference in
+[`docs/10-logica-luau.md`](docs/10-logica-luau.md).
 
-| | frames pintados durante el bloqueo | frame más largo |
-| --- | --- | --- |
-| pleamar, render separado | 38 | 17–19 ms (un ciclo de cada cinco soltó un frame: 33 ms) |
-| pleamar `--ingenuo` | 0 | 617 ms |
-| QtQuick sobre Quickshell (`comparar/shell.qml`) | 0 | 600 ms |
+A library with its own `.luau` next to it is a **plugin**: its boundary lives
+under its name (`Clock.now`), it runs on its own thread, and its permissions are
+approved by whoever uses it, with `pleamar --aprobar`. Unapproved, it runs
+touching nothing.
 
-Memoria con la escena en reposo: 119 MB de RSS (76 privados) frente a 214 MB
-(145 privados) del banco de Quickshell, que es una ventana con tres
-rectángulos. Casi todo lo de pleamar es el driver de Vulkan de NVIDIA: el suelo
-de abrir un contexto de GPU existe, y un renderer por CPU para lo estático
-sería la forma de bajarlo.
+## In the editor
 
-Con capas y reglas, Marea se abre, realza su botón y se cierra **con la lógica
-bloqueada cinco segundos** (`--bloqueo 5000 --raton …`): la lógica se entera
-después. Y en `--escena cara`, buscar y confirmar mientras graba no le quitan el
-disco rojo; al dejar de grabar, la lupa sale sola.
+`pleamar --lsp` is a language server over stdio, with this same compiler behind
+it: mistakes as you type, which words fit here, what the word under the cursor
+means, go to where a name was declared, where it is used, and renaming it.
+`pleamar --resaltado vim|vscode` writes the syntax file straight from the
+vocabulary, so it cannot fall behind. Both, already generated, in
+[`editor/`](editor/).
 
-Con la escena como datos los números no cambian (38–39 frames durante el
-bloqueo, 17 ms), y el realce del botón responde con la lógica congelada.
+## How it is built
 
-## Documentación
+Three threads that never wait for each other: **platform** (windows and input),
+**logic** (Luau) and **render** (owner of the springs and the clock). Plus one
+per plugin, one per service, and a workshop thread for text and images.
 
-El diseño, el borrador del lenguaje, la prueba contra la Marea real y lo que
-falta —con la lista de limitaciones conocidas en `docs/08`— están en `docs/` (y, al día, en Edinot: `Proyectos/pleamar`).
+| | |
+| --- | --- |
+| `lenguaje/` | From text to scene: `fichas` tokenises, `arbol` groups without knowing what anything means, `obra` gives it meaning and checks the names, `vocabulario` is the list of what exists |
+| `escena.rs` | The contract: properties, expressions, drawing instructions, rules, layers, gestures, zones, surfaces |
+| `render.rs` | The interpreter. Still, it does not paint a single frame |
+| `gpu.rs` · `forma.wgsl` | One quad per element; each pixel only runs the shapes of the element covering it |
+| `formas.rs` | The geometry, written once, used three times: the GPU, the mouse and the bounding boxes |
+| `logica_luau.rs` | A scene's logic: Luau in a sandbox, with the boundary and nothing else |
+| `texto.rs` | Real text (`cosmic-text`) and images (SVG, PNG, JPEG) in an atlas at the monitor's scale |
+| `plataforma/` | The only part that knows about the system: Wayland, the services, files, the clock |
+| `lsp.rs` | The language server and the highlighters, both drawn from the vocabulary |
 
-## Lo que no es
+## What is missing
 
-Una lista es de capacidad fija —aunque la lógica la mueva con datos—, y la
-lógica solo se entera del sistema lanzando órdenes que acaban. No hay
-layout —las posiciones son expresiones a mano—
-y todas las superficies pintan la misma escena. Y los primeros frames tras despertar salen
-sin esperar al vsync, así que el reloj de animación debería ir con el tiempo de
-presentación, no con el de la CPU.
+Measured against two real Quickshell configs (648 QML files between them), in
+[`docs/07-que-falta.md`](docs/07-que-falta.md): session lock, showing a screen
+inside the scene, input methods for Japanese or Chinese, and list copies that are
+born and die on their own.
+
+Known limitations, **each one with its plan to fix it**, in
+[`docs/08-limitaciones.md`](docs/08-limitaciones.md). They are written down as
+they show up, not at the end.
+
+## Documentation
+
+| | |
+| --- | --- |
+| [`docs/guide.md`](docs/guide.md) | From zero to a bar, step by step |
+| [`docs/recipes.md`](docs/recipes.md) | Patterns that already work, ready to copy |
+| [`docs/11-referencia-del-lenguaje.md`](docs/11-referencia-del-lenguaje.md) | The reference: grammar, types, every element and every property |
+| [`docs/10-logica-luau.md`](docs/10-logica-luau.md) | What the logic can do, and what it cannot |
+| [`docs/07-que-falta.md`](docs/07-que-falta.md) | Parity with Quickshell, told by real usage |
+| [`docs/08-limitaciones.md`](docs/08-limitaciones.md) | Everything that fails or is missing, with its plan |
+| [`docs/02-como-funciona.md`](docs/02-como-funciona.md) | Inside: the threads, the renderer, the why |
+| [`.claude/skills/pleamar/`](.claude/skills/pleamar/) | So an AI writes `.plm` without making things up |
+
+The working notes (01, 03–06, 09) are the design logbook: how this got here.
