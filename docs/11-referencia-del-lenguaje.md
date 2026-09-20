@@ -235,6 +235,25 @@ for m in menu { …  for it in m.items { text it.label { … } } }
 
 Una lista de dentro se recorre con `for it in m.items`, y tiene su `m.items.count` y su `m.items.total`. **`list children max 6 depth 2`**, sin bloque, son fichas como la de fuera, unas dentro de otras hasta esa hondura (de 1 a 6): un árbol, como el menú de una aplicación. Se recorre con tantos `for` como niveles se quieran enseñar. Todo se despliega al cargar: 8 × 6 son 48 fichas, y el tope entre todas las listas de un modelo es 4096.
 
+**Una por monitor.** `screens: each [max N]` repite la superficie en cada monitor (4 como mucho, si no se dice otra cosa), y **cada copia tiene lo suyo**: sus propiedades, sus zonas y sus reglas. Dentro:
+
+| | |
+| --- | --- |
+| `$screen` | su número, para interpolar en un nombre: `mon.$screen.active`, como `$i` en un `repeat` |
+| `screen.index` | lo mismo, como número |
+| `screen.name` | el nombre de **su** monitor, que pone el render (`HDMI-A-1`) |
+| `screen.width` · `screen.height` | lo que mide **su** monitor |
+| `screens.count` | cuántos monitores están enseñando algo |
+
+Con la superficie de la escena (la que no lleva nombre), lo que se repite es el dibujo suelto. `--pantalla A,B` reparte las copias entre esos monitores, que es como se ensayan dos sin tener dos.
+
+```
+surface { size: full, 44; anchor: top; screens: each }
+model mon max 4 { active: number = 1; title: text }     // una ficha por monitor, de la lógica
+text mon.$screen.title { … }
+repeat i in 1..10 { Desk(i, mon.$screen.active) { show: ws.$i.there } }
+```
+
 **`surface`**: `size: ancho, alto` (`full` como ancho es todo el monitor) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` · `margin: n` o `arriba, derecha, abajo, izquierda` · `level:` `background` `bottom` `top` `overlay` · `reserve: n` (el sitio que las ventanas le dejan) · `screens: all` o `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, y con `while expr` solo lo pide mientras sea verdad.
 
 ## 7. Expresiones

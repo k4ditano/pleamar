@@ -51,7 +51,7 @@ Un nombre mal escrito es un error al momento, con sugerencia: `the scene has no 
 
 | Servicio | Lo que cuenta | Quién lo da hoy |
 | --- | --- | --- |
-| `workspaces` | `{ active = 3, list = { { id, name, windows, monitor }, … } }` | Hyprland, por sus sockets (sin lanzar `hyprctl`) |
+| `workspaces` | `{ active = 3, list = { { id, name, windows, monitor, active }, … } }`; el `active` de cada uno dice si es el activo **de su monitor**, que es lo que necesita una barra por pantalla | Hyprland, por sus sockets (sin lanzar `hyprctl`) |
 | `window` | `{ title, class }` | Hyprland |
 | `sys.call("workspaces.focus", n)` | ir a un escritorio | Hyprland |
 | `audio` | `{ volume = 0.54, muted = false }` | Linux: PipeWire (`wpctl`, y `pactl subscribe` para enterarse) |

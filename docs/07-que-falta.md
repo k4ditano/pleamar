@@ -35,7 +35,7 @@ Tipos instanciados, con las veces que aparecen entre las dos configuraciones:
 | `Region` | 27 | ✅ la región de entrada se calcula sola, de las zonas |
 | `FileView` | 16 | ⬜ **no hay**: ni leer ni escribir ficheros · §2 |
 | `PanelWindow` | 10 | ✅ varias por escena (`surface panel { … }`), con su `open:` |
-| `Variants` | 7 | 🟡 `screens: all` repite la superficie en cada monitor, pero con el mismo estado (S2) |
+| `Variants` | 7 | ✅ `screens: each`: una superficie por monitor, cada una con su estado |
 | `ShellRoot` · `Scope` | 7 · 4 | ✅ `scene` |
 | `IpcHandler` | 4 | ✅ `pleamar --decir`, con `emit`, `fact`, `text`, `get` |
 | `IconImage` | 3 | ✅ `image x = icon "…"` |
@@ -52,10 +52,6 @@ Tipos instanciados, con las veces que aparecen entre las dos configuraciones:
 Y lo que usan del objeto `Quickshell`: `env` (82), `shellPath` (32), `screens` (31), `execDetached` (24), `iconPath` (18), `clipboardText` (6).
 
 ## 2. Lo que falta, por lo que duele
-
-### 🔴 Una escena por pantalla, con su propio estado
-
-`surface panel { … }` ya permite muchas ventanas en un proceso, y `screens: all` repite una en cada monitor. Lo que falta es que **cada monitor tenga su estado**: hoy las dos copias de una barra enseñan el mismo escritorio activo. Eso es `Variants` (7 usos) con `PanelWindow.screen` (9), y en pleamar sería `per screen { … }`: propiedades y hechos propios por instancia, con un `screen.name` que la lógica pueda leer. Anotado como S2.
 
 ### 🟡 Listas: lo que queda
 
@@ -94,7 +90,6 @@ Para no perderlo de vista, porque es la razón de que esto exista:
 
 ## 4. En qué orden
 
-1. **Una escena por pantalla con su estado** (`per screen`): lo que queda para una barra de verdad en dos monitores.
-2. **Ficheros** como servicio, y un **reloj** como servicio.
-3. **Caminos** (`path`), y copias que nazcan en marcha (G12).
-4. Ventanas normales, bloqueo de sesión, IME.
+1. **Ficheros** como servicio, y un **reloj** como servicio.
+2. **Caminos** (`path`), y copias que nazcan en marcha (G12).
+3. Ventanas normales, bloqueo de sesión, IME.
