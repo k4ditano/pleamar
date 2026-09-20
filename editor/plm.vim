@@ -4,7 +4,7 @@ if exists("b:current_syntax") | finish | endif
 syn keyword plmStatement surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
 syn keyword plmStatement scene library import language
 syn keyword plmKeyword in max while for after from until at by reach within rest inset right middle as via strict each all
-syn keyword plmFunction min max abs floor ceil clamp smooth mix if vel
+syn keyword plmFunction min max abs floor ceil sin cos clamp smooth mix if vel
 syn keyword plmFunction upper lower
 syn keyword plmTrigger press release scroll drag hold enter leave hover away idle key submit focus blur drop change still
 syn keyword plmEffect toggle emit impulse play focus blur

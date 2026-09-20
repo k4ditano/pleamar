@@ -329,6 +329,7 @@ From weakest to strongest: `or` · `and` · `not` · `< > <= >= == !=` (they do 
 | --- | --- |
 | `min(a, b)` `max(a, b)` `abs(x)` | |
 | `floor(x)` `ceil(x)` | to the integer below or the one above |
+| `sin(deg)` `cos(deg)` | sine and cosine, **in degrees**: what it takes to put something on an arc. Animate the angle and not the x and the y, and the thing travels along the arc instead of cutting across it |
 | `clamp(x, a, b)` | x, between a and b |
 | `smooth(a, b, x)` | from 0 to 1 while x goes from a to b, easing in and out |
 | `mix(a, b, t)` | between a and b. Also between two colors |
@@ -684,7 +685,7 @@ properties.group: pivot rotate scale move opacity size show
 properties.popup: at size open
 properties.children: move
 properties.layout: at anchor gap padding align fill corner show opacity cursor view step content wrap
-functions: min max abs floor ceil clamp smooth mix if vel
+functions: min max abs floor ceil sin cos clamp smooth mix if vel
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change still
 effects: toggle emit impulse play focus blur

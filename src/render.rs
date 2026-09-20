@@ -112,6 +112,8 @@ pub fn hilo(
     let mut en_reposo = false;
     let mut proxima_cita: Option<Instant> = None;
     let mut periodo_ms = 16.7f32;
+    let mut ultimo_presentado = Instant::now();
+    let mut proximo_frame = Instant::now();
     let mut frames_para_periodo = 0u32;
 
     loop {
@@ -1077,8 +1079,56 @@ pub fn hilo(
         uniformes[8..].copy_from_slice(&historial);
         // La que marca el ritmo va la última: es la que espera a la pantalla.
         laminas.sort_by_key(|l| l.marca_el_ritmo);
+        // Quién está abierta ahora. Si cambia, se reparte el ritmo otra vez: una
+        // superficie cerrada que lo marcase esperaría con vsync un frame que el
+        // compositor no le va a dar —a lo que no se ve no se le dan—, y con ella
+        // se paraba todo: 300 ms en mitad de una animación de otra ventana.
+        let mut cambio_de_abiertas = false;
+        for l in &mut laminas {
+            let ab = l.vista.emergente.is_some() || abierta(l.vista.superficie);
+            cambio_de_abiertas |= ab != l.abierta;
+            if ab {
+                l.vaciada = false;
+            }
+            l.abierta = ab;
+        }
+        if cambio_de_abiertas {
+            repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
+            laminas.sort_by_key(|l| l.marca_el_ritmo);
+        }
+        // El paso. Con buzón lo marca el render: un plazo absoluto por periodo del
+        // monitor que marca el ritmo, para que el error de cada espera no se
+        // acumule; si se llega tarde —un reposo, un frame largo— se empieza de
+        // nuevo desde ahora en vez de correr a alcanzarlo. Con vsync de cola lo
+        // marca la pantalla, pero solo cuando su cola está llena: al despertar
+        // aceptaba dos o tres frames sin esperar y el bucle los presentaba en dos
+        // milisegundos; ahí, nunca más de un frame por periodo.
+        if !op.sin_vsync && !op.ingenuo {
+            let ahora_mismo = Instant::now();
+            if g.con_buzon() {
+                let mhz = laminas.iter().find(|l| l.marca_el_ritmo).map_or(60_000, |l| l.mhz.max(1));
+                let periodo = Duration::from_secs_f64(1000.0 / mhz as f64);
+                if proximo_frame > ahora_mismo {
+                    std::thread::sleep(proximo_frame - ahora_mismo);
+                    proximo_frame += periodo;
+                } else {
+                    proximo_frame = ahora_mismo + periodo;
+                }
+            } else {
+                let minimo = Duration::from_secs_f32(periodo_ms * 0.8 / 1000.0);
+                let desde = ahora_mismo - ultimo_presentado;
+                if desde < minimo {
+                    std::thread::sleep(minimo - desde);
+                }
+            }
+        }
+        ultimo_presentado = Instant::now();
         let mut pintadas = 0;
         for l in &mut laminas {
+            // Cerrada se pinta una vez, vacía, y ya.
+            if !l.abierta && std::mem::replace(&mut l.vaciada, true) {
+                continue;
+            }
             pintadas += g.pintar(l, &dibujo, &uniformes) as u32;
         }
         if pintadas == 0 {
@@ -1171,7 +1221,15 @@ pub fn hilo(
 /// otro a 165.
 fn repartir_el_ritmo(g: &Gpu, laminas: &mut [Lamina], tam: (f32, f32), sin_vsync: bool) {
     // Una emergente nunca marca el ritmo: viene y va, y puede estar tapada.
-    let rapida = laminas.iter().filter(|l| l.vista.emergente.is_none()).max_by_key(|l| l.mhz).map(|l| l.id);
+    // Ni una cerrada. Y entre iguales, la primera: `max_by_key` se queda con la
+    // última, que con dos superficies a 60 Hz era la de la esquina, cerrada.
+    let mut rapida: Option<(i32, _)> = None;
+    for l in laminas.iter().filter(|l| l.vista.emergente.is_none() && l.abierta) {
+        if rapida.is_none_or(|(mhz, _)| l.mhz > mhz) {
+            rapida = Some((l.mhz, l.id));
+        }
+    }
+    let rapida = rapida.map(|(_, id)| id);
     for l in laminas.iter_mut() {
         let marca = !sin_vsync && Some(l.id) == rapida;
         if l.marca_el_ritmo != marca {

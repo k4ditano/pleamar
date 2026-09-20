@@ -161,6 +161,9 @@ pub enum Expr {
     Abs(Box<Expr>),
     /// Redondeo hacia abajo o hacia arriba: hace falta para contar fichas.
     Suelo(Box<Expr>),
+    /// Seno y coseno, en grados: lo que hace falta para poner algo en un arco.
+    Seno(Box<Expr>),
+    Coseno(Box<Expr>),
     Techo(Box<Expr>),
     /// smoothstep(a, b, x)
     Suave(f32, f32, Box<Expr>),
@@ -187,6 +190,8 @@ impl Expr {
             Max(a, b) => a.evaluar(c).max(b.evaluar(c)),
             Abs(a) => a.evaluar(c).abs(),
             Suelo(a) => a.evaluar(c).floor(),
+            Seno(a) => a.evaluar(c).to_radians().sin(),
+            Coseno(a) => a.evaluar(c).to_radians().cos(),
             Techo(a) => a.evaluar(c).ceil(),
             Suave(a, b, x) => {
                 let t = ((x.evaluar(c) - a) / (b - a)).clamp(0.0, 1.0);
@@ -224,6 +229,12 @@ impl Expr {
     }
     pub fn abs(self) -> Expr {
         Expr::Abs(Box::new(self))
+    }
+    pub fn seno(self) -> Expr {
+        Expr::Seno(Box::new(self))
+    }
+    pub fn coseno(self) -> Expr {
+        Expr::Coseno(Box::new(self))
     }
     pub fn suelo(self) -> Expr {
         Expr::Suelo(Box::new(self))

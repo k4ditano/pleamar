@@ -41,7 +41,7 @@
       "name": "keyword.other.plm"
     },
     {
-      "match": "\\b(min|max|abs|floor|ceil|clamp|smooth|mix|if|vel|upper|lower)\\b",
+      "match": "\\b(min|max|abs|floor|ceil|sin|cos|clamp|smooth|mix|if|vel|upper|lower)\\b",
       "name": "support.function.plm"
     },
     {

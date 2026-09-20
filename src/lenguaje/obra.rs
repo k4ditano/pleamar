@@ -902,6 +902,8 @@ impl<'a> Obra<'a> {
             "max" => toma()?.max(toma()?),
             "abs" => toma()?.abs(),
             "floor" => toma()?.suelo(),
+            "sin" => toma()?.seno(),
+            "cos" => toma()?.coseno(),
             "ceil" => toma()?.techo(),
             "clamp" => {
                 let (x, lo, hi) = (toma()?, toma()?, toma()?);

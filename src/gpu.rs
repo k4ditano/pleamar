@@ -544,6 +544,11 @@ pub struct Lamina {
     pub escala: f32,
     /// La que espera a la pantalla y marca el ritmo; las demás no bloquean.
     pub marca_el_ritmo: bool,
+    /// Si su superficie está abierta ahora. Una cerrada no marca el ritmo ni se
+    /// pinta más que una vez, para vaciarla: el compositor no le da frames a lo
+    /// que no se ve, y esperarlos con vsync paraba el render entero.
+    pub abierta: bool,
+    pub vaciada: bool,
     pub vista: Vista,
     superficie: wgpu::Surface<'static>,
     ventana: Box<dyn Ventana>,
@@ -663,6 +668,19 @@ impl Gpu {
     }
 
     /// Sube al atlas lo que el taller haya pintado desde la última vez.
+    /// Si se presenta por buzón y el paso lo marca el render con su reloj.
+    ///
+    /// Con vsync de cola (`Fifo`) pedir la siguiente imagen espera a que el
+    /// compositor suelte una, y aquí —Hyprland con NVIDIA— a veces no la suelta:
+    /// cuatro frames después de despertar de un reposo largo, 300 ms parado en
+    /// `vkAcquireNextImage` en mitad de una animación. Con buzón nunca se espera
+    /// a nadie; lo que se pierde es ir clavado al refresco, y se recupera
+    /// marcando el paso con plazos absolutos al periodo del monitor.
+    /// `PLEAMAR_FIFO=1` vuelve a lo de antes, para comparar.
+    pub fn con_buzon(&self) -> bool {
+        self.sin_bloqueo == Some(wgpu::PresentMode::Mailbox) && std::env::var_os("PLEAMAR_FIFO").is_none()
+    }
+
     pub fn subir_atlas(&self, por_subir: &mut Vec<(Hueco, Vec<u8>)>) {
         for (h, rgba) in por_subir.drain(..) {
             self.cola.write_texture(
@@ -720,7 +738,7 @@ impl Gpu {
         });
         let (vistas_de_capa, grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, 1, 1);
         let mut l = Lamina {
-            id: n.id, nombre: n.nombre, mhz: n.mhz, escala: n.escala, marca_el_ritmo: true, vista: n.vista,
+            id: n.id, nombre: n.nombre, mhz: n.mhz, escala: n.escala, marca_el_ritmo: true, abierta: true, vaciada: false, vista: n.vista,
             superficie: n.superficie, ventana: n.ventana, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas,
         };
         self.configurar(&mut l, tam);
@@ -752,7 +770,9 @@ impl Gpu {
                 desired_maximum_frame_latency: 1,
                 // Solo una lámina espera a su pantalla. Si esperasen todas, dos
                 // monitores a distinto ritmo se frenarían el uno al otro.
-                present_mode: if l.marca_el_ritmo { wgpu::PresentMode::Fifo } else { self.sin_bloqueo.unwrap_or(wgpu::PresentMode::Fifo) },
+                // Con buzón, ninguna espera a la pantalla: el paso lo marca el render
+                // (ver `con_buzon`). Sin él, la que marca el ritmo espera con vsync.
+                present_mode: if l.marca_el_ritmo && !self.con_buzon() { wgpu::PresentMode::Fifo } else { self.sin_bloqueo.unwrap_or(wgpu::PresentMode::Fifo) },
                 color_space: wgpu::SurfaceColorSpace::Auto,
             },
         );
