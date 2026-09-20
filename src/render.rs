@@ -251,10 +251,29 @@ pub fn hilo(
                         let _ = a_logica.send(Evento::Hecho(escena.hechos[h].0, 0.0));
                     }
                 }
+                ARender::HechoDeFuera(nombre, escrito) => match escena.hechos.iter().position(|h| h.0 == nombre) {
+                    Some(i) => {
+                        let tipo = escena.tipos.iter().find(|(n, _)| n == nombre).map(|(_, t)| t);
+                        let v = tipo.and_then(|t| t.de_texto(&escrito)).or_else(|| escrito.parse().ok()).or(match escrito.as_str() { "true" => Some(1.0), "false" => Some(0.0), _ => None });
+                        match v {
+                            Some(v) => {
+                                hechos[i] = v;
+                                // No lo ha puesto la lógica: que se entere.
+                                let _ = a_logica.send(Evento::Hecho(nombre, v));
+                            }
+                            None => eprintln!("render · «{nombre}» no puede valer «{escrito}»"),
+                        }
+                    }
+                    None => eprintln!("render · no conozco el hecho «{nombre}»"),
+                },
                 ARender::Pregunta(nombre, a_quien) => {
                     let numero = |v: f32| if v.fract() == 0.0 { format!("{}", v as i64) } else { format!("{v}") };
                     let r = if let Some(i) = escena.hechos.iter().position(|h| h.0 == nombre) {
-                        numero(hechos[i])
+                        // Como se escribiría: `true`, `critical`, o el número.
+                        match escena.tipos.iter().find(|(n, _)| n == nombre) {
+                            Some((_, t)) => t.como_texto(hechos[i]),
+                            None => numero(hechos[i]),
+                        }
                     } else if let Some(i) = escena.textos.iter().position(|t| t.0 == nombre) {
                         textos.get(i).cloned().unwrap_or_default()
                     } else if let Some(i) = escena.props.iter().position(|p| p.0 == nombre) {

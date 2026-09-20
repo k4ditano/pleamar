@@ -1,0 +1,6 @@
+// espera: fallo ««normal» ya es el valor número 1 de otro enumerado, y aquí sería el 0»
+scene X {
+    surface { size: 10, 10 }
+    fact mode: low | normal | critical = normal
+    fact speed: normal | fast = fast
+}

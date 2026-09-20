@@ -1,0 +1,6 @@
+// espera: fallo «no hay nada que se llame «critcal». ¿Querías decir «critical»?»
+scene X {
+    surface { size: 10, 10 }
+    fact mode: low | normal | critical = low
+    box { at: 5, 5; size: 4, 4; color: #fff; opacity: mode == critcal }
+}

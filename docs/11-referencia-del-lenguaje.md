@@ -33,7 +33,7 @@ Es un lenguaje **declarativo y que siempre termina**. No hay bucles libres, ni r
 | Duración | `320ms`, `14s`. Donde se espera una duración no vale un número sin unidad |
 | Color | `#151616` o `#fff` |
 | Texto | `"entre comillas"`. Con huecos, ver §11 |
-| Símbolos | `{ } ( ) , : ; = ~ + - * / < > <= >= == != .. -> %` |
+| Símbolos | `{ } ( ) , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
 
 Palabras del lenguaje (no se pueden usar como nombre de algo propio sin confundir a quien lee, aunque el compilador no lo prohíbe): `language import scene library surface permissions model spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, y dentro de sus sentencias `in max while for after from until at by reach within rest every inset right middle true false and or not`.
 
@@ -52,11 +52,14 @@ declaracion  = superficie | permisos | modelo | muelle | propiedad | hecho | suc
              | texto_vivo | imagen_decl | medida | let | zona ;
 superficie   = "surface" "{" { propiedad_de } "}" ;
 permisos     = "permissions" "{" { ( "run" | "services" ) ":" texto { "," texto } fin } "}" ;
-modelo       = "model" nombre [ "max" numero ] "{" { nombre ":" tipo [ "=" literal ] fin } "}" ;
-tipo         = "text" | "number" | "bool" ;
+modelo       = "model" nombre [ "max" numero ] "{" { campo | lista } "}" ;
+campo        = nombre ":" tipo [ "=" literal ] fin ;
+lista        = "list" nombre [ "max" numero ] "{" { campo | lista } "}" ;        (* fichas dentro de la ficha *)
+tipo         = "text" | "number" | "bool" | "image" numero "," numero | enumerado ;
+enumerado    = nombre "|" nombre { "|" nombre } ;
 muelle       = "spring" nombre "=" numero "," numero ;
 propiedad    = ( "prop" | "pose" ) nombre "=" numero [ "~" ref_muelle ] ;
-hecho        = "fact" nombre "=" ( numero | "true" | "false" ) ;
+hecho        = "fact" nombre [ ":" ( "number" | "bool" | enumerado ) ] "=" ( numero | "true" | "false" | nombre ) ;
 suceso       = "event" nombre [ "->" ] ;
 texto_vivo   = "text" nombre "=" texto ;
 imagen_decl  = "image" nombre "=" ( "icon" texto | "file" texto | "from" nombre ) "," numero "," numero ;
@@ -159,7 +162,7 @@ color        = "#" hex | nombre | "mix" "(" color "," color "," expr ")" ;
 | `model rows max 14 { label: text; enabled: bool = true; depth: number }` | Una lista de fichas que pone la lógica. `max`: cuántas caben (1 a 256; 16 si no se dice). Crea `rows.count`, `rows.total` y, por ficha, `rows.K.campo` |
 | `prop orb.x = 360 ~lively` | Una propiedad animada: un muelle. Sin `~`, `lively` |
 | `pose eyes = 14` | Una propiedad de la pose: la que un gesto lleva de la mano |
-| `fact open = false` | Algo que es verdad un rato: un número (`true` es 1). Lo ponen la lógica y las reglas |
+| `fact open = false` · `fact tries: number = 3` · `fact mode: low \| normal \| critical = normal` | Algo que es verdad un rato. Lo ponen la lógica y las reglas. Ver **Tipos**, abajo |
 | `event confirmed` · `event view_event ->` | Algo que ocurre. Con `->`, además le llega a la lógica |
 | `text notice.title = "Reunión"` | Un texto vivo: lo cambia la lógica, o un `input` |
 | `image fox = icon "firefox", 48, 48` | Una imagen, y a qué tamaño lógico se pinta como mucho. `icon "nombre"`, `file "ruta"`, o `from un_texto`: la que ese texto diga (un nombre de icono, o una ruta si empieza por `/`) |
@@ -167,6 +170,22 @@ color        = "#" hex | nombre | "mix" "(" color "," color "," expr ")" ;
 | `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | Un nombre para una expresión, o para un color |
 | `spring bouncy = 170, 12` | Un muelle propio: rigidez, freno. De casa: `lively`, `calm`, `quick`, `slow`, `eyes`, `pose`. En línea: `~spring(170, 12)` |
 | `zone box whole { at: …; size: …; active: expr }` | Una zona que no se pinta |
+
+**Tipos.** Para el render todo son números; los tipos son para quien escribe y para quien habla con la escena desde fuera. Un hecho es un número, un sí o no (`bool`; sin tipo, lo es el que nace `true` o `false`) o un **enumerado**: `fact mode: low | normal | critical = normal`. Los nombres de sus valores valen en cualquier expresión (`mode == critical`, `mode = low` en una regla) y son su posición: `low` es 0. El mismo nombre puede estar en dos enumerados mientras signifique el mismo número; si no, es un fallo al declararlo. En un hueco de un texto, un enumerado se enseña por su nombre: `"modo: {mode}"` → `modo: critical`. La lógica los lee y los escribe como lo que son —`fact.open` es `true`, `fact.mode` es `"critical"`—, y `--decir` también.
+
+Los campos de un modelo tienen esos tipos y dos más: **`image w, h`** —el nombre de un icono o una ruta, y la imagen que eso diga: `image r.icon { … }` sin declarar nada más— y **`list`**, fichas dentro de la ficha:
+
+```
+model menu max 8 {
+    label: text
+    icon: image 20, 20
+    kind: plain | checked | danger = plain
+    list items max 6 { label: text; enabled: bool = true }
+}
+for m in menu { …  for it in m.items { text it.label { … } } }
+```
+
+Una lista de dentro se recorre con `for it in m.items`, y tiene su `m.items.count` y su `m.items.total`. Todo se despliega al cargar: 8 × 6 son 48 fichas, y el tope entre todas las listas de un modelo es 4096.
 
 **`surface`**: `size: ancho, alto` (`full` como ancho es todo el monitor) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` · `margin: n` o `arriba, derecha, abajo, izquierda` · `level:` `background` `bottom` `top` `overlay` · `reserve: n` (el sitio que las ventanas le dejan) · `screens: all` o `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, y con `while expr` solo lo pide mientras sea verdad.
 
@@ -476,7 +495,9 @@ effects: toggle emit impulse play focus blur
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back
 frame: hold emit
 classes: ambient reflex asked state
-field_types: text number bool
+field_types: text number bool image
+fact_types: number bool
+model: list
 parameter_types: number bool color text record event image gesture spring
 springs: lively calm quick slow eyes pose
 units: px % deg ms s
@@ -492,4 +513,4 @@ layout.align: start center end
 
 ## 18. Lo que esta versión no tiene
 
-Para no buscarlo aquí: tipos para los hechos (son números), enumerados, fichas dentro de fichas, `import … as`, bibliotecas con lógica, salto de línea en los repartos, horas y plurales en los huecos, y escribir en el campo de una ficha desde una regla. Todo está, con su plan, en [[pleamar · 08 Limitaciones conocidas]].
+Para no buscarlo aquí: `import … as`, bibliotecas con lógica, salto de línea en los repartos, horas y plurales en los huecos, y escribir en el campo de una ficha desde una regla. Todo está, con su plan, en [[pleamar · 08 Limitaciones conocidas]].

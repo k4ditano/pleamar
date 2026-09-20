@@ -12,7 +12,7 @@ scene TrayIcons {
 
 
     // ── la frontera: dos listas que pone la lógica ───────────────
-    model icons max 8 { icon: text }
+    model icons max 8 { icon: image 28, 28 }
     model rows max 14 {
         label: text
         separator: bool
@@ -40,9 +40,8 @@ scene TrayIcons {
     component Icon(i) {
         size: 32, 32
         prop lift = 0 ~lively
-        image pic = from i.icon, 28, 28
         box hit { from: 0, 0; size: 32, 32; corner: 9; color: ink; opacity: lift * 12%; cursor: pointer }
-        image pic { at: 2, 2; size: 28, 28 }
+        image i.icon { at: 2, 2; size: 28, 28 }
         on enter hit       { lift: 1 ~quick }
         on leave hit       { lift: 0 ~quick }
         on press hit       { emit activate(i.index) }

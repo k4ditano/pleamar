@@ -23,7 +23,7 @@ end
 
 -- Sin ratón, `--demo` hace de aviso que llega y se va.
 on("demo", function()
-    if fact.open == 1 then fact.open = false else arrive() end
+    if fact.open then fact.open = false else arrive() end
 end)
 
 on("view_event", function()
@@ -32,4 +32,4 @@ on("view_event", function()
     run("date", { "+%H:%M:%S" }, function(out) log("…y eran las", out) end)
 end)
 
-on("fact:asleep", function(v) if v == 1 then log("se ha dormido") end end)
+on("fact:asleep", function(asleep) if asleep then log("se ha dormido") end end)

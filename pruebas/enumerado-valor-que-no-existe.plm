@@ -1,0 +1,5 @@
+// espera: fallo ««urgent» no vale aquí: un valor de este hecho es low, normal o critical»
+scene X {
+    surface { size: 10, 10 }
+    fact mode: low | normal | critical = urgent
+}

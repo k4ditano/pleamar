@@ -22,7 +22,7 @@ scene Launcher {
     // ── la frontera ──────────────────────────────────────────────
     fact open  = false
     //  Los resultados, como los cuenta el servicio `apps`: la lógica filtra y entrega.
-    model hits max 7 { name: text; icon: text }
+    model hits max 7 { name: text; icon: image 24, 24 }
     fact sel   = 0                        // cuál está elegido
     text query = ""
     event toggle                          // viene de fuera
@@ -66,11 +66,10 @@ scene Launcher {
         size: 536, 40
         prop on = 0 ~quick
         follow on = if(sel == h.index, 1, 0)
-        image pic = from h.icon, 24, 24   // la imagen es la que ese texto diga
 
         box hit { from: 0, 0; size: 536, 40; corner: 12; color: mint; opacity: on * 16%; cursor: pointer }
         box { from: 0, 10; size: 3, 20; corner: 1.5; color: mint; opacity: on }
-        image pic { at: 14, 8; size: 24, 24 }
+        image h.icon { at: 14, 8; size: 24, 24 }
         text h.name { at: 50, 20; anchor: left center; size: 15.5; width: 468; lines: 1; color: ink; opacity: 62% + on * 38% }
 
         on enter hit { sel = h.index }

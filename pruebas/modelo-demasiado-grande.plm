@@ -1,0 +1,5 @@
+// espera: fallo «este modelo despliega más de 4096 fichas»
+scene X {
+    surface { size: 10, 10 }
+    model big max 100 { a: text; list inner max 100 { b: text } }
+}

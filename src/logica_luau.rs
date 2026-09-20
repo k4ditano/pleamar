@@ -65,8 +65,129 @@ struct Compartido {
     textos: HashMap<String, String>,
     permisos: crate::escena::Permisos,
     modelos: Vec<crate::escena::Modelo>,
+    /// De los hechos que no son números a secas, qué son: la lógica los ve como `true` o como `"critical"`.
+    tipos: HashMap<String, crate::escena::TipoDeHecho>,
     /// Hasta cuándo puede correr lo que está corriendo.
     limite: Option<Instant>,
+}
+
+/// Reparte una lista de fichas entre los textos y los hechos que la escena tiene para
+/// ella —`rows.3.label`—, y las listas de dentro, igual. Solo viaja lo que cambia.
+///
+/// Primero se lee entera y luego se aplica: si una ficha está mal, la lista que
+/// había se queda como estaba, no a medias.
+fn repartir(c: &mut Compartido, tx: &Sender<ARender>, prefijo: &str, m: &crate::escena::Modelo, lista: &Table) -> mlua::Result<()> {
+    let mut cambios = Vec::new();
+    leer_fichas(&mut cambios, prefijo, m, lista)?;
+    for cambio in cambios {
+        match cambio {
+            Cambio::Texto(nombre, t) => if c.textos.get(&nombre) != Some(&t) {
+                c.textos.insert(nombre.clone(), t.clone());
+                let _ = tx.send(ARender::Texto(internar(&nombre), t));
+            },
+            Cambio::Hecho(nombre, n) => if c.hechos.get(&nombre) != Some(&n) {
+                c.hechos.insert(nombre.clone(), n);
+                let _ = tx.send(ARender::Hecho(internar(&nombre), n as f32));
+            },
+        }
+    }
+    Ok(())
+}
+
+enum Cambio {
+    Texto(String, String),
+    Hecho(String, f64),
+}
+
+fn leer_fichas(cambios: &mut Vec<Cambio>, prefijo: &str, m: &crate::escena::Modelo, lista: &Table) -> mlua::Result<()> {
+    use crate::escena::{TipoDeCampo, TipoDeHecho, ValorDeCampo};
+    let total = lista.raw_len();
+    let texto = |c: &mut Vec<Cambio>, nombre: String, t: String| c.push(Cambio::Texto(nombre, t));
+    let hecho = |c: &mut Vec<Cambio>, nombre: String, n: f64| c.push(Cambio::Hecho(nombre, n));
+    let c = cambios;
+    for i in 0..total.min(m.caben) {
+        let ficha: Value = lista.raw_get(i + 1)?;
+        let Value::Table(ficha) = ficha else {
+            return Err(mlua::Error::runtime(format!("«{prefijo}» es una lista de fichas, y la número {} no es una tabla", i + 1)));
+        };
+        for campo in &m.campos {
+            let nombre = format!("{prefijo}.{i}.{}", campo.nombre);
+            let v: Value = ficha.get(campo.nombre.as_str())?;
+            match (&campo.tipo, &campo.por_defecto) {
+                (TipoDeCampo::Lista(dentro), _) => match v {
+                    Value::Table(t) => leer_fichas(c, &nombre, dentro, &t)?,
+                    // Sin lista, es una vacía: que no quede la de la ficha que hubo antes en este sitio.
+                    _ => {
+                        hecho(c, format!("{nombre}.count"), 0.0);
+                        hecho(c, format!("{nombre}.total"), 0.0);
+                    }
+                },
+                (TipoDeCampo::Texto | TipoDeCampo::Imagen(..), por_defecto) => {
+                    let t = match &v {
+                        Value::Nil => if let ValorDeCampo::Texto(t) = por_defecto { t.clone() } else { String::new() },
+                        otro => otro.to_string()?,
+                    };
+                    texto(c, nombre, t);
+                }
+                (tipo, por_defecto) => {
+                    let falta = if let ValorDeCampo::Numero(d) = por_defecto { *d as f64 } else { 0.0 };
+                    let n = match (tipo, &v) {
+                        (_, Value::Nil) => falta,
+                        // Una lista donde se espera un número cuenta como cuántos tiene.
+                        (TipoDeCampo::Numero, Value::Table(t)) => t.raw_len() as f64,
+                        (TipoDeCampo::Bool, Value::Table(t)) => (t.raw_len() > 0) as u8 as f64,
+                        (TipoDeCampo::Bool, _) => a_numero(&nombre, Some(&TipoDeHecho::Bool), &v)?,
+                        (TipoDeCampo::Enum(nombres), _) => a_numero(&nombre, Some(&TipoDeHecho::Enum(nombres.clone())), &v)?,
+                        _ => a_numero(&nombre, None, &v)?,
+                    };
+                    hecho(c, nombre, n);
+                }
+            }
+        }
+    }
+    hecho(c, format!("{prefijo}.count"), total.min(m.caben) as f64);
+    hecho(c, format!("{prefijo}.total"), total as f64);
+    Ok(())
+}
+
+/// Lo que la lógica escribe en un hecho, como el número que ve la escena. Un `bool`
+/// quiere `true` o `false`; un enumerado, uno de sus nombres; los demás, un número.
+fn a_numero(nombre: &str, tipo: Option<&crate::escena::TipoDeHecho>, v: &Value) -> mlua::Result<f64> {
+    use crate::escena::TipoDeHecho;
+    let numero = match v {
+        Value::Boolean(b) => Some(*b as u8 as f64),
+        Value::Integer(i) => Some(*i as f64),
+        Value::Number(x) => Some(*x),
+        _ => None,
+    };
+    match (tipo, v) {
+        (Some(TipoDeHecho::Enum(nombres)), Value::String(t)) => {
+            let t = t.to_string_lossy();
+            match nombres.iter().position(|n| *n == t) {
+                Some(k) => Ok(k as f64),
+                None => Err(mlua::Error::runtime(format!("«{nombre}» no puede valer «{t}»{}: vale {}", pista(&t, nombres.iter()), nombres.join(", ")))),
+            }
+        }
+        (Some(TipoDeHecho::Enum(nombres)), _) => match numero {
+            Some(n) if n >= 0.0 && (n as usize) < nombres.len() && n.fract() == 0.0 => Ok(n),
+            _ => Err(mlua::Error::runtime(format!("«{nombre}» es un enumerado: vale {}", nombres.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")))),
+        },
+        (Some(TipoDeHecho::Bool), _) => numero.map(|n| (n != 0.0) as u8 as f64).ok_or_else(|| mlua::Error::runtime(format!("«{nombre}» es un sí o no: true o false, no un {}", v.type_name()))),
+        (None, _) => numero.ok_or_else(|| mlua::Error::runtime(format!("«{nombre}» es un número, no un {}", v.type_name()))),
+    }
+}
+
+/// Y al revés: como lo ve la lógica.
+fn de_numero(lua: &Lua, tipo: Option<&crate::escena::TipoDeHecho>, v: f64) -> mlua::Result<Value> {
+    use crate::escena::TipoDeHecho;
+    Ok(match tipo {
+        Some(TipoDeHecho::Bool) => Value::Boolean(v > 0.5),
+        Some(TipoDeHecho::Enum(nombres)) => match nombres.get(v.round().max(0.0) as usize) {
+            Some(n) => Value::String(lua.create_string(n)?),
+            None => Value::Number(v),
+        },
+        None => Value::Number(v),
+    })
 }
 
 fn en_claro(p: &crate::escena::Permisos) -> String {
@@ -188,22 +309,24 @@ impl GuionLuau {
         // fact.open = true · fact.open
         let (tx, c) = (self.tx.clone(), self.c.clone());
         let poner = lua.create_function(move |_, (_, k, v): (Table, String, Value)| {
-            let n = match v {
-                Value::Boolean(b) => b as u8 as f64,
-                Value::Integer(i) => i as f64,
-                Value::Number(x) => x,
-                otro => return Err(mlua::Error::runtime(format!("un hecho es un número o un sí/no, no un {}", otro.type_name()))),
-            };
             // Un nombre mal escrito es un error aquí, con su línea, y no un aviso perdido en el render.
             if !c.lock().unwrap().hechos.contains_key(&k) {
                 return Err(mlua::Error::runtime(format!("la escena no tiene ningún hecho «{k}»{}", pista(&k, c.lock().unwrap().hechos.keys()))));
             }
+            let tipo = c.lock().unwrap().tipos.get(&k).cloned();
+            let n = a_numero(&k, tipo.as_ref(), &v)?;
             c.lock().unwrap().hechos.insert(k.clone(), n);
             let _ = tx.send(ARender::Hecho(internar(&k), n as f32));
             Ok(())
         })?;
         let c = self.c.clone();
-        let leer = lua.create_function(move |_, (_, k): (Table, String)| Ok(c.lock().unwrap().hechos.get(&k).copied()))?;
+        let leer = lua.create_function(move |lua, (_, k): (Table, String)| {
+            let c = c.lock().unwrap();
+            match c.hechos.get(&k) {
+                Some(v) => de_numero(lua, c.tipos.get(&k), *v),
+                None => Ok(Value::Nil),
+            }
+        })?;
         g.set("fact", Self::tabla_viva(&lua, leer, poner)?)?;
 
         // text["notice.title"] = "…"
@@ -226,7 +349,6 @@ impl GuionLuau {
         let guardadas = lua.create_table()?;
         let (tx, c, almacen) = (self.tx.clone(), self.c.clone(), guardadas.clone());
         let poner = lua.create_function(move |_, (_, k, lista): (Table, String, Value)| {
-            use crate::escena::{TipoDeCampo, ValorDeCampo};
             let Value::Table(lista) = lista else {
                 return Err(mlua::Error::runtime(format!("a «model.{k}» se le da una lista de fichas: model.{k} = {{ {{ … }}, {{ … }} }}")));
             };
@@ -234,54 +356,7 @@ impl GuionLuau {
             let Some(m) = c.modelos.iter().find(|m| m.nombre == k).cloned() else {
                 return Err(mlua::Error::runtime(format!("la escena no tiene ningún modelo «{k}»{}", pista(&k, c.modelos.iter().map(|m| &m.nombre)))));
             };
-            let total = lista.raw_len();
-            for i in 0..total.min(m.caben) {
-                let ficha: Value = lista.raw_get(i + 1)?;
-                let Value::Table(ficha) = ficha else {
-                    return Err(mlua::Error::runtime(format!("«{k}» es una lista de fichas, y la número {} no es una tabla", i + 1)));
-                };
-                for campo in &m.campos {
-                    let nombre = format!("{k}.{i}.{}", campo.nombre);
-                    let v: Value = ficha.get(campo.nombre.as_str())?;
-                    // Una lista donde se espera un número cuenta como cuántos tiene: `children: number`.
-                    let numero = |v: &Value| match v {
-                        Value::Number(n) => Some(*n),
-                        Value::Integer(n) => Some(*n as f64),
-                        Value::Boolean(b) => Some(*b as u8 as f64),
-                        Value::Table(t) => Some(t.raw_len() as f64),
-                        _ => None,
-                    };
-                    match (&campo.tipo, &campo.por_defecto) {
-                        (TipoDeCampo::Texto, por_defecto) => {
-                            let t = match &v {
-                                Value::Nil => if let ValorDeCampo::Texto(t) = por_defecto { t.clone() } else { String::new() },
-                                otro => otro.to_string()?,
-                            };
-                            if c.textos.get(&nombre) != Some(&t) {
-                                c.textos.insert(nombre.clone(), t.clone());
-                                let _ = tx.send(ARender::Texto(internar(&nombre), t));
-                            }
-                        }
-                        (tipo, por_defecto) => {
-                            let mut n = numero(&v).unwrap_or(if let ValorDeCampo::Numero(d) = por_defecto { *d as f64 } else { 0.0 });
-                            if *tipo == TipoDeCampo::Bool {
-                                n = (n != 0.0) as u8 as f64;
-                            }
-                            if c.hechos.get(&nombre) != Some(&n) {
-                                c.hechos.insert(nombre.clone(), n);
-                                let _ = tx.send(ARender::Hecho(internar(&nombre), n as f32));
-                            }
-                        }
-                    }
-                }
-            }
-            for (parte, n) in [("count", total.min(m.caben)), ("total", total)] {
-                let nombre = format!("{k}.{parte}");
-                if c.hechos.get(&nombre) != Some(&(n as f64)) {
-                    c.hechos.insert(nombre.clone(), n as f64);
-                    let _ = tx.send(ARender::Hecho(internar(&nombre), n as f32));
-                }
-            }
+            repartir(&mut c, &tx, &k, &m, &lista)?;
             almacen.raw_set(k, lista)
         })?;
         let leer = lua.create_function(move |_, (_, k): (Table, String)| guardadas.raw_get::<Value>(k))?;
@@ -507,6 +582,7 @@ impl Guion for GuionLuau {
         c.textos = e.textos.iter().map(|(n, v)| (n.to_string(), v.clone())).collect();
         c.permisos = e.permisos.clone();
         c.modelos = e.modelos.clone();
+        c.tipos = e.tipos.iter().cloned().collect();
         e
     }
 
@@ -543,7 +619,13 @@ impl Guion for GuionLuau {
             Evento::Demo => self.avisar("demo", Value::Nil),
             Evento::Hecho(n, v) => {
                 self.c.lock().unwrap().hechos.insert(n.to_owned(), v as f64);
-                self.avisar(&format!("fact:{n}"), numero(v));
+                // A quien escucha le llega como lo lee: `true`, `"critical"`, o un número.
+                let tipo = self.c.lock().unwrap().tipos.get(n).cloned();
+                let valor = match &self.lua {
+                    Some(lua) => de_numero(lua, tipo.as_ref(), v as f64).unwrap_or(numero(v)),
+                    None => numero(v),
+                };
+                self.avisar(&format!("fact:{n}"), valor);
             }
             Evento::Capa(capa, gana) => {
                 let Some(lua) = &self.lua else { return };
@@ -553,9 +635,10 @@ impl Guion for GuionLuau {
             }
             // La escena se recargó: lo que tenga de nuevo ya se puede nombrar; lo que
             // ya se sabía, se sigue sabiendo.
-            Evento::EscenaNueva(hechos, textos, permisos, modelos) => {
+            Evento::EscenaNueva(hechos, textos, permisos, modelos, tipos) => {
                 let mut c = self.c.lock().unwrap();
                 c.modelos = modelos;
+                c.tipos = tipos.into_iter().collect();
                 // Los permisos sí se sustituyen: quitar uno de la escena lo quita ya.
                 if c.permisos != permisos {
                     println!("lógica · permisos ahora: {}", en_claro(&permisos));

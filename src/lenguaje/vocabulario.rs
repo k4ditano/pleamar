@@ -45,7 +45,12 @@ pub const CURVAS: &[&str] = &["linear", "in_quad", "out_quad", "in_cubic", "out_
 /// Lo que puede llevar un fotograma además de una curva.
 pub const DE_FOTOGRAMA: &[&str] = &["hold", "emit"];
 pub const CLASES: &[&str] = &["ambient", "reflex", "asked", "state"];
-pub const TIPOS: &[&str] = &["text", "number", "bool"];
+/// De un campo de un modelo. Además: un enumerado, `low | normal | critical`.
+pub const TIPOS: &[&str] = &["text", "number", "bool", "image"];
+/// De un hecho. Además: un enumerado.
+pub const TIPOS_DE_HECHO: &[&str] = &["number", "bool"];
+/// Lo que un modelo puede llevar dentro además de campos: otra lista de fichas.
+pub const DE_MODELO: &[&str] = &["list"];
 /// Lo que un componente puede pedir: `component Row(r: record, chosen: event, tone: color = mint)`.
 pub const TIPOS_DE_PARAMETRO: &[&str] = &["number", "bool", "color", "text", "record", "event", "image", "gesture", "spring"];
 pub const MUELLES: &[&str] = &["lively", "calm", "quick", "slow", "eyes", "pose"];
@@ -80,6 +85,8 @@ pub fn como_texto() -> String {
     linea("frame", DE_FOTOGRAMA);
     linea("classes", CLASES);
     linea("field_types", TIPOS);
+    linea("fact_types", TIPOS_DE_HECHO);
+    linea("model", DE_MODELO);
     linea("parameter_types", TIPOS_DE_PARAMETRO);
     linea("springs", MUELLES);
     linea("units", UNIDADES);

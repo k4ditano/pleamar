@@ -196,6 +196,8 @@ struct Obra<'a> {
     ficheros: &'a [String],
     /// Qué ficheros, por su número, son bibliotecas `strict`.
     estrictos: &'a [usize],
+    /// Los nombres de los valores de los enumerados, como números: `critical` es 2.
+    valores: HashMap<String, f32>,
     /// Lo que cada copia en curso trae para el `children` de su componente: los
     /// nodos, el ámbito de quien los escribió, y si ya se han puesto.
     hijos_de_copia: Vec<HijosDeCopia<'a>>,
@@ -257,7 +259,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], estrictos: &'a
             otro => unreachable!("«{otro}» está en el vocabulario, pero no tiene rigidez ni freno"),
         })).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
-        ficheros, estrictos, hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
+        ficheros, estrictos, valores: HashMap::new(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
@@ -377,7 +379,7 @@ impl<'a> Obra<'a> {
             return;
         }
         let Some(e) = self.entornos.iter().rev().find(|e| e.copia.is_some()) else { return };
-        if !e.estricta || self.de_biblioteca.contains(nombre) {
+        if !e.estricta || self.de_biblioteca.contains(nombre) || self.valores.contains_key(nombre) {
             return;
         }
         // Un parámetro, o un `let` del componente: es suyo aunque no tenga sufijo.
@@ -439,9 +441,12 @@ impl<'a> Obra<'a> {
             // Existe, pero es de otra clase: un número donde hace falta un texto, o al revés.
             if let Some(c) = m.campos.iter().find(|c| c.nombre == campo) {
                 let (es, hace_falta) = match c.tipo {
-                    TipoDeCampo::Texto => ("text", "un número (number o bool)"),
+                    TipoDeCampo::Texto => ("text", "un número (number, bool o un enumerado)"),
+                    TipoDeCampo::Imagen(..) => ("image", "un número (number, bool o un enumerado)"),
                     TipoDeCampo::Numero => ("number", "un text"),
                     TipoDeCampo::Bool => ("bool", "un text"),
+                    TipoDeCampo::Enum(_) => ("un enumerado", "un text"),
+                    TipoDeCampo::Lista(_) => ("una lista", "un campo suelto: se recorre con `for`"),
                 };
                 return Err(Fallo::en(l, col, format!("el campo «{campo}» de «{}» es {es}, y aquí hace falta {hace_falta}.", m.nombre)));
             }
@@ -613,8 +618,11 @@ impl<'a> Obra<'a> {
                     Ok(p.e())
                 } else if let Some(h) = self.hechos.get(n) {
                     Ok(h.e())
+                } else if let Some(v) = self.valores.get(n) {
+                    // El valor de un enumerado: `mode == critical`.
+                    Ok(Expr::K(*v))
                 } else {
-                    let conocidos: Vec<&String> = self.lets.keys().chain(self.props.keys()).chain(self.hechos.keys()).collect();
+                    let conocidos: Vec<&String> = self.lets.keys().chain(self.props.keys()).chain(self.hechos.keys()).chain(self.valores.keys()).collect();
                     self.desconocido(c, "nada", n, conocidos)
                 }
             }
@@ -885,11 +893,25 @@ impl<'a> Obra<'a> {
                     self.props.insert(nombre, p);
                 }
                 "fact" => {
+                    // fact open = false · fact count: number = 0 · fact mode: low | normal | critical = normal
                     let nombre = self.declarar(&c.id("un nombre para el hecho")?);
+                    let declarado = if c.sim(":") { Some(self.tipo_de_hecho(&mut c)?) } else { None };
                     c.exige_sim("=")?;
-                    let v = if c.palabra("true") { 1.0 } else if c.palabra("false") { 0.0 } else { c.num()? };
+                    let (v, tipo) = match declarado {
+                        Some(Some(TipoDeHecho::Enum(nombres))) => {
+                            let cual = c.una_de(&nombres.iter().map(String::as_str).collect::<Vec<_>>(), "un valor de este hecho")?;
+                            (nombres.iter().position(|x| *x == cual).unwrap() as f32, Some(TipoDeHecho::Enum(nombres)))
+                        }
+                        Some(Some(TipoDeHecho::Bool)) => (if c.palabra("true") { 1.0 } else if c.palabra("false") { 0.0 } else { return c.fallo("un hecho `bool` vale true o false") }, Some(TipoDeHecho::Bool)),
+                        Some(None) => (if c.sim("-") { -c.num()? } else { c.num()? }, None),
+                        // Sin tipo, lo dice lo que valga: `true` y `false` hacen un sí o no; un número, un número.
+                        None => if c.palabra("true") { (1.0, Some(TipoDeHecho::Bool)) } else if c.palabra("false") { (0.0, Some(TipoDeHecho::Bool)) } else { (if c.sim("-") { -c.num()? } else { c.num()? }, None) },
+                    };
                     c.nada_mas()?;
                     let h = self.e.hecho(fijo(&nombre), v);
+                    if let Some(t) = tipo {
+                        self.e.tipos.push((nombre.clone(), t));
+                    }
                     self.hechos.insert(nombre, h);
                 }
                 "event" => {
@@ -1387,6 +1409,11 @@ impl<'a> Obra<'a> {
             }
             if let Some(t) = es_texto(self, n) {
                 return Ok(Trozo::Vivo(t, Letras::Igual));
+            }
+            // Un hecho enumerado se enseña por su nombre, no por su número.
+            let g = self.global(n);
+            if let (Some(h), Some((_, TipoDeHecho::Enum(nombres)))) = (self.hechos.get(&g), self.e.tipos.iter().find(|(x, _)| *x == g)) {
+                return Ok(Trozo::Nombre(h.e(), nombres.clone()));
             }
         }
         let e = self.expr(&mut c)?;
@@ -2486,64 +2513,164 @@ impl<'a> Obra<'a> {
     // ── modelos ─────────────────────────────────────────────────
 
     /// `model rows max 14 { label: text;  enabled: bool = true;  depth: number }`
-    fn modelo(&mut self, n: &Nodo, c: &mut Cur) -> R<()> {
+    /// El tipo de un hecho: `number`, `bool`, o un enumerado (`low | normal | critical`).
+    /// `None` es un número a secas.
+    fn tipo_de_hecho(&mut self, c: &mut Cur) -> R<Option<TipoDeHecho>> {
+        if let Some(nombres) = self.enumerado(c)? {
+            return Ok(Some(TipoDeHecho::Enum(nombres)));
+        }
+        let o_enumerado = |mut f: Fallo| { f.mensaje.push_str(" O un enumerado: `low | normal | critical`."); f };
+        Ok(match c.una_de(voz::TIPOS_DE_HECHO, "el tipo de un hecho").map_err(o_enumerado)?.as_str() {
+            "number" => None,
+            "bool" => Some(TipoDeHecho::Bool),
+            _ => unreachable!(),
+        })
+    }
+
+    /// `low | normal | critical`, si es lo que viene. Sus nombres pasan a valer su posición
+    /// en cualquier expresión: `mode == critical`.
+    fn enumerado(&mut self, c: &mut Cur) -> R<Option<Vec<String>>> {
+        if !matches!((c.mira(), c.f.get(c.i + 1).map(|x| &x.f)), (Some(F::Id(_)), Some(F::Sim("|")))) {
+            return Ok(None);
+        }
+        let mut nombres = vec![c.id("un valor")?];
+        while c.sim("|") {
+            let n = c.id("otro valor del enumerado")?;
+            if nombres.contains(&n) {
+                c.i -= 1;
+                return c.fallo(format!("«{n}» está dos veces"));
+            }
+            nombres.push(n);
+        }
+        for (k, n) in nombres.iter().enumerate() {
+            // El mismo nombre en dos enumerados vale mientras signifique el mismo número.
+            match self.valores.get(n) {
+                Some(v) if *v != k as f32 => {
+                    return c.fallo(format!("«{n}» ya es el valor número {} de otro enumerado, y aquí sería el {k}: en una expresión no se sabría cuál es. Ponlos en el mismo orden, o llámalo de otra manera", *v as usize));
+                }
+                _ => { self.valores.insert(n.clone(), k as f32); }
+            }
+            if self.hechos.contains_key(n) || self.props.contains_key(n) || self.lets.contains_key(n) {
+                return c.fallo(format!("«{n}» ya es otra cosa en esta escena, y como valor de un enumerado la taparía"));
+            }
+        }
+        Ok(Some(nombres))
+    }
+
+    /// `model rows max 14 { label: text;  enabled: bool = true;  list items max 8 { … } }`
+    fn modelo(&mut self, n: &'a Nodo, c: &mut Cur) -> R<()> {
         let nombre = self.declarar(&c.id("un nombre para el modelo")?);
         let caben = if c.palabra("max") { c.num()? as usize } else { 16 };
         c.nada_mas()?;
+        let campos = self.campos_de(n, caben)?;
+        let modelo = Modelo { nombre: nombre.clone(), caben, campos };
+        let mut cuantas = 0;
+        self.fichas_de(&nombre, &modelo, &mut cuantas).map_err(|m| Fallo::en(n.linea, n.col, m))?;
+        self.e.modelos.push(modelo);
+        Ok(())
+    }
+
+    /// Los campos de un modelo, o de una lista de dentro de un modelo.
+    fn campos_de(&mut self, n: &'a Nodo, caben: usize) -> R<Vec<Campo>> {
         if !(1..=256).contains(&caben) {
-            return Err(Fallo::en(n.linea, n.col, "en un modelo caben entre 1 y 256 fichas: cada una se despliega al cargar"));
+            return Err(Fallo::en(n.linea, n.col, "en una lista caben entre 1 y 256 fichas: cada una se despliega al cargar"));
         }
-        let mut campos = Vec::new();
+        let mut campos: Vec<Campo> = Vec::new();
         for e in n.cuerpo.as_deref().unwrap_or(&[]) {
-            let Entrada::Prop { nombre: campo, valor, linea, col } = e else {
-                return Err(Fallo::en(n.linea, n.col, "dentro de un modelo solo van sus campos: `label: text`"));
+            let campo = match e {
+                // `list items max 8 { label: text }`: fichas dentro de la ficha.
+                Entrada::Nodo(x) => {
+                    let mut c = Cur::de(&x.cabeza, x.linea, x.col);
+                    c.una_de(voz::DE_MODELO, "lo que lleva un modelo además de campos")?;
+                    let nombre = c.id("un nombre para la lista")?;
+                    let caben = if c.palabra("max") { c.num()? as usize } else { 8 };
+                    c.nada_mas()?;
+                    let dentro = self.campos_de(x, caben)?;
+                    Campo { nombre: nombre.clone(), tipo: TipoDeCampo::Lista(Box::new(Modelo { nombre, caben, campos: dentro })), por_defecto: ValorDeCampo::Numero(0.0) }
+                }
+                Entrada::Prop { nombre, valor, linea, col } => {
+                    let mut c = Cur::de(valor, *linea, *col);
+                    let (tipo, por_defecto) = if let Some(nombres) = self.enumerado(&mut c)? {
+                        let v = if c.sim("=") {
+                            let cual = c.una_de(&nombres.iter().map(String::as_str).collect::<Vec<_>>(), "un valor de este campo")?;
+                            nombres.iter().position(|x| *x == cual).unwrap() as f32
+                        } else { 0.0 };
+                        (TipoDeCampo::Enum(nombres), ValorDeCampo::Numero(v))
+                    } else {
+                        let o_enumerado = |mut f: Fallo| { f.mensaje.push_str(" O un enumerado: `low | normal | critical`."); f };
+                        match c.una_de(voz::TIPOS, "el tipo de un campo").map_err(o_enumerado)?.as_str() {
+                            "text" => (TipoDeCampo::Texto, ValorDeCampo::Texto(if c.sim("=") { c.cadena()? } else { String::new() })),
+                            "number" => (TipoDeCampo::Numero, ValorDeCampo::Numero(if c.sim("=") { if c.sim("-") { -c.num()? } else { c.num()? } } else { 0.0 })),
+                            "bool" => (TipoDeCampo::Bool, ValorDeCampo::Numero(if !c.sim("=") || c.palabra("false") { 0.0 } else if c.palabra("true") { 1.0 } else { return c.fallo("un bool vale true o false") })),
+                            // `icon: image 24, 24`: el nombre de un icono o una ruta, y la imagen que diga.
+                            "image" => {
+                                let w = c.num()?;
+                                c.exige_sim(",")?;
+                                (TipoDeCampo::Imagen(w as u32, c.num()? as u32), ValorDeCampo::Texto(if c.sim("=") { c.cadena()? } else { String::new() }))
+                            }
+                            _ => unreachable!(),
+                        }
+                    };
+                    c.nada_mas()?;
+                    Campo { nombre: nombre.clone(), tipo, por_defecto }
+                }
             };
-            let mut c = Cur::de(valor, *linea, *col);
-            let tipo = match c.una_de(voz::TIPOS, "el tipo de un campo")?.as_str() {
-                "text" => TipoDeCampo::Texto,
-                "number" => TipoDeCampo::Numero,
-                "bool" => TipoDeCampo::Bool,
-                _ => unreachable!(),
-            };
-            let por_defecto = match (tipo, c.sim("=")) {
-                (TipoDeCampo::Texto, true) => ValorDeCampo::Texto(c.cadena()?),
-                (TipoDeCampo::Texto, false) => ValorDeCampo::Texto(String::new()),
-                (TipoDeCampo::Bool, true) => ValorDeCampo::Numero(if c.palabra("true") { 1.0 } else if c.palabra("false") { 0.0 } else { return c.fallo("un bool vale true o false") }),
-                (TipoDeCampo::Numero, true) => ValorDeCampo::Numero(if c.sim("-") { -c.num()? } else { c.num()? }),
-                (_, false) => ValorDeCampo::Numero(0.0),
-            };
-            c.nada_mas()?;
-            if campo == "index" {
-                return Err(Fallo::en(*linea, *col, "`index` ya existe en todas las fichas: es su posición"));
+            let (l, col) = match e { Entrada::Nodo(x) => (x.linea, x.col), Entrada::Prop { linea, col, .. } => (*linea, *col) };
+            if ["index", "count", "total"].contains(&campo.nombre.as_str()) {
+                return Err(Fallo::en(l, col, format!("`{}` ya existe: lo pone el lenguaje", campo.nombre)));
             }
-            campos.push(Campo { nombre: campo.clone(), tipo, por_defecto });
+            if campos.iter().any(|k| k.nombre == campo.nombre) {
+                return Err(Fallo::en(l, col, format!("el campo «{}» está dos veces", campo.nombre)));
+            }
+            campos.push(campo);
         }
         if campos.is_empty() {
-            return Err(Fallo::en(n.linea, n.col, "a este modelo le faltan sus campos: `label: text`"));
+            return Err(Fallo::en(n.linea, n.col, "a esta lista le faltan sus campos: `label: text`"));
         }
-        // Por dentro, cada campo de cada ficha es un texto o un hecho con nombre.
-        for k in 0..caben {
-            for campo in &campos {
-                let entero = format!("{nombre}.{k}.{}", campo.nombre);
+        Ok(campos)
+    }
+
+    /// Por dentro, cada campo de cada ficha es un texto o un hecho con nombre:
+    /// `rows.3.label`, y si hay listas dentro, `rows.3.items.0.label`.
+    fn fichas_de(&mut self, prefijo: &str, m: &Modelo, cuantas: &mut usize) -> Result<(), String> {
+        for k in 0..m.caben {
+            *cuantas += 1;
+            if *cuantas > 4096 {
+                return Err("este modelo despliega más de 4096 fichas entre todas sus listas: baja algún `max`".into());
+            }
+            for campo in &m.campos {
+                let entero = format!("{prefijo}.{k}.{}", campo.nombre);
+                if let TipoDeCampo::Lista(dentro) = &campo.tipo {
+                    self.fichas_de(&entero, dentro, cuantas)?;
+                    continue;
+                }
                 match &campo.por_defecto {
                     ValorDeCampo::Texto(t) => {
                         let id = self.e.texto_vivo(fijo(&entero), t);
+                        if let TipoDeCampo::Imagen(w, h) = campo.tipo {
+                            let imagen = self.e.imagen(Fuente::Viva(id), w, h);
+                            self.imagenes.insert(entero.clone(), imagen);
+                        }
                         self.textos.insert(entero, id);
                     }
                     ValorDeCampo::Numero(v) => {
                         let id = self.e.hecho(fijo(&entero), *v);
+                        match &campo.tipo {
+                            TipoDeCampo::Bool => self.e.tipos.push((entero.clone(), TipoDeHecho::Bool)),
+                            TipoDeCampo::Enum(n) => self.e.tipos.push((entero.clone(), TipoDeHecho::Enum(n.clone()))),
+                            _ => {}
+                        }
                         self.hechos.insert(entero, id);
                     }
                 }
             }
         }
         for parte in ["count", "total"] {
-            let entero = format!("{nombre}.{parte}");
+            let entero = format!("{prefijo}.{parte}");
             let id = self.e.hecho(fijo(&entero), 0.0);
             self.hechos.insert(entero, id);
         }
-        self.modelos.insert(nombre.clone(), caben);
-        self.e.modelos.push(Modelo { nombre, caben, campos });
+        self.modelos.insert(prefijo.to_owned(), m.caben);
         Ok(())
     }
 

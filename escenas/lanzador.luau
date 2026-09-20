@@ -31,4 +31,4 @@ on("launch", function(i)
 end)
 
 --  Al cerrarse, el campo vuelve a estar vacío para la próxima vez.
-on("fact:open", function(v) if v == 0 then text.query = ""; filter() end end)
+on("fact:open", function(open) if not open then text.query = ""; filter() end end)

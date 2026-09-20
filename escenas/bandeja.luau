@@ -20,9 +20,9 @@ else
         { app = "Mensajes",   title = "Lucía", body = "¿bajas a por café? ☕" },
     }
     local pending = {
-        { app = "Actualizaciones", title = "Hay 214 paquetes esperando a que alguien se decida a instalarlos", body = "", urgency = 0 },
+        { app = "Actualizaciones", title = "Hay 214 paquetes esperando a que alguien se decida a instalarlos", body = "", urgency = "low" },
         { app = "Música",          title = "Tycho", body = "Awake" },
-        { app = "Batería",         title = "Queda un 12 %", body = "", urgency = 2 },
+        { app = "Batería",         title = "Queda un 12 %", body = "", urgency = "critical" },
         { app = "Mensajes",        title = "Lucía", body = "venga, que se enfría" },
     }
     every(1600, function()

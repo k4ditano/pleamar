@@ -367,6 +367,8 @@ pub enum Trozo {
     Vivo(TextoId, Letras),
     /// Una expresión, con tantos decimales.
     Numero(Expr, u8),
+    /// El nombre de lo que valga un hecho enumerado: `{mode}` → `critical`.
+    Nombre(Expr, Vec<String>),
     /// `{? · {r.body}}`: un tramo que solo está si ninguno de sus textos está vacío.
     Opcional(Vec<Trozo>),
     /// Un tramo que viene de fuera ya montado: el texto que se le pasó a un componente.
@@ -401,6 +403,11 @@ impl Trozo {
                 }
                 Trozo::Numero(e, decimales) => {
                     let _ = write!(en, "{:.*}", *decimales as usize, e.evaluar(c));
+                }
+                Trozo::Nombre(e, nombres) => {
+                    if let Some(n) = nombres.get(e.evaluar(c).round().max(0.0) as usize) {
+                        en.push_str(n);
+                    }
                 }
                 Trozo::Tramo(dentro) => entero &= Trozo::escribir(dentro, c, textos, en),
                 Trozo::Vacio => entero = false,
@@ -835,6 +842,8 @@ pub struct Escena {
     pub permisos: Permisos,
     pub emergentes: Vec<Emergente>,
     pub modelos: Vec<Modelo>,
+    /// De los hechos que no son números a secas, qué son. Por nombre.
+    pub tipos: Vec<(String, TipoDeHecho)>,
 }
 
 /// Datos con forma que cruzan la frontera: una lista de fichas, todas con los
@@ -857,12 +866,44 @@ pub struct Campo {
     pub por_defecto: ValorDeCampo,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TipoDeCampo {
     Texto,
     Numero,
     /// Como `Numero`, pero solo 0 o 1, y la lógica lo escribe con `true` y `false`.
     Bool,
+    /// Uno de estos nombres: `low | normal | critical`. Por dentro, su posición.
+    Enum(Vec<String>),
+    /// El nombre de un icono o una ruta, y la imagen que eso diga, a este tamaño.
+    Imagen(u32, u32),
+    /// Una lista de fichas dentro de la ficha: un menú con sus submenús.
+    Lista(Box<Modelo>),
+}
+
+/// Lo que es un hecho que no es un número a secas. La escena solo ve números; esto
+/// es para quien los pone y los lee desde fuera —la lógica, `--decir`, un hueco de un
+/// texto—, que habla de `true` y de `critical`, no de 1 y de 2.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TipoDeHecho {
+    Bool,
+    Enum(Vec<String>),
+}
+
+impl TipoDeHecho {
+    /// Como se le enseña a alguien: `true`, `critical`.
+    pub fn como_texto(&self, v: f32) -> String {
+        match self {
+            TipoDeHecho::Bool => (v > 0.5).to_string(),
+            TipoDeHecho::Enum(nombres) => nombres.get(v.round().max(0.0) as usize).cloned().unwrap_or_else(|| v.to_string()),
+        }
+    }
+    /// Y al revés: lo que alguien escribió, como número.
+    pub fn de_texto(&self, t: &str) -> Option<f32> {
+        match self {
+            TipoDeHecho::Bool => match t { "true" => Some(1.0), "false" => Some(0.0), _ => None },
+            TipoDeHecho::Enum(nombres) => nombres.iter().position(|n| n == t).map(|k| k as f32),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1034,6 +1075,8 @@ pub enum ARender {
     /// Cómo repite las teclas este usuario: a los cuántos ms empieza y cada cuántos
     /// sigue. `None`: las tiene sin repetición. Lo dice el sistema; si calla, 400 y 33.
     Repeticion(Option<(u32, u32)>),
+    /// Un hecho puesto desde fuera, como se escribió: `true`, `critical`, `3`. El render sabe de qué tipo es.
+    HechoDeFuera(&'static str, String),
     /// El sistema ha cerrado una emergente: han pulsado fuera de ella.
     EmergenteCerrada(usize),
     /// Desde fuera preguntan cuánto vale un hecho, un texto o una propiedad.
@@ -1072,7 +1115,7 @@ pub enum Evento {
     /// El fichero de la lógica ha cambiado.
     RecargarLogica,
     /// La escena se ha recargado: estos son ahora sus hechos y sus textos.
-    EscenaNueva(Vec<(&'static str, f32)>, Vec<(&'static str, String)>, Permisos, Vec<Modelo>),
+    EscenaNueva(Vec<(&'static str, f32)>, Vec<(&'static str, String)>, Permisos, Vec<Modelo>, Vec<(String, TipoDeHecho)>),
     /// Una capa ha cambiado de manos: (capa, quién gana ahora).
     Capa(&'static str, &'static str),
     /// Se pidió un gesto y había uno de más clase puesto.

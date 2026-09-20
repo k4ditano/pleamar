@@ -21,7 +21,7 @@ pub struct Ficha {
     pub col: usize,
 }
 
-const SIMBOLOS: [&str; 22] = ["->", "..", "<=", ">=", "==", "!=", "{", "}", "(", ")", ",", ":", ";", "=", "~", "+", "-", "*", "/", "<", ">", "%"];
+const SIMBOLOS: [&str; 23] = ["->", "..", "<=", ">=", "==", "!=", "{", "}", "(", ")", ",", ":", ";", "=", "~", "+", "-", "*", "/", "<", ">", "%", "|"];
 
 pub fn trocear(fuente: &str) -> Result<Vec<Ficha>, Fallo> {
     let mut fichas = Vec::new();

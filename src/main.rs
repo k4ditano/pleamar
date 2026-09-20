@@ -195,11 +195,8 @@ fn main() {
             let _ = match que {
                 "emit" => tx.send(ARender::SucesoDeFuera(escena::internar(quien), resto.parse().ok())),
                 // Lo que se pone desde fuera, la lógica tiene que saberlo: no lo ha puesto ella.
-                "fact" => {
-                    let v = match resto { "true" => 1.0, "false" => 0.0, n => n.parse().unwrap_or(0.0) };
-                    let _ = a_logica.send(Evento::Hecho(escena::internar(quien), v));
-                    tx.send(ARender::Hecho(escena::internar(quien), v))
-                }
+                // Lo escrito se entiende según lo que sea ese hecho: `true`, `critical`, `3`.
+                "fact" => tx.send(ARender::HechoDeFuera(escena::internar(quien), resto.to_owned())),
                 "text" => {
                     let _ = a_logica.send(Evento::Texto(escena::internar(quien), resto.to_owned()));
                     tx.send(ARender::Texto(escena::internar(quien), resto.to_owned()))

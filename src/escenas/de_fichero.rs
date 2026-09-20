@@ -116,7 +116,7 @@ pub fn vigilar(ruta: String, al_render: Sender<ARender>, a_logica: Sender<Evento
                         println!("recarga · {ruta} leída en {:.1} ms{}", t0.elapsed().as_secs_f32() * 1000.0, if ficheros.len() > 1 { format!(" · con {} bibliotecas", ficheros.len() - 1) } else { String::new() });
                         // Puede que ahora importe otras cosas.
                         vigilados = ficheros;
-                        let _ = a_la_logica.send(Evento::EscenaNueva(e.hechos.clone(), e.textos.clone(), e.permisos.clone(), e.modelos.clone()));
+                        let _ = a_la_logica.send(Evento::EscenaNueva(e.hechos.clone(), e.textos.clone(), e.permisos.clone(), e.modelos.clone(), e.tipos.clone()));
                         if al_render.send(ARender::Escena(e)).is_err() {
                             return;
                         }
