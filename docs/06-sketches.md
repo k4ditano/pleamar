@@ -1,5 +1,8 @@
 # Three sketches for the language
 
+
+> The code in this note is written in Spanish on purpose: that is how the draft was written at the time, and translating its keywords would misrepresent what was actually considered. The language that came out of it has English keywords.
+
 All three describe the same piece of Marea —the body with its water neck, the
 eyes, the button that lights up and open/close— and all three compile to the
 same thing: the `Escena` of `src/escena.rs`. What changes is where each thing

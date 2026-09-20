@@ -82,7 +82,7 @@ Numbers with a unit: `40`, `40px`, `34%` (= 0.34), `138deg` (into radians), `320
 | `pose eyes = 14` | A pose property: the one a gesture leads by the hand |
 | `fact open = false` · `fact mode: low \| normal \| critical = normal` | Something that is true for a while. The logic and the rules set it. A yes or no, a number, or an enum: `mode == critical`, `"{mode}"` |
 | `event confirmed` · `event view_event ->` | Something that happens. With `->`, it also goes out to the logic |
-| `text notice.title = "Reunión"` | A live text: the logic changes it |
+| `text notice.title = "Meeting"` | A live text: the logic changes it |
 | `image fox = icon "firefox", 48, 48` · `… = file "path.png", 48, 48` | An image, and the largest size it is painted at |
 | `measure label` | Creates `label.width` and `label.height`, filled in by whichever text carries `measure: label` |
 | `let panel.x = orb.x + 62` | A name for an expression |
@@ -115,7 +115,7 @@ line    { from: x, y; to: x, y; width: w }
 
 text notice.title { at: x, y; anchor: left center; width: 354; lines: 1; size: 20; weight: 500;
                     color: #…; opacity: e; align: left; line_height: 1.3; family: "Inter"; measure: label }
-text "Descartar"  { at: x, y; anchor: center }
+text "Dismiss"  { at: x, y; anchor: center }
 text number(volume * 100, 0, " %") { … }                     // a number out of an expression: decimals and what goes after
 
 image fox { at: x, y; size: w, h; opacity: e; tint: #9ed6bd }   // tint: for symbolic icons
@@ -133,12 +133,12 @@ group {                                 // the tree: transforms, blends and clip
 ## Texts with slots
 
 ```
-text "Hola, {who}"                                   // a live text
+text "Hello, {who}"                                   // a live text
 text "{volume * 100} %"                              // an expression, no decimals
 text "{temperature, 1} °C"                           // with one
 text "{upper(n.app)}"                                // upper() and lower(), over a text
 text "{n.title}{? · {n.body}}"                       // {? …}: the stretch is only there if its text is not empty
-text "unas {{llaves}} de verdad"                     // two in a row are one
+text "some real {{braces}}"                     // two in a row are one
 Chip("{notes.total} nuevos", mint)                   // and it goes into a component already resolved
 ```
 
@@ -230,7 +230,7 @@ component Card(title: text) {
     text "{upper(title)}" { at: 12, 18; anchor: left center; size: 11; color: ink }
     column inside { at: 12, 32; gap: 4;  children }
 }
-Card("Avisos") { text title { size: 14; color: ink };  repeat i in 0..2 { text "fila {i}" { size: 13; color: ink } } }
+Card("Alerts") { text title { size: 14; color: ink };  repeat i in 0..2 { text "row {i}" { size: 13; color: ink } } }
 ```
 
 A component can have **several slots** (`children header`, `children footer`; in the copy, `header { … }`). And a layout can put something **between** its children and know **how many** there are:
@@ -305,7 +305,7 @@ Its size (`list.width`, `list.height`) can be read **anywhere in the file, inclu
 ```
 text query = ""
 input query { at: 48, 44; width: 504; size: 20; color: ink
-              placeholder: "Busca una aplicación…"; selection: #2f5f52 }
+              placeholder: "Search for an app…"; selection: #2f5f52 }
 ```
 
 A one-line field edited by **the renderer**: every key is seen on the next frame, whatever state the logic is in. The field is named after the `text` it edits, and that same name is its zone (pressing gives it the focus and places the cursor; dragging selects). It knows the usual: arrows, Home and End, Ctrl+arrow by words, Shift to select, Ctrl+A, Ctrl+C / X / V against the system clipboard, Backspace and Delete, and it repeats a key held down. If the text does not fit, it slides so the cursor stays visible.

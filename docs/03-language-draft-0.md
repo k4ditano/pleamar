@@ -1,5 +1,8 @@
 # The language — draft 0
 
+
+> The code in this note is written in Spanish on purpose: that is how the draft was written at the time, and translating its keywords would misrepresent what was actually considered. The language that came out of it has English keywords.
+
 > **Historical.** This is the sketch, with Spanish keywords, from before implementing it. What actually works is in [[pleamar · 09 El lenguaje v0]].
 
 **Status:** draft, to discuss. None of this has a parser yet. It comes out of sketches A+B ([[pleamar · 06 Bocetos A-B-C]]) corrected by the test against Marea ([[pleamar · 04 Prueba - cabe Marea]]).
@@ -45,8 +48,8 @@ Cuerpo {
 `nombre: valor` is a constant or a binding. **`~muelle` turns it into an animated property**: it has position and velocity, and when something changes its target, it heads there with that spring.
 
 ```
-x: 360 ~vivo            // muelle con nombre
-alto: 0 ~muelle(150, 23)   // rigidez, freno
+x: 360 ~vivo            // a named spring
+alto: 0 ~muelle(150, 23)   // stiffness, damping
 ```
 
 Properties have a **global name** (`orbe.x`). If the file reloads, the ones with the same name keep value and velocity: the animation does not jump.
@@ -66,7 +69,7 @@ Pure, no effects. The renderer evaluates them every frame.
 hecho grabando, buscando, durmiendo: bool
 hecho cuenta: entero = 0
 suceso confirmado, aviso_urgente
-suceso ver_evento  ->                  // este sale: de la escena a la lógica
+suceso ver_evento  ->                  // this one goes out: from the scene to the logic
 ```
 
 A **fact** is true for a while; an **event** happens in an instant. **It is the only thing that crosses**: the logic sets facts and emits events; the scene emits events back. The logic does not touch properties, poses or timers.
@@ -130,7 +133,7 @@ Rules:
 ### 7. Rules — what makes things change
 
 ```
-encima ver                       => realce: 1 ~rápido          // el :hover de CSS
+encima ver                       => realce: 1 ~rápido          // the :hover of CSS
 encima orbe durante 320ms        => abierta? = sí
 fuera de conjunto durante 420ms  => abierta? = no
 pulsa ver                        => abierta? = no, impulso orbe.y -620, emite ver_evento

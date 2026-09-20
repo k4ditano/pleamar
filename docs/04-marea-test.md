@@ -1,5 +1,8 @@
 # Test: does the real Marea fit in the language?
 
+
+> The code in this note is written in Spanish on purpose: that is how the draft was written at the time, and translating its keywords would misrepresent what was actually considered. The language that came out of it has English keywords.
+
 **Date:** 2026-09-19 · **What was read:** `proyecto-marea/prototype/ExpressionController.qml`, all of it, at commit `ad95cf4`.
 
 **Short verdict:** with sketch B's *flat states*, **it does not fit**. With three more pieces —**facts and events**, **layers with claims** and **gestures as timelines with a class**— **it fits whole, and it clears away two kinds of error** the file fights by hand today.
@@ -30,9 +33,9 @@ This pattern appears **eight times**, almost letter for letter:
 
 ```js
 function buscar(si) {
-    //  Apagar solo lo que se encendió aquí. Sin esta guarda, abrir CUALQUIER
-    //  página le borraba la cara […] el disco rojo de estar grabando, incluido.
-    //  Es el único error que importa de verdad en esta clase.
+    //  Turn off only what was turned on here. Without this guard, opening ANY
+    //  page wiped its face […] the red recording disc included.
+    //  It is the only error that really matters in this class.
     if (!si && forma !== "lupa") return
     forma = si ? "lupa" : "ojos"
 }
@@ -54,7 +57,7 @@ Today the logic calls 41 functions of the controller (`onBuscando`, `onGrabacion
 hecho durmiendo, grabando, buscando, catalogando, en_faro: bool
 hecho instalando, actualizando, terminal_ocupada, no_molestar: bool
 hecho cuenta: entero = 0
-hecho soltando: símbolo?           // nada, o de qué es lo que le dan
+hecho soltando: símbolo?           // nothing, or what kind of thing is handed over
 
 suceso confirmado, aviso_urgente, al_día, no_pudo, olvidado
 suceso gesto(nombre, clase)
@@ -67,7 +70,7 @@ A **fact** is something that is true for a while. An **event** happens in an ins
 A **layer** is a slot many can claim. The first claim that holds wins; when it stops holding, the next one is seen **on its own**.
 
 ```
-capa forma {                          // de más a menos prioridad
+capa forma {                          // from highest to lowest priority
     cuenta     mientras cuenta > 0
     rec        mientras grabando
     cámara     mientras en_cámara
@@ -83,7 +86,7 @@ capa forma {                          // de más a menos prioridad
     reloj      mientras comprobando_cupos
     sin_datos  mientras cupos_sin_datos y página == "reservas"
     de_plugin  mientras cara_de_plugin y cara.libre
-    ojos                              // lo que queda cuando nadie dice nada
+    ojos                              // what is left when nobody says anything
 }
 ```
 
@@ -117,7 +120,7 @@ gesto señalar(lado) clase pedido {
     …
 }
 
-postura trabajando mientras herramienta_en_curso { … }          // se repite sola
+postura trabajando mientras herramienta_en_curso { … }          // repeats on its own
 ```
 
 Three rules of the language replace code that is hand-written today:
