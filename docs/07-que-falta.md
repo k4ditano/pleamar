@@ -24,7 +24,7 @@ Tipos instanciados, con las veces que aparecen entre las dos configuraciones:
 | `GradientStop` | 66 | 🟡 degradado lineal de dos colores; sin paradas ni radial |
 | `Image` | 63 | ✅ `image`, por fichero, por icono o desde un dato |
 | `TextInput` | 34 | ✅ `input` (una línea; sin IME) |
-| `ListView` · `Flickable` | 31 · 22 | ⬜ **no hay** · §2 |
+| `ListView` · `Flickable` | 31 · 22 | 🟡 `view:` en un reparto: recorta y se corre con la rueda. Sin arrastrar, y lo de dentro se instancia todo |
 | `Flow` | 28 | ⬜ sin salto de línea en los repartos |
 | `QtObject` | 38 | 🟡 propiedades sueltas, sin agrupar |
 
@@ -34,8 +34,8 @@ Tipos instanciados, con las veces que aparecen entre las dos configuraciones:
 | `Singleton` | 47 | ✅ un plugin (biblioteca con lógica) es esto, y además con frontera y permisos |
 | `Region` | 27 | ✅ la región de entrada se calcula sola, de las zonas |
 | `FileView` | 16 | ⬜ **no hay**: ni leer ni escribir ficheros · §2 |
-| `PanelWindow` | 10 | 🟡 una por escena · §2 |
-| `Variants` | 7 | ⬜ **no hay**: es lo que hace una barra por pantalla · §2 |
+| `PanelWindow` | 10 | ✅ varias por escena (`surface panel { … }`), con su `open:` |
+| `Variants` | 7 | 🟡 `screens: all` repite la superficie en cada monitor, pero con el mismo estado (S2) |
 | `ShellRoot` · `Scope` | 7 · 4 | ✅ `scene` |
 | `IpcHandler` | 4 | ✅ `pleamar --decir`, con `emit`, `fact`, `text`, `get` |
 | `IconImage` | 3 | ✅ `image x = icon "…"` |
@@ -53,17 +53,13 @@ Y lo que usan del objeto `Quickshell`: `env` (82), `shellPath` (32), `screens` (
 
 ## 2. Lo que falta, por lo que duele
 
-### 🔴 Muchas superficies, y una por pantalla
+### 🔴 Una escena por pantalla, con su propio estado
 
-Una configuración de Quickshell **es un proceso con muchas ventanas**: la barra en cada monitor, el lanzador, el centro de notificaciones, el bloqueo. Comparten estado y se hablan entre ellas sin dar la vuelta por el sistema. Eso es `Variants` (7 usos) más `PanelWindow.screen` (9).
+`surface panel { … }` ya permite muchas ventanas en un proceso, y `screens: all` repite una en cada monitor. Lo que falta es que **cada monitor tenga su estado**: hoy las dos copias de una barra enseñan el mismo escritorio activo. Eso es `Variants` (7 usos) con `PanelWindow.screen` (9), y en pleamar sería `per screen { … }`: propiedades y hechos propios por instancia, con un `screen.name` que la lógica pueda leer. Anotado como S2.
 
-En pleamar, una escena es **una** superficie, y cada cosa es un proceso aparte que no comparte nada. Es el hueco más grande que queda, y se nota en todo: no se puede escribir una barra de verdad para dos monitores.
+### 🟡 Listas: lo que queda
 
-**Qué haría falta:** varias `surface` con nombre en una escena, cada una con su dibujo; y `per screen` para que una se repita por monitor, con sus propias propiedades y hechos. Anotado como S1, S2 y G22.
-
-### 🔴 Listas con desplazamiento
-
-`ListView` (31) y `Flickable` (22). Cualquier configuración real tiene una lista más larga que su hueco: notificaciones, ventanas, resultados. Hoy un modelo tiene tope (`max 14`) y se despliega entero al cargar: ni scroll, ni «solo se instancia lo que se ve».
+`view:` ya recorta y corre con la rueda. Falta **arrastrar** para moverlas (en un panel táctil es lo natural) y que **solo se instancie lo que se ve**: hoy las 200 fichas de una lista de 200 existen desde el principio, con sus zonas y sus reglas (G12).
 
 ### 🟡 Dibujo vectorial: `Shape`, `ShapePath`, `PathLine`
 
@@ -77,13 +73,17 @@ En pleamar, una escena es **una** superficie, y cada cosa es un proceso aparte q
 
 128 usos. En pleamar todo se despliega al cargar. Para un menú que casi nunca se abre, o una lista de 200, eso es trabajo y memoria por nada.
 
+### 🔴 Los mensajes están en castellano
+
+113 mensajes de error. Quien no lea castellano se queda con medio pleamar: las palabras clave son inglesas, pero lo que le dice cuando se equivoca, no. Antes de traducir hay que decidir si pleamar habla inglés o si los mensajes llevan clave y se eligen por `LANG`; hacerlo dos veces cuesta el doble (G5).
+
 ### 🟡 Lo que no se ha probado con manos de verdad
 
 El teclado exclusivo, el clic fuera de una emergente, el arrastre real, la rueda, y las notificaciones y la bandeja en la sesión de verdad (con k4 parado). Están en la nota 08 como E1, E8, S11, B12 y B14.
 
 ### ⚪ Lo demás
 
-Ventanas normales y bloqueo de sesión (S7); `ScreencopyView`; un reloj como servicio; degradados con paradas y radial; `Flow`; otros compositores además de Hyprland (B8); IME (E7); mensajes de error en inglés (G5).
+Ventanas normales y bloqueo de sesión (S7); `ScreencopyView`; un reloj como servicio; degradados con paradas y radial; `Flow`; IME (E7).
 
 ## 3. Lo que pleamar tiene y Quickshell no
 
@@ -94,13 +94,12 @@ Para no perderlo de vista, porque es la razón de que esto exista:
 - **Un lenguaje que no puede colgarse:** sin bucles libres ni recursión. Lo declarado termina siempre.
 - **Plugins con contrato:** frontera propia bajo su nombre, hilo propio, y permisos que **aprueba quien los usa** (`pleamar --aprobar`). En Quickshell, un trozo de configuración de otro es JavaScript con todos tus permisos.
 - **Formas que se funden**, con sombra, filo y luz, sin capas ni trucos: es SDF.
-- **Multiplataforma por diseño:** todo lo del sistema detrás de `src/plataforma/`, y `./portable.sh` comprueba que compila para Windows y macOS.
+- **Multiplataforma por diseño:** todo lo del sistema detrás de `src/plataforma/`, y `./portable.sh` comprueba que compila para Windows y macOS. Los escritorios y la ventana activa van por protocolos estándar, no por un compositor.
 
 ## 4. En qué orden
 
-1. **Muchas superficies y una por pantalla.** Sin esto no hay barra de verdad.
-2. **Listas con desplazamiento**, y copias que nazcan en marcha (G12): las dos son la misma obra.
+1. **Una escena por pantalla con su estado** (`per screen`): lo que queda para una barra de verdad en dos monitores.
+2. **Decidir el idioma de los mensajes** y traducirlos: es lo que separa esto de «solo lo uso yo».
 3. **Ficheros** como servicio, y un **reloj** como servicio.
-4. **Caminos** (`path`).
-5. Sacar del núcleo lo que solo servía para Marea, y los mensajes en inglés.
-6. Ventanas normales, bloqueo de sesión, IME, otros compositores.
+4. **Caminos** (`path`), y copias que nazcan en marcha (G12).
+5. Ventanas normales, bloqueo de sesión, IME.
