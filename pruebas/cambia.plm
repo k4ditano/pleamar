@@ -1,0 +1,26 @@
+// espera: bien
+language 0.1
+// `on change`: reaccionar a que una cuenta cambie, venga de donde venga.
+scene Change {
+    surface { size: 240, 120 }
+    let ink = #f5f7f5
+    let step = 20
+    fact total = 40
+    event slid ->
+    event stepped ->
+    prop level = 0 ~calm
+
+    column list {
+        at: 10, 10
+        view: 220, 80
+        step: step
+        content: total * step
+        repeat i in 1..5 {
+            group { size: 220, step; box { from: 0, 0; size: 220, 18; corner: 6; color: ink; opacity: 20% } }
+        }
+    }
+    //  Pasó de fila: da igual si con la rueda, arrastrándola o de un salto.
+    on change floor(list.scroll / step) { emit slid(list.scroll) }
+    //  Y con `while`, solo mientras algo sea verdad.
+    on change level while total > 0 { emit stepped }
+}

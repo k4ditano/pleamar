@@ -202,7 +202,9 @@ struct Parametro {
 struct Obra<'a> {
     e: Escena,
     /// Repartos que se desplazan: su zona, su propiedad, hasta dónde, cuánto por muesca y con qué muelle.
-    scrolls: Vec<(String, PropId, Expr, Expr, Muelle)>,
+    scrolls: Vec<(String, PropId, Expr, Expr, Muelle, HechoId)>,
+    /// De los repartos que se desplazan, cuáles son filas: se arrastran de lado.
+    fila_de_scroll: std::collections::HashSet<String>,
     /// Superficies cuyo `open:` se resuelve al final: (cuál, el hecho, dónde está escrito).
     superficies_pendientes: Vec<(usize, String, (usize, usize))>,
     /// Los nombres de los ficheros de los que está hecha, para decir dónde está algo.
@@ -303,7 +305,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
             otro => unreachable!("'{otro}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(), declarados: Vec::new(), clase_actual: String::new(),
-        scrolls: Vec::new(), superficies_pendientes: Vec::new(), ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), vuelta: 0, siguiente_origen: 0.0, valores: HashMap::new(), ambiguos: Default::default(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
+        scrolls: Vec::new(), fila_de_scroll: Default::default(), superficies_pendientes: Vec::new(), ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), vuelta: 0, siguiente_origen: 0.0, valores: HashMap::new(), ambiguos: Default::default(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
@@ -2903,7 +2905,12 @@ impl<'a> Obra<'a> {
                 // final, cuando ya se sabe qué formas con nombre son zonas de verdad.
                 let visible = if fila { tam.0.clone() } else { tam.1.clone() };
                 let hasta = (if fila { contenido.0.clone() } else { contenido.1.clone() } - visible).max(Expr::K(0.0));
-                self.scrolls.push((nombre.clone(), *prop, hasta, paso.clone(), muelle.unwrap_or(Muelle::RAPIDO)));
+                // Y por dónde iba al agarrarlo, para poder arrastrarlo.
+                let agarre = self.e.hecho(fijo(&format!("{nombre}.grab")), 0.0);
+                if fila {
+                    self.fila_de_scroll.insert(nombre.clone());
+                }
+                self.scrolls.push((nombre.clone(), *prop, hasta, paso.clone(), muelle.unwrap_or(Muelle::RAPIDO), agarre));
             }
             let destino = match self.entornos.last_mut() {
                 Some(e) => &mut e.exprs,
@@ -3322,10 +3329,17 @@ impl<'a> Obra<'a> {
         }
         // Y las reglas de los repartos que se desplazan, ahora que sus zonas existen.
         let rueda = self.hechos["wheel"].e();
-        for (nombre, prop, hasta, paso, muelle) in std::mem::take(&mut self.scrolls) {
+        let (dx, dy) = (self.hechos["drag.dx"].e(), self.hechos["drag.dy"].e());
+        for (nombre, prop, hasta, paso, muelle, agarre) in std::mem::take(&mut self.scrolls) {
             let Some(zona) = self.zonas.get(&nombre).copied() else { continue };
-            let a = (prop.e() - rueda.clone() * paso).max(Expr::K(0.0)).min(hasta);
+            let a = (prop.e() - rueda.clone() * paso).max(Expr::K(0.0)).min(hasta.clone());
             self.e.regla(Disparador::Rueda(zona), vec![Efecto::Animar(Transicion { prop, a, muelle, retraso: Duration::ZERO })]);
+            // Arrastrarlo: al pulsar se apunta por dónde iba, y mientras se mueve va de ahí.
+            // La zona del reparto está debajo de las de sus hijos, y el arrastre le llega igual.
+            let cuanto = if self.fila_de_scroll.contains(&nombre) { dx.clone() } else { dy.clone() };
+            self.e.regla(Disparador::Pulsa(zona), vec![Efecto::Hecho(agarre, prop.e())]);
+            let a = (agarre.e() - cuanto).max(Expr::K(0.0)).min(hasta);
+            self.e.regla(Disparador::Arrastra(zona), vec![Efecto::Animar(Transicion { prop, a, muelle: Muelle::RAPIDO, retraso: Duration::ZERO })]);
         }
     }
 
@@ -3377,6 +3391,8 @@ impl<'a> Obra<'a> {
                 }
                 "focus" => Disparador::GanaFoco,
                 "blur" => Disparador::PierdeFoco,
+                // `on change floor(list.scroll / 34) { … }`: cuando esa cuenta cambie.
+                "change" => Disparador::Cambia(self.expr(c)?),
                 "drop" => Disparador::Recibe(self.zona(c)?),
                 "enter" => Disparador::Entra(self.zona(c)?),
                 "leave" => Disparador::Sale(self.zona(c)?),

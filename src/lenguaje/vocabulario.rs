@@ -39,7 +39,7 @@ pub const FUNCIONES: &[&str] = &["min", "max", "abs", "floor", "ceil", "clamp", 
 /// Dentro de un hueco de un texto.
 pub const DE_TEXTO: &[&str] = &["upper", "lower"];
 /// Lo que puede ir tras `on`. Cualquier otra palabra es el nombre de un suceso.
-pub const DISPARADORES: &[&str] = &["press", "release", "scroll", "drag", "hold", "enter", "leave", "hover", "away", "idle", "key", "submit", "focus", "blur", "drop"];
+pub const DISPARADORES: &[&str] = &["press", "release", "scroll", "drag", "hold", "enter", "leave", "hover", "away", "idle", "key", "submit", "focus", "blur", "drop", "change"];
 /// Los efectos con palabra propia. Además: `prop: valor ~muelle` y `hecho = expr`.
 pub const EFECTOS: &[&str] = &["toggle", "emit", "impulse", "play", "focus", "blur"];
 pub const CURVAS: &[&str] = &["linear", "in_quad", "out_quad", "in_cubic", "out_cubic", "in_out_sine", "out_back"];

@@ -1,9 +1,10 @@
 // Cinco mil filas en dieciséis copias.
 //
 // Una lista no se despliega entera: la escena declara la **ventana** —lo que cabe a
-// la vista y un poco más— y dice cuánto mide la lista de verdad con `content:`. La
-// rueda se mueve sobre el total; cuando pasa de fila, la escena le pide a la lógica
-// el trozo que toca, y las mismas dieciséis copias enseñan otras fichas.
+// la vista y un poco más— y dice cuánto mide la lista de verdad con `content:`. Se
+// mueve con la rueda, arrastrándola o de un salto; cuando pasa de fila, la escena le
+// pide a la lógica el trozo que toca, y las mismas dieciséis copias enseñan otras
+// fichas. Quien lo avisa es `on change`, que no sabe de dónde vino el movimiento.
 //
 // Lo que cuesta no depende de cuántas haya: dieciséis grupos, dieciséis zonas.
 
@@ -78,6 +79,7 @@ scene LongList {
         }
     }
 
-    //  Al girar la rueda, la lógica se entera de por dónde va.
-    on scroll list { emit slid(list.scroll) }
+    //  Cuando la lista pasa de fila —con la rueda, arrastrándola o de un salto—,
+    //  la lógica se entera y manda el trozo que toca. Da igual cómo se haya movido.
+    on change floor(list.scroll / step) { emit slid(list.scroll) }
 }

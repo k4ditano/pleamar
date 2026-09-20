@@ -813,6 +813,9 @@ pub enum Disparador {
     Quieto { durante: Duration, mientras: Expr },
     /// De vez en cuando, con azar, mientras se cumpla la condición.
     Cada { entre: (f32, f32), mientras: Expr },
+    /// Cuando esa cuenta deje de valer lo que valía. La primera vez no cuenta: se
+    /// dispara al cambiar, no al nacer.
+    Cambia(Expr),
     Al(SucesoId),
 }
 

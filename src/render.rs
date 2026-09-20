@@ -553,10 +553,25 @@ pub fn hilo(
                     Disparador::PulsaCon(z, b) => pulsada_con == Some((z.0 as usize, *b)),
                     Disparador::Suelta(z) => soltada == Some(z.0 as usize),
                     Disparador::Rueda(z) => rueda != 0.0 && dentro[z.0 as usize],
-                    Disparador::Arrastra(z) => arrastrada == Some(z.0 as usize),
+                    // Arrastrar no es solo de la zona de más arriba, como la rueda: vale
+                    // para cualquiera que estuviera debajo cuando se pulsó. Así una lista
+                    // se puede arrastrar agarrándola por una de sus filas.
+                    Disparador::Arrastra(z) => {
+                        arrastrada.is_some()
+                            && match (escena.zonas.get(z.0 as usize), arrastre) {
+                                (Some(zona), Some((_, o, _))) => zona.contiene(c, o.0, o.1),
+                                _ => false,
+                            }
+                    }
                     Disparador::Mantiene { zona, durante } => {
                         let puesta = arrastre.is_some_and(|(k, _, _)| k == zona.0 as usize);
                         e.esperar(puesta, *durante, ahora, &mut citas)
+                    }
+                    // `on change floor(list.scroll / 34) { … }`: cuando eso cambie.
+                    Disparador::Cambia(x) => {
+                        let ahora = x.evaluar(c);
+                        let antes = e.valia.replace(ahora);
+                        antes.is_some_and(|v| (v - ahora).abs() > 0.001)
                     }
                     Disparador::Tecla(t) => teclas.iter().any(|x| x == t),
                     Disparador::Envia(t) => enviados.contains(&(t.0 as usize)),
@@ -1158,6 +1173,8 @@ impl EstadoCapa {
 
 #[derive(Default)]
 struct EstadoRegla {
+    /// Lo que valía la última vez la cuenta de un `on change`.
+    valia: Option<f32>,
     desde: Option<Instant>,
     disparada: bool,
     armada: bool,

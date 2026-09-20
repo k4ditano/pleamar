@@ -6,7 +6,7 @@ syn keyword plmStatement scene library import language
 syn keyword plmKeyword in max while for after from until at by reach within rest inset right middle as via strict each all
 syn keyword plmFunction min max abs floor ceil clamp smooth mix if vel
 syn keyword plmFunction upper lower
-syn keyword plmTrigger press release scroll drag hold enter leave hover away idle key submit focus blur drop
+syn keyword plmTrigger press release scroll drag hold enter leave hover away idle key submit focus blur drop change
 syn keyword plmEffect toggle emit impulse play focus blur
 syn keyword plmStep move line curve close
 syn keyword plmConstant true false lively calm quick slow gentle pose linear in_quad out_quad in_cubic out_cubic in_out_sine out_back text number bool image

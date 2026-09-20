@@ -454,7 +454,8 @@ Los nombres de un hueco se resuelven donde está escrita la cadena, no donde se 
 | `enter zona` · `leave zona` | el ratón entra o sale |
 | `hover zona for 320ms` · `away zona for 420ms` | lleva ese rato encima; estuvo encima y lleva ese rato fuera |
 | `scroll zona` | la rueda, sobre cualquier zona que tenga debajo. Se lee en `wheel` |
-| `drag zona` | se mueve con el botón puesto; sigue aunque se salga, hasta soltar. `local.x`, `drag.dx` |
+| `drag zona` | se mueve con el botón puesto; sigue aunque se salga, hasta soltar. `local.x`, `drag.dx`. Como la rueda, vale para cualquier zona que estuviera debajo al pulsar, no solo la de arriba: así una lista se arrastra agarrándola por una fila |
+| `change expr` | esa cuenta deja de valer lo que valía. Al nacer no cuenta: se dispara al cambiar |
 | `key Escape` · `key Ctrl+k` | una tecla; la superficie tiene que pedir teclado. Modificadores: `Ctrl+` `Alt+` `Super+` |
 | `submit campo` | Intro dentro de ese `input` |
 | `focus` · `blur` | la superficie gana o pierde el teclado |
@@ -622,7 +623,7 @@ properties.children: move
 properties.layout: at anchor gap padding align fill corner show opacity cursor view step content
 functions: min max abs floor ceil clamp smooth mix if vel
 text_functions: upper lower
-triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop
+triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change
 effects: toggle emit impulse play focus blur
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back
 frame: hold emit
