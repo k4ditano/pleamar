@@ -37,10 +37,10 @@ belongs to another element, a service asked for something it does not report.
 
 | | |
 | --- | --- |
-| `docs/11-referencia-del-lenguaje.md` | The reference. Grammar, every element, every property, types, rules, layers, gestures, services, files. Read this before writing anything non-trivial |
+| `docs/11-language-reference.md` | The reference. Grammar, every element, every property, types, rules, layers, gestures, services, files. Read this before writing anything non-trivial |
 | `docs/guide.md` | From zero to a bar, six steps |
 | `docs/recipes.md` | Whole scenes that work: long lists, grids, melting shapes, gradients, paths, saved settings, normal windows, popups |
-| `docs/10-logica-luau.md` | What the `.luau` logic can and cannot do |
+| `docs/10-luau-logic.md` | What the `.luau` logic can and cannot do |
 | `escenas/*.plm` | Real scenes that run: `barra.plm` (a bar), `lista-larga.plm` (5000 rows), `iconos.plm` (tray with menus), `lanzador.plm` (launcher), `caminos.plm` (paths and gradients) |
 | `pruebas/*.plm` | One file per language feature, each with the expected result on its first line |
 

@@ -210,8 +210,8 @@ emit that event, and it can touch nothing else of the scene.
 
 - Patterns that already work, ready to copy: [recipes](recipes.md).
 - Everything that exists, with its exact shape:
-  [the reference](11-referencia-del-lenguaje.md).
-- What the logic can do: [the Luau boundary](10-logica-luau.md).
+  [the reference](11-language-reference.md).
+- What the logic can do: [the Luau boundary](10-luau-logic.md).
 - In the editor: `pleamar --lsp` gives errors as you type, and
   `pleamar --resaltado vim` the highlighting. See [`editor/`](../editor/).
 

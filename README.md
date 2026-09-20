@@ -120,7 +120,7 @@ A `.plm` file is a scene: what is seen, and how it reacts.
 | `permissions { run: "date"; services: "audio" }` | undeclared, the logic cannot |
 
 The full reference, with its grammar and its checked examples, is in
-[`docs/11-referencia-del-lenguaje.md`](docs/11-referencia-del-lenguaje.md). To
+[`docs/11-language-reference.md`](docs/11-language-reference.md). To
 start from zero, [`docs/guide.md`](docs/guide.md); to copy and paste,
 [`docs/recipes.md`](docs/recipes.md).
 
@@ -131,7 +131,7 @@ sandbox, on its own thread, which the renderer never waits for. It can only cros
 the boundary the scene declares — `fact.open = true`, `text.title = …`,
 `model.rows = {…}`, `emit`, and listening with `on(…)` — plus timers, `sys` for
 services and `run` for system commands, all behind permissions. Reference in
-[`docs/10-logica-luau.md`](docs/10-logica-luau.md).
+[`docs/10-luau-logic.md`](docs/10-luau-logic.md).
 
 A library with its own `.luau` next to it is a **plugin**: its boundary lives
 under its name (`Clock.now`), it runs on its own thread, and its permissions are
@@ -168,12 +168,12 @@ per plugin, one per service, and a workshop thread for text and images.
 ## What is missing
 
 Measured against two real Quickshell configs (648 QML files between them), in
-[`docs/07-que-falta.md`](docs/07-que-falta.md): session lock, showing a screen
+[`docs/07-whats-missing.md`](docs/07-whats-missing.md): session lock, showing a screen
 inside the scene, input methods for Japanese or Chinese, and list copies that are
 born and die on their own.
 
 Known limitations, **each one with its plan to fix it**, in
-[`docs/08-limitaciones.md`](docs/08-limitaciones.md). They are written down as
+[`docs/08-limitations.md`](docs/08-limitations.md). They are written down as
 they show up, not at the end.
 
 ## Documentation
@@ -182,11 +182,11 @@ they show up, not at the end.
 | --- | --- |
 | [`docs/guide.md`](docs/guide.md) | From zero to a bar, step by step |
 | [`docs/recipes.md`](docs/recipes.md) | Patterns that already work, ready to copy |
-| [`docs/11-referencia-del-lenguaje.md`](docs/11-referencia-del-lenguaje.md) | The reference: grammar, types, every element and every property |
-| [`docs/10-logica-luau.md`](docs/10-logica-luau.md) | What the logic can do, and what it cannot |
-| [`docs/07-que-falta.md`](docs/07-que-falta.md) | Parity with Quickshell, told by real usage |
-| [`docs/08-limitaciones.md`](docs/08-limitaciones.md) | Everything that fails or is missing, with its plan |
-| [`docs/02-como-funciona.md`](docs/02-como-funciona.md) | Inside: the threads, the renderer, the why |
+| [`docs/11-language-reference.md`](docs/11-language-reference.md) | The reference: grammar, types, every element and every property |
+| [`docs/10-luau-logic.md`](docs/10-luau-logic.md) | What the logic can do, and what it cannot |
+| [`docs/07-whats-missing.md`](docs/07-whats-missing.md) | Parity with Quickshell, told by real usage |
+| [`docs/08-limitations.md`](docs/08-limitations.md) | Everything that fails or is missing, with its plan |
+| [`docs/02-how-it-works.md`](docs/02-how-it-works.md) | Inside: the threads, the renderer, the why |
 | [`.claude/skills/pleamar/`](.claude/skills/pleamar/) | So an AI writes `.plm` without making things up |
 
 The working notes (01, 03–06, 09) are the design logbook: how this got here.

@@ -5,7 +5,7 @@ cargo build --release --quiet || exit 1
 # Los ejemplos completos de la documentación (los bloques ```plm) también se
 # comprueban: si el README, la guía, las recetas o la referencia mienten, esto falla.
 ejemplos=$(mktemp -d)
-for nota in README.md docs/11-referencia-del-lenguaje.md docs/guide.md docs/recipes.md; do
+for nota in README.md docs/11-language-reference.md docs/guide.md docs/recipes.md; do
     corto=$(basename "$nota" .md)
     awk -v dir="$ejemplos" -v de="$corto" '/^```plm$/ { k++; dentro = 1; next } /^```$/ { dentro = 0 } dentro { print > (dir "/" de "-" k ".plm") }' "$nota"
 done
@@ -23,7 +23,7 @@ for f in pruebas/*.plm escenas/*.plm "$ejemplos"/*.plm; do
 done
 
 # El vocabulario de la referencia tiene que ser el que consulta el compilador, palabra por palabra.
-awk '/^```vocabulario$/ { dentro = 1; next } /^```$/ { dentro = 0 } dentro' docs/11-referencia-del-lenguaje.md > "$ejemplos/escrito.txt"
+awk '/^```vocabulario$/ { dentro = 1; next } /^```$/ { dentro = 0 } dentro' docs/11-language-reference.md > "$ejemplos/escrito.txt"
 ./target/release/pleamar --gramatica > "$ejemplos/de-verdad.txt"
 if ! diff -q "$ejemplos/escrito.txt" "$ejemplos/de-verdad.txt" > /dev/null; then
     echo "✗ la referencia (docs/11, §17) y el compilador no dicen lo mismo:"

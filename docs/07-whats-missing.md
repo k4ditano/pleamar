@@ -24,8 +24,8 @@ Instantiated types, with the number of times they appear across the two configur
 | `GradientStop` | 66 | ✅ up to eight stops, each one where it says, and radial as well as linear |
 | `Image` | 63 | ✅ `image`, from a file, from an icon or from a piece of data |
 | `TextInput` | 34 | ✅ `input` (single line; no IME) |
-| `ListView` · `Flickable` | 31 · 22 | 🟡 `view:` in a layout, with `content:` and `for … from` for lists of thousands in a handful of copies. No dragging |
-| `Flow` | 28 | ⬜ no line wrapping in layouts |
+| `ListView` · `Flickable` | 31 · 22 | 🟡 `view:` in a layout, with `content:` and `for … from` for lists of thousands in a handful of copies, and dragged by grabbing any row. No inertia when let go |
+| `Flow` | 28 | ✅ `wrap: n` in a `row` or `column`: a grid, and what is not seen leaves no gap |
 | `QtObject` | 38 | 🟡 standalone properties, no grouping |
 
 | From Quickshell | | pleamar |
@@ -55,7 +55,7 @@ And what they use from the `Quickshell` object: `env` (82) ✅ `sys.ask("env", �
 
 ### 🟡 Lists: what is left
 
-A list of five thousand already fits in sixteen copies (`content:` + `for … from`, §3.1), so the cost no longer depends on how much there is. What is missing is **dragging** to move them, which on a touchpad is the natural thing, and copies that **are born and die on their own** instead of the scene declaring the window and the logic slicing the chunk (G12).
+A list of five thousand already fits in sixteen copies (`content:` + `for … from`, §3.1), so the cost no longer depends on how much there is, and it is dragged by grabbing any of its rows. What is missing is **inertia** when it is let go, and copies that **are born and die on their own** instead of the scene declaring the window and the logic slicing the chunk (G12).
 
 ### 🟡 Deferred loading: `Loader`, `LazyLoader`, `Component`
 
@@ -93,5 +93,5 @@ Kept in sight here, because it is the reason this exists:
 ## 4. In what order
 
 1. The language server knowing about names: completing the scene's facts and components, and going to where they are declared (G9).
-2. Copies that are born and die on their own (G12), and dragging a list.
+2. Copies that are born and die on their own (G12), and inertia when a list is let go.
 3. Plain windows, session lock, IME.

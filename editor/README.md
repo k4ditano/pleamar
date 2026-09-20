@@ -1,25 +1,25 @@
-# pleamar en un editor
+# pleamar in an editor
 
-Dos cosas, y las dos salen del **vocabulario del compilador**, no de una lista
-escrita aparte: si el lenguaje cambia y esto no, `./probar.sh` lo dice.
+Two things, and both come out of the **compiler's vocabulary**, not out of a
+list written apart: if the language changes and this does not, `./probar.sh` says so.
 
-## Los fallos mientras escribes
+## The errors while typing
 
-`pleamar --lsp` es un servidor de lenguaje por la entrada y la salida. Da:
+`pleamar --lsp` is a language server over standard input and output. It gives:
 
-- **los fallos con su sitio**, los mismos que al lanzar la escena, con su «did you
-  mean…?». Al guardar y al teclear, y también en las bibliotecas que importa;
-- **qué palabras valen aquí**: dentro de un `box`, sus propiedades; dentro de un
-  `path`, sus pasos; tras `anchor:`, las anclas que existen; en una expresión, los
-  hechos y las propiedades **de esta escena**; tras `emit`, sus sucesos;
-- **qué significa** la palabra bajo el cursor, y de qué es nombre;
-- **ir a donde se declaró** un nombre, aunque esté en una biblioteca importada;
-- **dónde se usa** ese nombre, y **cambiarlo** en todos esos sitios de una vez;
-- **el esquema del fichero**: todo lo que declara, con su clase.
+- **the errors with their place**, the same ones as when launching the scene, with
+  their "did you mean…?". On save and while typing, and also in the libraries it imports;
+- **which words are valid here**: inside a `box`, its properties; inside a
+  `path`, its steps; after `anchor:`, the anchors that exist; in an expression, the
+  facts and the properties **of this scene**; after `emit`, its events;
+- **what the word under the cursor means**, and what it is the name of;
+- **going to where a name was declared**, even if it is in an imported library;
+- **where that name is used**, and **renaming it** in all those places at once;
+- **the outline of the file**: everything it declares, with its kind.
 
-Cambiar un nombre toca los `.plm`, no la lógica: si un `.luau` escribe `fact.volume`,
-eso hay que cambiarlo a mano. El compilador avisa igual, porque el nombre viejo ya no
-existe.
+Renaming touches the `.plm` files, not the logic: if a `.luau` writes `fact.volume`,
+that has to be changed by hand. The compiler warns all the same, because the old name
+no longer exists.
 
 ### Neovim
 
@@ -36,7 +36,7 @@ vim.api.nvim_create_autocmd("FileType", {
 
 ### Helix
 
-En `languages.toml`:
+In `languages.toml`:
 
 ```toml
 [[language]]
@@ -53,14 +53,14 @@ args = ["--lsp"]
 
 ### VS Code
 
-Necesita una extensión que lance el servidor (`vscode-languageclient`), o
-cualquiera de las genéricas de LSP apuntando a `pleamar --lsp`.
+It needs an extension that launches the server (`vscode-languageclient`), or
+any of the generic LSP ones pointing at `pleamar --lsp`.
 
-## El resaltado
+## The highlighting
 
-- **Vim y Neovim**: `plm.vim` va en `~/.config/nvim/syntax/plm.vim`.
-- **VS Code**: `plm.tmLanguage.json` es la gramática TextMate de una extensión
-  con `"scopeName": "source.plm"` y `"language": "plm"`.
+- **Vim and Neovim**: `plm.vim` goes in `~/.config/nvim/syntax/plm.vim`.
+- **VS Code**: `plm.tmLanguage.json` is the TextMate grammar of an extension
+  with `"scopeName": "source.plm"` and `"language": "plm"`.
 
-Los dos se rehacen con `pleamar --resaltado vim` y `pleamar --resaltado vscode`.
-Se guardan aquí para no tener que compilar pleamar solo para editar un fichero.
+Both are regenerated with `pleamar --resaltado vim` and `pleamar --resaltado vscode`.
+They are kept here so pleamar does not have to be compiled just to edit a file.
