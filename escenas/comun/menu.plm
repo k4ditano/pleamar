@@ -1,22 +1,22 @@
-// Una fila de menú, para cualquier lista de opciones: la bandeja hoy, un menú
-// contextual mañana. Espera fichas con `label`, `separator`, `enabled`,
-// `checked` (-1: no es casilla · 0: vacía · 1: marcada) y `children`; y se le
-// dice qué suceso emitir al pulsarla, que lleva dentro la posición de la fila.
+// A menu row, for any list of options: the tray today, a context menu
+// tomorrow. It expects records with `label`, `separator`, `enabled`,
+// `checked` (-1: not a checkbox · 0: empty · 1: checked) and `children`; and it is
+// told which event to emit on press, which carries the row's position inside.
 
 import "paleta.plm"
 
-//  `strict`: sus componentes solo leen lo que piden, lo que declaran y lo de la paleta.
+//  `strict`: its components only read what they ask for, what they declare and the palette's.
 library Menu strict {
     component MenuRow(r: record, chosen: event, tone: color = mint, width: number = 220) {
         size: width, 30 - r.separator * 21
         prop on = 0 ~quick
         box hit { from: 0, 0; size: width, 30 - r.separator * 21; corner: 7; color: tone
                   opacity: on * 20%; cursor: pointer; active: r.enabled and not r.separator }
-        //  La raya de un separador.
+        //  A separator's stripe.
         box { from: 6, 4; size: width - 12, 1; color: ink; opacity: r.separator * 14% }
         text r.label { at: 12, 15; anchor: left center; size: 13.5; width: width - 50; lines: 1; color: ink
                        opacity: (1 - r.separator) * (0.45 + r.enabled * 0.55) }
-        //  Una casilla, marcada o no; o la flecha de «hay más».
+        //  A checkbox, checked or not; or the «there is more» arrow.
         ellipse { at: width - 16, 15; radius: 3.5; color: tone; opacity: r.checked > 0.5 }
         ellipse { at: width - 16, 15; radius: 3.5; stroke: 1.2; color: ink; opacity: if(r.checked > -0.5, 0.5, 0) }
         text "›" { at: width - 16, 14; anchor: center; size: 16; color: ink; opacity: if(r.children > 0, 0.6, 0) }

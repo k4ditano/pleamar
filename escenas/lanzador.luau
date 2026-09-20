@@ -1,5 +1,5 @@
--- La lógica del lanzador: sabe qué aplicaciones hay y filtra. Lo que se escribe
--- ya se ve —eso es del render—; aquí solo se decide qué lista acompaña.
+-- The launcher's logic: it knows which applications there are and filters. What is typed
+-- already shows —that is the renderer's job—; here it only decides which list goes with it.
 
 local apps = {}
 
@@ -13,8 +13,8 @@ local function filter()
     fact.sel = 0
 end
 
---  Un servicio de la plataforma: en Linux, los .desktop. Donde no lo haya, la
---  lista sale vacía y el lanzador lo dice.
+--  A platform service: on Linux, the .desktop files. Where there is none, the
+--  list comes out empty and the launcher says so.
 if not sys.watch("apps", function(list) apps = list; filter() end) then
     model.hits = { { name = "Este sistema no sabe todavía qué aplicaciones tiene" } }
 end
@@ -24,11 +24,11 @@ on("text:query", filter)
 on("launch", function(i)
     local a = model.hits[i + 1]
     if a then
-        log("lanzo:", a.name, "→", a.exec)
+        log("launching:", a.name, "→", a.exec)
         sys.call("apps.launch", a.exec)
     end
     fact.open = false
 end)
 
---  Al cerrarse, el campo vuelve a estar vacío para la próxima vez.
+--  On closing, the field is empty again for next time.
 on("fact:open", function(open) if not open then text.query = ""; filter() end end)

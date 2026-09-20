@@ -1,8 +1,8 @@
-// Marea: la bolita, sus ojos y la tarjeta de aviso que le nace del costado.
+// Marea: the blob, its eyes and the notice card that grows out of its side.
 //
-// Todo lo que hay en este fichero lo ejecuta el render, solo: abrirse al pasar
-// el ratón, cerrarse al irse, dormirse, realzar el botón. La lógica se limita a
-// decir qué pone el aviso y a enterarse de que alguien pulsó «Ver evento».
+// The renderer runs everything in this file on its own: opening on hover,
+// closing on leaving, falling asleep, lighting up the button. The logic only
+// says what the notice reads and finds out that someone pressed «Ver evento».
 
 scene Marea {
     surface {
@@ -12,10 +12,10 @@ scene Marea {
         screens: "HDMI-A-1"
     }
 
-    //  `marea.luau` mira la hora con `date`. Es lo único que puede lanzar.
+    //  `marea.luau` checks the time with `date`. It is the only thing it may spawn.
     permissions { run: "date" }
 
-    // ── la frontera con la lógica ────────────────────────────────
+    // ── the boundary with the logic ──────────────────────────────
     fact open = false
     fact asleep = false
     event view_event ->
@@ -25,15 +25,15 @@ scene Marea {
     text notice.title  = "Reunión en 5 min"
     text notice.detail = "Revisión de diseño · 18:00"
 
-    // ── lo que se mueve ──────────────────────────────────────────
+    // ── what moves ───────────────────────────────────────────────
     prop orb.x   = 360
     prop orb.y   = 90
     prop panel.w = 0
     prop panel.h = 0
-    prop neck    = 0          // cuánto se funden bolita y tarjeta
+    prop neck    = 0          // how much blob and card blend
     prop content = 0
     prop sleep   = 0
-    prop glow    = 0          // el realce del botón
+    prop glow    = 0          // the button's highlight
     prop eyelid  = 1
     prop breath  = 0
     prop gaze.x  = 0 ~gentle
@@ -41,17 +41,17 @@ scene Marea {
 
     let panel.x = orb.x + 62
     let panel.y = orb.y - 70
-    //  Estirarse con la velocidad: el render la conoce; la lógica, nunca.
+    //  Stretching with speed: the renderer knows it; the logic, never.
     let stretch = clamp((abs(vel(orb.x)) - abs(vel(orb.y))) / 2400, -0.22, 0.22)
 
-    //  La zona de todo el conjunto, debajo de las demás: las que se declaran
-    //  después quedan encima. Solo existe mientras hay tarjeta; cerrada, por ahí
-    //  el clic pasa a lo de debajo.
+    //  The zone for the whole thing, below the rest: the ones declared
+    //  later stay on top. It only exists while there is a card; closed, the click
+    //  goes through there to what is underneath.
     zone box whole { at: 360, 115; size: 532, 226; corner: 24; active: open or panel.w > 1 }
 
-    // ── quién manda ──────────────────────────────────────────────
-    //  Abrir y cerrar son dos reclamaciones de la misma capa, cada una con su
-    //  coreografía. Quien ponga `open` no sabe nada de muelles.
+    // ── who commands ─────────────────────────────────────────────
+    //  Opening and closing are two claims on the same layer, each with its own
+    //  choreography. Whoever sets `open` knows nothing about springs.
     layer card ~calm {
         shown while open {
             neck:    96  ~quick
@@ -76,8 +76,8 @@ scene Marea {
         awake { sleep: 0 ~lively }
     }
 
-    // ── el dibujo ────────────────────────────────────────────────
-    //  Un solo cuerpo: bolita y tarjeta fundidas por un cuello de agua.
+    // ── the drawing ──────────────────────────────────────────────
+    //  One single body: blob and card blended by a neck of water.
     body {
         color: #151616
         rim: 5%
@@ -97,8 +97,8 @@ scene Marea {
         }
     }
 
-    //  Lo de dentro de la tarjeta: recortado a lo que lleve crecido, y fundido
-    //  como una sola cosa.
+    //  What is inside the card: clipped to however much it has grown, and blended
+    //  as one single thing.
     group {
         clip inset 1 box {
             from: panel.x, orb.y - panel.h * 70 / 190
@@ -126,19 +126,19 @@ scene Marea {
         }
     }
 
-    //  Los ojos: dos píldoras recortadas a la cara.
+    //  The eyes: two pills clipped to the face.
     group {
         clip inset 3 ellipse { at: orb.x, orb.y; radius: 28 }
         box { at: orb.x + gaze.x - 8.6, orb.y + gaze.y + sleep * 3 - 1; size: 7, 16.8 * max(eyelid * (1 - sleep), 0.14); corner: 3.5; color: #f5f7f5 }
         box { at: orb.x + gaze.x + 8.6, orb.y + gaze.y + sleep * 3 - 1; size: 7, 16.8 * max(eyelid * (1 - sleep), 0.14); corner: 3.5; color: #f5f7f5 }
     }
 
-    // ── lo que lleva sola ────────────────────────────────────────
+    // ── what it does alone ───────────────────────────────────────
     blink eyelid every 2.4s..6s for 170ms
     wave breath = sleep * 1.3 at 1.7
     look gaze.x, gaze.y at orb.x, orb.y reach 5, 3.2 within 140 rest panel.w * 3.2 / 406, panel.w * 0.6 / 406
 
-    // ── qué hace cambiar las cosas ───────────────────────────────
+    // ── what makes things change ─────────────────────────────────
     on enter orb             { asleep = false }
     on hover orb for 320ms   { open = true }
     on press orb             { toggle open }
@@ -149,5 +149,5 @@ scene Marea {
     on press view            { open = false; impulse orb.y -620; emit view_event }
     on idle for 14s while not open { asleep = true }
 
-    //  Sin ratón, `--demo` avisa a la lógica (marea.luau), que hace de aviso que llega.
+    //  With no mouse, `--demo` pokes the logic (marea.luau), which plays the arriving notice.
 }

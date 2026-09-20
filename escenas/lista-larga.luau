@@ -1,5 +1,5 @@
--- Cinco mil filas que nunca están todas en la escena: solo las dieciséis que se ven.
--- Lo único que hace esta lógica es cortar el trozo que toca cuando la rueda se mueve.
+-- Five thousand rows that are never all in the scene: only the sixteen in view.
+-- All this logic does is cut the slice that belongs when the wheel moves.
 
 local PASO, VENTANA, CUANTAS = 34, 16, 5000
 

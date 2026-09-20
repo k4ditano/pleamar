@@ -1,40 +1,40 @@
-# Decisiones y preguntas abiertas
+# Decisions and open questions
 
-## Decidido
+## Decided
 
-| Fecha | Decisión | Por qué |
+| Date | Decision | Why |
 | --- | --- | --- |
-| 2026-09-19 | **El render es dueño de las animaciones**; la lógica declara intenciones | Es la idea que se quería probar, y se midió: 38 frames frente a 0 con la lógica bloqueada |
-| 2026-09-19 | **Una escena son datos**, no código | Si el render ha de trabajar solo, no puede depender de ejecutar nada ajeno |
-| 2026-09-19 | **Formas SDF** en un shader intérprete | Fundir, sombrear y hacer hit-test salen de la misma fórmula |
-| 2026-09-19 | **Lenguaje propio, A+B**: árbol de elementos + todo lo declarativo que el render pueda hacer solo | C (Luau puro) es más potente pero no puede garantizar qué corre en el render. Esa frontera es el proyecto |
-| 2026-09-19 | **Luau solo para la lógica** | Sandbox, tipos graduales, LSP hecho, y las IA lo escriben bien |
-| 2026-09-19 | **Sintaxis aburrida, semántica nueva** | Que quien venga de QML lo lea a la primera; lo único que aprender es lo que lo hace distinto |
-| 2026-09-19 | **`capa` es el concepto central, no `estado`** | La prueba con Marea: `forma` es un hueco que muchos reclaman, y hoy se defiende con ocho guardas copiadas |
-| 2026-09-19 | **Dos formas de animar**: muelles y gestos por fotogramas | Marea tiene 25 gestos que ya son datos de fotogramas; un muelle no cuenta una historia |
-| 2026-09-19 | **Primero la semántica en el runtime, después el parser** | Un parser congela la sintaxis; aún no sabemos del todo qué conceptos hacen falta |
-| 2026-09-19 | **Una forma de capa solo se ve con más de media presencia** | Fundir dos formas de ojos da un borrón; como las presencias suman uno, así una se va y entra la otra |
-| 2026-09-19 | **Un `estado` es una reclamación que fija propiedades**; no hay construcción aparte | Abrir/cerrar la tarjeta de Marea salió como `capa tarjeta { abierta mientras abierta?; reposo }`, sin nada nuevo |
-| 2026-09-19 | **Las palabras clave del lenguaje, en inglés** (`layer`, `gesture`, `while`, `after`…) | Decisión de Abel. k4 ya recibe PRs de fuera y cambiarlo después es caro. El código Rust del runtime sigue en castellano por ahora; el parser hará de frontera |
-| 2026-09-19 | **Multiplataforma: ahora no, pero sin cerrarlo — y siempre presente.** Todo lo de sistema va detrás de `src/plataforma/`; el núcleo solo usa crates que existen en Linux, Windows y macOS; `cargo check` contra Windows tiene que pasar | Decisión de Abel. El 80 % ya es portable (`wgpu`, el modelo, el lenguaje, Luau). Lo que no: la ventana (layer-shell no existe fuera) y los servicios, que van por el grafo de datos. Primera candidata a portarse: **Marea**, no k4 —en Mac no se puede sustituir el Dock—. Primer sistema: Windows |
-| 2026-09-19 | **Las limitaciones se anotan según salen, cada una con su plan de arreglo** ([[pleamar · 08 Limitaciones conocidas]]) | Decisión de Abel: nada de deuda escondida |
+| 2026-09-19 | **The renderer owns the animations**; the logic declares intentions | It is the idea this set out to prove, and it was measured: 38 frames against 0 with the logic blocked |
+| 2026-09-19 | **A scene is data**, not code | If the renderer has to work on its own, it cannot depend on running anything foreign |
+| 2026-09-19 | **SDF shapes** in an interpreter shader | Blending, shadowing and hit-testing all come out of the same formula |
+| 2026-09-19 | **Own language, A+B**: element tree + everything declarative the renderer can do on its own | C (plain Luau) is more powerful but cannot guarantee what runs in the renderer. That boundary is the project |
+| 2026-09-19 | **Luau only for the logic** | Sandbox, gradual types, LSP already done, and the AIs write it well |
+| 2026-09-19 | **Boring syntax, new semantics** | So anyone coming from QML reads it first time; the only thing to learn is what makes it different |
+| 2026-09-19 | **`capa` is the central concept, not `estado`** | The test against Marea: `forma` is a slot many claim, and today it is defended with eight copied guards |
+| 2026-09-19 | **Two ways to animate**: springs and keyframe gestures | Marea has 25 gestures that are already keyframe data; a spring does not tell a story |
+| 2026-09-19 | **Semantics in the runtime first, the parser after** | A parser freezes the syntax; which concepts are needed is not fully known yet |
+| 2026-09-19 | **A layer shape is only seen with more than half presence** | Blending two eye shapes gives a smear; since the presences add up to one, this way one leaves and the other comes in |
+| 2026-09-19 | **An `estado` is a claim that sets properties**; there is no separate construct | Opening/closing Marea's card came out as `capa tarjeta { abierta mientras abierta?; reposo }`, with nothing new |
+| 2026-09-19 | **The language keywords, in English** (`layer`, `gesture`, `while`, `after`…) | Abel's decision. k4 already gets outside PRs and changing it later is expensive. The runtime's Rust code stays in Spanish for now; the parser will act as the boundary |
+| 2026-09-19 | **Cross-platform: not now, but not ruled out — and always present.** Everything system-related goes behind `src/plataforma/`; the core only uses crates that exist on Linux, Windows and macOS; `cargo check` against Windows has to pass | Abel's decision. 80 % is portable already (`wgpu`, the model, the language, Luau). What is not: the window (layer-shell does not exist elsewhere) and the services, which go through the data graph. First candidate to port: **Marea**, not k4 —on a Mac the Dock cannot be replaced—. First system: Windows |
+| 2026-09-19 | **Limitations get written down as they come up, each with its fix plan** ([[pleamar · 08 Limitaciones conocidas]]) | Abel's decision: no hidden debt |
 
-## Lo que enseñó implementarlo
+## What implementing it taught
 
-- **La lógica de Marea se quedó en diez líneas.** Abrir, cerrar, dormirse, realzar el botón y el salto al pulsar son reglas. A la lógica le llega `Capa("tarjeta", "abierta")` para hacer *su* trabajo y `Suceso("ver-evento")`.
-- **La lógica de la isla no decide nada**: dos capas y tres reglas.
-- Hizo falta `Alternar(hecho)` —pulsar para abrir y cerrar— y `Fuera{durante}` tiene que «armarse»: solo cuenta si antes se estuvo encima, o cerraría nada más arrancar.
-- Lo que emite un fotograma se atiende en el frame siguiente. Para un obturador de cámara son 16 ms; habrá que ver si importa.
-- **Pendiente:** dos capas que fijan la misma propiedad (hoy gana la última que cambió), transiciones distintas según *de dónde* se viene, y gestos con parámetros (`señalar(lado)`).
+- **Marea's logic came down to ten lines.** Opening, closing, falling asleep, highlighting the button and the hop on press are rules. What reaches the logic is `Capa("tarjeta", "abierta")`, to do *its* job, and `Suceso("ver-evento")`.
+- **The island's logic decides nothing**: two layers and three rules.
+- `Alternar(hecho)` was needed —press to open and close— and `Fuera{durante}` has to "arm" itself: it only counts if the pointer was over it before, or it would close right after starting.
+- What a keyframe emits is handled on the next frame. For a camera shutter that is 16 ms; whether it matters remains to be seen.
+- **Pending:** two layers setting the same property (today the last one to change wins), different transitions depending on *where* it comes from, and gestures with parameters (`señalar(lado)`).
 
-## Abierto
+## Open
 
-| Pregunta | Opciones | Nota |
+| Question | Options | Note |
 | --- | --- | --- |
-| ¿Cómo se llama el lenguaje, y su extensión? | — | pleamar es el runtime; el nombre lo puso Claude y se puede cambiar |
-| El orden de prioridad de `capa forma` | Ver [[pleamar · 04 Prueba - cabe Marea]] §3.2 | Lo dedujo Claude de los comentarios. Hay que revisarlo línea a línea |
-| ¿`confirmado()` mientras graba borra el disco rojo? | — | Visto leyendo `ExpressionController.qml`, sin ejecutar. Comprobar en Marea |
-| ¿Tipos escritos o inferidos? | `hecho cuenta: entero` · `hecho cuenta = 0` | |
-| ¿Qué pasa si dos capas fijan la misma propiedad? | Error al cargar · gana la capa declarada antes | Probablemente error |
-| Componentes, repetición, layout, texto dinámico | — | Sin diseñar. Sin esto no hay lista de notificaciones |
-| ¿Render por CPU para lo estático? | — | Bajaría los ~100 MB que pone el driver de Vulkan |
+| What is the language called, and its extension? | — | pleamar is the runtime; the name came from Claude and can be changed |
+| The priority order of `capa forma` | See [[pleamar · 04 Prueba - cabe Marea]] §3.2 | Claude deduced it from the comments. It has to be reviewed line by line |
+| Does `confirmado()` while recording wipe the red disc? | — | Seen by reading `ExpressionController.qml`, without running it. Check in Marea |
+| Written or inferred types? | `hecho cuenta: entero` · `hecho cuenta = 0` | |
+| What happens if two layers set the same property? | Error at load · the layer declared first wins | Probably an error |
+| Components, repetition, layout, dynamic text | — | Not designed. Without this there is no notification list |
+| CPU rendering for the static parts? | — | It would cut the ~100 MB the Vulkan driver adds |

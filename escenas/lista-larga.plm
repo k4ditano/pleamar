@@ -1,12 +1,12 @@
-// Cinco mil filas en dieciséis copias.
+// Five thousand rows in sixteen copies.
 //
-// Una lista no se despliega entera: la escena declara la **ventana** —lo que cabe a
-// la vista y un poco más— y dice cuánto mide la lista de verdad con `content:`. Se
-// mueve con la rueda, arrastrándola o de un salto; cuando pasa de fila, la escena le
-// pide a la lógica el trozo que toca, y las mismas dieciséis copias enseñan otras
-// fichas. Quien lo avisa es `on change`, que no sabe de dónde vino el movimiento.
+// A list is not laid out whole: the scene declares the **window** —what fits in
+// view and a little more— and says how long the real list is with `content:`. It
+// moves with the wheel, by dragging or in one jump; when it crosses a row, the scene
+// asks the logic for the slice that belongs, and the same sixteen copies show other
+// records. What tells it is `on change`, which does not know where the movement came from.
 //
-// Lo que cuesta no depende de cuántas haya: dieciséis grupos, dieciséis zonas.
+// What it costs does not depend on how many there are: sixteen groups, sixteen zones.
 
 import "comun/paleta.plm"
 
@@ -16,11 +16,11 @@ scene LongList {
     let step = 34
     let window = 16
 
-    //  La ventana: lo único que se despliega.
+    //  The window: the only thing laid out.
     model rows max 16 { label: text; tag: text }
-    fact total = 0                 // cuántas hay de verdad, de la lógica
-    fact first = 0                 // por cuál va la ventana, de la lógica
-    event slid ->                  // «se ha movido, mándame de aquí»
+    fact total = 0                 // how many there really are, from the logic
+    fact first = 0                 // which one the window is at, from the logic
+    event slid ->                  // «it moved, send me from here»
 
     box { from: 0, 0; size: 420, 462; corner: 16; color: coal }
 
@@ -29,13 +29,13 @@ scene LongList {
         gap: 0
         view: 400, 400
         step: step
-        content: total * step      // el largo de la lista entera, no el de la ventana
+        content: total * step      // the length of the whole list, not the window's
 
-        //  `from first`: la copia 0 es la ficha `first` de la lista de verdad.
+        //  `from first`: copy 0 is record `first` of the real list.
         for r in rows from first {
             group {
                 size: 400, step
-                //  Las copias van en su sitio de la lista entera, no en el de la ventana.
+                //  The copies sit in their place in the whole list, not in the window's.
                 move: 0, first * step
 
                 zone box hit { from: 2, 1; size: 396, 32; corner: 8; cursor: pointer }
@@ -51,12 +51,12 @@ scene LongList {
         }
     }
 
-    //  La barrita: lo que se ve, sobre lo que hay.
+    //  The scrollbar: what is seen, over what there is.
     let bar_h = max(400 * 400 / max(total * step, 400), 24)
     box { at: 410, 10 + list.scroll / max(total * step - 400, 1) * (400 - bar_h); size: 4, bar_h; corner: 2; color: mint; opacity: 45% }
 
-    //  Abajo: por dónde va, y dos saltos. El scroll es una propiedad como otra
-    //  cualquiera, así que una regla puede llevarlo donde quiera.
+    //  Below: where it is, and two jumps. The scroll is a property like any
+    //  other, so a rule can take it wherever it wants.
     row footer { at: 12, 424; gap: 10; align: center
         group {
             size: 150, 26
@@ -79,7 +79,7 @@ scene LongList {
         }
     }
 
-    //  Cuando la lista pasa de fila —con la rueda, arrastrándola o de un salto—,
-    //  la lógica se entera y manda el trozo que toca. Da igual cómo se haya movido.
+    //  When the list crosses a row —with the wheel, by dragging or in one jump—,
+    //  the logic finds out and sends the slice that belongs. How it moved does not matter.
     on change floor(list.scroll / step) { emit slid(list.scroll) }
 }

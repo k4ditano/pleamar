@@ -1,27 +1,27 @@
-// Lo que una escena necesita para acordarse de algo: su propia carpeta y la hora.
+// What a scene needs to remember something: its own folder and the clock.
 //
-// La hora no la pone nadie: `service clock as now` la pide por su nombre y el sistema
-// la cuenta solo. Lo que se elige aquí lo guarda `ajustes.luau` en `settings.txt`,
-// dentro de la carpeta de esta escena —y de ninguna otra—, y al abrirla vuelve.
+// Nobody fills the clock: `service clock as now` asks for it by name and the system
+// counts it on its own. What is picked here `ajustes.luau` saves in `settings.json`,
+// inside this scene's folder —and no other's—, and it comes back when it opens.
 
 import "comun/paleta.plm"
 
 scene Settings {
     surface { size: 360, 210; anchor: center; keyboard: none }
 
-    //  Escuchar no es mandar: `"files"` deja leer; escribir pide `"files.write"`.
+    //  Listening is not commanding: `"files"` lets it read; writing asks for `"files.write"`.
     permissions { services: "clock", "files", "files.write" }
 
-    //  La hora, sin una línea de lógica.
+    //  The clock, without a line of logic.
     service clock as now {
         time: text = "--:--"
         date: text
     }
 
-    fact tone = 0                 // 0, 1, 2: el acento elegido
-    fact saves = 0                // cuántas veces se ha guardado
-    text folder = ""              // dónde vive todo esto
-    event pick ->                 // `emit pick(1)`: me quedo con este
+    fact tone = 0                 // 0, 1, 2: the chosen accent
+    fact saves = 0                // how many times it has been saved
+    text folder = ""              // where all this lives
+    event pick ->                 // `emit pick(1)`: I'll take this one
 
     let pane = #151616
     box { from: 0, 0; size: 360, 210; corner: 16; color: pane }
@@ -38,11 +38,11 @@ scene Settings {
                     follow on = if(tone == k, 1, 0)
 
                     zone box hit { from: 0, 0; size: 34, 34; corner: 17; cursor: pointer }
-                    //  El elegido crece y se enciende; los otros se apagan.
+                    //  The chosen one grows and lights up; the others go out.
                     ellipse {
                         at: 17, 17
                         radius: 11 + 4 * on
-                        //  `mix` con una comparación hace de `if` con colores.
+                        //  `mix` with a comparison works as an `if` for colors.
                         color: mix(mix(mint, sand, k >= 1), #e86a9a, k >= 2)
                         opacity: 35% + on * 65%
                     }

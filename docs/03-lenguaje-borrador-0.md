@@ -1,30 +1,30 @@
-# El lenguaje — borrador 0
+# The language — draft 0
 
-> **Histórico.** Este es el boceto, con palabras clave en castellano, de antes de implementarlo. Lo que funciona de verdad está en [[pleamar · 09 El lenguaje v0]].
+> **Historical.** This is the sketch, with Spanish keywords, from before implementing it. What actually works is in [[pleamar · 09 El lenguaje v0]].
 
-**Estado:** borrador para discutir. Nada de esto tiene parser todavía. Sale de los bocetos A+B ([[pleamar · 06 Bocetos A-B-C]]) corregidos por la prueba con Marea ([[pleamar · 04 Prueba - cabe Marea]]).
+**Status:** draft, to discuss. None of this has a parser yet. It comes out of sketches A+B ([[pleamar · 06 Bocetos A-B-C]]) corrected by the test against Marea ([[pleamar · 04 Prueba - cabe Marea]]).
 
-**Sin nombre todavía**, ni extensión de fichero. Las palabras clave están en castellano a la espera de decidirlo ([[pleamar · 05 Decisiones y preguntas abiertas]]).
+**Still unnamed**, and with no file extension. The keywords are in Spanish while that gets decided ([[pleamar · 05 Decisiones y preguntas abiertas]]).
 
-## Qué es
+## What it is
 
-Un **lenguaje de dominio específico, declarativo y no Turing-completo** para describir escenas de escritorio: qué se ve, cómo se mueve y a qué reacciona. De la familia de CSS, QML o Slint, no de la de Lua o Rust.
+A **declarative, non-Turing-complete domain-specific language** for describing desktop scenes: what is seen, how it moves and what it reacts to. Of the CSS, QML or Slint family, not the Lua or Rust one.
 
-Una frase lo resume: **todo lo que se declara aquí lo ejecuta el render, solo, a la cadencia de la pantalla; la lógica se limita a contar lo que pasa.**
+One sentence sums it up: **everything declared here is run by the renderer, on its own, at the cadence of the screen; the logic does no more than report what happens.**
 
-## Principios
+## Principles
 
-1. **Sintaxis aburrida, semántica nueva.** Llaves, `nombre: expresión`, como QML. Solo se aparta donde aporta algo que QML no tiene.
-2. **Lo declarado no puede colgarse.** Sin bucles libres, sin recursión, sin variables que muten. Todo termina; todo se puede comprobar antes de arrancar.
-3. **Los errores salen al cargar, con línea y columna.** Nombrar una propiedad que no existe no es un fallo en ejecución.
-4. **La frontera con la lógica se ve.** Lo que corre en el render y lo que corre en la lógica no se confunden leyendo el fichero.
-5. **Se escribe con comentarios largos.** El `ExpressionController` de Marea es un tercio prosa, y es lo mejor que tiene.
+1. **Boring syntax, new semantics.** Braces, `nombre: expresión`, like QML. It only departs from that where it brings something QML does not have.
+2. **What is declared cannot hang.** No free loops, no recursion, no mutating variables. Everything terminates; everything can be checked before starting.
+3. **Errors come out at load time, with line and column.** Naming a property that does not exist is not a runtime failure.
+4. **The boundary with the logic is visible.** What runs in the renderer and what runs in the logic are not mixed up when reading the file.
+5. **It is written with long comments.** Marea's `ExpressionController` is a third prose, and that is the best thing it has.
 
-## Las piezas
+## The pieces
 
-### 1. Elementos — el árbol (boceto A)
+### 1. Elements — the tree (sketch A)
 
-Lo que se ve. Un hijo se coloca respecto a su padre y se recorta a él.
+What is seen. A child is placed relative to its parent and clipped to it.
 
 ```
 Cuerpo {
@@ -37,30 +37,30 @@ Cuerpo {
 }
 ```
 
-- `Cuerpo` funde sus formas en una sola silueta (mínimo suave) y la rellena. `funde` es el radio del cuello de agua.
-- Hoy existen `Elipse`, `Caja`, `Texto` (por atlas). Faltan `Anillo`, `Arco`, `Segmento` y el giro.
+- `Cuerpo` blends its shapes into a single silhouette (smooth minimum) and fills it. `funde` is the radius of the water neck.
+- Today there are `Elipse`, `Caja`, `Texto` (by atlas). Missing: `Anillo`, `Arco`, `Segmento` and rotation.
 
-### 2. Propiedades y muelles
+### 2. Properties and springs
 
-`nombre: valor` es una constante o un enlace. **`~muelle` la convierte en una propiedad animada**: tiene posición y velocidad, y cuando algo le cambia el destino, va hacia él con ese muelle.
+`nombre: valor` is a constant or a binding. **`~muelle` turns it into an animated property**: it has position and velocity, and when something changes its target, it heads there with that spring.
 
 ```
 x: 360 ~vivo            // muelle con nombre
 alto: 0 ~muelle(150, 23)   // rigidez, freno
 ```
 
-Las propiedades tienen **nombre global** (`orbe.x`). Si el fichero se recarga, las que se llaman igual conservan valor y velocidad: la animación no salta.
+Properties have a **global name** (`orbe.x`). If the file reloads, the ones with the same name keep value and velocity: the animation does not jump.
 
-### 3. Expresiones
+### 3. Expressions
 
-Puras, sin efectos. El render las evalúa cada frame.
+Pure, no effects. The renderer evaluates them every frame.
 
-- Aritmética, comparación, `y`/`o`/`no`, ternario `c ? a : b`.
-- Funciones: `min`, `max`, `acotar`, `abs`, `mezcla(a, b, t)`, `suave(a, b, x)`, `azar(a, b)`, y de color `hsl()`, `aclarar()`.
-- **`velocidad(prop)`**: la velocidad de un muelle. La lógica no podría saberla nunca; el render sí.
-- Unidades: `ms`, `s`, `%`, `px` implícito. Colores `#rrggbb`.
+- Arithmetic, comparison, `y`/`o`/`no`, ternary `c ? a : b`.
+- Functions: `min`, `max`, `acotar`, `abs`, `mezcla(a, b, t)`, `suave(a, b, x)`, `azar(a, b)`, and for color `hsl()`, `aclarar()`.
+- **`velocidad(prop)`**: the velocity of a spring. The logic could never know it; the renderer can.
+- Units: `ms`, `s`, `%`, implicit `px`. Colors `#rrggbb`.
 
-### 4. Hechos y sucesos — la frontera con la lógica
+### 4. Facts and events — the boundary with the logic
 
 ```
 hecho grabando, buscando, durmiendo: bool
@@ -69,11 +69,11 @@ suceso confirmado, aviso_urgente
 suceso ver_evento  ->                  // este sale: de la escena a la lógica
 ```
 
-Un **hecho** es verdad durante un rato; un **suceso** ocurre en un instante. **Es lo único que cruza**: la lógica pone hechos y emite sucesos; la escena emite sucesos de vuelta. La lógica no toca propiedades, poses ni temporizadores.
+A **fact** is true for a while; an **event** happens in an instant. **It is the only thing that crosses**: the logic sets facts and emits events; the scene emits events back. The logic does not touch properties, poses or timers.
 
-### 5. Capas — quién gana
+### 5. Layers — who wins
 
-Una capa es un hueco que muchos reclaman. **Gana la primera reclamación que se cumple**; al dejar de cumplirse, se ve la siguiente sola.
+A layer is a slot many things claim. **The first claim that holds wins**; when it stops holding, the next one is seen on its own.
 
 ```
 capa forma {
@@ -85,9 +85,9 @@ capa forma {
 }
 ```
 
-Formas de reclamar: `mientras <condición>`, `<tiempo> tras <suceso>`, `desde <suceso> hasta <suceso>`, y sin nada (por defecto).
+Ways to claim: `mientras <condición>`, `<tiempo> tras <suceso>`, `desde <suceso> hasta <suceso>`, and nothing at all (the default).
 
-Una reclamación puede **fijar propiedades**, y entonces es lo que el boceto B llamaba *estado*:
+A claim can **set properties**, and then it is what sketch B called a *state*:
 
 ```
 capa tarjeta {
@@ -96,7 +96,7 @@ capa tarjeta {
 }
 ```
 
-Y una **transición** dice con qué muelle y qué retraso se va de una a otra:
+And a **transition** says with which spring and which delay it goes from one to the other:
 
 ```
 transición reposo -> abierta {
@@ -106,9 +106,9 @@ transición reposo -> abierta {
 }
 ```
 
-### 6. Gestos — líneas de tiempo
+### 6. Gestures — timelines
 
-La otra forma de animar. Un muelle sigue a un valor; un gesto cuenta una historia.
+The other way to animate. A spring follows a value; a gesture tells a story.
 
 ```
 pose reposo { ojos: 14; ancho: 6; hueco: 16; giro: 0; sx: 1; sy: 1; sube: 0; mira: 0 0 }
@@ -120,14 +120,14 @@ gesto asentir clase reflejo {
 postura trabajando mientras herramienta_en_curso { … }
 ```
 
-Reglas:
-1. Cada fotograma parte de la pose de reposo: lo que no nombra, vuelve a su valor.
-2. Al acabar vuelve a la pose base de donde esté (`reposo`, `dormida`…).
-3. **Clases**: `estado > pedido > reflejo > postura > ambiente`. Un gesto solo interrumpe a otro de su clase o inferior.
-4. Puede llevar parámetros (`señalar(lado)`), `emite` sucesos en un fotograma y `reclama` una capa mientras dura.
-5. `quieta { … }` declara su cara sin movimiento.
+Rules:
+1. Every keyframe starts from the rest pose: whatever it does not name goes back to its value.
+2. When it ends it returns to the base pose of wherever it is (`reposo`, `dormida`…).
+3. **Classes**: `estado > pedido > reflejo > postura > ambiente`. A gesture only interrupts another of its own class or lower.
+4. It can take parameters (`señalar(lado)`), `emite` events in a keyframe and `reclama` a layer for as long as it lasts.
+5. `quieta { … }` declares its still face.
 
-### 7. Reglas — qué hace cambiar las cosas
+### 7. Rules — what makes things change
 
 ```
 encima ver                       => realce: 1 ~rápido          // el :hover de CSS
@@ -138,26 +138,26 @@ quieto 14s mientras reposo       => durmiendo = sí
 cada 2.5s..7s mientras ambiente  => parpadea;  17%: otra vez a los 250ms
 ```
 
-Disparadores: `encima`, `fuera de`, `pulsa`, `quieto`, `cada a..b`, `al <suceso>`. Modificadores: `durante`, `mientras`, `como mucho cada`. Las zonas son los propios elementos: el render hace el hit-test con la misma fórmula con la que los pinta.
+Triggers: `encima`, `fuera de`, `pulsa`, `quieto`, `cada a..b`, `al <suceso>`. Modifiers: `durante`, `mientras`, `como mucho cada`. The zones are the elements themselves: the renderer hit-tests with the same formula it paints them with.
 
-### 8. Movimiento reducido
+### 8. Reduced motion
 
-Un interruptor del runtime, no de cada escena. Activo: los muelles se posan al instante y cada gesto enseña su cara `quieta` lo que duraría. En Marea hoy son 56 ramas escritas a mano.
+A runtime switch, not a per-scene one. When on: the springs settle instantly and each gesture shows its `quieta` face for as long as it would have lasted. In Marea today that is 56 hand-written branches.
 
-### 9. La lógica
+### 9. The logic
 
-Aparte, en **Luau**, en un hilo que puede atascarse sin que se note. Recibe sucesos, pone hechos y emite sucesos. Nada más.
+Apart, in **Luau**, on a thread that can stall without it showing. It receives events, sets facts and emits events. Nothing else.
 
 ```lua
 al("ver_evento", function() abrir_calendario() end)
 al_cambiar("notificaciones", function(n) hecho.avisos = #n end)
 ```
 
-## Lo que falta por diseñar
+## What is left to design
 
-- **Componentes y repetición.** `repite i en 0..12 { … }` y elementos reutilizables con parámetros. Sin esto no hay lista de notificaciones.
-- **Layout.** Hoy las posiciones son expresiones a mano. Filas, columnas y «ocupa lo que quede».
-- **Texto de verdad**: contenido dinámico, no un mapa de bits fijo.
-- **Varios ficheros**: importar gestos, poses y componentes. Los plugins son esto.
-- **Tipos**: `bool`, `entero`, `real`, `color`, `símbolo`, `tiempo`. ¿Se infieren o se escriben?
-- **Qué pasa cuando dos capas fijan la misma propiedad.**
+- **Components and repetition.** `repite i en 0..12 { … }` and reusable elements with parameters. Without this there is no notification list.
+- **Layout.** Today the positions are hand-written expressions. Rows, columns and "take whatever is left".
+- **Real text**: dynamic content, not a fixed bitmap.
+- **Several files**: importing gestures, poses and components. Plugins are this.
+- **Types**: `bool`, `entero`, `real`, `color`, `símbolo`, `tiempo`. Inferred or written?
+- **What happens when two layers set the same property.**

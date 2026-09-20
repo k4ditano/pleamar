@@ -1,163 +1,163 @@
-# Cómo funciona hoy
+# How it works today
 
-Lo que ya corre en `~/Proyectos/pleamar`. Rust, `wgpu` 30, `cosmic-text` para el texto, `resvg` e `image` para las imágenes; y solo en Linux, `smithay-client-toolkit` 0.21 (layer-shell).
+What already runs in `~/Proyectos/pleamar`. Rust, `wgpu` 30, `cosmic-text` for the text, `resvg` and `image` for the images; and, on Linux only, `smithay-client-toolkit` 0.21 (layer-shell).
 
-## Tres hilos
+## Three threads
 
-| Hilo | Hace | No hace |
+| Thread | Does | Does not do |
 | --- | --- | --- |
-| **Plataforma** (`plataforma/wayland.rs`) | Una superficie layer-shell por monitor (y por los que se enchufen), su escala, y el ratón | Nada más |
-| **Lógica** (`logica.rs`) | Corre un `Guion`: recibe eventos con nombre, cuenta hechos y sucesos, pide gestos | No anima. No sabe de coordenadas. Se bloquea a propósito para el ensayo |
-| **Render** (`render.rs`) | Dueño de los muelles y del reloj. Evalúa, pinta y avisa | No sabe qué está pintando |
+| **Platform** (`plataforma/wayland.rs`) | One layer-shell surface per monitor (and for the ones plugged in later), its scale, and the mouse | Nothing else |
+| **Logic** (`logica.rs`) | Runs a `Guion`: receives named events, reports facts and events, asks for gestures | Does not animate. Knows nothing about coordinates. Blocks on purpose for the trial |
+| **Renderer** (`render.rs`) | Owner of the springs and of the clock. Evaluates, paints and reports | Does not know what it is painting |
 
-El ratón va **al render**, que es quien sabe qué hay debajo; a la lógica le llega ya como `Entra("ver")` o `Pulsa("orbe")`.
+The mouse goes **to the renderer**, which is the one that knows what is underneath; the logic gets it already as `Entra("view")` or `Pulsa("orb")`.
 
-## Una escena son datos (`escena.rs`)
+## A scene is data (`escena.rs`)
 
-- **Propiedades** con nombre. Cada una es un muelle (posición, velocidad, destino). Si la escena se sustituye, las del mismo nombre sobreviven.
-- **Expresiones** puras (`Expr`): constantes, propiedades, velocidades, `+ − × ÷`, `min`, `max`, `abs`, `suave`. En Rust se escriben con operadores sobrecargados: `orbe_x + 62.0`.
-- **Lista de dibujo**, en orden:
+- **Properties** with a name. Each one is a spring (position, velocity, target). If the scene is replaced, the ones with the same name survive.
+- Pure **expressions** (`Expr`): constants, properties, velocities, `+ − × ÷`, `min`, `max`, `abs`, `suave`. In Rust they are written with overloaded operators: `orbe_x + 62.0`.
+- **Draw list**, in order:
 
-| Instrucción | Qué hace |
+| Instruction | What it does |
 | --- | --- |
-| `Grupo` | Empieza un cuerpo; opcionalmente con sombra |
-| `Forma` | Añade una elipse o caja, fundida con lo anterior (`fusion` = radio del mínimo suave) |
-| `Relleno` | Pinta el cuerpo acumulado: sombra, color, luz y filo |
-| `Recorte` | Lo siguiente se recorta a esta forma |
-| `Plano` | Una forma suelta de color plano |
-| `Textura` | Un trozo del atlas, colocado en pantalla |
+| `Grupo` | Starts a body; optionally with a shadow |
+| `Forma` | Adds an ellipse or a box, blended into what came before (`fusion` = radius of the smooth minimum) |
+| `Relleno` | Paints the accumulated body: shadow, color, light and rim |
+| `Recorte` | What follows is clipped to this shape |
+| `Plano` | A loose shape in flat color |
+| `Textura` | A piece of the atlas, placed on screen |
 
-- **Comportamientos** que el render lleva solo: `Parpadeo`, `Onda`, `Avance` (una aguja que da vueltas), `Mirada`.
-- **Zonas**: una forma con nombre y una condición `activa`.
-- **Hechos y sucesos**: la frontera. La lógica manda `Hecho("grabando", sí)`, `Suceso("confirmado")` o `Gesto("asentir")`, y nada más. Los hechos se leen en las expresiones (`Expr::H`), con `y`, `o`, `no`, `mayor`.
-- **Capas**: reclamaciones en orden de prioridad — `mientras <expr>`, `N ms tras <suceso>`, `desde … hasta`, o por defecto. Gana la primera que se cumple. Cada reclamación tiene una **presencia** (una propiedad que va a 1 cuando gana), para pintar según quién mande, y puede **fijar** propiedades con su muelle y su retraso: eso es una coreografía.
-- **Gestos**: fotogramas con duración, curva (`OutBack`, `InQuad`…) y aguante, sobre las propiedades **de pose**. Lo que un fotograma no nombra vuelve a su base; al acabar, los muelles recogen la pose. **Clases**: `Estado > Pedido > Reflejo > Postura > Ambiente`; uno solo corta a otro de su clase o inferior. Una **postura** se repite sola mientras algo sea verdad.
-- **Reglas**: `Entra`, `Sale`, `Pulsa`, `Encima{durante}`, `Fuera{durante}`, `Quieto{durante}`, `Cada{a..b}`, `Al(suceso)` → efectos (`Animar`, `Hecho`, `Alternar`, `Suceso`, `Impulso`, `Gesto`). **Todo lo ejecuta el render.**
-- **Movimiento reducido** (`--movimiento-reducido`): los muelles se posan y cada gesto enseña, quieto, el fotograma que más se aparta de la base.
+- **Behaviors** the renderer runs by itself: `Parpadeo`, `Onda`, `Avance` (a hand going round), `Mirada`.
+- **Zones**: a named shape and an `activa` condition.
+- **Facts and events**: the boundary. The logic sends `Hecho("recording", true)`, `Suceso("confirmed")` or `Gesto("nod")`, and nothing else. Facts are read in expressions (`Expr::H`), with `y`, `o`, `no`, `mayor`.
+- **Layers**: claims in order of priority — `while <expr>`, `N ms after <event>`, `from … until`, or the default one. The first one that holds wins. Each claim has a **presence** (a property that goes to 1 when it wins), to paint according to who is in charge, and it can **pin** properties with their spring and their delay: that is a choreography.
+- **Gestures**: keyframes with a duration, a curve (`OutBack`, `InQuad`…) and a hold, over the **pose** properties. Whatever a keyframe does not name goes back to its base; when it ends, the springs pick the pose up. **Classes**: `Estado > Pedido > Reflejo > Postura > Ambiente`; one only cuts off another of its own class or lower. A **posture** repeats on its own while something is true.
+- **Rules**: `Entra`, `Sale`, `Pulsa`, `Encima{durante}`, `Fuera{durante}`, `Quieto{durante}`, `Cada{a..b}`, `Al(suceso)` → effects (`Animar`, `Hecho`, `Alternar`, `Suceso`, `Impulso`, `Gesto`). **The renderer runs all of it.**
+- **Reduced motion** (`--movimiento-reducido`): the springs settle and each gesture shows, held still, the keyframe furthest from the base.
 
-## El renderer: un quad por elemento (`render.rs`, `forma.wgsl`, `formas.rs`)
+## The renderer: one quad per element (`render.rs`, `forma.wgsl`, `formas.rs`)
 
-Cada frame, el render recorre la lista de dibujo y la **compone** en dos tablas que sube a la GPU:
+Every frame, the renderer walks the draw list and **composes** it into two tables it uploads to the GPU:
 
-- **formas**, con sus expresiones ya evaluadas (16 números cada una);
-- **elementos** (48 números): un *cuerpo* —una o varias formas fundidas, con su pintura, borde, luz y sombra— o un trozo del atlas. Cada uno lleva su **caja envolvente**, calculada en CPU con la misma geometría, ensanchada por la sombra y el fundido y recortada por sus recortes.
+- **shapes**, with their expressions already evaluated (16 numbers each);
+- **elements** (48 numbers): a *body* —one or several blended shapes, with their paint, border, light and shadow— or a piece of the atlas. Each one carries its **bounding box**, computed on the CPU from the same geometry, widened by the shadow and the blend and cut down by its clips.
 
-Se pinta con **una sola llamada** instanciada: un quad por elemento, en orden, con mezcla premultiplicada. Un píxel solo ejecuta las formas del elemento que lo cubre. Lo invisible (`alfa` 0, cajas vacías) no genera ni quad.
+It is painted with **a single** instanced call: one quad per element, in order, with premultiplied blending. A pixel only runs the shapes of the element that covers it. What is invisible (`alfa` 0, empty boxes) does not even produce a quad.
 
-| Primitiva | Notas |
+| Primitive | Notes |
 | --- | --- |
-| `Elipse`, `Caja` | como antes |
-| `Arco` | como «∩»; `apertura` es medio ángulo en radianes |
-| `Segmento` | línea de extremos redondos |
-| `.trazo(grosor)` | solo el contorno: un círculo se vuelve un **aro** |
-| `.girada(ángulo)` | sobre su centro; positivo, sentido del reloj |
-| `Transformar` | gira, escala y mueve todo lo que venga después alrededor de un pivote. Es una **pila que se compone**: son matrices afines que se multiplican, así que un giro dentro de un grupo que escala dentro de otro que gira hace lo que se espera. Las zonas del ratón pueden vivir bajo las mismas transformaciones (`zona_bajo`) |
-| `Opacidad` | todo lo de dentro se pinta **aparte, en una capa**, y se funde como una sola cosa. Sin capa, fundir pieza a pieza deja ver lo de detrás a través de lo de delante. Solo gasta capa mientras está a medio fundir (ni a 0 ni a 1); hasta cuatro a la vez |
-| `Recorte` | ahora es una **pila** (hasta cuatro): un hijo se recorta a su padre y a su abuelo |
-| `Pintura::Lineal`, `borde` | degradado entre dos puntos; borde interior del cuerpo |
+| `Elipse`, `Caja` | as before |
+| `Arco` | like an "∩"; `apertura` is a half-angle in radians |
+| `Segmento` | a line with round ends |
+| `.trazo(grosor)` | the outline only: a circle becomes a **ring** |
+| `.girada(ángulo)` | about its center; positive is clockwise |
+| `Transformar` | rotates, scales and moves everything that follows around a pivot. It is a **stack that composes**: affine matrices multiplied together, so a rotation inside a group that scales inside another that rotates does what one expects. Mouse zones can live under the same transforms (`zona_bajo`) |
+| `Opacidad` | everything inside is painted **apart, on a layer**, and blended as one single thing. Without a layer, blending piece by piece lets what is behind show through what is in front. It only spends a layer while it is half-blended (neither 0 nor 1); up to four at a time |
+| `Recorte` | now a **stack** (up to four): a child is clipped to its parent and to its grandparent |
+| `Pintura::Lineal`, `borde` | a gradient between two points; an inner border on the body |
 
-`formas.rs` tiene la geometría una sola vez para tres usos: codificar para la GPU, saber qué hay bajo el ratón y calcular cajas.
+`formas.rs` holds the geometry once for three uses: encoding it for the GPU, knowing what is under the mouse, and computing boxes.
 
-**Medido** (RTX 2060, 720×300, `--escena enjambre --sin-vsync`, ms por frame):
+**Measured** (RTX 2060, 720×300, `--escena enjambre --sin-vsync`, ms per frame):
 
-| formas | intérprete por píxel (antes) | por elementos |
+| shapes | per-pixel interpreter (before) | per element |
 | --- | --- | --- |
-| 12 | 0,27 | 0,25 |
-| 60 | 0,53 | 0,28 |
-| 200 | 1,37 | 0,30 |
-| 600 | 3,66 | 0,42 |
-| 2000 | no cabía (tope 1024) | 0,57 |
+| 12 | 0.27 | 0.25 |
+| 60 | 0.53 | 0.28 |
+| 200 | 1.37 | 0.30 |
+| 600 | 3.66 | 0.42 |
+| 2000 | did not fit (1024 ceiling) | 0.57 |
 
-Ojo con lo que dice esta tabla: **el intérprete viejo no iba tan mal como se temía** a este tamaño de superficie; 600 formas seguían cabiendo de sobra en un frame. Donde se habría roto es a pantalla completa (9,6 veces más píxeles) o en una gráfica integrada. El nuevo, además, deja de tener tope.
+Mind what this table says: **the old interpreter was not doing as badly as feared** at this surface size; 600 shapes still fit in a frame with room to spare. Where it would have broken is full screen (9.6 times the pixels) or on an integrated GPU. The new one, on top of that, has no ceiling any more.
 
-## Texto e imágenes (`texto.rs`)
+## Text and images (`texto.rs`)
 
-Todo lo que acaba siendo un trozo de atlas. Tres crates de Rust puro que existen en los tres sistemas: `cosmic-text`, `image` y `resvg`.
+Everything that ends up as a piece of the atlas. Three pure-Rust crates that exist on all three systems: `cosmic-text`, `image` and `resvg`.
 
-- **`Instr::Texto`**: contenido fijo o **vivo** (un texto con nombre que la lógica cambia con `c.texto("aviso.título", …)`), un punto y un `ancla` —qué parte del texto cae sobre él: (0.5, 0.5) lo centra—, un ancho opcional para partir en líneas, y un `Estilo` (familia, tamaño, peso, color, interlínea, alineado, máximo de líneas con puntos suspensivos).
-- El **tipógrafo** da forma al texto —ligaduras, derecha a izquierda, fuentes de reserva, emoji en color— y guarda la maqueta: mientras no cambien texto, estilo ni ancho, no se repite. Cada glifo se pinta una vez, **a la escala de la lámina más fina**, en un atlas de 2048² que comparte con las imágenes. Una letra es una máscara que el shader tiñe; un emoji trae su color.
-- Cada glifo es un elemento más: se recorta, se transforma y se funde como todo. El origen del texto se redondea a píxeles de verdad para que no salga blando.
-- **`Instr::Imagen`**: una ruta o un icono por nombre (`Fuente::Icono("firefox")`; encontrarlo es cosa de la plataforma). Los SVG se pintan al tamaño exacto por la escala; con `tinte`, la forma se pinta de un color: lo que quiere un icono simbólico.
-- **El taller.** Dar forma, pintar glifos y decodificar imágenes ocurre en su propio hilo, que además es quien lee las fuentes del sistema al arrancar. El render **pide y no espera**: mientras llega una maqueta enseña la última que hubo en ese sitio, y lo que ya está en la escena se encarga antes de que exista la ventana. Primer frame a los ~170 ms, y ninguno lento después.
-- **Medir.** Un `Texto` con `mide` deja su ancho y su alto en dos propiedades de solo lectura. Con `Comportamiento::Sigue` —una propiedad que persigue a una expresión con su muelle— una caja crece con su rótulo.
-- Hay un chivato permanente: cualquier frame que pase de 2,4 periodos sale por consola con su hora.
+- **`Instr::Texto`**: fixed content or **live** (a named text the logic changes with `c.texto("aviso.título", …)`), a point and an `ancla` —which part of the text lands on it: (0.5, 0.5) centers it—, an optional width for breaking into lines, and an `Estilo` (family, size, weight, color, line height, alignment, maximum lines with an ellipsis).
+- The **typesetter** shapes the text —ligatures, right to left, fallback fonts, color emoji— and keeps the layout: as long as text, style and width do not change, it is not redone. Each glyph is painted once, **at the scale of the finest render surface**, into a 2048² atlas it shares with the images. A letter is a mask the shader tints; an emoji brings its own color.
+- Each glyph is one more element: it is clipped, transformed and blended like everything else. The text origin is rounded to real pixels so that it does not come out soft.
+- **`Instr::Imagen`**: a path or an icon by name (`Fuente::Icono("firefox")`; finding it is the platform's business). SVGs are painted at the exact size for the scale; with `tinte`, the shape is painted in a single color: what a symbolic icon wants.
+- **The workshop.** Shaping, painting glyphs and decoding images happen on its own thread, which is also the one that reads the system fonts at startup. The renderer **asks and does not wait**: while a layout is on its way it shows the last one there was in that spot, and whatever is already in the scene is ordered before the window even exists. First frame at ~170 ms, and none slow after it.
+- **Measuring.** A `Texto` with `mide` leaves its width and its height in two read-only properties. With `Comportamiento::Sigue` —a property that chases an expression with its spring— a box grows with its label.
+- There is a permanent snitch: any frame longer than 2.4 periods is printed to the console with its time.
 
-## La frontera de plataforma (`src/plataforma/`)
+## The platform boundary (`src/plataforma/`)
 
-Lo único del programa que sabe qué es Wayland. Una plataforma pone las superficies que pide una escena y se las entrega al render como láminas; le cuenta el ratón, la escala y los monitores que van y vienen; le da una `Ventana` con un método (`region_de_entrada`); y sabe encontrar un icono por su nombre. Hoy solo hay `wayland.rs`. En cualquier otro sistema el núcleo compila y dice que aún no sabe poner ventanas. **`./portable.sh` lo comprueba contra Linux, Windows y macOS**, y es la guarda de que nada de un sistema se cuele fuera de aquí.
+The only part of the program that knows what Wayland is. A platform puts up the surfaces a scene asks for and hands them to the renderer as render surfaces; it tells it about the mouse, the scale and the monitors coming and going; it gives it a `Ventana` with one method (`region_de_entrada`); and it knows how to find an icon by its name. Today there is only `wayland.rs`. On any other system the core compiles and says it does not know how to put up windows yet. **`./portable.sh` checks it against Linux, Windows and macOS**, and it is the guard that nothing belonging to one system slips out of here.
 
-## Servicios (`plataforma/mod.rs`, `plataforma/hyprland.rs`)
+## Services (`plataforma/mod.rs`, `plataforma/hyprland.rs`)
 
-Lo que pasa en el sistema llega a la lógica por `plataforma::servicio(nombre, avisar)`: un hilo que escucha y avisa con un `Valor` —un JSON en pequeño: nulo, sí/no, número, texto, lista, mapa— que Luau recibe como tabla. `plataforma::orden(nombre, args)` es el camino de vuelta. Hoy contesta Hyprland, hablado por sus dos sockets con `std` y nada más: uno para preguntar y mandar (`j/workspaces`, `dispatch …`), otro por el que cuenta lo que pasa. Un sistema sin ese servicio dice que no lo tiene.
+What happens in the system reaches the logic through `plataforma::servicio(nombre, avisar)`: a thread that listens and reports with a `Valor` —a small JSON: null, yes/no, number, text, list, map— that Luau receives as a table. `plataforma::orden(nombre, args)` is the way back. Today Hyprland answers, spoken to over its two sockets with `std` and nothing else: one to ask and to command (`j/workspaces`, `dispatch …`), another over which it tells what is happening. A system without that service says it does not have it.
 
-Además de Hyprland: `plataforma/sistema.rs` (audio, batería y red: un hilo por servicio, que solo avisa si algo cambia) y `plataforma/mpris.rs` (lo que suena, por D-Bus con `zbus`, escuchando señales). Dos servicios no escuchan sino que **son** el servidor, los dos con `zbus`: `plataforma/avisos.rs` (las notificaciones: quien tenga el nombre `org.freedesktop.Notifications` las recibe, y si ya es de otro el servicio dice que no está) y `plataforma/bandeja.rs` (la bandeja: vigía si nadie lo es, anfitrión del vigía que haya si lo hay). Lo que hay que decirle al bus fuera de la llamada que lo provocó —una señal, una caducidad— lo hace un hilo aparte, por un canal.
+Besides Hyprland: `plataforma/sistema.rs` (audio, battery and network: one thread per service, which only reports if something changes) and `plataforma/mpris.rs` (what is playing, over D-Bus with `zbus`, listening to signals). Two services do not listen but **are** the server, both with `zbus`: `plataforma/avisos.rs` (the notifications: whoever holds the name `org.freedesktop.Notifications` receives them, and if it already belongs to someone else the service says it is not there) and `plataforma/bandeja.rs` (the tray: watcher if nobody else is, host to whatever watcher there is if there is one). Whatever has to be said to the bus outside the call that caused it —a signal, an expiry— is done by a separate thread, over a channel.
 
-Todo lo que se lanza pasa por `plataforma::morir_con_el_padre`: en Linux, `PR_SET_PDEATHSIG`.
+Everything that is spawned goes through `plataforma::morir_con_el_padre`: on Linux, `PR_SET_PDEATHSIG`.
 
-## Superficies (`plataforma/wayland.rs`, `gpu.rs`)
+## Surfaces (`plataforma/wayland.rs`, `gpu.rs`)
 
-La escena declara la superficie que quiere: tamaño en píxeles **lógicos**, ancla, margen, nivel (fondo, debajo, encima, sobre todo), cuánto sitio reserva, y en qué pantallas (`Todas` o una lista). El hilo de Wayland pone una en cada monitor que toque, las quita cuando el monitor se va y las pone cuando uno llega. Cada una pasa al render como una **lámina** cuando el compositor la configura.
+The scene declares the surface it wants: size in **logical** pixels, anchor, margin, level (background, bottom, top, overlay), how much room it reserves, and on which screens (`Todas` or a list). The Wayland thread puts one on each monitor it applies to, removes them when the monitor goes away and puts them up when one arrives. Each one reaches the renderer as a **render surface** when the compositor configures it.
 
-- **Escala.** Con `wp_fractional_scale` y `wp_viewporter`: el tamaño lógico no cambia, y la lámina se pinta con `tamaño × escala` píxeles de verdad. El shader divide la posición por la escala y suaviza los bordes en píxeles de verdad, así que a escala 2 nada sale blando —salvo el texto, que es un mapa de bits—. Sin esos protocolos, cae a la escala entera de toda la vida.
-- **Ritmo.** Solo una lámina —la del monitor más rápido— espera a la pantalla; las demás presentan sin bloquear. Si esperasen todas, un monitor a 60 Hz frenaría a otro a 165.
-- **Región de entrada.** Cada frame en que cambian, las cajas de las zonas activas se le dan al compositor como región de entrada, justo antes de presentar: lo demás de la superficie, aunque sea suya, deja pasar el clic.
-- La GPU (dispositivo, tubería, almacenes) se crea con la primera lámina que llega.
+- **Scale.** With `wp_fractional_scale` and `wp_viewporter`: the logical size does not change, and the render surface is painted with `size × scale` real pixels. The shader divides the position by the scale and smooths the edges in real pixels, so at scale 2 nothing comes out soft —except the text, which is a bitmap—. Without those protocols, it falls back to the old integer scale.
+- **Pace.** Only one render surface —the one on the fastest monitor— waits for the screen; the rest present without blocking. If they all waited, a 60 Hz monitor would hold back a 165 Hz one.
+- **Input region.** On every frame in which they change, the boxes of the active zones are handed to the compositor as the input region, right before presenting: the rest of the surface, even though it is its own, lets the click through.
+- The GPU (device, pipeline, buffers) is created with the first render surface that arrives.
 
-## Escribir (`render.rs`, `texto.rs`)
+## Typing (`render.rs`, `texto.rs`)
 
-Un `input` lo edita **el render**, no la lógica: la tecla entra, `Edicion` cambia el texto y el cursor, y se ve en ese mismo frame aunque la lógica lleve un segundo atascada. El taller devuelve con cada maqueta dónde cae cada letra (`cursores`), y con eso se coloca el cursor, se pinta la selección y se sabe qué letra hay bajo el ratón. La lógica recibe el texto ya cambiado (`Evento::Texto`) y el Intro (`Evento::Envia`).
+An `input` is edited by **the renderer**, not by the logic: the key arrives, `Edicion` changes the text and the caret, and it shows in that same frame even if the logic has been stuck for a second. With every layout the workshop returns where each letter falls (`cursores`), and with that the caret is placed, the selection is painted and it is known which letter is under the mouse. The logic receives the text already changed (`Evento::Texto`) and the Enter (`Evento::Envia`).
 
-La repetición de tecla es nuestra (400 ms, luego una cada 33): así es igual en todos los sistemas. El portapapeles es `arboard`, que existe en los tres.
+Key repeat is ours (400 ms, then one every 33): that way it is the same on every system. The clipboard is `arboard`, which exists on all three.
 
-## Órdenes desde fuera (`plataforma/mod.rs`)
+## Commands from outside (`plataforma/mod.rs`)
 
-Un hilo escucha en `$XDG_RUNTIME_DIR/pleamar-ESCENA.sock`; `pleamar --decir ESCENA "emit toggle"` escribe una línea y se va (2 ms). Una pregunta (`get open`) va al render con un canal de vuelta (`ARender::Pregunta`) y se contesta por el mismo socket. La orden entra al render como `ARender::SucesoDeFuera`, por la misma puerta que los sucesos de la lógica. Es `cfg(unix)`: en Windows será una tubería con nombre.
+A thread listens on `$XDG_RUNTIME_DIR/pleamar-SCENE.sock`; `pleamar --decir SCENE "emit toggle"` writes one line and leaves (2 ms). A question (`get open`) goes to the renderer with a channel back (`ARender::Pregunta`) and is answered over the same socket. The command enters the renderer as `ARender::SucesoDeFuera`, through the same door as the logic's events. It is `cfg(unix)`: on Windows it will be a named pipe.
 
-## Soltar desde otra aplicación (`plataforma/wayland.rs`)
+## Dropping from another application (`plataforma/wayland.rs`)
 
-`wl_data_device`: al entrar un arrastre se mira si trae `text/uri-list` o `text/plain`, y al soltarlo se lee en un hilo aparte —quien lo ofrece puede tardar— y llega como `ARender::Soltado`. El render mira qué zona hay debajo y dispara `on drop zona`.
+`wl_data_device`: when a drag enters, it looks at whether it brings `text/uri-list` or `text/plain`, and when it is dropped it is read on a separate thread —whoever offers it may take a while— and arrives as `ARender::Soltado`. The renderer looks at which zone is underneath and fires `on drop zone`.
 
-## Varios ficheros (`lenguaje/mod.rs`)
+## Several files (`lenguaje/mod.rs`)
 
-`import` se resuelve **antes** de compilar, empalmando árboles: cada fichero se trocea y se agrupa por separado, lo que declaran las bibliotecas se pone delante del cuerpo de la escena, y `obra` compila un solo árbol sin saber que hubo varios. Para que un fallo sepa de qué fichero viene sin cargar cada ficha con un nombre, el número de línea lo lleva dentro: la línea 12 del tercer fichero es la 2 000 012, y al enseñar el fallo se deshace. `leer_fichero` devuelve, con la escena, la lista de ficheros de los que está hecha: es lo que vigila la recarga en caliente.
+`import` is resolved **before** compiling, by splicing trees: each file is tokenized and parsed on its own, what the libraries declare goes in front of the scene's body, and `obra` compiles a single tree without knowing there was more than one. So that an error knows which file it comes from without loading every token with a name, the line number carries it inside: line 12 of the third file is 2,000,012, and it is undone when the error is shown. `leer_fichero` returns, along with the scene, the list of files it is made of: that is what hot reload watches.
 
-## Modelos (`lenguaje/obra.rs`, `logica_luau.rs`)
+## Models (`lenguaje/obra.rs`, `logica_luau.rs`)
 
-El render no sabe que hay listas. `model rows max 14 { label: text; enabled: bool }` declara, por dentro, catorce textos vivos `rows.k.label`, catorce hechos `rows.k.enabled`, y `rows.count` y `rows.total`. `for r in rows` despliega catorce copias, cada una en un ámbito donde `r` es otro nombre para `rows.k` (el mismo mecanismo de alias de los componentes) y con una condición: `rows.count > k`. Esa condición apaga el dibujo, el hueco en el reparto y las zonas. En Luau, `model.rows = lista` reparte cada campo a su texto o a su hecho y manda solo lo que cambió.
+The renderer does not know there are lists. `model rows max 14 { label: text; enabled: bool }` declares, underneath, fourteen live texts `rows.k.label`, fourteen facts `rows.k.enabled`, plus `rows.count` and `rows.total`. `for r in rows` unfolds fourteen copies, each one in a scope where `r` is another name for `rows.k` (the same aliasing mechanism as components) and with a condition: `rows.count > k`. That condition turns off the drawing, the slot in the layout and the zones. In Luau, `model.rows = list` hands each field to its text or to its fact and sends only what changed.
 
-Es una decisión a propósito: el lenguaje ya es el definitivo —se escribe una lista y se recorre—, y la implementación puede cambiar debajo (copias que nazcan en marcha, G12) sin tocar una escena.
+It is a deliberate decision: the language is already the definitive one —a list is written and walked— and the implementation can change underneath (copies born at runtime, G12) without touching a scene.
 
-## Emergentes (`plataforma/wayland.rs`, `gpu.rs`, `forma.wgsl`)
+## Popups (`plataforma/wayland.rs`, `gpu.rs`, `forma.wgsl`)
 
-Una `popup` no es otra escena: es **otra ventana a la misma**. Lo de dentro se compila bajo una traslación que lo lleva lejos (a 10 000 px por emergente), y su lámina lleva un *origen*: el shader resta ese origen al colocar los quads y lo suma al calcular cada píxel. Todo lo demás —propiedades, zonas, reglas, el atlas— es común, y por eso un menú se anima y se pulsa igual que la barra de la que sale. Al componer, un elemento sobrevive si toca la superficie principal o el trozo que alguna emergente abierta está enseñando.
+A `popup` is not another scene: it is **another window onto the same one**. What is inside is compiled under a translation that takes it far away (10,000 px per popup), and its render surface carries an *origin*: the shader subtracts that origin when placing the quads and adds it back when computing each pixel. Everything else —properties, zones, rules, the atlas— is shared, and that is why a menu animates and is clicked just like the bar it comes out of. When composing, an element survives if it touches the main surface or the piece some open popup is showing.
 
-El render decide cuándo (el hecho de `open:` y la geometría, mirados después de las reglas) y llama a `plataforma::emergente`; la plataforma crea el `xdg_popup` desde ese mismo hilo —los objetos de Wayland lo permiten—, y cuando el compositor lo configura, la lámina le llega al render como cualquier otra. El ratón dentro de una emergente llega ya con el origen sumado. Al cerrar, primero suelta el render lo que pintaba y luego se destruye la superficie.
+The renderer decides when (the `open:` fact and the geometry, looked at after the rules) and calls `plataforma::emergente`; the platform creates the `xdg_popup` from that same thread —Wayland's objects allow it—, and when the compositor configures it, the render surface reaches the renderer like any other. The mouse inside a popup arrives with the origin already added. On closing, the renderer first lets go of what it was painting and then the surface is destroyed.
 
-## Reposo
+## At rest
 
-Si ninguna propiedad se mueve y ningún comportamiento está vivo, el render no pinta: espera un mensaje, un retraso que venza o el próximo parpadeo. Cero frames.
+If no property is moving and no behavior is alive, the renderer does not paint: it waits for a message, for a delay to come due, or for the next blink. Zero frames.
 
-## Cómo se prueba
+## How it is tested
 
 ```sh
-./target/release/pleamar                 # Marea; botón derecho la cierra
-./target/release/pleamar --escena isla   # la isla
-./target/release/pleamar --escena cara   # la cara de Marea: capas y gestos, con su guion
-./target/release/pleamar --escena muestrario   # degradado, borde, transformaciones anidadas, textura girada, opacidad de grupo
+./target/release/pleamar                 # Marea; right click closes it
+./target/release/pleamar --escena isla   # the island
+./target/release/pleamar --escena cara   # Marea's face: layers and gestures, with its script
+./target/release/pleamar --escena muestrario   # gradient, border, nested transforms, rotated texture, group opacity
 ./target/release/pleamar --demo --segundos 9
-./target/release/pleamar --ingenuo       # la lógica bloquea al render, como QtQuick
+./target/release/pleamar --ingenuo       # the logic blocks the renderer, like QtQuick
 ./target/release/pleamar --raton "360,90@500 500,172@1100 pulsa@3200 fuera@4500"
 ```
 
-Sale en `HDMI-A-1`. La gráfica de abajo es una barra por frame; la franja roja, el tiempo con la lógica bloqueada. **No medir mientras se captura con `grim`**: provoca frames caídos.
+It comes up on `HDMI-A-1`. The graph at the bottom is one bar per frame; the red band is the time with the logic blocked. **Do not measure while capturing with `grim`**: it causes dropped frames.
 
-## Deudas conocidas
+## Known debts
 
-- Todas están en [[pleamar · 08 Limitaciones conocidas]]. Las que más pesan:
-- Las escenas se escriben en Rust y se compilan con el programa.
-- Sin layout.
-- Un grupo con opacidad dentro de otro no tiene capa propia: multiplica. Y si hay más de cuatro fundiéndose a la vez, los que sobran también multiplican.
-- Con escala distinta en cada eje, el suavizado del borde es aproximado.
-- El degradado y la luz viven en el espacio del grupo, no en el de la forma: si la forma gira *por sí misma* (`.girada`), el degradado no gira con ella.
-- Los primeros frames tras despertar no esperan al vsync: el reloj de animación debería ir con el tiempo de presentación.
-- Un frame de cada ~400 se cae a 33 ms. Sin investigar.
+- All of them are in [[pleamar · 08 Limitaciones conocidas]]. The heaviest ones:
+- Scenes are written in Rust and compiled with the program.
+- No layout.
+- A group with opacity inside another one does not get a layer of its own: it multiplies. And if more than four are blending at once, the extra ones multiply too.
+- With a different scale on each axis, the smoothing of the edge is approximate.
+- The gradient and the light live in the group's space, not in the shape's: if the shape rotates *by itself* (`.girada`), the gradient does not rotate with it.
+- The first frames after waking up do not wait for vsync: the animation clock should follow the presentation time.
+- One frame in ~400 drops to 33 ms. Not investigated.

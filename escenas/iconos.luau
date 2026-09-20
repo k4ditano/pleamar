@@ -1,8 +1,8 @@
--- La lógica de la bandeja: qué iconos hay, y el menú del que se pida. El menú es
--- un árbol, y un submenú no sale al lado: se entra en él, con una fila para volver.
+-- The tray's logic: which icons there are, and the menu of the one asked for. A menu is
+-- a tree, and a submenu does not open beside it: you go into it, with a row to come back.
 
-local owner = nil                -- de qué icono es el menú abierto
-local root, path = {}, {}        -- ese menú, entero; y por qué submenús se ha entrado
+local owner = nil                -- which icon the open menu belongs to
+local root, path = {}, {}        -- that menu, whole; and which submenus have been entered
 
 local function show(list)
     local rows = #path > 0 and { { back = true, label = "‹  Volver" } } or {}
@@ -11,7 +11,7 @@ local function show(list)
 end
 
 if not sys.watch("tray", function(list) model.icons = list end) then
-    log("este sistema no tiene bandeja todavía")
+    log("this system has no tray yet")
 end
 
 on("activate", function(i)
@@ -24,7 +24,7 @@ on("menu", function(i)
     if not it then return end
     local ok, menu = pcall(sys.ask, "tray.menu", it.key)
     if not ok then
-        -- Sin menú que leer: que lo enseñe ella, si sabe.
+        -- No menu to read: let it show the menu itself, if it knows how.
         pcall(sys.call, "tray.context", it.key)
         return
     end

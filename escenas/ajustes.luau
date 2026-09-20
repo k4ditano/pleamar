@@ -1,8 +1,8 @@
--- Guardar y recordar. La escena tiene su propia carpeta: `files.folder` dice cuál,
--- y de ahí no se sale. Nada de rutas, nada de `..`, nada del `.ssh` de nadie.
+-- Save and remember. The scene has its own folder: `files.folder` says which one,
+-- and there is no getting out of it. No paths, no `..`, nobody's `.ssh`.
 --
--- Lo que se guarda es una tabla, y se lee como una tabla: el JSON lo pone y lo
--- quita el servicio.
+-- What is saved is a table, and it reads back as a table: the JSON is put on and
+-- taken off by the service.
 
 local FICHERO = "settings.json"
 
@@ -21,7 +21,7 @@ on("pick", function(cual)
     guardar()
 end)
 
--- Si el fichero cambia por debajo —otra copia de la escena, o un editor—, se recarga.
+-- If the file changes underneath —another copy of the scene, or an editor—, it reloads.
 sys.watch("files:" .. FICHERO, function()
     local ahora = sys.ask("files.read", FICHERO, "json")
     if ahora then

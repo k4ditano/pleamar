@@ -5,6 +5,7 @@ whole scene and compiles: `./probar.sh` checks them.
 
 - [A list of thousands](#a-list-of-thousands)
 - [Dragging a list](#dragging-a-list)
+- [A progress ring](#a-progress-ring)
 - [A grid](#a-grid)
 - [Something that melts into something else](#something-that-melts-into-something-else)
 - [Gradients and paths](#gradients-and-paths)
@@ -107,10 +108,45 @@ scene Jumps {
 }
 ```
 
+## A progress ring
+
+`arc` draws an arc shaped like `∩`: it opens **upwards and symmetrically**, and
+`span` is the whole angle it covers, not where it starts. A ring that fills from
+the top clockwise comes from turning it by half of what it covers:
+
+```plm
+language 0.1
+scene Ring {
+    surface { size: 420, 140; anchor: top }
+    box { from: 0, 0; size: 420, 140; color: #151616 }
+    repeat k in 0..5 {
+        let p = k / 4                                    // 0, 0.25, 0.5, 0.75, 1
+        ellipse { at: 50 + k * 80, 70; radius: 26; stroke: 6; color: #f5f7f5; opacity: 14% }
+        arc {
+            at: 50 + k * 80, 70
+            radius: 26
+            width: 6
+            span: p * 360deg                             // how much of the circle
+            rotate: p * 180deg                           // half of it: that starts it at the top
+            color: #9ed6bd
+        }
+        text number(p * 100, 0, "%") { at: 50 + k * 80, 70; anchor: center; size: 11; color: #f5f7f5 }
+    }
+}
+```
+
+With a battery: `span: batt.percent / 100 * 360deg` and
+`rotate: batt.percent / 100 * 180deg`, because `battery.percent` runs from 0 to
+100. `audio.volume`, on the other hand, runs from 0 to 1. The scales of every
+service field are in the reference.
+
+To have it fill counter-clockwise, negate the rotation. To start somewhere other
+than the top, add a fixed angle to it.
+
 ## A grid
 
 `wrap: n` turns a layout into a grid: n per line, then the next one. The cell is
-as big as the largest child, and **what is not shown leaves no hole**, so the
+as big as the largest child, and **what is not shown leaves no gap**, so the
 rest move up with the layout's spring.
 
 ```plm

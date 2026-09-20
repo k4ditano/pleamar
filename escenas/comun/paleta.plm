@@ -1,9 +1,9 @@
-// Los colores de casa. Una escena que quiera otro tono lo declara ella, con el
-// mismo nombre, después de importar: el suyo gana.
+// The house colors. A scene that wants another tone declares it itself, with the
+// same name, after importing: its own wins.
 
 library Palette {
-    let ink  = #f5f7f5        // lo que se lee
-    let mint = #9ed6bd        // el acento
-    let sand = #e8c07a        // el segundo acento: avisos, «hay más»
-    let coal = #151616        // el fondo de las píldoras y los paneles
+    let ink  = #f5f7f5        // what is read
+    let mint = #9ed6bd        // the accent
+    let sand = #e8c07a        // the second accent: notices, the «hay más» chip
+    let coal = #151616        // the background of pills and panels
 }

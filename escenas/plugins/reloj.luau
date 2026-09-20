@@ -1,8 +1,8 @@
--- La lógica del plugin del reloj. Corre en su propio estado de Luau: aquí `text.now`
--- es el `Clock.now` de la escena, y no existe nada que no sea del plugin.
+-- The clock plugin's logic. It runs in its own Luau state: here `text.now`
+-- is the scene's `Clock.now`, and nothing exists that is not the plugin's.
 --
--- No lanza nada: `clock.seconds` es un servicio, y llega solo. Con el segundero
--- apagado, la cara solo cambia cuando cambia el minuto.
+-- It spawns nothing: `clock.seconds` is a service, and it arrives on its own. With the
+-- seconds hand off, the face only changes when the minute changes.
 
 local ultimo = ""
 

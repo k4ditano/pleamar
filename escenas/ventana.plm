@@ -1,8 +1,8 @@
-// Una ventana de las normales: con su título, su marco y su cruz, y la coloca el
-// compositor. `kind: window` es lo único que la distingue de un panel.
+// An ordinary window: with its title, its frame and its close button, and the
+// compositor places it. `kind: window` is all that sets it apart from a panel.
 //
-// Como la puede estirar cualquiera, lo que dibuja va contra `screen.width` y
-// `screen.height`, que para una ventana son lo que mide ella ahora mismo.
+// Since anyone can resize it, what it draws goes against `screen.width` and
+// `screen.height`, which for a window are what it measures right now.
 
 import "comun/paleta.plm"
 
@@ -24,14 +24,14 @@ scene Window {
         text "la estira quien quiera: esto se mide contra lo que mide ella" { size: 11.5; color: ink; opacity: 45% }
     }
 
-    //  Pegado abajo a la derecha, como en cualquier diálogo.
+    //  Stuck to the bottom right, as in any dialog.
     group {
         size: 150, 38
         zone box hit { at: w - 100, h - 40; size: 160, 38; corner: 12; cursor: pointer }
         box { at: w - 100, h - 40; size: 160, 38; corner: 12; color: mix(#232727, mint, on) }
         text "de acuerdo" { at: w - 100, h - 40; anchor: center; size: 13; weight: 500; color: mix(ink, #10221b, on) }
     }
-    //  Y una raya que cruza la ventana entera, mida lo que mida.
+    //  And a stripe that crosses the whole window, whatever it measures.
     path {
         at: 30, 96
         stroke: 1.5

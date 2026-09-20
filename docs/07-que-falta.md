@@ -1,97 +1,97 @@
-# Paridad con Quickshell — qué falta de verdad
+# Parity with Quickshell — what is actually missing
 
-**Para qué es esta nota.** pleamar es **una alternativa a Quickshell**, no el motor de Marea. Marea fue la prueba de esfuerzo del principio, y algún día se reescribirá con este lenguaje; pero lo que decide si esto sirve es si alguien que hoy escribe su escritorio en Quickshell puede escribirlo aquí. Esta nota es esa vara de medir, y manda sobre [[pleamar · 04 Prueba - cabe Marea]].
+**What this note is for.** pleamar is **an alternative to Quickshell**, not Marea's engine. Marea was the stress test at the start, and some day it will be rewritten in this language; but what decides whether this is worth anything is whether someone who writes their desktop in Quickshell today can write it here. This note is that yardstick, and it overrules [[pleamar · 04 Prueba - cabe Marea]].
 
-**De dónde salen los números.** No de la documentación de Quickshell: de **dos configuraciones de verdad** que hay en esta máquina —`~/.config/quickshell` (k4, 278 ficheros QML) y `proyecto-marea` (370)—, contando qué tipos instancian. Un tipo que nadie usa no es una carencia; uno que sale 800 veces, sí.
+**Where the numbers come from.** Not from Quickshell's documentation: from **two real configurations** on this machine —`~/.config/quickshell` (k4, 278 QML files) and `proyecto-marea` (370)—, counting which types they instantiate. A type nobody uses is not a gap; one that shows up 800 times is.
 
-## 1. Lo que usan de verdad
+## 1. What they actually use
 
-Tipos instanciados, con las veces que aparecen entre las dos configuraciones:
+Instantiated types, with the number of times they appear across the two configurations:
 
-| De QtQuick | | pleamar |
+| From QtQuick | | pleamar |
 | --- | --- | --- |
-| `Rectangle` | 819 | ✅ `box`, y además fundido de siluetas, sombra, filo y luz |
-| `Text` | 655 | ✅ `text`, con huecos (`"{a} · {b}"`), medida y recorte |
-| `NumberAnimation` · `SequentialAnimation` · `ParallelAnimation` · `PauseAnimation` · `ScriptAction` | 469 · 78 · 38 · 42 · 37 | ✅ muelles (`~calm`), capas con retraso, y `gesture` (que es una línea de tiempo: lo mismo que `SequentialAnimation`) |
-| `RowLayout` · `ColumnLayout` · `Row` · `Column` | 460 · 279 · 106 · 74 | ✅ `row` / `column` con hueco, relleno, alineado, ancla, `between` y muelle |
-| `Repeater` | 364 | ✅ `repeat` (fijo) y `for` (sobre un modelo) |
-| `MouseArea` · `HoverHandler` | 351 · 33 | ✅ zonas: `on press/enter/leave/hover/drag/scroll/hold` |
+| `Rectangle` | 819 | ✅ `box`, and on top of that blended shapes, shadow, rim and light |
+| `Text` | 655 | ✅ `text`, with slots (`"{a} · {b}"`), measuring and clipping |
+| `NumberAnimation` · `SequentialAnimation` · `ParallelAnimation` · `PauseAnimation` · `ScriptAction` | 469 · 78 · 38 · 42 · 37 | ✅ springs (`~calm`), layers with delay, and `gesture` (which is a timeline: the same as `SequentialAnimation`) |
+| `RowLayout` · `ColumnLayout` · `Row` · `Column` | 460 · 279 · 106 · 74 | ✅ `row` / `column` with gap, padding, align, anchor, `between` and spring |
+| `Repeater` | 364 | ✅ `repeat` (fixed) and `for` (over a model) |
+| `MouseArea` · `HoverHandler` | 351 · 33 | ✅ zones: `on press/enter/leave/hover/drag/scroll/hold` |
 | `Item` | 351 | ✅ `group` |
-| `Timer` | 195 | ✅ `every` en la escena, `after`/`every` en la lógica |
-| `Connections` | 145 | ✅ reglas `on suceso`, `on("fact:x")` |
-| `Shape` · `ShapePath` · `PathLine` | 40 · 78 · 56 | ✅ `path` con `move`, `line`, `curve` y `close`: relleno o con trazo, y se funde con lo demás |
-| `Component` · `Loader` | 67 · 64 | 🟡 `component` sí; carga diferida no · §2 |
-| `GradientStop` | 66 | ✅ hasta ocho paradas, cada una donde diga, y radial además de lineal |
-| `Image` | 63 | ✅ `image`, por fichero, por icono o desde un dato |
-| `TextInput` | 34 | ✅ `input` (una línea; sin IME) |
-| `ListView` · `Flickable` | 31 · 22 | 🟡 `view:` en un reparto, con `content:` y `for … from` para listas de miles en unas pocas copias. Sin arrastrar |
-| `Flow` | 28 | ⬜ sin salto de línea en los repartos |
-| `QtObject` | 38 | 🟡 propiedades sueltas, sin agrupar |
+| `Timer` | 195 | ✅ `every` in the scene, `after`/`every` in the logic |
+| `Connections` | 145 | ✅ `on event` rules, `on("fact:x")` |
+| `Shape` · `ShapePath` · `PathLine` | 40 · 78 · 56 | ✅ `path` with `move`, `line`, `curve` and `close`: filled or stroked, and it blends with everything else |
+| `Component` · `Loader` | 67 · 64 | 🟡 `component` yes; deferred loading no · §2 |
+| `GradientStop` | 66 | ✅ up to eight stops, each one where it says, and radial as well as linear |
+| `Image` | 63 | ✅ `image`, from a file, from an icon or from a piece of data |
+| `TextInput` | 34 | ✅ `input` (single line; no IME) |
+| `ListView` · `Flickable` | 31 · 22 | 🟡 `view:` in a layout, with `content:` and `for … from` for lists of thousands in a handful of copies. No dragging |
+| `Flow` | 28 | ⬜ no line wrapping in layouts |
+| `QtObject` | 38 | 🟡 standalone properties, no grouping |
 
-| De Quickshell | | pleamar |
+| From Quickshell | | pleamar |
 | --- | --- | --- |
-| `Process` | 83 | ✅ `run`, `spawn`, `kill`, con permisos |
-| `Singleton` | 47 | ✅ un plugin (biblioteca con lógica) es esto, y además con frontera y permisos |
-| `Region` | 27 | ✅ la región de entrada se calcula sola, de las zonas |
-| `FileView` | 16 | ✅ servicio `files`, con carpeta propia por escena y por plugin |
-| `PanelWindow` | 10 | ✅ varias por escena (`surface panel { … }`), con su `open:` |
-| `Variants` | 7 | ✅ `screens: each`: una superficie por monitor, cada una con su estado |
+| `Process` | 83 | ✅ `run`, `spawn`, `kill`, with permissions |
+| `Singleton` | 47 | ✅ a plugin (a library with logic) is this, and with a boundary and permissions on top |
+| `Region` | 27 | ✅ the input region is computed on its own, from the zones |
+| `FileView` | 16 | ✅ `files` service, with a folder of its own per scene and per plugin |
+| `PanelWindow` | 10 | ✅ several per scene (`surface panel { … }`), each with its `open:` |
+| `Variants` | 7 | ✅ `screens: each`: one surface per monitor, each with its own state |
 | `ShellRoot` · `Scope` | 7 · 4 | ✅ `scene` |
-| `IpcHandler` | 4 | ✅ `pleamar --decir`, con `emit`, `fact`, `text`, `get` |
+| `IpcHandler` | 4 | ✅ `pleamar --decir`, with `emit`, `fact`, `text`, `get` |
 | `IconImage` | 3 | ✅ `image x = icon "…"` |
-| `SystemClock` | 2 | ✅ servicio `clock`, y `service clock as now { … }` sin lógica ninguna |
-| `ScreencopyView` | 2 | ⬜ ver lo que hay en una pantalla o en una ventana |
-| `NotificationServer` | 2 | ✅ servicio `notifications` |
-| `FloatingWindow` | 2 | ✅ `kind: window`, con su título; y lo que dibuja se mide contra lo que mide ella |
-| `WlSessionLock` | 1 | ⬜ bloqueo de sesión |
+| `SystemClock` | 2 | ✅ `clock` service, and `service clock as now { … }` with no logic at all |
+| `ScreencopyView` | 2 | ⬜ seeing what is on a screen or in a window |
+| `NotificationServer` | 2 | ✅ `notifications` service |
+| `FloatingWindow` | 2 | ✅ `kind: window`, with its title; and what it draws is measured against the window's own size |
+| `WlSessionLock` | 1 | ⬜ session lock |
 | `LazyLoader` | 1 | ⬜ · §2 |
-| `GlobalShortcut` | 1 | 🟡 un bind del compositor que llama a `--decir` |
-| `PwObjectTracker` | 1 | ✅ servicio `audio` (aunque por `wpctl`, no nativo) |
+| `GlobalShortcut` | 1 | 🟡 a compositor bind that calls `--decir` |
+| `PwObjectTracker` | 1 | ✅ `audio` service (through `wpctl`, though, not native) |
 | `ClippingRectangle` | 1 | ✅ `clip` |
 
-Y lo que usan del objeto `Quickshell`: `env` (82) ✅ `sys.ask("env", …)`, con permiso; `shellPath` (32) ✅ `sys.ask("files.folder")` y `require`, que ya son relativos a quien los escribe; `screens` (31) ✅ `screens: each` y `screen.name`; `execDetached` (24) ✅ `spawn`; `iconPath` (18) ✅ `image x = icon "…"`; `clipboardText` (6) ✅ `sys.ask("clipboard")`.
+And what they use from the `Quickshell` object: `env` (82) ✅ `sys.ask("env", …)`, with permission; `shellPath` (32) ✅ `sys.ask("files.folder")` and `require`, which are already relative to whoever writes them; `screens` (31) ✅ `screens: each` and `screen.name`; `execDetached` (24) ✅ `spawn`; `iconPath` (18) ✅ `image x = icon "…"`; `clipboardText` (6) ✅ `sys.ask("clipboard")`.
 
-## 2. Lo que falta, por lo que duele
+## 2. What is missing, ordered by how much it hurts
 
-### 🟡 Listas: lo que queda
+### 🟡 Lists: what is left
 
-Una lista de cinco mil ya cabe en dieciséis copias (`content:` + `for … from`, §3.1), así que lo que hay no depende de lo que haya. Falta **arrastrar** para moverlas, que en un panel táctil es lo natural, y que las copias **nazcan y mueran solas** en vez de que la escena declare la ventana y la lógica corte el trozo (G12).
+A list of five thousand already fits in sixteen copies (`content:` + `for … from`, §3.1), so the cost no longer depends on how much there is. What is missing is **dragging** to move them, which on a touchpad is the natural thing, and copies that **are born and die on their own** instead of the scene declaring the window and the logic slicing the chunk (G12).
 
-### 🟡 Carga diferida: `Loader`, `LazyLoader`, `Component`
+### 🟡 Deferred loading: `Loader`, `LazyLoader`, `Component`
 
-128 usos. En pleamar todo se despliega al cargar. Para un menú que casi nunca se abre, o una lista de 200, eso es trabajo y memoria por nada.
+128 uses. In pleamar everything is expanded at load time. For a menu that almost never opens, or a list of 200, that is work and memory for nothing.
 
-### 🟡 Lo que no se ha probado con manos de verdad
+### 🟡 What has not been tested with real hands
 
-El teclado exclusivo, el clic fuera de una emergente, el arrastre real, la rueda, y las notificaciones y la bandeja en la sesión de verdad (con k4 parado). Están en la nota 08 como E1, E8, S11, B12 y B14.
+Exclusive keyboard, clicking outside a popup, real dragging, the wheel, and notifications and the tray in the real session (with k4 stopped). They are in note 08 as E1, E8, S11, B12 and B14.
 
-### ⚪ Lo demás
+### ⚪ The rest
 
-Bloqueo de sesión (S7); `ScreencopyView`; IME (E7).
+Session lock (S7); `ScreencopyView`; IME (E7).
 
-## 3. Lo que pleamar tiene y Quickshell no
+## 3. What pleamar has and Quickshell does not
 
-Para no perderlo de vista, porque es la razón de que esto exista:
+Kept in sight here, because it is the reason this exists:
 
-- **El render anima solo.** Con la lógica bloqueada 600 ms, 38 frames a ~17 ms; QtQuick, en el mismo ensayo, un hueco de 600 ms. La lógica no puede hacer tartamudear la pantalla, por mal escrita que esté.
-- **Todo se comprueba al cargar.** Un nombre mal escrito es un fallo con fichero, línea, flecha y «did you mean…?», no un `undefined` en marcha.
-- **Un lenguaje que no puede colgarse:** sin bucles libres ni recursión. Lo declarado termina siempre.
-- **Plugins con contrato:** frontera propia bajo su nombre, hilo propio, y permisos que **aprueba quien los usa** (`pleamar --aprobar`). En Quickshell, un trozo de configuración de otro es JavaScript con todos tus permisos.
-- **Formas que se funden**, con sombra, filo y luz, sin capas ni trucos: es SDF.
-- **Multiplataforma por diseño:** todo lo del sistema detrás de `src/plataforma/`, y `./portable.sh` comprueba que compila para Windows y macOS. Los escritorios y la ventana activa van por protocolos estándar, no por un compositor.
+- **The renderer animates on its own.** With the logic blocked for 600 ms, 38 frames at ~17 ms; QtQuick, in the same test, a 600 ms gap. The logic cannot make the screen stutter, however badly written it is.
+- **Everything is checked at load time.** A misspelled name is an error with file, line, caret and "did you mean…?", not an `undefined` at runtime.
+- **A language that cannot hang:** no free loops, no recursion. What is declared always terminates.
+- **Plugins with a contract:** a boundary of their own under their own name, a thread of their own, and permissions **approved by whoever uses them** (`pleamar --aprobar`). In Quickshell, somebody else's piece of configuration is JavaScript with every permission the person running it has.
+- **Shapes that blend**, with shadow, rim and light, no layers and no tricks: it is SDF.
+- **Cross-platform by design:** everything system-related behind `src/plataforma/`, and `./portable.sh` checks that it compiles for Windows and macOS. Workspaces and the active window go through standard protocols, not through one compositor.
 
-## 3.1. Lo que además salió de aquí
+## 3.1. What else came out of this
 
-**El editor sabe el lenguaje**: `pleamar --lsp` da los fallos mientras se escribe, con el mismo compilador que lee la escena, y `--resaltado` escribe la sintaxis desde el vocabulario. Quickshell tiene el tooling de QML, que es mucho más viejo y más completo; esto es pequeño, pero no puede desfasarse.
+**The editor knows the language**: `pleamar --lsp` reports errors while typing, with the same compiler that reads the scene, and `--resaltado` writes the syntax file from the vocabulary. Quickshell has QML's tooling, which is far older and far more complete; this is small, but it cannot fall out of date.
 
-**Una lista de cinco mil filas cuesta lo que dieciséis**, y se escribe en la escena: `content:` dice lo que mide de verdad, `for … from` numera las copias desde donde toca, y el desplazamiento es una propiedad que una regla puede llevar donde quiera. En Quickshell eso es `ListView`, que virtualiza él solo pero se lleva su propio hilo de instanciación por delante.
+**A list of five thousand rows costs what sixteen cost**, and it is written in the scene: `content:` states its real size, `for … from` numbers the copies from the right place, and the scroll offset is a property a rule can take wherever it wants. In Quickshell that is `ListView`, which virtualizes on its own but brings its whole instantiation thread along with it.
 
-**Un camino es una forma más**, no una isla: `Shape` en QtQuick es un motor aparte (triangula y pinta con otro camino de render), así que no se funde con lo de alrededor ni tiene sombra de balde. Aquí es la misma distancia con signo que un círculo, y `blend` lo funde con lo que tenga al lado.
+**A `path` is just another shape**, not an island: `Shape` in QtQuick is a separate engine (it triangulates and paints through another render path), so it does not blend with what is around it and gets no shadow for free. Here it is the same signed distance as a circle, and `blend` merges it with whatever is next to it.
 
-**Un servicio se pide desde la escena**, no desde la lógica: `service clock as now { time: text }` y los campos llegan solos a hechos y textos, con el compilador comprobando que ese servicio trae eso. En Quickshell lo equivalente es un `Singleton` con sus `property` y su JavaScript.
+**A service is requested from the scene**, not from the logic: `service clock as now { time: text }` and the fields reach facts and texts on their own, with the compiler checking that the service brings them. In Quickshell the equivalent is a `Singleton` with its `property` and its JavaScript.
 
-## 4. En qué orden
+## 4. In what order
 
-1. Que el servidor de lenguaje sepa de nombres: completar los hechos y los componentes de la escena, e ir a donde se declaran (G9).
-2. Copias que nazcan y mueran solas (G12), y arrastrar una lista.
-3. Ventanas normales, bloqueo de sesión, IME.
+1. The language server knowing about names: completing the scene's facts and components, and going to where they are declared (G9).
+2. Copies that are born and die on their own (G12), and dragging a list.
+3. Plain windows, session lock, IME.

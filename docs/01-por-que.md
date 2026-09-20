@@ -1,42 +1,42 @@
-# Por qué existe
+# Why it exists
 
-## El problema
+## The problem
 
-Quickshell es QML sobre Qt, y QtQuick anima en el mismo hilo en que corre la lógica. Un `Behavior` o un `SpringAnimation` se paran si un handler de JavaScript tarda. Y tarda justo cuando más se nota: **al abrir un panel**, que es cuando se instancia, se lee y se parsea.
+Quickshell is QML on Qt, and QtQuick animates on the same thread the logic runs on. A `Behavior` or a `SpringAnimation` stops if a JavaScript handler takes its time. And it takes its time exactly when it shows most: **opening a panel**, which is when things get instantiated, read and parsed.
 
-No es un fallo de Quickshell ni se arregla cambiando C++ por Rust: es una decisión de diseño de QtQuick, que está hecho para aplicaciones y no para escritorios.
+This is not a Quickshell bug, and it is not fixed by swapping C++ for Rust: it is a QtQuick design decision, made for applications and not for desktops.
 
-## La idea
+## The idea
 
-Copiada de Core Animation (iOS), que es por lo que la Dynamic Island no se atasca nunca: **la vista declara transiciones y otro las ejecuta.**
+Taken from Core Animation (iOS), which is why the Dynamic Island never stalls: **the view declares transitions and someone else runs them.**
 
-- La **lógica** dice «el ancho va a 406 con este muelle, dentro de 70 ms» y se olvida.
-- El **render**, en su hilo, recorre esa intención a la cadencia de la pantalla pase lo que pase.
+- The **logic** says "the width goes to 406 with this spring, in 70 ms" and forgets about it.
+- The **renderer**, on its own thread, walks that intent at the screen's cadence no matter what.
 
-De ahí sale todo lo demás: si el render tiene que poder trabajar solo, lo que se le da tienen que ser **datos y expresiones puras**, no código. Y eso es un lenguaje.
+Everything else follows from there: if the renderer has to be able to work alone, what it is given must be **data and pure expressions**, not code. And that is a language.
 
-## Lo que se midió
+## What was measured
 
-RTX 2060, pantalla a 60 Hz. Abrir la tarjeta de Marea con la lógica bloqueada 600 ms justo al empezar:
+RTX 2060, 60 Hz screen. Opening Marea's card with the logic blocked for 600 ms right at the start:
 
-| | frames durante el bloqueo | frame más largo |
+| | frames during the block | longest frame |
 | --- | --- | --- |
 | pleamar | 38 | 17–19 ms |
-| pleamar `--ingenuo` (lógica en el hilo que pinta) | 0 | 617 ms |
-| QtQuick sobre Quickshell (`comparar/shell.qml`) | 0 | 600 ms |
+| pleamar `--ingenuo` (logic on the thread that paints) | 0 | 617 ms |
+| QtQuick on Quickshell (`comparar/shell.qml`) | 0 | 600 ms |
 
-Memoria en reposo: 119 MB frente a 214 MB del banco de Quickshell. **La mitad, no la cuarta parte**: casi todo lo de pleamar es el driver de Vulkan de NVIDIA. Pintar lo estático por CPU sería la forma de bajar de ahí.
+Memory at rest: 119 MB against the 214 MB of the Quickshell bench. **Half, not a quarter**: almost everything pleamar holds is NVIDIA's Vulkan driver. Painting the static parts on the CPU would be the way to go below that.
 
-## Las cinco ideas del diseño completo
+## The five ideas of the complete design
 
-Solo la 2 y media 3 están hechas.
+Only 2 and half of 3 are done.
 
-1. **El estado vive fuera de la vista.** Recargar es cambiar la función, no perder el estado.
-2. **Las animaciones no las ejecuta tu código.** ← lo que prueba el prototipo
-3. **Un renderer para este dominio**: formas SDF. Transformar una forma en otra es interpolar dos fórmulas.
-4. **El sistema como grafo de datos perezoso**: `audio.salida.volumen`. Si nadie lo mira, ni se conecta.
-5. **Los plugins son actores con permisos**: VM aislada, presupuesto de CPU, nunca en el hilo que pinta.
+1. **State lives outside the view.** Reloading means swapping the function, not losing the state.
+2. **Animations are not run by your code.** ← what the prototype proves
+3. **A renderer for this domain**: SDF shapes. Turning one shape into another is interpolating two formulas.
+4. **The system as a lazy data graph**: `audio.output.volume`. If nobody looks at it, it does not even connect.
+5. **Plugins are actors with permissions**: isolated VM, CPU budget, never on the thread that paints.
 
-## Lo que esto no es
+## What this is not
 
-No sustituye a k4 ni a Marea. Son 2000 líneas de prototipo contra quince años de QtQuick: texto, IME, accesibilidad, multimonitor, bandeja… Un prototipo que impresione son meses; algo para usar a diario, años. **El camino realista para k4 y Marea hoy sigue siendo un daemon en Rust + Lua al lado de Quickshell.** pleamar es la pregunta de qué habría que construir si no existiera nada.
+It does not replace k4 or Marea. This is 2000 lines of prototype against fifteen years of QtQuick: text, IME, accessibility, multi-monitor, tray… A prototype that impresses is months; something to use daily, years. **The realistic path for k4 and Marea today is still a Rust + Lua daemon beside Quickshell.** pleamar is the question of what would have to be built if nothing existed.

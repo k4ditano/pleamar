@@ -1,18 +1,18 @@
-# Tres bocetos para el lenguaje
+# Three sketches for the language
 
-Los tres describen el mismo trozo de Marea —el cuerpo con su cuello de agua, los
-ojos, el botón que se realza y abrir/cerrar— y los tres compilan a lo mismo: la
-`Escena` de `src/escena.rs`. Lo que cambia es dónde vive cada cosa y cuánto
-puede hacer el render sin la lógica.
+All three describe the same piece of Marea —the body with its water neck, the
+eyes, the button that lights up and open/close— and all three compile to the
+same thing: the `Escena` of `src/escena.rs`. What changes is where each thing
+lives and how much the renderer can do without the logic.
 
-Las palabras clave están en castellano porque el proyecto lo está; si esto sale
-de casa, es una decisión aparte.
+The keywords are in Spanish because the project is; if this ever leaves home,
+that is a separate decision.
 
-## A · Árbol — «como QML, pero los muelles son del lenguaje»
+## A · Tree — "like QML, but the springs belong to the language"
 
-Elementos anidados con propiedades. `~` convierte una propiedad en un muelle. Un
-hijo se coloca respecto a su padre y se recorta a él. La lógica va aparte, en
-Luau, y es imperativa como hoy.
+Nested elements with properties. `~` turns a property into a spring. A child is
+placed relative to its parent and clipped to it. The logic goes apart, in Luau,
+and is imperative just like today.
 
 ```
 Cuerpo {
@@ -22,7 +22,7 @@ Cuerpo {
     Elipse orbe {
         x: 360 ~vivo;  y: 90 ~vivo
         radio: 28 + respira
-        estira: velocidad                   // se deforma con su propia velocidad
+        estira: velocidad                   // deforms with its own velocity
 
         Ojos { mirada: puntero, hasta 5 3.2;  parpadea: cada 2.4..6s;  cerrados: sueño }
         respira: onda(1.7) * sueño * 1.3
@@ -32,15 +32,15 @@ Cuerpo {
     Caja panel {
         izquierda: orbe.x + 62;  arriba: orbe.y - alto * 70/190
         ancho: 0 ~sereno;  alto: 0 ~sereno;  radio: 24
-        funde: 0 ~rápido                    // cuello de agua con lo anterior
-        contenido: 0 ~sereno                // opacidad de los hijos
+        funde: 0 ~rápido                    // water neck with the previous one
+        contenido: 0 ~sereno                // the children's opacity
 
         Texto { en: 26 78;  "Reunión en 5 min";  20px medio }
         Caja ver {
             centro: 296 151;  tamaño: 168+realce*4  46+realce*3;  radio: 9
             color: mezcla(#9ed6bd, #bdeed6, realce)
             realce: 0 ~rápido
-            encima { realce: 1 }            // lo ejecuta el render, sin lógica
+            encima { realce: 1 }            // run by the renderer, no logic
             Texto { centrado; "Ver evento"; 15px medio; #121f1a }
         }
     }
@@ -55,23 +55,23 @@ lógica {
         anima(panel.contenido, 1, { tras = 300 })
         anima(panel.funde, 0, { tras = 560, muelle = sereno })
     end
-    al.encima(orbe, 320, abrir)             -- 320 ms encima
+    al.encima(orbe, 320, abrir)             -- 320 ms hovering
     al.pulsa(ver, function() cerrar(true) end)
 }
 ```
 
-**A favor:** se lee como lo que es, un dibujo con partes; las coordenadas
-relativas y el recorte por padre salen solos, y de ahí a un layout hay un paso.
-Quien venga de QML lo entiende a la primera.
-**En contra:** la coreografía sigue siendo código imperativo. Abrir depende de
-que la lógica esté viva para declararla: si está atascada, Marea no se abre.
+**For:** it reads like what it is, a drawing made of parts; relative coordinates
+and clipping by the parent come out on their own, and from there to a layout is
+one step. Anyone coming from QML reads it first time.
+**Against:** the choreography is still imperative code. Opening depends on the
+logic being alive to declare it: if it is stalled, Marea does not open.
 
-## B · Estados — «la escena es una máquina, y la lleva el render»
+## B · States — "the scene is a machine, and the renderer runs it"
 
-Las formas se declaran planas. Lo central son los **estados** —qué valor tiene
-cada propiedad en cada uno—, las **transiciones** —con qué muelle y qué retraso
-se va de uno a otro— y las **reglas** —qué hace cambiar de estado—. Todo eso lo
-ejecuta el render. A la lógica solo le llegan hechos con significado.
+The shapes are declared flat. The central things are the **states** —what value
+each property has in each one—, the **transitions** —with which spring and which
+delay it goes from one to another— and the **rules** —what makes it change
+state—. All of that is run by the renderer. Only facts with meaning reach the logic.
 
 ```
 prop orbe.x, orbe.y = 360, 90
@@ -111,21 +111,21 @@ quieto 14s en reposo              => dormida
 encima orbe en dormida            => reposo
 ```
 
-**A favor:** Marea se abre, se cierra, se duerme y responde al ratón con la
-lógica muerta. La lógica queda en lo que de verdad es suyo: poner el texto,
-decidir que ha llegado un aviso, reaccionar a `"ver-evento"`. Y es comprobable
-antes de ejecutar: un estado que nombra una propiedad que no existe es un error
-con número de línea.
-**En contra:** una máquina de estados plana no aguanta a la Marea real. Su
-`ExpressionController` son 2100 líneas de «quién gana»: dormida, grabando, aviso
-urgente, Remanso… Haría falta estados por capas con prioridad, y eso hay que
-diseñarlo bien o se vuelve otro lenguaje de programación por la puerta de atrás.
+**For:** Marea opens, closes, falls asleep and answers the mouse with the logic
+dead. The logic is left with what is really its own: putting the text in,
+deciding a notice has arrived, reacting to `"ver-evento"`. And it is checkable
+before running: a state that names a property which does not exist is an error
+with a line number.
+**Against:** a flat state machine does not hold up against the real Marea. Its
+`ExpressionController` is 2100 lines of "who wins": asleep, recording, urgent
+notice, Remanso… It would need layered states with priority, and that has to be
+designed well or it turns into another programming language through the back door.
 
-## C · Luau — «ningún lenguaje nuevo»
+## C · Luau — "no new language"
 
-Una biblioteca en Luau. `orbe.x + 62` no suma: las metatablas construyen el
-mismo árbol de expresiones que hoy construye Rust con sus operadores. Vista y
-lógica en un solo lenguaje, con su LSP, su formateador y su sandbox ya hechos.
+A library in Luau. `orbe.x + 62` does not add: the metatables build the same
+expression tree that Rust builds today with its operators. View and logic in a
+single language, with its LSP, its formatter and its sandbox already done.
 
 ```lua
 local e = escena "Marea"
@@ -158,11 +158,11 @@ e:al("encima", "orbe", 320, abrir)
 e:al("pulsa", "ver", function() cerrar(true) end)
 ```
 
-**A favor:** es lo más barato con diferencia —no hay parser que escribir— y lo
-que mejor escribe una IA, que Luau lo conoce de Roblox. Bucles y funciones
-gratis para generar escenas (doce iconos en órbita son un `for`).
-**En contra:** el ruido (`{ }`, comas, `local`) y los límites de las metatablas:
-no se puede sobrecargar `>`, `and` ni un ternario, así que las condiciones en
-expresiones son `si(mayor(a, b), x, y)`. Los errores salen al ejecutar, no al
-leer. Y nada distingue a simple vista lo que corre en el render de lo que corre
-en la lógica, que es justo la frontera que este proyecto quiere hacer visible.
+**For:** it is by far the cheapest —there is no parser to write— and the one an
+AI writes best, since it knows Luau from Roblox. Loops and functions for free to
+generate scenes (twelve icons in orbit are a `for`).
+**Against:** the noise (`{ }`, commas, `local`) and the limits of metatables: `>`,
+`and` and a ternary cannot be overloaded, so conditions inside expressions are
+`si(mayor(a, b), x, y)`. The errors come out when it runs, not when it is read.
+And nothing tells apart at a glance what runs in the renderer from what runs in
+the logic, which is exactly the boundary this project wants to make visible.

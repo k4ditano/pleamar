@@ -1,12 +1,12 @@
--- La lógica de la barra: se entera de lo que pasa y se lo cuenta a la escena.
--- Nada de aquí anima ni coloca nada.
+-- The bar's logic: it finds out what happens and tells the scene.
+-- Nothing here animates or places anything.
 
--- La hora no está aquí: la escena la pide con `service clock`, y llega sola.
+-- The clock is not here: the scene asks for it with `service clock`, and it arrives on its own.
 
--- ── los escritorios y la ventana: un servicio de la plataforma ───
---  `sys.watch` dice si este sistema lo tiene. Si no, la barra sale sin ellos.
--- Una ficha por monitor: su escritorio activo y la ventana que tiene delante. Cada
--- copia de la barra (`screens: each`) enseña la suya.
+-- ── the workspaces and the window: a platform service ────────────
+--  `sys.watch` says whether this system has it. If not, the bar comes without them.
+-- One record per monitor: its active workspace and the window in front of it. Each
+-- copy of the bar (`screens: each`) shows its own.
 local monitores, escritorios, activo_global, titulo = {}, {}, 0, ""
 
 local function repartir()
@@ -21,13 +21,13 @@ local function repartir()
                 con_foco = d.id == activo_global
             end
         end
-        -- El título es de quien tiene el foco: las demás barras no enseñan ventana ajena.
+        -- The title belongs to whoever has the focus: the other bars do not show someone else's window.
         fichas[k + 1] = { active = suyo, title = con_foco and titulo or "" }
     end
     model.mon = fichas
 end
 
--- Cuál es cada copia lo dice el render en cuanto pone su superficie.
+-- The renderer says which copy is which as soon as it places its surface.
 for k = 0, 3 do
     on("text:screen." .. k .. ".name", function(nombre) monitores[k] = nombre; repartir() end)
 end
@@ -54,19 +54,19 @@ sys.watch("window", function(w) titulo = w.title; repartir() end)
 
 on("go", function(i) sys.call("workspaces.focus", i) end)
 
--- ── el volumen: un servicio, el mismo en todos los sistemas ──────
+-- ── the volume: a service, the same on every system ──────────────
 if not sys.watch("audio", function(a)
     fact.volume = a.volume
     fact.muted = a.muted
 end) then
-    log("este sistema no cuenta su volumen todavía")
+    log("this system does not report its volume yet")
 end
 
--- ── y en la otra dirección: lo que se pide desde la barra ────────
+-- ── and the other way round: what the bar asks for ───────────────
 on("volume_step", function(notches) sys.call("audio.step", 0.05 * notches) end)
 
---  Arrastrando llegan sesenta por segundo: se guarda el último y se manda como
---  mucho uno cada 50 ms.
+--  Dragging sends sixty a second: the last one is kept and at most one goes out
+--  every 50 ms.
 local wanted, sending = nil, false
 on("volume_set", function(v)
     wanted = v

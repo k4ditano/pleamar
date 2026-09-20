@@ -1,32 +1,32 @@
-# Prueba: ¿cabe la Marea de verdad en el lenguaje?
+# Test: does the real Marea fit in the language?
 
-**Fecha:** 2026-09-19 · **Qué se leyó:** `proyecto-marea/prototype/ExpressionController.qml`, entero, en el commit `ad95cf4`.
+**Date:** 2026-09-19 · **What was read:** `proyecto-marea/prototype/ExpressionController.qml`, all of it, at commit `ad95cf4`.
 
-**Veredicto corto:** con los *estados planos* del boceto B, **no cabe**. Con tres piezas más —**hechos y sucesos**, **capas con reclamaciones** y **gestos como líneas de tiempo con clase**— **cabe entero, y quita de en medio dos clases de error** que hoy el fichero combate a mano.
+**Short verdict:** with sketch B's *flat states*, **it does not fit**. With three more pieces —**facts and events**, **layers with claims** and **gestures as timelines with a class**— **it fits whole, and it clears away two kinds of error** the file fights by hand today.
 
-## 1. Qué es en realidad el controlador
+## 1. What the controller really is
 
-No es una máquina de estados. Son cinco cosas distintas conviviendo en un `QtObject`:
+It is not a state machine. It is five different things living together in a `QtObject`:
 
-| Qué | Cuánto | Cómo está hecho hoy |
+| What | How much | How it is done today |
 | --- | --- | --- |
-| Un reproductor de gestos | 25 gestos de la casa + los de plugins | Secuencias de fotogramas (`eyes`, `width`, `gap`, `tilt`, `sx`, `sy`, `lift`, `x`, `y`, `ms`, `hold`, `ease`). **Ya son datos.** |
-| La forma de los ojos (`forma`) | unas 24 formas, **43 escrituras** | Una cadena que escribe quien quiere. Último en escribir, gana. |
-| Adornos que no son `forma` | anillo de terminal, medidores, sudor, perla de Remanso, vistos, órbita, destello, tinte, subir 5 px | Booleanos sueltos con su temporizador |
-| Vida propia | parpadeo, mirada, respiro en reposo, respiración dormida | Temporizadores con azar |
-| Arbitraje | quién puede pisar a quién | Repartido: `reflejo()`, `ocupadaHasta()`, `caraLibre` (16 condiciones), `insigniaCedida` en la vista |
+| A gesture player | 25 in-house gestures + the plugin ones | Keyframe sequences (`eyes`, `width`, `gap`, `tilt`, `sx`, `sy`, `lift`, `x`, `y`, `ms`, `hold`, `ease`). **They are already data.** |
+| The eye shape (`forma`) | some 24 shapes, **43 writes** | A string anyone writes. Last writer wins. |
+| Trimmings that are not `forma` | terminal ring, gauges, sweat, Remanso's pearl, ticks, orbit, glint, tint, lift 5 px | Loose booleans, each with its timer |
+| A life of its own | blinking, gaze, breath at rest, sleeping breathing | Timers with randomness |
+| Arbitration | who can override whom | Spread out: `reflejo()`, `ocupadaHasta()`, `caraLibre` (16 conditions), `insigniaCedida` in the view |
 
-Y tres impuestos que se pagan por todo el fichero:
+And three taxes paid across the whole file:
 
-- **`reducedMotion` aparece 56 veces.** Casi cada función tiene su rama «sin movimiento».
-- **`model.sleeping` aparece 35 veces.** Casi cada función empieza comprobando que no duerme.
-- **28 temporizadores**, la mayoría para deshacer algo al cabo de un rato (`volverDeContenta`, `volverDeAviso`, `unsweat`, `unwiden`…).
+- **`reducedMotion` appears 56 times.** Almost every function has its "no motion" branch.
+- **`model.sleeping` appears 35 times.** Almost every function starts by checking it is not asleep.
+- **28 timers**, most of them to undo something after a while (`volverDeContenta`, `volverDeAviso`, `unsweat`, `unwiden`…).
 
-Un tercio del fichero (679 líneas) es comentario, y es lo mejor que tiene: cada decisión de diseño está razonada. **El lenguaje tiene que dejar escribir así.**
+A third of the file (679 lines) is comment, and it is the best thing it has: every design decision is reasoned out. **The language has to allow writing like that.**
 
-## 2. El hallazgo: la guarda que se repite ocho veces
+## 2. The finding: the guard repeated eight times
 
-Este patrón aparece **ocho veces**, casi letra por letra:
+This pattern appears **eight times**, almost letter for letter:
 
 ```js
 function buscar(si) {
@@ -38,17 +38,17 @@ function buscar(si) {
 }
 ```
 
-`buscar`, `soltando`, `grabar`, `sinDatos`, `comprobando`, `catalogando`, `enFaro`, `instalando`, `actualizando`. El propio código dice cuál es el problema: **`forma` es una sola variable y muchos la quieren.** La guarda es un parche que hay que acordarse de copiar en cada función nueva.
+`buscar`, `soltando`, `grabar`, `sinDatos`, `comprobando`, `catalogando`, `enFaro`, `instalando`, `actualizando`. The code itself says what the problem is: **`forma` is a single variable and many want it.** The guard is a patch you have to remember to copy into every new function.
 
-Y hay sitios donde no está. `confirmado()`, `noticeUrgent()`, `alDia()` y `noticeLanded()` escriben `forma = "contenta"` o `"aviso"` **sin mirar qué había**, y su temporizador devuelve a `"ojos"`. Por lo que leo —no lo he ejecutado—, confirmar algo o recibir un aviso urgente *mientras graba* le quitaría el disco rojo: justo el error que los comentarios llaman «el único que importa». Si está cubierto, es en otro fichero; aquí no lo veo.
+And there are places where it is missing. `confirmado()`, `noticeUrgent()`, `alDia()` and `noticeLanded()` write `forma = "contenta"` or `"aviso"` **without looking at what was there**, and their timer returns it to `"ojos"`. From what I read —I have not run it—, confirming something or getting an urgent notice *while recording* would take the red disc away: exactly the error the comments call "the only one that matters". If it is covered, it is in another file; I do not see it here.
 
-**Esto no es un fallo de Marea, es que el modelo de datos no ayuda.** Y es exactamente lo que un lenguaje puede arreglar de raíz.
+**This is not a Marea bug, it is that the data model does not help.** And it is exactly what a language can fix at the root.
 
-## 3. Las tres piezas que hacen falta
+## 3. The three pieces needed
 
-### 3.1 Hechos y sucesos — la frontera con la lógica
+### 3.1 Facts and events — the boundary with the logic
 
-Hoy la lógica llama a 41 funciones del controlador (`onBuscando`, `onGrabacionCambiada`, `onPaquetesAlDia`…) y cada una decide qué hacer con la cara. En el lenguaje, la lógica solo **cuenta lo que pasa**:
+Today the logic calls 41 functions of the controller (`onBuscando`, `onGrabacionCambiada`, `onPaquetesAlDia`…) and each one decides what to do with the face. In the language, the logic only **reports what happens**:
 
 ```
 hecho durmiendo, grabando, buscando, catalogando, en_faro: bool
@@ -60,11 +60,11 @@ suceso confirmado, aviso_urgente, al_día, no_pudo, olvidado
 suceso gesto(nombre, clase)
 ```
 
-Un **hecho** es algo que es verdad durante un rato. Un **suceso** ocurre en un instante. La lógica no toca nada más: ni `forma`, ni poses, ni temporizadores.
+A **fact** is something that is true for a while. An **event** happens in an instant. The logic touches nothing else: not `forma`, not poses, not timers.
 
-### 3.2 Capas con reclamaciones — adiós a la guarda
+### 3.2 Layers with claims — goodbye to the guard
 
-Una **capa** es un hueco que muchos pueden reclamar. Gana la primera reclamación que se cumple; cuando deja de cumplirse, se ve la siguiente **sola**.
+A **layer** is a slot many can claim. The first claim that holds wins; when it stops holding, the next one is seen **on its own**.
 
 ```
 capa forma {                          // de más a menos prioridad
@@ -87,20 +87,20 @@ capa forma {                          // de más a menos prioridad
 }
 ```
 
-Lo que cambia:
+What changes:
 
-- **Las ocho guardas desaparecen.** Dejar de buscar no puede borrar el disco rojo: `rec` está por encima y nunca dejó de reclamarse.
-- **El fallo de `confirmado()` mientras graba no se puede escribir.** `contenta` está por debajo de `rec`; se reclama, no se ve, y caduca sola.
-- **Los temporizadores `volverDe…` desaparecen.** `700ms tras aviso_urgente` *es* el temporizador.
-- **`wakeReconciliation` desaparece.** Existe porque cara y modelo pueden desincronizarse; si la cara *se deriva* de `durmiendo`, no pueden.
+- **The eight guards disappear.** Stopping a search cannot wipe the red disc: `rec` sits above it and never stopped claiming.
+- **The `confirmado()`-while-recording bug cannot be written.** `contenta` sits below `rec`; it claims, it is not seen, and it expires on its own.
+- **The `volverDe…` timers disappear.** `700ms tras aviso_urgente` *is* the timer.
+- **`wakeReconciliation` disappears.** It exists because face and model can fall out of sync; if the face *derives* from `durmiendo`, they cannot.
 
-⚠️ **El orden de arriba lo he puesto yo**, deducido de los comentarios. Hoy no existe —manda el último que escribe—, así que hay que revisarlo línea a línea. Esa revisión es, de hecho, el diseño que el fichero actual nunca tuvo que hacer explícito.
+⚠️ **The order above is mine**, deduced from the comments. It does not exist today —the last writer rules—, so it has to be reviewed line by line. That review is, in fact, the design the current file never had to make explicit.
 
-Lo que **no** se simplifica tanto: `caraLibre` tiene 16 condiciones. Seis se vuelven implícitas por el orden (grabando, drop, forma ≠ ojos…); las otras diez (`no_molestar`, medidores, sudor, tinte, página abierta con cara propia…) siguen siendo una condición escrita. Es menos, no es magia.
+What does **not** simplify as much: `caraLibre` has 16 conditions. Six become implicit through the order (recording, drop, forma ≠ ojos…); the other ten (`no_molestar`, gauges, sweat, tint, an open page with a face of its own…) are still a written condition. It is less, it is not magic.
 
-### 3.3 Gestos: líneas de tiempo con clase
+### 3.3 Gestures: timelines with a class
 
-Los gestos **ya son datos** en Marea, así que esto es casi una transcripción:
+Gestures **are already data** in Marea, so this is almost a transcription:
 
 ```
 pose reposo { ojos: 14; ancho: 6; hueco: 16; giro: 0; sx: 1; sy: 1; sube: 0; mira: 0 0 }
@@ -120,13 +120,13 @@ gesto señalar(lado) clase pedido {
 postura trabajando mientras herramienta_en_curso { … }          // se repite sola
 ```
 
-Tres reglas del lenguaje sustituyen a código que hoy está escrito a mano:
+Three rules of the language replace code that is hand-written today:
 
-1. **Cada fotograma parte de `reposo`**: lo que no nombra, vuelve a su valor. Es lo que hace `pose()` con sus doce `=== undefined ?`.
-2. **Al acabar, vuelve a la pose base de donde esté** —`reposo` o `dormida`—. Sustituye a `asentarLuego`, a `_esPoseNeutra` y al `concat` que le pega la pose dormida al final de cualquier gesto.
-3. **Un gesto solo interrumpe a otro de su clase o inferior**: `estado > pedido > reflejo > postura > ambiente`. Sustituye a `reflejo()`, `_ultimoFueReflejo`, `_finDelGesto` y `ocupadaHasta()`. Es la regla que el comentario de la línea 144 explica en veinte líneas: «los gestos reflejos y los pedidos no valen lo mismo».
+1. **Every keyframe starts from `reposo`**: whatever it does not name goes back to its value. It is what `pose()` does with its twelve `=== undefined ?`.
+2. **When it ends, it returns to the base pose of wherever it is** —`reposo` or `dormida`—. It replaces `asentarLuego`, `_esPoseNeutra` and the `concat` that sticks the sleeping pose onto the end of any gesture.
+3. **A gesture only interrupts another of its own class or lower**: `estado > pedido > reflejo > postura > ambiente`. It replaces `reflejo()`, `_ultimoFueReflejo`, `_finDelGesto` and `ocupadaHasta()`. It is the rule the comment on line 144 explains in twenty lines: "reflex gestures and asked-for ones are not worth the same".
 
-Un gesto puede **emitir sucesos** en un fotograma —la cámara necesita `disparo` justo cuando cierra el obturador— y **reclamar una capa** mientras dura:
+A gesture can **emit events** in a keyframe —the camera needs `disparo` exactly when the shutter closes— and **claim a layer** for as long as it lasts:
 
 ```
 gesto foto clase estado, reclama forma cámara {
@@ -137,9 +137,9 @@ gesto foto clase estado, reclama forma cámara {
 }
 ```
 
-### 3.4 Y dos cosas menores
+### 3.4 And two minor things
 
-**Vida propia, con azar:**
+**A life of its own, with randomness:**
 
 ```
 cada 2.5s..7s  mientras ambiente { parpadea;  17%: otra vez a los 250ms }
@@ -149,38 +149,38 @@ cada 5s..14s   mientras ambiente y miradas y no abierta {
 cada 12s..24s  mientras reposo_desnudo { gesto respiro(lado: azar(-1 | 1)) }
 ```
 
-**Movimiento reducido, del lenguaje y no de cada función.** Con `movimiento reducido` activo el runtime posa los muelles al instante y de cada gesto enseña su **cara quieta** —declarada con `quieta { … }` o, si no, el fotograma que más se aparta del reposo, que es lo que calcula hoy `_quietaDe()`— durante lo que duraría. **Las 56 ramas se quedan en cero.**
+**Reduced motion, from the language and not from every function.** With `movimiento reducido` on, the runtime settles the springs instantly and, of each gesture, shows its **still face** —declared with `quieta { … }` or, failing that, the keyframe furthest from rest, which is what `_quietaDe()` computes today— for as long as it would have lasted. **The 56 branches go to zero.**
 
-## 4. Lo que no cabe, o cabe con ayuda
+## 4. What does not fit, or fits with help
 
-| Qué | Dónde está | Qué hacer |
+| What | Where it is | What to do |
 | --- | --- | --- |
-| Aclarar un color para que se lea (`_tinteLegible`) | l. 1139 | Funciones de color en las expresiones: `hsl()`, `aclarar()` |
-| «Como mucho una vez cada 30 s» (`lastGreeting`, `_ultimoClic`) | l. 1871, 862 | Un modificador de regla: `como mucho cada 30s` |
-| Elegir gesto según datos (`_comoLoTraga`) | l. 838 | Ternario con símbolos: `piezas > 1 ? lote : …` |
-| Gestos de plugin validados por una herramienta | `extraGestures` | Pasan a ser ficheros del mismo lenguaje; validar es cargar |
-| **Decidir cuándo cambia un hecho** | `MascotModel`, servicios | **Se queda en la lógica (Luau). Es su trabajo.** |
+| Lightening a color so it reads (`_tinteLegible`) | l. 1139 | Color functions in expressions: `hsl()`, `aclarar()` |
+| "At most once every 30 s" (`lastGreeting`, `_ultimoClic`) | l. 1871, 862 | A rule modifier: `como mucho cada 30s` |
+| Picking a gesture from data (`_comoLoTraga`) | l. 838 | A ternary with symbols: `piezas > 1 ? lote : …` |
+| Plugin gestures validated by a tool | `extraGestures` | They become files in the same language; validating is loading |
+| **Deciding when a fact changes** | `MascotModel`, services | **Stays in the logic (Luau). That is its job.** |
 
-Nada de esto rompe el diseño. Lo último es la frontera funcionando como debe.
+None of this breaks the design. The last one is the boundary working as it should.
 
-## 5. Lo que la prueba le pide al runtime
+## 5. What the test asks of the runtime
 
-Esto es lo caro, y no es el parser:
+This is the expensive part, and it is not the parser:
 
-1. **Pistas de fotogramas con curva** (`OutBack`, `InQuad`…). Hoy pleamar solo tiene muelles.
-2. **El evaluador de capas**: reclamaciones, `mientras`, `N ms tras`, `desde … hasta`.
-3. **El canal de hechos y sucesos** lógica → escena, y sucesos escena → lógica.
-4. **Azar y reglas temporizadas** en el render.
-5. **Gestos con parámetros** (`lado`) y **símbolos** en las expresiones.
-6. **Giro.** Las formas no rotan todavía, y `tilt` está en casi todos los gestos.
-7. **Más primitivas SDF**: anillo, arco, segmento. Las 24 formas de ojos (cámara, candado, reloj de arena, luna…) no salen de elipses y cajas. **Es el trozo más grande.**
+1. **Keyframe tracks with easing** (`OutBack`, `InQuad`…). Today pleamar only has springs.
+2. **The layer evaluator**: claims, `mientras`, `N ms tras`, `desde … hasta`.
+3. **The fact and event channel** logic → scene, and events scene → logic.
+4. **Randomness and timed rules** in the renderer.
+5. **Gestures with parameters** (`lado`) and **symbols** in expressions.
+6. **Rotation.** Shapes do not rotate yet, and `tilt` is in almost every gesture.
+7. **More SDF primitives**: ring, arc, segment. The 24 eye shapes (camera, padlock, hourglass, moon…) do not come out of ellipses and boxes. **It is the biggest chunk.**
 
-## 6. Tamaño, a ojo
+## 6. Size, by eye
 
-De las 2103 líneas: 679 son comentario (se quedan, valen oro), unas 250 son datos de gestos (se quedan casi igual) y unas 1170 son código. De ese código, la mayor parte son guardas, temporizadores de vuelta, ramas de `reducedMotion` y comprobaciones de `sleeping`. **Estimo 250–350 líneas de lenguaje** para lo mismo. Es una estimación, no una medida: la medida será escribirlo.
+Of the 2103 lines: 679 are comment (they stay, they are worth gold), some 250 are gesture data (they stay almost the same) and some 1170 are code. Of that code, most is guards, return timers, `reducedMotion` branches and `sleeping` checks. **I estimate 250–350 lines of the language** for the same thing. It is an estimate, not a measurement: the measurement will be writing it.
 
-## 7. Qué decidimos con esto
+## 7. What this decides
 
-- El boceto B se queda corto: `estado` no es el concepto central, **`capa` lo es**. Un `estado` de B (reposo/abierta) es una capa con dos reclamaciones que además fijan propiedades.
-- El lenguaje necesita **dos formas de animar**, no una: muelles para lo que sigue a un valor, fotogramas para lo que cuenta una historia.
-- El siguiente paso con más retorno **no es el parser**: son los puntos 1–3 de la lista del runtime, probados con Marea: `capa forma` con `rec`, `lupa` y `contenta`, y tres gestos.
+- Sketch B falls short: `estado` is not the central concept, **`capa` is**. A B `estado` (reposo/abierta) is a layer with two claims that also set properties.
+- The language needs **two ways to animate**, not one: springs for what follows a value, keyframes for what tells a story.
+- The next step with the most return **is not the parser**: it is points 1–3 of the runtime list, tested with Marea: `capa forma` with `rec`, `lupa` and `contenta`, and three gestures.

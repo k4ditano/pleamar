@@ -1,9 +1,9 @@
-// Una barra de verdad, y una por monitor: los escritorios, la ventana que tienes
-// delante, la hora y el volumen. La escena no sabe qué compositor hay ni qué servidor
-// de sonido: solo tiene hechos y textos, y quién los pone es cosa de barra.luau.
+// A real bar, and one per monitor: the workspaces, the window you have
+// in front, the clock and the volume. The scene knows neither which compositor is
+// there nor which sound server: it only has facts and texts, and barra.luau fills them.
 //
-// `screens: each` la repite en cada monitor, y cada copia tiene lo suyo: su escritorio
-// activo y su ventana. Lo común —la hora, el volumen— lo comparten.
+// `screens: each` repeats it on each monitor, and every copy has its own: its active
+// workspace and its window. What is shared —the clock, the volume— stays shared.
 
 import "comun/paleta.plm"
 
@@ -12,35 +12,35 @@ scene Bar {
         size: full, 44
         anchor: top
         margin: 6
-        reserve: 0            // súbelo a 44 para que las ventanas le dejen sitio
-        screens: each         // una por monitor, cada una con su estado
+        reserve: 0            // raise it to 44 so windows leave room for it
+        screens: each         // one per monitor, each with its own state
     }
 
-    //  Lo que `barra.luau` puede tocar del sistema. Sin declarar, nada; y escuchar no es
-    //  mandar: `"audio"` deja saber el volumen, `"audio.*"` deja cambiarlo.
+    //  What `barra.luau` may touch of the system. Undeclared, nothing; and listening is not
+    //  commanding: `"audio"` lets it know the volume, `"audio.*"` lets it change it.
     permissions { services: "workspaces", "workspaces.focus", "window", "audio", "audio.*", "clock" }
 
 
-    // ── lo que cuenta la lógica ──────────────────────────────────
-    //  Una ficha por monitor: su escritorio activo y la ventana que tiene delante.
+    // ── what the logic reports ───────────────────────────────────
+    //  One record per monitor: its active workspace and the window in front of it.
     model mon max 4 { active: number = 1; title: text }
     repeat i in 1..10 {
-        fact ws.$i.there = false          // ¿existe ese escritorio?
-        fact ws.$i.busy  = false          // ¿tiene ventanas?
+        fact ws.$i.there = false          // does that workspace exist?
+        fact ws.$i.busy  = false          // does it have windows?
     }
-    //  La hora no la pone nadie: se pide por su nombre y el sistema la cuenta.
+    //  Nobody fills the clock: it is asked for by name and the system counts it.
     service clock { time: text = "--:--"; date: text }
     fact volume = 0
     fact muted  = false
-    event go ->                           // `emit go(3)`: llévame al escritorio 3
-    event volume_step ->                  // la rueda: +1 o −1 por muesca
-    event volume_set ->                   // arrastrar la barrita: de 0 a 1
+    event go ->                           // `emit go(3)`: take me to workspace 3
+    event volume_step ->                  // the wheel: +1 or −1 per notch
+    event volume_set ->                   // dragging the slider: 0 to 1
     event mute ->
 
     image speaker = icon "audio-volume-high-symbolic", 16, 16
 
-    // ── un escritorio ────────────────────────────────────────────
-    //  Cada copia sabe si es la activa, y persigue ese sí o no con su muelle.
+    // ── one workspace ────────────────────────────────────────────
+    //  Each copy knows whether it is the active one, and chases that yes or no with its spring.
     component Desk(i, active: number) {
         size: 28, 26
         prop on  = 0 ~lively
@@ -49,7 +49,7 @@ scene Bar {
 
         box hit { from: 0, 0; size: 28, 26; corner: 9; color: mix(#2b2d2d, mint, on); opacity: 30% + on * 70% + hot * 35%; cursor: pointer }
         text "{i}" { at: 14, 12.5; anchor: center; size: 12.5; weight: 600; color: mix(ink, #121f1a, on) }
-        //  Un punto debajo si tiene ventanas y no estás en él.
+        //  A dot underneath if it has windows and you are not on it.
         ellipse { at: 14, 22; radius: 1.6 * ws.$i.busy * (1 - on); color: ink; opacity: 65% }
 
         on enter hit { hot: 1 ~quick }
@@ -57,7 +57,7 @@ scene Bar {
         on press hit { emit go(i) }
     }
 
-    // ── a la izquierda: escritorios y ventana ────────────────────
+    // ── on the left: workspaces and window ───────────────────────
     row desks ~calm {
         at: 10, 4
         padding: 5; gap: 4
@@ -66,7 +66,7 @@ scene Bar {
     }
     text mon.$screen.title { at: 10 + desks.width + 14, 22; anchor: left center; size: 13; width: screen.width / 2 - desks.width - 130; lines: 1; color: ink; opacity: 80% }
 
-    // ── en el centro: la hora ────────────────────────────────────
+    // ── in the middle: the clock ─────────────────────────────────
     row ~calm {
         at: screen.width / 2, 4
         anchor: center
@@ -76,12 +76,12 @@ scene Bar {
         text clock.date { size: 12.5; color: ink; opacity: 55% }
     }
 
-    // ── a la derecha: el volumen ─────────────────────────────────
+    // ── on the right: the volume ─────────────────────────────────
     prop level = 0 ~calm
     follow level = volume * 64 * (1 - muted)
 
-    //  El reparto tiene nombre, así que su caja entera es una zona: la rueda vale
-    //  en cualquier punto de la píldora. Las de dentro quedan encima.
+    //  The layout has a name, so its whole box is a zone: the wheel works
+    //  anywhere on the pill. The ones inside stay on top.
     row sound ~calm {
         at: screen.width - 10, 4
         anchor: right
@@ -96,16 +96,16 @@ scene Bar {
             size: 64, 4
             box { from: 0, 0; size: 64, 4; corner: 2; color: #343737 }
             box { from: 0, 0; size: level, 4; corner: 2; color: mint }
-            //  Más alta que la barrita, que con cuatro píxeles no hay quien atine.
+            //  Taller than the slider: nobody can hit four pixels.
             zone box track { from: -2, -8; size: 68, 20; cursor: pointer }
         }
-        //  Con ancho fijo: si la píldora cambiase de tamaño con cada cifra, la barrita
-        //  se movería debajo del ratón mientras la arrastras.
+        //  Fixed width: if the pill changed size with every number, the slider
+        //  would move under the mouse while you drag it.
         text "{volume * 100} %" { size: 12.5; weight: 500; width: 42; align: right; color: ink; opacity: 80% }
     }
 
-    //  La escena mueve la barrita en el acto —el dedo no espera a nadie— y le
-    //  cuenta a la lógica lo que se quiere; el sistema contestará con lo mismo.
+    //  The scene moves the slider at once —the finger waits for nobody— and tells
+    //  the logic what is wanted; the system will answer with the same.
     on scroll sound  { emit volume_step(wheel) }
     on press track   { volume = clamp(local.x / 64, 0, 1); emit volume_set(clamp(local.x / 64, 0, 1)) }
     on drag track    { volume = clamp(local.x / 64, 0, 1); emit volume_set(clamp(local.x / 64, 0, 1)) }

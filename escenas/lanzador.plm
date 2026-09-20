@@ -1,7 +1,7 @@
-// Un lanzador: un campo donde escribir y una lista que se filtra según
-// escribes. Se abre desde fuera —un atajo de Hyprland que ejecute
-// `pleamar --decir lanzador "emit toggle"`— y se cierra con Escape, al lanzar
-// algo, o al pulsar en cualquier otro sitio.
+// A launcher: a field to type in and a list that filters as you
+// type. It opens from outside —a Hyprland shortcut that runs
+// `pleamar --decir lanzador "emit toggle"`— and it closes with Escape, on launching
+// something, or on pressing anywhere else.
 
 import "comun/paleta.plm"
 
@@ -11,27 +11,27 @@ scene Launcher {
         anchor: center
         level: overlay
         screens: "HDMI-A-1"
-        //  El teclado, entero, pero solo mientras está abierto: cerrado no existe.
+        //  The keyboard, whole, but only while it is open: closed it does not exist.
         keyboard: exclusive while open
     }
 
-    //  Lo que `lanzador.luau` puede tocar: saber qué aplicaciones hay, y lanzar una de ellas.
+    //  What `lanzador.luau` may touch: knowing which applications there are, and launching one of them.
     permissions { services: "apps", "apps.launch" }
 
 
-    // ── la frontera ──────────────────────────────────────────────
+    // ── the boundary ─────────────────────────────────────────────
     fact open  = false
-    //  Los resultados, como los cuenta el servicio `apps`: la lógica filtra y entrega.
+    //  The results, as the `apps` service reports them: the logic filters and hands them over.
     model hits max 7 { name: text; icon: image 24, 24 }
-    fact sel   = 0                        // cuál está elegido
+    fact sel   = 0                        // which one is chosen
     text query = ""
-    event toggle                          // viene de fuera
-    event launch ->                       // `emit launch(2)`: lanza el tercero
+    event toggle                          // comes from outside
+    event launch ->                       // `emit launch(2)`: launch the third
 
-    // ── abrir y cerrar ───────────────────────────────────────────
+    // ── opening and closing ──────────────────────────────────────
     prop seen  = 0 ~quick
     prop scale = 0.96 ~lively
-    //  El alto del panel persigue a lo que ocupe la lista, que se declara más abajo.
+    //  The panel's height chases whatever the list takes up, declared further down.
     prop tall = 84 ~quick
     follow tall = 84 + list.height
     layer panel ~quick {
@@ -39,7 +39,7 @@ scene Launcher {
         gone             { seen: 0 ~quick;  scale: 0.96 ~quick }
     }
 
-    //  Cerrado, ni una zona: el clic pasa a lo de debajo.
+    //  Closed, not one zone: the click goes through to what is underneath.
     zone box whole { at: 300, 220; size: 560, 400; active: open }
 
     group {
@@ -76,11 +76,11 @@ scene Launcher {
         on press hit { emit launch(h.index) }
     }
 
-    // ── teclas ───────────────────────────────────────────────────
-    //  Lo que es escribir se lo queda el campo; lo demás llega aquí.
+    // ── keys ─────────────────────────────────────────────────────
+    //  The field keeps whatever counts as typing; the rest arrives here.
     on toggle          { toggle open; focus query }
     on key Escape      { open = false }
-    on blur            { open = false }              // han pulsado en otro sitio
+    on blur            { open = false }              // pressed somewhere else
     on key Down        { sel = min(sel + 1, max(hits.count - 1, 0)) }
     on key Up          { sel = max(sel - 1, 0) }
     on submit query    { emit launch(sel) }

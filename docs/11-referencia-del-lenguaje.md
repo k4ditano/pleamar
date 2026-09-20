@@ -1,162 +1,163 @@
-# Referencia del lenguaje — versión 0.1
+# Language reference — version 0.1
 
-**Qué es esta nota.** La descripción completa y exacta de lo que el lenguaje acepta. [[pleamar · 09 El lenguaje v0]] es la guía —se lee de corrido, con el porqué de cada cosa—; esto es donde se mira una duda. Está sacada del compilador (`src/lenguaje/`), no de la memoria, y **no se puede desfasar sin que `./probar.sh` lo diga**: sus ejemplos completos se compilan, y su vocabulario (§17) se compara con el que consulta el compilador.
+**What this note is.** The complete, exact description of what the language accepts. [[pleamar · 09 El lenguaje v0]] is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/lenguaje/`), not from memory, and **it cannot fall behind without `./probar.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
 ```sh
-pleamar --version                  # pleamar 0.1.0 · lenguaje 0.1
-pleamar --comprobar escena.plm     # la lee, con lo que importe; dice si está bien, y sale
-./probar.sh                        # pruebas/*.plm, escenas/*.plm y los ejemplos de esta nota
+pleamar --version                  # pleamar 0.1.0 · language 0.1
+pleamar --comprobar scene.plm      # reads it, with whatever it imports; says whether it is fine, exits
+./probar.sh                        # pruebas/*.plm, escenas/*.plm and the examples in this note
 ```
 
-## 1. Versión
+## 1. Version
 
-El lenguaje tiene número propio, aparte del programa: **0.1**. El primero cambia cuando algo escrito deja de valer; el segundo, cuando se añade algo. Un fichero puede decir cuál necesita, en su primera línea:
+The language has a number of its own, apart from the program's: **0.1**. The first changes when something already written stops being valid; the second, when something is added. A file can say which one it needs, on its first line:
 
 ```
 language 0.1
 ```
 
-Si pide un primer número distinto, o un segundo mayor que el que entiende el programa, es un fallo al cargar —`this file asks for language 0.7, and this pleamar understands 0.1`— y no una escena a medias. Sin esa línea, se lee con lo que haya. Mientras el primero sea 0, nada está prometido: es un lenguaje que aún se está haciendo.
+If it asks for a different first number, or a second one higher than the program understands, it is an error on load —`this file asks for language 0.7, and this pleamar understands 0.1`— and not a half-built scene. Without that line, it is read with whatever is there. While the first is 0, nothing is promised: this is a language still being made.
 
-## 2. Lo que garantiza
+## 2. What it guarantees
 
-Es un lenguaje **declarativo y que siempre termina**. No hay bucles libres, ni recursión, ni variables que muten: `repeat` y `for` se despliegan al cargar, con un tope. Todo lo que se escribe lo ejecuta el render, solo, a la cadencia de la pantalla; la lógica (Luau, aparte) solo pone hechos, textos, modelos y sucesos. **Todos los nombres se comprueban al cargar**: uno mal escrito es un fallo con su fichero, su línea, su flecha y un «¿querías decir…?», nunca un error en marcha.
+It is a **declarative language that always terminates**. No free loops, no recursion, no variables that mutate: `repeat` and `for` unfold on load, with a ceiling. Everything written is run by the renderer, on its own, at the cadence of the screen; the logic (Luau, apart) only sets facts, texts, models and events. **Every name is checked on load**: a misspelt one is an error with its file, its line, its arrow and a "did you mean…?", never a failure while running.
 
-## 3. Léxico
+## 3. Lexicon
 
 | | |
 | --- | --- |
-| Comentario | `//` hasta el final de la línea |
-| Fin de sentencia | un salto de línea o `;`. Dentro de un paréntesis, un salto de línea no acaba nada |
-| Nombre | letras, cifras, `_` y `.`; empieza por letra o `_`. Los puntos son parte del nombre: `orb.x`, `note.0.title`. Dentro de un `repeat`, `$i` se sustituye por el número de la vuelta: `hit.$i` |
-| Número | `40`, `0.5`, `-3`. Con unidad: `40px` (= 40), `34%` (= 0.34), `138deg` (a radianes) |
-| Duración | `320ms`, `14s`. Donde se espera una duración no vale un número sin unidad |
-| Color | `#151616` o `#fff` |
-| Texto | `"entre comillas"`. Con huecos, ver §11 |
-| Símbolos | `{ } ( ) , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
+| Comment | `//` to the end of the line |
+| End of statement | a newline or `;`. Inside parentheses, a newline ends nothing |
+| Name | letters, digits, `_` and `.`; starts with a letter or `_`. Dots are part of the name: `orb.x`, `note.0.title`. Inside a `repeat`, `$i` is replaced by the number of the turn: `hit.$i` |
+| Number | `40`, `0.5`, `-3`. With a unit: `40px` (= 40), `34%` (= 0.34), `138deg` (to radians) |
+| Duration | `320ms`, `14s`. Where a duration is expected, a number without a unit is not valid |
+| Color | `#151616` or `#fff` |
+| Text | `"in quotes"`. With slots, see §11 |
+| Symbols | `{ } ( ) , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
 
-Palabras del lenguaje (no se pueden usar como nombre de algo propio sin confundir a quien lee, aunque el compilador no lo prohíbe): `language import scene library surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, y dentro de sus sentencias `in max while for after from until at by reach within rest every inset right middle move curve close via as radial radius to change wrap true false and or not`.
+Words of the language (they cannot be used as a name of one's own without confusing the reader, though the compiler does not forbid it): `language import scene library surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, and inside their statements `in max while for after from until at by reach within rest every inset right middle move curve close via as radial radius to change wrap true false and or not`.
 
-## 4. Gramática
+## 4. Grammar
 
-En EBNF: `[ x ]` es opcional, `{ x }` cero o más veces, `|` alternativas, `"x"` tal cual. `fin` es un salto de línea o `;`.
+In EBNF: `[ x ]` is optional, `{ x }` zero or more times, `|` alternatives, `"x"` literally. `end` is a newline or `;`.
 
 ```
-fichero      = [ "language" numero fin ] { "import" texto fin } ( escena | biblioteca ) ;
-escena       = "scene" nombre "{" { sentencia } "}" ;
-biblioteca   = "library" nombre [ "strict" ] "{" { let | muelle | componente | frontera | por_dentro } "}" ;
-frontera     = permisos | hecho | suceso | texto_vivo | modelo | imagen_decl ;   (* vive bajo el nombre de la biblioteca: `Clock.now` *)
-por_dentro   = propiedad | gesto | capa ;                                        (* lo que mueve por dentro; también bajo su nombre *)
+file         = [ "language" number end ] { "import" text end } ( scene | library ) ;
+scene        = "scene" name "{" { statement } "}" ;
+library      = "library" name [ "strict" ] "{" { let | spring | component | boundary | inner } "}" ;
+boundary     = permissions | fact | event | live_text | model | image_decl ;    (* lives under the library's name: `Clock.now` *)
+inner        = property | gesture | layer ;                                     (* what moves inside; also under its name *)
 
-sentencia    = declaracion | dibujo | estructura | capa | regla | comportamiento | gesto ;
+statement    = declaration | drawing | structure | layer | rule | behaviour | gesture ;
 
-declaracion  = superficie | permisos | modelo | muelle | propiedad | hecho | suceso
-             | texto_vivo | imagen_decl | medida | let | zona ;
-superficie   = "surface" [ nombre ] "{" { propiedad_de | sentencia } "}" ;   (* con nombre: una de varias, con lo suyo dentro *)
-permisos     = "permissions" "{" { ( "run" | "services" ) ":" texto { "," texto } fin } "}" ;
-modelo       = "model" nombre [ "max" numero ] "{" { campo | lista } "}" ;
-campo        = nombre ":" tipo [ "=" literal ] fin ;
-lista        = "list" nombre [ "max" numero ] ( "{" { campo | lista } "}"        (* fichas dentro de la ficha *)
-                                              | "depth" numero ) ;              (* …o como la de fuera, hasta esa hondura: un árbol *)
-tipo         = "text" | "number" | "bool" | "image" numero "," numero | enumerado ;
-enumerado    = nombre "|" nombre { "|" nombre } ;
-muelle       = "spring" nombre "=" numero "," numero ;
-propiedad    = ( "prop" | "pose" ) nombre "=" numero [ "~" ref_muelle ] ;
-hecho        = "fact" nombre [ ":" ( "number" | "bool" | enumerado ) ] "=" ( numero | "true" | "false" | nombre ) ;
-suceso       = "event" nombre [ "->" ] ;
-texto_vivo   = "text" nombre "=" texto ;
-imagen_decl  = "image" nombre "=" ( "icon" texto | "file" texto | "from" nombre ) "," numero "," numero ;
-medida       = "measure" nombre ;
-let          = "let" nombre "=" ( expr | color ) ;
-zona         = "zone" forma ;
-ref_muelle   = nombre | "spring" "(" numero "," numero ")" ;
+declaration  = surface | permissions | model | spring | property | fact | event
+             | live_text | image_decl | measure | let | zone ;
+surface      = "surface" [ name ] "{" { element_prop | statement } "}" ;   (* named: one of several, with its own things inside *)
+permissions  = "permissions" "{" { ( "run" | "services" ) ":" text { "," text } end } "}" ;
+model        = "model" name [ "max" number ] "{" { field | list } "}" ;
+service      = "service" service_name [ "as" name ] "{" { field } "}" ;     (* the services, and their fields, are in §17 *)
+field        = name ":" type [ "=" literal ] end ;
+list         = "list" name [ "max" number ] ( "{" { field | list } "}"          (* records inside the record *)
+                                            | "depth" number ) ;                (* …or like the outer one, down to that depth: a tree *)
+type         = "text" | "number" | "bool" | "image" number "," number | enum ;
+enum         = name "|" name { "|" name } ;
+spring       = "spring" name "=" number "," number ;
+property     = ( "prop" | "pose" ) name "=" number [ "~" spring_ref ] ;
+fact         = "fact" name [ ":" ( "number" | "bool" | enum ) ] "=" ( number | "true" | "false" | name ) ;
+event        = "event" name [ "->" ] ;
+live_text    = "text" name "=" text ;
+image_decl   = "image" name "=" ( "icon" text | "file" text | "from" name ) "," number "," number ;
+measure      = "measure" name ;
+let          = "let" name "=" ( expr | color ) ;
+zone         = "zone" shape ;
+spring_ref   = name | "spring" "(" number "," number ")" ;
 
-dibujo       = cuerpo | forma | texto | imagen | campo | recorte | grupo | emergente ;
-cuerpo       = "body" "{" { propiedad_de | forma } "}" ;
-forma        = ( "ellipse" | "box" | "arc" | "line" ) [ nombre ] "{" { propiedad_de } "}"
-             | "path" [ nombre ] "{" { propiedad_de | paso } "}" ;
-paso         = "move" punto | "line" punto | "curve" punto "via" punto | "close" ;
-texto        = "text" ( texto | nombre | "number" "(" expr [ "," numero [ "," texto ] ] ")" ) "{" { propiedad_de } "}" ;
-imagen       = "image" nombre "{" { propiedad_de } "}" ;
-campo        = "input" nombre "{" { propiedad_de } "}" ;
-recorte      = "clip" [ "inset" numero ] forma ;
-grupo        = "group" "{" { propiedad_de | sentencia } "}" ;
-emergente    = "popup" nombre "{" { propiedad_de | sentencia } "}" ;
+drawing      = body | shape | text | image | field | clip | group | popup ;
+body         = "body" "{" { element_prop | shape } "}" ;
+shape        = ( "ellipse" | "box" | "arc" | "line" ) [ name ] "{" { element_prop } "}"
+             | "path" [ name ] "{" { element_prop | step } "}" ;
+step         = "move" point | "line" point | "curve" point "via" point | "close" ;
+text         = "text" ( text | name | "number" "(" expr [ "," number [ "," text ] ] ")" ) "{" { element_prop } "}" ;
+image        = "image" name "{" { element_prop } "}" ;
+field        = "input" name "{" { element_prop } "}" ;
+clip         = "clip" [ "inset" number ] shape ;
+group        = "group" "{" { element_prop | statement } "}" ;
+popup        = "popup" name "{" { element_prop | statement } "}" ;
 
-estructura   = componente | copia | hijos | bloque_hueco | repeat | for | reparto | espacio | separador ;
-componente   = "component" nombre [ "(" [ parametro { "," parametro } ] ")" ] "{" { propiedad_de | sentencia } "}" ;
-parametro    = nombre [ ":" tipo_param ] [ "=" argumento ] ;
-tipo_param   = "number" | "bool" | "color" | "text" | "record" | "event" | "image" | "gesture" | "spring" ;
-copia        = Nombre [ "(" [ argumentos ] ")" ] [ "{" { propiedad_de | sentencia } "}" ] ;   (* las sentencias son sus hijos *)
-hijos        = "children" [ nombre ] [ "{" { propiedad_de } "}" ] ;                          (* solo dentro de un componente *)
-bloque_hueco = nombre "{" { sentencia } "}" ;                                                (* en una copia: lo que va al hueco de ese nombre *)
-separador    = "between" [ nombre ] "{" { propiedad_de | sentencia } "}" ;                   (* solo dentro de un reparto; con varias cosas, lleva `size:` *)
-argumentos   = argumento { "," argumento } { "," nombre ":" argumento }
-             | nombre ":" argumento { "," nombre ":" argumento } ;
-argumento    = expr | color | texto | nombre ;
-repeat       = "repeat" nombre "in" entero ".." entero "{" { sentencia } "}" ;
-for          = "for" nombre "in" nombre [ "from" expr ] "{" { sentencia } "}" ;
-reparto      = ( "row" | "column" ) [ nombre ] [ "~" ref_muelle ] "{" { propiedad_de | sentencia } "}" ;
-espacio      = "space" expr ;
+structure    = component | copy | children | slot_block | repeat | for | layout | space | separator ;
+component    = "component" name [ "(" [ parameter { "," parameter } ] ")" ] "{" { element_prop | statement } "}" ;
+parameter    = name [ ":" param_type ] [ "=" argument ] ;
+param_type   = "number" | "bool" | "color" | "text" | "record" | "event" | "image" | "gesture" | "spring" ;
+copy         = Name [ "(" [ arguments ] ")" ] [ "{" { element_prop | statement } "}" ] ;   (* the statements are its children *)
+children     = "children" [ name ] [ "{" { element_prop } "}" ] ;                          (* only inside a component *)
+slot_block   = name "{" { statement } "}" ;                                                (* in a copy: what goes into the slot of that name *)
+separator    = "between" [ name ] "{" { element_prop | statement } "}" ;                   (* only inside a layout; with several things, it needs `size:` *)
+arguments    = argument { "," argument } { "," name ":" argument }
+             | name ":" argument { "," name ":" argument } ;
+argument     = expr | color | text | name ;
+repeat       = "repeat" name "in" integer ".." integer "{" { statement } "}" ;
+for          = "for" name "in" name [ "from" expr ] "{" { statement } "}" ;
+layout       = ( "row" | "column" ) [ name ] [ "~" spring_ref ] "{" { element_prop | statement } "}" ;
+space        = "space" expr ;
 
-capa         = "layer" nombre [ "~" ref_muelle ] "{" { reclamacion } "}" ;
-reclamacion  = nombre [ cuando ] [ "{" { transicion } "}" ] ;
-cuando       = "while" expr | "for" duracion "after" sucesos | "from" sucesos "until" sucesos ;
-sucesos      = nombre { "," nombre } ;
-transicion   = nombre ":" expr [ "~" ref_muelle ] [ "after" duracion ] fin ;
+layer        = "layer" name [ "~" spring_ref ] "{" { claim } "}" ;
+claim        = name [ when ] [ "{" { transition } "}" ] ;
+when         = "while" expr | "for" duration "after" events | "from" events "until" events ;
+events       = name { "," name } ;
+transition   = name ":" expr [ "~" spring_ref ] [ "after" duration ] end ;
 
-regla        = "on" disparador [ "while" expr ] "{" { efecto } "}"
-             | "every" duracion [ ".." duracion ] [ "while" expr ] "{" { efecto } "}" ;
-disparador   = "press" [ "right" | "middle" ] zona_ref | "release" zona_ref | "scroll" zona_ref
-             | "drag" zona_ref | "hold" zona_ref "for" duracion
-             | "enter" zona_ref | "leave" zona_ref
-             | ( "hover" | "away" ) zona_ref "for" duracion
-             | "idle" "for" duracion
-             | "key" tecla | "submit" nombre | "focus" | "blur" | "drop" zona_ref
-             | nombre ;                                  (* un suceso *)
-tecla        = nombre { "+" nombre } ;                  (* Escape · Ctrl+k · Super+Alt+s *)
-efecto       = transicion | nombre "=" expr | "toggle" nombre
-             | "emit" nombre [ "(" expr ")" ] | "impulse" nombre numero
-             | "play" nombre | "focus" nombre | "blur" ;
+rule         = "on" trigger [ "while" expr ] "{" { effect } "}"
+             | "every" duration [ ".." duration ] [ "while" expr ] "{" { effect } "}" ;
+trigger      = "press" [ "right" | "middle" ] zone_ref | "release" zone_ref | "scroll" zone_ref
+             | "drag" zone_ref | "hold" zone_ref "for" duration
+             | "enter" zone_ref | "leave" zone_ref
+             | ( "hover" | "away" ) zone_ref "for" duration
+             | "idle" "for" duration
+             | "key" key | "submit" name | "focus" | "blur" | "drop" zone_ref
+             | name ;                                (* an event *)
+key          = name { "+" name } ;                   (* Escape · Ctrl+k · Super+Alt+s *)
+effect       = transition | name "=" expr | "toggle" name
+             | "emit" name [ "(" expr ")" ] | "impulse" name number
+             | "play" name | "focus" name | "blur" ;
 
-comportamiento = "blink" nombre "every" duracion ".." duracion "for" duracion
-             | "wave" nombre "=" expr "at" numero
-             | "spin" nombre "by" expr
-             | "follow" nombre "=" expr
-             | "look" nombre "," nombre "at" punto "reach" numero "," numero "within" numero [ "rest" punto ] ;
+behaviour    = "blink" name "every" duration ".." duration "for" duration
+             | "wave" name "=" expr "at" number
+             | "spin" name "by" expr
+             | "follow" name "=" expr
+             | "look" name "," name "at" point "reach" number "," number "within" number [ "rest" point ] ;
 
-gesto        = "gesture" nombre ( "ambient" | "reflex" | "asked" | "state" ) "{" { fotograma } "}"
-             | "posture" nombre "while" expr "{" { fotograma } "}" ;
-fotograma    = duracion { curva | "hold" duracion | "emit" nombre } [ "{" { nombre ":" expr fin } "}" ] ;
-curva        = "linear" | "in_quad" | "out_quad" | "in_cubic" | "out_cubic" | "in_out_sine" | "out_back" ;
+gesture      = "gesture" name ( "ambient" | "reflex" | "asked" | "state" ) "{" { frame } "}"
+             | "posture" name "while" expr "{" { frame } "}" ;
+frame        = duration { curve | "hold" duration | "emit" name } [ "{" { name ":" expr end } "}" ] ;
+curve        = "linear" | "in_quad" | "out_quad" | "in_cubic" | "out_cubic" | "in_out_sine" | "out_back" ;
 
-propiedad_de = nombre ":" valor { "," valor } fin ;      (* cuáles valen, según el elemento: §8 *)
-punto        = expr "," expr ;
+element_prop = name ":" value { "," value } end ;       (* which ones are valid, depending on the element: §8 *)
+point        = expr "," expr ;
 
-expr         = o ;
-o            = y { "or" y } ;
-y            = no { "and" no } ;
-no           = "not" no | suma [ ( "<" | ">" | "<=" | ">=" | "==" | "!=" ) suma ] ;
-suma         = producto { ( "+" | "-" ) producto } ;
-producto     = unario { ( "*" | "/" ) unario } ;
-unario       = "-" unario | "(" expr ")" | numero | duracion | "true" | "false"
-             | nombre | funcion "(" [ expr { "," expr } ] ")" ;
-color        = "#" hex | nombre | "mix" "(" color "," color "," expr ")" ;
+expr         = or ;
+or           = and { "or" and } ;
+and          = not { "and" not } ;
+not          = "not" not | sum [ ( "<" | ">" | "<=" | ">=" | "==" | "!=" ) sum ] ;
+sum          = product { ( "+" | "-" ) product } ;
+product      = unary { ( "*" | "/" ) unary } ;
+unary        = "-" unary | "(" expr ")" | number | duration | "true" | "false"
+             | name | function "(" [ expr { "," expr } ] ")" ;
+color        = "#" hex | name | "mix" "(" color "," color "," expr ")" ;
 ```
 
-`Nombre` en `copia` es el de un componente ya declarado: por convención, con mayúscula, que es lo que lo distingue a la vista de una sentencia del lenguaje.
+`Name` in `copy` is that of an already declared component: by convention capitalised, which is what tells it apart at a glance from a statement of the language.
 
-## 5. Ficheros, orden y nombres
+## 5. Files, order and names
 
-**Un fichero es una escena o una biblioteca.** Una escena se abre; una biblioteca se importa. `import "ruta.plm"` va antes de `scene` o `library`, y la ruta es relativa **al fichero que importa**. Una biblioteca importada por dos caminos se lee una vez; un círculo es un fallo que dice su camino. Una biblioteca solo declara: `let`, `spring` y `component`. Lo importado se comporta como si estuviera escrito al principio de la escena.
+**A file is a scene or a library.** A scene is opened; a library is imported. `import "path.plm"` goes before `scene` or `library`, and the path is relative **to the file that imports it**. A library imported by two routes is read once; a circle is an error that says its route. A library only declares: `let`, `spring` and `component`. What is imported behaves as if it were written at the start of the scene.
 
-**`library Nombre strict { … }`**: sus componentes solo pueden leer lo que piden por parámetro, lo que ellos declaran, lo de su biblioteca (y lo que esta importe), y los nombres que siempre existen. Leer un hecho, un color o un suceso de la escena sin pedirlo es un fallo al cargar —`'Nosy' belongs to a `strict` library and reads 'secret', which is the scene's, without asking for it`—: así una biblioteca de otro no depende de cómo se llamen las cosas en tu escena, ni las toca. Sin `strict`, un componente ve todo lo de quien lo usa, que es lo cómodo para las bibliotecas propias.
+**`library Name strict { … }`**: its components can only read what they ask for by parameter, what they declare themselves, what belongs to their library (and to whatever it imports), and the names that always exist. Reading a fact, a color or an event of the scene without asking for it is an error on load —`'Nosy' belongs to a `strict` library and reads 'secret', which is the scene's, without asking for it`—: that way someone else's library does not depend on what things are called in the scene, nor does it touch them. Without `strict`, a component sees everything belonging to whoever uses it, which is the comfortable thing for one's own libraries.
 
-**Un plugin es una biblioteca con su lógica al lado**: `reloj.plm` y `reloj.luau`. Puede declarar, además, su propia frontera —`fact`, `text`, `model`, `event`— y sus `permissions`:
+**A plugin is a library with its logic next to it**: `clock.plm` and `clock.luau`. It can also declare its own boundary —`fact`, `text`, `model`, `event`— and its `permissions`:
 
 ```
 library Clock strict {
-    permissions { run: "date" }           // los de SU lógica, no los de la escena
+    permissions { run: "date" }           // ITS logic's, not the scene's
     text now = "--:--"
     fact seconds = false
     event tapped ->
@@ -167,45 +168,45 @@ library Clock strict {
 }
 ```
 
-- Su frontera **vive bajo el nombre de la biblioteca**: dentro se escribe `now`; desde la escena, `Clock.now`. Dos plugins pueden tener cada uno su `count`, y ninguno pisa el de la escena.
-- Su lógica corre en **su propio estado de Luau**, y ahí `text.now` es `Clock.now`: no puede nombrar —ni leer, ni escribir, ni emitir— nada que no sea suyo, ni de la escena ni de otro plugin. No oye el teclado, ni el ratón, ni los sucesos de nadie más; no pide gestos ni mueve el cursor de escribir.
-- Lo que toque del sistema lo dicen **sus** `permissions`. Los de la escena no le valen, y los suyos no le valen a la escena. Al arrancar se imprime: `lógica · plugin «Clock» · permisos · órdenes: date`.
-- Una escena puede no tener lógica propia y usar plugins que sí. Guardar el `.plm` o el `.luau` de un plugin recarga en caliente, como lo demás.
+- Its boundary **lives under the name of the library**: inside it is written `now`; from the scene, `Clock.now`. Two plugins can each have their own `count`, and neither treads on the scene's.
+- Its logic runs in **its own Luau state**, and there `text.now` is `Clock.now`: it cannot name —cannot read, write or emit— anything that is not its own, neither the scene's nor another plugin's. It does not hear the keyboard, or the mouse, or anybody else's events; it does not ask for gestures or move the writing cursor.
+- What it touches of the system is set by **its** `permissions`. The scene's are no good to it, and its own are no good to the scene. On start-up this is printed: `logic  · plugin 'Clock' · permissions · commands: date · services: none`.
+- A scene may have no logic of its own and use plugins that do. Saving a plugin's `.plm` or `.luau` reloads hot, like everything else.
 
-Pedir permisos sin tener un `.luau` al lado es un fallo: no hay quien los use.
+Asking for permissions without a `.luau` next to it is an error: there is nobody to use them.
 
-**Los permisos de un plugin los aprueba quien lo usa.** Declararlos no es tenerlos: `pleamar --aprobar escena.plm` enseña lo que pide cada plugin de esa escena y pregunta. Lo aprobado se guarda fuera del plugin, con la huella de su lógica y de lo que pedía: si cambia cualquiera de las dos, vuelve a estar sin aprobar. **Sin aprobar, un plugin corre sin ningún permiso**, y sus errores dicen por qué y cómo aprobarlo. Un intérprete (`sh`, `python`…) sale marcado: es pedirlo todo. La escena que uno abre no pasa por esto: abrirla ya es decidir.
+**A plugin's permissions are approved by whoever uses it.** Declaring them is not having them: `pleamar --aprobar scene.plm` shows what each plugin of that scene asks for, and asks. What is approved is stored outside the plugin, with the fingerprint of its logic and of what it asked for: if either of the two changes, it goes back to unapproved. **Unapproved, a plugin runs with no permissions at all**, and its errors say why and how to approve it. An interpreter (`sh`, `python`…) comes out flagged: it is asking for everything. The scene one opens does not go through this: opening it is already deciding.
 
-Una biblioteca puede traer también **lo que mueve por dentro** —`prop`, `pose`, `gesture`, `posture`, `layer`— e **imágenes** (`image logo = file "logo.png", 16, 16`: la ruta es relativa al fichero que la escribe, así que la imagen va con ella). Todo bajo su nombre, como su frontera. Lo que no puede es pintar fuera de un componente, ni tener reglas sueltas: eso es de la escena.
+A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `posture`, `layer`— and **images** (`image logo = file "logo.png", 16, 16`: the path is relative to the file that writes it, so the image travels with it). All under its name, like its boundary. What it cannot do is draw outside a component, or hold loose rules: that belongs to the scene.
 
-**La escena le habla a un plugin emitiendo un suceso suyo** (`on press button { emit Face.cheer }`), que oyen los componentes del plugin (`on cheer { … }`) y su lógica (`on("cheer", …)`); y puede leer y poner los hechos de su frontera (`Face.happy = false`): la escena es la dueña. Un plugin no tiene superficie propia: si algo necesita la suya, es una escena.
+**The scene talks to a plugin by emitting one of its events** (`on press button { emit Face.cheer }`), which the plugin's components hear (`on cheer { … }`) and its logic too (`on("cheer", …)`); and it can read and set the facts of its boundary (`Face.happy = false`): the scene is the owner. A plugin has no surface of its own: if something needs one, it is a scene.
 
-**El fichero se lee en cuatro vueltas** —declaraciones; `let` y capas; dibujo; reglas—, así que el orden de lo escrito es el que le convenga a quien lee: una regla puede ir antes que la forma que nombra, y un `prop` al final. Dos excepciones: un `let` tiene que ir antes de quien lo usa, y **se pinta en el orden en que se escribe** (y de las zonas, la que se declara después queda encima).
+**The file is read in four passes** —declarations; `let` and layers; drawing; rules—, so the order of what is written is whatever suits the reader: a rule can come before the shape it names, and a `prop` at the end. Two exceptions: a `let` has to come before whoever uses it, and **things are painted in the order they are written** (and of two zones, the one declared later ends up on top).
 
-**Todos los nombres son globales**, salvo dentro de un componente o de una vuelta de `repeat` o `for`: ahí lo que se declara es propio de esa copia (dos copias de `Note` tienen cada una su `lit` y su zona `hit`), y primero se busca lo de dentro —parámetros, `let` del componente— y luego lo de fuera. Un `let` de la escena con el nombre de uno importado lo pisa: así se cambia un tono. Dos componentes con el mismo nombre no conviven.
+**Every name is global**, except inside a component or inside one turn of a `repeat` or a `for`: there, what is declared belongs to that copy (two copies of `Note` each have their own `lit` and their own `hit` zone), and the inner things are looked up first —parameters, the component's `let`— and then the outer ones. A `let` of the scene with the name of an imported one treads on it: that is how a tone is changed. Two components with the same name do not coexist.
 
-**Nombres que siempre existen**, y se leen como hechos: `screen.width`, `screen.height` (lo que mide la superficie de verdad), y durante una regla, lo del ratón: `pointer.x`, `pointer.y` (en la superficie), `local.x`, `local.y` (dentro de la zona), `drag.dx`, `drag.dy` (desde que se pulsó), `wheel` (muescas; positivo, hacia arriba). Y el suceso `demo`, que dispara `--demo`.
+**Names that always exist**, read like facts: `screen.width`, `screen.height` (what the real surface measures), and during a rule, the mouse's: `pointer.x`, `pointer.y` (on the surface), `local.x`, `local.y` (inside the zone), `drag.dx`, `drag.dy` (since the press), `wheel` (notches; positive is upwards). And the `demo` event, which `--demo` fires.
 
-## 6. Declaraciones
+## 6. Declarations
 
-| Sentencia | Qué declara |
+| Statement | What it declares |
 | --- | --- |
-| `surface { … }` · `surface panel { …; …dibujo… }` | Las ventanas que pide. Ver abajo |
-| `permissions { run: "date"; services: "audio", "audio.*" }` | Lo que la lógica puede tocar del sistema. Sin declarar, nada. **Escuchar no es mandar**: `"audio"` deja saber el volumen (`sys.watch`, `sys.ask`); para cambiarlo hace falta `"audio.volume"`, o `"audio.*"` |
-| `service clock as now { time: text; hour: number }` | Un servicio del sistema, por su nombre. Lo que cuente rellena `now.time` y `now.hour` **sin una línea de lógica**. Ver abajo |
-| `model rows max 14 { label: text; enabled: bool = true; depth: number }` | Una lista de fichas que pone la lógica. `max`: cuántas caben (1 a 256; 16 si no se dice). Crea `rows.count`, `rows.total` y, por ficha, `rows.K.campo` |
-| `prop orb.x = 360 ~lively` | Una propiedad animada: un muelle. Sin `~`, `lively` |
-| `pose eyes = 14` | Una propiedad de la pose: la que un gesto lleva de la mano |
-| `fact open = false` · `fact tries: number = 3` · `fact mode: low \| normal \| critical = normal` | Algo que es verdad un rato. Lo ponen la lógica y las reglas. Ver **Tipos**, abajo |
-| `event confirmed` · `event view_event ->` | Algo que ocurre. Con `->`, además le llega a la lógica |
-| `text notice.title = "Reunión"` | Un texto vivo: lo cambia la lógica, o un `input` |
-| `image fox = icon "firefox", 48, 48` | Una imagen, y a qué tamaño lógico se pinta como mucho. `icon "nombre"`, `file "ruta"`, o `from un_texto`: la que ese texto diga (un nombre de icono, o una ruta si empieza por `/`) |
-| `measure label` | Crea `label.width` y `label.height`, que rellena el texto que lleve `measure: label` |
-| `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | Un nombre para una expresión, o para un color |
-| `spring bouncy = 170, 12` | Un muelle propio: rigidez, freno. De casa: `lively`, `calm`, `quick`, `slow`, `gentle`, `pose`. En línea: `~spring(170, 12)` |
-| `zone box whole { at: …; size: …; active: expr }` | Una zona que no se pinta |
+| `surface { … }` · `surface panel { …; …drawing… }` | The windows it asks for. See below |
+| `permissions { run: "date"; services: "audio", "audio.*" }` | What the logic may touch of the system. Undeclared, nothing. **Listening is not commanding**: `"audio"` allows knowing the volume (`sys.watch`, `sys.ask`); changing it needs `"audio.volume"`, or `"audio.*"` |
+| `service clock as now { time: text; hour: number }` | A system service, by its name. Whatever it reports fills `now.time` and `now.hour` **without a line of logic**. See below |
+| `model rows max 14 { label: text; enabled: bool = true; depth: number }` | A list of records that the logic fills. `max`: how many fit (1 to 256; 16 if unsaid). Creates `rows.count`, `rows.total` and, per record, `rows.K.field` |
+| `prop orb.x = 360 ~lively` | An animated property: a spring. Without `~`, `lively` |
+| `pose eyes = 14` | A property of the pose: the kind a gesture leads by the hand |
+| `fact open = false` · `fact tries: number = 3` · `fact mode: low \| normal \| critical = normal` | Something that is true for a while. The logic and the rules set it. See **Types**, below |
+| `event confirmed` · `event view_event ->` | Something that happens. With `->`, it also reaches the logic |
+| `text notice.title = "Meeting"` | A live text: the logic changes it, or an `input` |
+| `image fox = icon "firefox", 48, 48` | An image, and the largest logical size it is painted at. `icon "name"`, `file "path"`, or `from some_text`: whichever that text says (an icon name, or a path if it starts with `/`) |
+| `measure label` | Creates `label.width` and `label.height`, filled by the text that carries `measure: label` |
+| `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | A name for an expression, or for a color |
+| `spring bouncy = 170, 12` | A spring of one's own: stiffness, damping. From the house: `lively`, `calm`, `quick`, `slow`, `gentle`, `pose`. Inline: `~spring(170, 12)` |
+| `zone box whole { at: …; size: …; active: expr }` | A zone that is not painted |
 
-**Varias ventanas en un proceso.** `surface { … }` sin nombre es la de la escena, y dibuja lo que hay suelto. Con nombre, `surface panel { … }` es una de varias y **lleva dentro lo que dibuja**:
+**Several windows in one process.** `surface { … }` with no name is the scene's, and draws whatever is loose. With a name, `surface panel { … }` is one of several and **carries inside it what it draws**:
 
 ```
 surface { size: full, 40; anchor: top; screens: all }
@@ -214,17 +215,17 @@ on press knob { toggle open }
 
 surface panel {
     size: 300, 160;  anchor: top_right;  margin: 48, 12, 0, 0;  level: overlay
-    open: open                                   // está mientras ese hecho sea verdad
+    open: open                                   // it is there while that fact is true
     body { … };  box close { … }
     on press close { open = false }
 }
 ```
 
-Todas **comparten propiedades, hechos, modelos y reglas**: una barra y su panel se hablan con un hecho, sin dar la vuelta por el sistema y sin saber una de otra. Por dentro cada una mira a un trozo distinto del mismo plano, igual que una emergente. Una superficie cerrada no se ve y no se puede pulsar.
+They all **share properties, facts, models and rules**: a bar and its panel talk through a fact, without a round trip through the system and without knowing about each other. Inside, each one looks at a different slice of the same plane, just like a popup. A closed surface is not seen and cannot be pressed.
 
-**Tipos.** Para el render todo son números; los tipos son para quien escribe y para quien habla con la escena desde fuera. Un hecho es un número, un sí o no (`bool`; sin tipo, lo es el que nace `true` o `false`) o un **enumerado**: `fact mode: low | normal | critical = normal`. Los nombres de sus valores valen en cualquier expresión (`mode == critical`, `mode = low` en una regla) y son su posición: `low` es 0. **Un enumerado se compara con sus valores, y el compilador lo comprueba**: `mode == fast`, si `fast` es de otro, es un fallo que dice cuáles valen; y con un enumerado no se hacen cuentas (`mode + 1` no significa nada; con un sí o no, sí: `r.separator * 21`). El mismo nombre puede estar en dos enumerados: comparado con su hecho, cada uno es el suyo; suelto, si significa números distintos, es un fallo que pide la forma larga, `mode.normal`, que vale siempre. En un hueco de un texto, un enumerado se enseña por su nombre: `"modo: {mode}"` → `modo: critical`. La lógica los lee y los escribe como lo que son —`fact.open` es `true`, `fact.mode` es `"critical"`—, y `--decir` también.
+**Types.** For the renderer everything is numbers; types are for whoever writes and for whoever talks to the scene from outside. A fact is a number, a yes or no (`bool`; with no type, that is what one born `true` or `false` is) or an **enum**: `fact mode: low | normal | critical = normal`. The names of its values are valid in any expression (`mode == critical`, `mode = low` in a rule) and they are their position: `low` is 0. **An enum is compared against its own values, and the compiler checks it**: `mode == fast`, if `fast` belongs to another one, is an error that says which ones are valid; and arithmetic is not done with an enum (`mode + 1` means nothing; with a yes or no it does: `r.separator * 21`). The same name can be in two enums: compared against its fact, each one is its own; on its own, if it means different numbers, it is an error that asks for the long form, `mode.normal`, which is always valid. In a slot of a text, an enum is shown by its name: `"mode: {mode}"` → `mode: critical`. The logic reads and writes them as what they are —`fact.open` is `true`, `fact.mode` is `"critical"`—, and so does `--decir`.
 
-Los campos de un modelo tienen esos tipos y dos más: **`image w, h`** —el nombre de un icono o una ruta, y la imagen que eso diga: `image r.icon { … }` sin declarar nada más— y **`list`**, fichas dentro de la ficha:
+The fields of a model have those types and two more: **`image w, h`** —an icon name or a path, and the image that says: `image r.icon { … }` without declaring anything else— and **`list`**, records inside the record:
 
 ```
 model menu max 8 {
@@ -236,111 +237,123 @@ model menu max 8 {
 for m in menu { …  for it in m.items { text it.label { … } } }
 ```
 
-Una lista de dentro se recorre con `for it in m.items`, y tiene su `m.items.count` y su `m.items.total`. **`list children max 6 depth 2`**, sin bloque, son fichas como la de fuera, unas dentro de otras hasta esa hondura (de 1 a 6): un árbol, como el menú de una aplicación. Se recorre con tantos `for` como niveles se quieran enseñar. Todo se despliega al cargar: 8 × 6 son 48 fichas, y el tope entre todas las listas de un modelo es 4096.
+An inner list is walked with `for it in m.items`, and it has its `m.items.count` and its `m.items.total`. **`list children max 6 depth 2`**, with no block, are records like the outer one, nested inside each other down to that depth (1 to 6): a tree, like the menu of an application. It is walked with as many `for` as levels are to be shown. Everything unfolds on load: 8 × 6 is 48 records, and the ceiling across all the lists of a model is 4096.
 
-**Servicios, sin lógica.** `service` pide algo del sistema por su nombre y dice qué campos quiere de los que ese servicio trae. Cada campo es un hecho o un texto normal —del tipo que se le ponga— con el nombre delante, y se rellena solo cuando el sistema cuenta algo:
+**Services, with no logic.** `service` asks the system for something by its name and says which of the fields that service brings it wants. Each field is an ordinary fact or text —of whatever type it is given— with the name in front, and it fills itself whenever the system reports something:
 
 ```
-permissions { services: "clock" }                      // sin permiso no se monta
-service clock { time: text = "--:--"; date: text }     // sin `as`: clock.time, clock.date
-service clock.seconds as tick { second: number }       // con `as`: tick.second
+permissions { services: "clock" }                      // without permission it is not set up
+service clock { time: text = "--:--"; date: text }     // without `as`: clock.time, clock.date
+service clock.seconds as tick { second: number }       // with `as`: tick.second
 text clock.time { size: 14; color: ink }
 ```
 
-Qué trae cada servicio está en el vocabulario (§17), y **pedirle lo que no tiene es un fallo al cargar**, con su «did you mean…?». Lo que no venga en un aviso se queda como estaba. Los que traen listas —`apps`, `tray`, `notifications`, `workspaces`— no se piden así: eso es un modelo, y lo reparte la lógica con `sys.watch`.
-
-Los permisos son los de la escena, y son los mismos de `sys.watch`: `services: "clock"`. Sin ellos la escena carga igual, dice por qué en la consola y ese campo se queda como nació. `clock` avisa al cambiar el minuto y `clock.seconds` cada segundo; ninguno de los dos pregunta la hora a nadie ni despierta a la máquina para mirar si ya toca.
-
-**Ficheros.** Una escena tiene **su propia carpeta**, y de ahí no sale: sin rutas, sin `..`, como `require`. Se usa desde la lógica, con permiso `services: "files"` para leer y `"files.write"` para escribir:
+What each service brings is in the vocabulary (§17), and **asking it for what it does not have is an error on load**, with its "did you mean…?". What the numbers mean:
 
 | | |
 | --- | --- |
-| `sys.ask("files.read", "settings.json")` | lo que diga, o `nil` si no está |
-| `sys.ask("files.read", n, "json")` | eso mismo, ya como tabla. Si el fichero está roto, es un fallo con su sitio, no una tabla a medias |
-| `sys.ask("files.exists", n)` · `sys.ask("files.list")` · `sys.ask("files.folder")` | si está · lo que hay · dónde |
-| `sys.call("files.write", n, texto)` · `sys.call("files.remove", n)` | escribir (entero o nada: primero al lado, luego en su sitio) · borrar |
-| `sys.call("files.write", n, { tone = 2 })` | una tabla se guarda como JSON, con sus saltos de línea: lo que se guarda también se lee a mano |
-| `sys.watch("files:settings.txt", f)` | avisa cuando ese fichero cambie, también si lo toca otro |
+| `audio.volume` | 0 to 1 |
+| `battery.percent` | 0 to 100 |
+| `network.strength` | 0 to 100 |
+| `clock.hour` · `minute` · `second` · `day` · `month` · `year` | as they are read |
+| `clock.weekday` | 0 is Sunday |
+| `clock.time` · `clock.date` | already written out: `10:41`, `Sun 20 Sep` |
+| `network.kind` | `none`, `wired` or `wifi` |
+| the `bool` ones | `muted`, `charging`, `present`, `online`, `playing` |
+ Whatever does not come in a report stays as it was. The ones that bring lists —`apps`, `tray`, `notifications`, `workspaces`— are not asked for this way: that is a model, and the logic hands it out with `sys.watch`.
 
-**El entorno y el portapapeles**, con sus permisos (`services: "env"`, `"clipboard"`, `"clipboard.set"` para escribir):
+The permissions are the scene's, and they are the same as `sys.watch`'s: `services: "clock"`. Without them the scene loads all the same, says why on the console and that field stays as it was born. `clock` reports when the minute changes and `clock.seconds` every second; neither of the two asks anybody for the time nor wakes the machine up to see whether it is time yet.
 
-| | |
-| --- | --- |
-| `sys.ask("env", "HOME")` | una variable del entorno, o `nil` |
-| `sys.ask("clipboard")` | lo que haya copiado, como texto |
-| `sys.call("clipboard.set", t)` | copiar eso. En Wayland, quien copia tiene que seguir vivo: de eso se encarga la plataforma |
-
-Un plugin tiene la suya, bajo su nombre: lo que guarde no lo ve la escena, ni al revés.
-
-**Una por monitor.** `screens: each [max N]` repite la superficie en cada monitor (4 como mucho, si no se dice otra cosa), y **cada copia tiene lo suyo**: sus propiedades, sus zonas y sus reglas. Dentro:
+**Files.** A scene has **its own folder**, and does not leave it: no paths, no `..`, like `require`. It is used from the logic, with permission `services: "files"` to read and `"files.write"` to write:
 
 | | |
 | --- | --- |
-| `$screen` | su número, para interpolar en un nombre: `mon.$screen.active`, como `$i` en un `repeat` |
-| `screen.index` | lo mismo, como número |
-| `screen.name` | el nombre de **su** monitor, que pone el render (`HDMI-A-1`) |
-| `screen.width` · `screen.height` | lo que mide **su** monitor |
-| `screens.count` | cuántos monitores están enseñando algo |
+| `sys.ask("files.read", "settings.json")` | whatever it says, or `nil` if it is not there |
+| `sys.ask("files.read", n, "json")` | that same thing, already as a table. If the file is broken, it is an error with its place, not a half table |
+| `sys.ask("files.exists", n)` · `sys.ask("files.list")` · `sys.ask("files.folder")` | whether it is there · what is there · where |
+| `sys.call("files.write", n, text)` · `sys.call("files.remove", n)` | write (all or nothing: first alongside, then into place) · remove |
+| `sys.call("files.write", n, { tone = 2 })` | a table is saved as JSON, with its newlines: what is saved can also be read by hand |
+| `sys.watch("files:settings.txt", f)` | reports when that file changes, including when somebody else touches it |
 
-Con la superficie de la escena (la que no lleva nombre), lo que se repite es el dibujo suelto. `--pantalla A,B` reparte las copias entre esos monitores, que es como se ensayan dos sin tener dos.
+**The environment and the clipboard**, with their permissions (`services: "env"`, `"clipboard"`, `"clipboard.set"` to write):
+
+| | |
+| --- | --- |
+| `sys.ask("env", "HOME")` | an environment variable, or `nil` |
+| `sys.ask("clipboard")` | whatever has been copied, as text |
+| `sys.call("clipboard.set", t)` | copy that. On Wayland, whoever copies has to stay alive: the platform takes care of that |
+
+A plugin has its own, under its name: what it saves the scene does not see, nor the other way round.
+
+**One per monitor.** `screens: each [max N]` repeats the surface on every monitor (4 at most, unless said otherwise), and **each copy has its own**: its properties, its zones and its rules. Inside:
+
+| | |
+| --- | --- |
+| `$screen` | its number, to interpolate into a name: `mon.$screen.active`, like `$i` in a `repeat` |
+| `screen.index` | the same, as a number |
+| `screen.name` | the name of **its** monitor, set by the renderer (`HDMI-A-1`) |
+| `screen.width` · `screen.height` | what **its** monitor measures |
+| `screens.count` | how many monitors are showing something |
+
+With the scene's surface (the one with no name), what is repeated is the loose drawing. `--pantalla A,B` spreads the copies across those monitors, which is how two are rehearsed without having two.
 
 ```
 surface { size: full, 44; anchor: top; screens: each }
-model mon max 4 { active: number = 1; title: text }     // una ficha por monitor, de la lógica
+model mon max 4 { active: number = 1; title: text }     // one record per monitor, from the logic
 text mon.$screen.title { … }
 repeat i in 1..10 { Desk(i, mon.$screen.active) { show: ws.$i.there } }
 ```
 
-**Una ventana de las normales.** `kind: window` pide una ventana con su marco y su cruz, de las que el compositor coloca, en vez de un panel pegado a un borde; `title:` es lo que enseña. Lo que es de un panel —`anchor`, `level`, `reserve`, `screens`, `margin`— no le vale, y **`screen.width` y `screen.height` son lo que mide ella**, no su monitor: cambian cuando alguien la estira, así que una ventana se dibuja contra ellos.
+**An ordinary window.** `kind: window` asks for a window with its frame and its cross, one of those the compositor places, instead of a panel stuck to an edge; `title:` is what it shows. What belongs to a panel —`anchor`, `level`, `reserve`, `screens`, `margin`— is no good to it, and **`screen.width` and `screen.height` are what it measures**, not its monitor: they change when somebody stretches it, so a window is drawn against them.
 
 ```
-surface { size: 460, 320;  kind: window;  title: "pleamar · ajustes" }
+surface { size: 460, 320;  kind: window;  title: "pleamar · settings" }
 box { from: 0, 0;  size: screen.width, screen.height;  color: coal }
 ```
 
-**`surface`**: `size: ancho, alto` (`full` como ancho es todo el monitor) · `kind:` `panel` `window` · `title:` (solo una ventana) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` · `margin: n` o `arriba, derecha, abajo, izquierda` · `level:` `background` `bottom` `top` `overlay` · `reserve: n` (el sitio que las ventanas le dejan) · `screens: all` o `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, y con `while expr` solo lo pide mientras sea verdad.
+**`surface`**: `size: width, height` (`full` as the width is the whole monitor) · `kind:` `panel` `window` · `title:` (a window only) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` · `margin: n` or `top, right, bottom, left` · `level:` `background` `bottom` `top` `overlay` · `reserve: n` (the room windows leave it) · `screens: all` or `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, and with `while expr` it only asks for it while that is true.
 
-## 7. Expresiones
+## 7. Expressions
 
-Son números. **Verdad es más de 0.5**; `true` es 1 y `false` es 0. Las evalúa el render, en cada frame que haga falta.
+They are numbers. **True is more than 0.5**; `true` is 1 and `false` is 0. The renderer evaluates them, on every frame that needs it.
 
-De menos a más fuerza: `or` · `and` · `not` · `< > <= >= == !=` (no se encadenan: `a < b < c` no vale) · `+ -` · `* /` · `-` delante. `==` es «iguales a menos de una milésima»: son números con coma, y un muelle nunca llega del todo.
+From weakest to strongest: `or` · `and` · `not` · `< > <= >= == !=` (they do not chain: `a < b < c` is not valid) · `+ -` · `* /` · `-` in front. `==` means "equal to within a thousandth": these are numbers with a decimal point, and a spring never quite arrives.
 
-| Función | |
+| Function | |
 | --- | --- |
 | `min(a, b)` `max(a, b)` `abs(x)` | |
-| `floor(x)` `ceil(x)` | al entero de abajo o al de arriba |
-| `clamp(x, a, b)` | x, entre a y b |
-| `smooth(a, b, x)` | de 0 a 1 mientras x va de a a b, con entrada y salida suaves |
-| `mix(a, b, t)` | entre a y b. También entre dos colores |
+| `floor(x)` `ceil(x)` | to the integer below or the one above |
+| `clamp(x, a, b)` | x, between a and b |
+| `smooth(a, b, x)` | from 0 to 1 while x goes from a to b, easing in and out |
+| `mix(a, b, t)` | between a and b. Also between two colors |
 | `if(cond, a, b)` | |
-| `vel(prop)` | la velocidad de un muelle, que solo el render conoce |
+| `vel(prop)` | the velocity of a spring, which only the renderer knows |
 
-Vale como nombre: un `let`, un `prop`, un `fact`, una medida (`label.width`), lo que ocupa un reparto con nombre y cuántos hijos tiene a la vista (`list.width`, `list.height`, `list.count`: se pueden leer también antes de donde se declara), el campo numérico de una ficha (`r.depth`, `r.index`, `rows.count`), y la presencia de una reclamación (`shape.rec`: 1 mientras gana).
+Valid as a name: a `let`, a `prop`, a `fact`, a measure (`label.width`), how much a named layout takes up and how many children it has in view (`list.width`, `list.height`, `list.count`: they can also be read before the point where it is declared), the numeric field of a record (`r.depth`, `r.index`, `rows.count`), and the presence of a claim (`shape.rec`: 1 while it wins).
 
-## 8. Dibujo
+## 8. Drawing
 
-Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sugerencia.
+Each element accepts these properties and no others; another one is an error, with a suggestion.
 
-| Elemento | Propiedades |
+| Element | Properties |
 | --- | --- |
 | `ellipse` | `at` · `radius` · `scale: sx, sy` |
-| `box` | `at: cx, cy` o `from: x, y` · `size: w, h` · `corner` |
-| `arc` (como «∩») | `at` · `radius` · `span` · `width` |
+| `box` | `at: cx, cy` or `from: x, y` · `size: w, h` · `corner` |
+| `arc` (like "∩") | `at` · `radius` · `span` (the whole angle it covers) · `width`. It opens **upwards and symmetrically**; a progress ring is `span: p * 360deg` with `rotate: p * 180deg` |
 | `line` | `from` · `to` · `width` |
-| `path` | `at` (de dónde cuelgan sus puntos) · `size: w, h` (lo que ocupa en un reparto), y dentro sus pasos: `move x, y` (una vez, la primera) · `line x, y` · `curve x, y via cx, cy` · `close`. Cerrado se rellena; abierto o con `stroke`, es una línea |
-| …y todas las formas | `color` · `opacity` · `rotate` · `stroke` (solo el contorno) · `blend` (dentro de un `body`: cuánto se funde con lo anterior) · `active` · `cursor` · `show` |
-| `body` | `color` o `gradient` (abajo) · `rim` · `light: cantidad, desde_y, alto` · `shadow: dx, dy, difusa, alfa` · `border: grosor, #color` · `opacity` · `show`, y dentro sus formas, fundidas en una silueta |
+| `path` | `at` (what its points hang from) · `size: w, h` (what it takes up in a layout), and inside it its steps: `move x, y` (once, the first one) · `line x, y` · `curve x, y via cx, cy` · `close`. Closed, it is filled; open, or with `stroke`, it is a line |
+| …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `show` |
+| `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha` · `border: width, #color` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` |
 | `image` | `at` · `size` · `opacity` · `tint` · `show` |
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `show` |
-| `group` | `pivot` · `rotate` · `scale: s` o `sx, sy` · `move: dx, dy` · `opacity` (se funden como una sola cosa) · `size` (para quien lo reparta) · `show` |
-| `popup` | `at` (dentro de la superficie) · `size` · `open:` un hecho |
+| `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` |
+| `popup` | `at` (inside the surface) · `size` · `open:` a fact |
 | `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `view: w, h` · `step` · `content` · `wrap: n` |
 
-`anchor` de un texto: `left` `center` `right` y `top` `center` `bottom`, uno o los dos (`anchor: left center`). De un reparto: `left` `center` `right` y `top` `middle` `bottom` —sin ancla, `at` es su esquina de arriba a la izquierda—. `cursor:` `default` `pointer` `text` `grab` `grabbing`.
+`anchor` of a text: `left` `center` `right` and `top` `center` `bottom`, one or both (`anchor: left center`). Of a layout: `left` `center` `right` and `top` `middle` `bottom` —with no anchor, `at` is its top left corner—. `cursor:` `default` `pointer` `text` `grab` `grabbing`.
 
-Un **camino** es una línea quebrada o curva. `close` la cierra, y entonces se rellena —también cóncava, y también consigo misma cruzada—; sin cerrar, o con `stroke`, es una línea de ese grosor con las puntas redondas. `curve` es una Bézier cuadrática, y se parte en tantos tramos como largo sea el desvío. Por dentro es la misma distancia con signo que las demás formas: se funde con `blend`, y tiene sombra, filo, luz y borde como cualquiera.
+A **path** is a broken or curved line. `close` closes it, and then it is filled —concave too, and crossing itself too—; unclosed, or with `stroke`, it is a line of that width with round caps. `curve` is a quadratic Bézier, and it is split into as many segments as the detour is long. Inside it is the same signed distance as the other shapes: it melts with `blend`, and it has shadow, rim, light and border like any other.
 
 ```
 path {
@@ -349,41 +362,41 @@ path {
 }
 ```
 
-Un camino lleva **un solo trazo** (un `move`, el primero) y hasta 64 puntos ya aplanados; para varios, varios `path`. En un reparto hay que decirle lo que ocupa con `size:`, porque su caja no se sabe hasta evaluarlo.
+A path carries **a single stroke** (one `move`, the first) and up to 64 already flattened points; for several, several `path`. In a layout it has to be told what it takes up with `size:`, because its box is not known until it is evaluated.
 
-**Listas más largas que lo que se despliega.** Un modelo despliega sus `max` fichas al cargar, y ese es el tope (256). Para una lista de miles, la escena declara solo la **ventana** —lo que se ve y un poco más— y dice cuánto mide la lista entera:
+**Lists longer than what is unfolded.** A model unfolds its `max` records on load, and that is the ceiling (256). For a list of thousands, the scene declares only the **window** —what is seen and a little more— and says how long the whole list is:
 
 | | |
 | --- | --- |
-| `content: total * 34` | en un reparto con `view:`, el largo de verdad: el desplazamiento va sobre él, no sobre lo desplegado |
-| `for r in rows from first` | la copia 0 es la ficha `first` de la lista de verdad, así que `r.index` es el número que le toca |
-| `move: 0, first * 34` | pone las copias en su sitio de la lista entera |
-| `list.scroll` | además de leerse, **se escribe** como cualquier propiedad: `on press top { list.scroll: 0 ~calm }` |
-| `on change floor(list.scroll / 34) { emit slid(list.scroll) }` | así se entera la lógica de que hay que mandarle otro trozo, venga el movimiento de donde venga |
+| `content: total * 34` | in a layout with `view:`, the real length: the scrolling runs over it, not over what is unfolded |
+| `for r in rows from first` | copy 0 is record `first` of the real list, so `r.index` is the number that belongs to it |
+| `move: 0, first * 34` | puts the copies in their place within the whole list |
+| `list.scroll` | besides being read, it **is written** like any property: `on press top { list.scroll: 0 ~calm }` |
+| `on change floor(list.scroll / 34) { emit slid(list.scroll) }` | that is how the logic learns it has to be sent another slice, wherever the movement comes from |
 
-Un reparto con `view:` **se arrastra** sin declarar nada: al pulsarlo se apunta por dónde iba y sigue al ratón, con su muelle. Y se agarra **por dentro**: arrastrar no es cosa de la zona de más arriba, sino de cualquiera que estuviera debajo al pulsar, como la rueda. Así una lista se mueve agarrándola por una de sus filas.
+A layout with `view:` **is dragged** without declaring anything: on being pressed it notes where it was and follows the mouse, with its spring. And it is grabbed **from inside**: dragging is not the business of the topmost zone, but of any zone that was underneath at the press, like the wheel. That is how a list is moved by grabbing it by one of its rows.
 
-**`wrap: 5`** convierte un reparto en una **rejilla**: cinco por línea y a la siguiente. La celda mide lo que el hijo más grande, y **lo que no se ve no deja hueco**, así que los demás se recolocan, con el muelle del reparto si lo lleva. Es lo que en Quickshell es un `Flow`.
+**`wrap: 5`** turns a layout into a **grid**: five per line and on to the next. The cell is as big as the largest child, and **what is not seen leaves no gap**, so the rest move up, with the layout's spring if it has one. It is what a `Flow` is in Quickshell.
 
-`escenas/lista-larga` son cinco mil filas en dieciséis copias: 0,49 ms por frame, y los mismos dieciséis grupos y diecinueve zonas las haya que haya.
+`escenas/lista-larga` is five thousand rows in sixteen copies: 0.49 ms per frame, and the same sixteen groups and nineteen zones however many there are.
 
-`clip [inset n] forma` recorta todo lo que venga después, hasta el final de su `group`. Hasta cuatro anidados recortan por su forma; los de más afuera, por su caja.
+`clip [inset n] shape` clips everything that comes after, to the end of its `group`. Up to four nested ones clip by their shape; the outer ones, by their box.
 
-**Degradados.** En un `body`, `gradient:` toma de dónde a dónde va y luego sus colores, separados por comas. Cada color puede decir **dónde cae** (`sand 40%`); los que no lo digan se reparten por igual. De dos a ocho.
+**Gradients.** In a `body`, `gradient:` takes where it goes from and to and then its colors, separated by commas. Each color can say **where it falls** (`sand 40%`); the ones that do not say it are spread evenly. From two to eight.
 
 ```
-gradient: 0, 0, 0, 44, mint, coal                        // de un punto a otro
-gradient: 0, 0 to 0, 44, mint, sand 30%, #e86a9a, coal   // lo mismo, con paradas
-gradient: radial 100, 160 radius 60, ink, mint 40%, coal // desde un centro hacia fuera
+gradient: 0, 0, 0, 44, mint, coal                        // from one point to another
+gradient: 0, 0 to 0, 44, mint, sand 30%, #e86a9a, coal   // the same, with stops
+gradient: radial 100, 160 radius 60, ink, mint 40%, coal // from a center outwards
 ```
 
-**Una forma con nombre es una zona** si alguna regla la nombra, si lleva `active`, o si se declaró con `zone`. Un nombre puesto solo para leerse mejor no para el clic. Una zona hereda las transformaciones de los grupos donde esté, y **lo que no está —un `show:` falso, una ficha que no existe— no es zona**. Un `row` o `column` con nombre también lo es: su caja entera, debajo de las de sus hijos.
+**A named shape is a zone** if some rule names it, if it carries `active`, or if it was declared with `zone`. A name put there only to read better does not stop a click. A zone inherits the transforms of the groups it is in, and **what is not there —a false `show:`, a record that does not exist— is not a zone**. A `row` or `column` with a name is one too: its whole box, underneath those of its children.
 
-## 9. Repartos
+## 9. Layouts
 
-`row` y `column` colocan a sus hijos uno detrás de otro: el sitio de cada uno es una expresión, así que si uno crece o desaparece, los demás se mueven. Con `~muelle` en la cabecera, viajan a su sitio en vez de saltar. Cada hijo tiene que saber cuánto ocupa: una forma con `size` o `radius`, un texto (se mide solo), una imagen, un `group` o un componente con `size:`, otro reparto, o `space n`. `show: expr` en un hijo decide si está: ocupa y se ve, o ni lo uno ni lo otro.
+`row` and `column` place their children one after another: the place of each one is an expression, so if one grows or disappears, the rest move. With `~spring` in the header, they travel to their place instead of jumping. Every child has to know how much it takes up: a shape with `size` or `radius`, a text (it measures itself), an image, a `group` or a component with `size:`, another layout, or `space n`. `show: expr` on a child decides whether it is there: it takes up room and is seen, or neither of the two.
 
-**Listas más largas que su hueco.** `view: w, h` dice lo que se ve; lo de dentro puede ser más largo y **se corre con la rueda**, recortado y sin pasarse de lo que hay. `step:` es cuánto por muesca (60 por defecto), y el muelle del reparto es con el que viaja. Además de `width`, `height` y `count`, publica `list.content` —cuánto hay— y `list.scroll` —por dónde va—, que es lo que hace falta para pintar una barrita al lado:
+**Lists longer than the room they have.** `view: w, h` says what is seen; what is inside can be longer and **moves with the wheel**, clipped and never past what there is. `step:` is how much per notch (60 by default), and the layout's spring is the one it travels with. Besides `width`, `height` and `count`, it publishes `list.content` —how much there is— and `list.scroll` —where it is— which is what is needed to paint a little bar alongside:
 
 ```
 column list { at: 16, 16;  view: 250, 208;  gap: 6
@@ -393,136 +406,136 @@ box { from: 276, 16 + list.scroll / max(list.content, 1) * 208
       size: 4, 208 * 208 / max(list.content, 208);  corner: 2;  color: ink;  opacity: 35% }
 ```
 
-Con `view:`, hacia fuera ocupa lo que se ve, no lo que lleva dentro.
+With `view:`, outwards it takes up what is seen, not what it carries inside.
 
-`between { box { size: 272, 1; color: ink } }` pone eso **entre cada dos hijos que estén**: si uno desaparece, su raya también, y nunca queda una al principio ni al final. **No abre otro hueco**: va centrada en el `gap` que ya hay entre sus vecinos, así que la distancia entre dos hijos es el `gap` más lo que ocupe ella. Con una sola cosa dentro, esa cosa dice cuánto ocupa; con varias, el `between` hace de grupo y lo dice él (`between { size: 10, 12; … }`). `between i { … }` le da su posición —1 tras el primer hijo, 2 tras el segundo…—, para que la primera pueda ser distinta: `opacity: if(i == 1, 50%, 12%)`. Un reparto con nombre publica, además de `lista.width` y `lista.height`, **`lista.count`**: cuántos hijos están ahora mismo. Los tres se pueden leer también antes de donde se declara.
+`between { box { size: 272, 1; color: ink } }` puts that **between every two children that are there**: if one disappears, so does its line, and there is never one at the start or at the end. **It does not open another gap**: it goes centred in the `gap` that is already between its neighbours, so the distance between two children is the `gap` plus what it takes up. With a single thing inside, that thing says how much it takes up; with several, the `between` acts as a group and says it itself (`between { size: 10, 12; … }`). `between i { … }` gives it its position —1 after the first child, 2 after the second…—, so the first one can be different: `opacity: if(i == 1, 50%, 12%)`. A named layout publishes, besides `list.width` and `list.height`, **`list.count`**: how many children are there right now. All three can also be read before the point where it is declared.
 
-## 10. Componentes, `repeat`, `for`
+## 10. Components, `repeat`, `for`
 
-`component Nombre(parámetros) { size: w, h; … }` declara; `Nombre(argumentos)` pone una copia. `size:` dice cuánto ocupa, para quien lo reparta. Lo que una copia declara —`prop`, formas con nombre, reglas— es suyo.
+`component Name(parameters) { size: w, h; … }` declares; `Name(arguments)` places a copy. `size:` says how much it takes up, for whoever lays it out. What a copy declares —`prop`, named shapes, rules— is its own.
 
-**Un componente dice qué necesita.** Cada parámetro puede llevar tipo y valor por defecto: `component Row(r: record, chosen: event, tone: color = mint, height: number = 30)`.
+**A component says what it needs.** Each parameter can carry a type and a default value: `component Row(r: record, chosen: event, tone: color = mint, height: number = 30)`.
 
-| Tipo | Lo que se le pasa | Dentro |
+| Type | What is passed to it | Inside |
 | --- | --- | --- |
-| `number` | una expresión | vale en cualquier expresión |
-| `color` | `#fff`, un `let` de color, `mix(…)` | donde va un color |
-| `text` | `"entre comillas"` (con huecos, si quiere) o el nombre de un texto vivo | `text nombre { … }`, y en un hueco: `"{nombre}"` |
-| `record` | una ficha: la de un `for`, o `rows.0` | `r.campo`, `r.index` |
-| `event` | el nombre de un suceso de la escena | `emit nombre(…)` y `on nombre { … }` hablan de **ese** suceso |
-| `image` | el nombre de una imagen | `image nombre { … }` |
-| `bool` | una expresión (`true`, `false`, `count > 3`) | vale en cualquier expresión |
-| `gesture` | el nombre de un gesto | `play nombre` |
-| `spring` | el nombre de un muelle, o `spring(170, 12)` | `~nombre` |
+| `number` | an expression | valid in any expression |
+| `color` | `#fff`, a color `let`, `mix(…)` | wherever a color goes |
+| `text` | `"in quotes"` (with slots, if it likes) or the name of a live text | `text name { … }`, and in a slot: `"{name}"` |
+| `record` | a record: that of a `for`, or `rows.0` | `r.field`, `r.index` |
+| `event` | the name of an event of the scene | `emit name(…)` and `on name { … }` talk about **that** event |
+| `image` | the name of an image | `image name { … }` |
+| `bool` | an expression (`true`, `false`, `count > 3`) | valid in any expression |
+| `gesture` | the name of a gesture | `play name` |
+| `spring` | the name of a spring, or `spring(170, 12)` | `~name` |
 
-Así un componente de biblioteca no da por hecho que la escena tenga un suceso que se llame de cierta manera: lo pide. Los argumentos van **por posición y luego, si se quiere, por nombre** (`Row(r, choose, height: 40)`); desde el primero con nombre, todos con nombre. Los que tienen valor por defecto se pueden omitir, y van al final. Lo que falte, sobre, se repita o no sea del tipo es un fallo donde se usa, que enseña la firma entera: `'Row' is missing 'chosen' (an event): it is Row(r: record, chosen: event, tone: color = …)`. El valor por defecto se lee donde se usa el componente, así que `= mint` es el `mint` de esa escena.
+That way a library component does not take it for granted that the scene has an event called in a certain way: it asks for it. Arguments go **by position and then, if wanted, by name** (`Row(r, choose, height: 40)`); from the first one with a name, all with a name. The ones that have a default value can be omitted, and they go at the end. Whatever is missing, extra, repeated or not of the type is an error where it is used, showing the whole signature: `'Row' is missing 'chosen' (an event): it is Row(r: record, chosen: event, tone: color = …)`. The default value is read where the component is used, so `= mint` is the `mint` of that scene.
 
-Sin tipo (`component Dot(tone)`), el parámetro es lo que parezca el argumento: es como se escribían antes, y sigue valiendo.
+With no type (`component Dot(tone)`), the parameter is whatever the argument looks like: it is how they used to be written, and it is still valid.
 
-**Un hueco para hijos: `children`.** Lo que una copia trae dentro de su bloque —además de propiedades como `show:`— va donde su componente diga `children`:
+**A slot for children: `children`.** What a copy brings inside its block —besides properties like `show:`— goes wherever its component says `children`:
 
 ```
 component Card(title: text) {
-    size: 300, 40 + inside.height            // mide lo que mida lo que le metan
+    size: 300, 40 + inside.height            // as big as whatever is put into it
     body { color: #1b1c1c; box { from: 0, 0; size: 300, 40 + inside.height; corner: 12 } }
     text "{upper(title)}" { at: 12, 18; anchor: left center; size: 11; color: ink }
     column inside { at: 12, 32; gap: 4;  children }
 }
 
-Card("Avisos") {
-    text title { size: 14; color: ink }      // el `title` de la escena, no el parámetro de Card
-    repeat i in 0..2 { text "fila {i}" { size: 13; color: ink } }
+Card("Alerts") {
+    text title { size: 14; color: ink }      // the scene's `title`, not Card's parameter
+    repeat i in 0..2 { text "row {i}" { size: 13; color: ink } }
 }
 ```
 
-Dentro de un `row` o `column`, cada hijo ocupa su sitio en el reparto (y un `repeat` o un `for` de fuera se despliega como los de dentro); suelto, `children { move: x, y }` es un grupo. **Los hijos se leen con los nombres de quien los escribió**: un componente ni ve ni pisa lo que le meten, y un parámetro suyo no tapa nada de fuera. **Varios huecos, con nombre.** Un componente tiene como mucho un `children` sin nombre y los que quiera con él: `children header`, `children footer`. En la copia, un bloque con ese nombre es lo que va a ese hueco —**aunque la escena tenga un componente que se llame igual: dentro de la copia, gana el hueco**—, y lo demás va al que no lo tiene. Un hueco no se puede llamar como una palabra del lenguaje.
+Inside a `row` or a `column`, each child takes its place in the layout (and a `repeat` or a `for` from outside unfolds like the ones inside); loose, `children { move: x, y }` is a group. **Children are read with the names of whoever wrote them**: a component neither sees nor treads on what is put into it, and a parameter of its own covers nothing from outside. **Several slots, with names.** A component has at most one `children` with no name and as many with one as it likes: `children header`, `children footer`. In the copy, a block with that name is what goes into that slot —**even if the scene has a component called the same: inside the copy, the slot wins**—, and the rest goes to the one that has no name. A slot cannot be called like a word of the language.
 
 ```
 Panel {
-    header { text "Avisos" { … } }
-    for n in notes { text n.title { … } }        // al `children` sin nombre
+    header { text "Alerts" { … } }
+    for n in notes { text n.title { … } }        // to the `children` with no name
     footer { box ok { … };  box no { … } }
 }
 ```
 
-Un hueco que no existe es un fallo que dice cuáles hay (`'Panel' has no slot called 'heder': it has header, footer. Did you mean 'header'?`), y meterle algo a un componente sin `children` también: no un silencio.
+A slot that does not exist is an error that says which ones there are (`'Panel' has no slot called 'heder': it has header, footer. Did you mean 'header'?`), and so is putting something into a component with no `children`: not a silence.
 
-Un fallo **dentro** de un componente dice también desde dónde se usó —`(inside 'Badge', used at escena.plm:6)`—, porque a menudo lo que está mal es lo que se le pasó.
+An error **inside** a component also says where it was used from —`(inside 'Badge', used at scene.plm:6)`—, because often what is wrong is what was passed to it.
 
-`repeat i in 0..5 { … }` despliega cinco vueltas al cargar (512 como mucho); dentro, `i` es un número y `$i` se sustituye en los nombres.
+`repeat i in 0..5 { … }` unfolds five turns on load (512 at most); inside, `i` is a number and `$i` is substituted into the names.
 
-`for r in rows { … }` despliega una vuelta por ficha que quepa en el modelo. Dentro, `r.campo` es el campo de esa ficha —un texto donde va un texto vivo, un número en cualquier expresión— y `r.index` su posición desde 0. **Cada vuelta solo existe si la lista llega hasta ahí.** Vale dentro de un reparto, suelto, y dentro de una `popup`.
+`for r in rows { … }` unfolds one turn per record that fits in the model. Inside, `r.field` is the field of that record —a text wherever a live text goes, a number in any expression— and `r.index` its position from 0. **Each turn only exists if the list reaches that far.** Valid inside a layout, loose, and inside a `popup`.
 
-## 11. Textos con huecos
+## 11. Text with slots
 
-Dentro de un texto entre comillas que sea el contenido de un `text` o el argumento de un componente:
-
-| | |
-| --- | --- |
-| `{nombre}` | un texto vivo, o el campo `text` de una ficha |
-| `{expr}` · `{expr, n}` | una expresión, con n decimales (0 si no se dice) |
-| `{upper(nombre)}` · `{lower(nombre)}` | ese texto, en mayúsculas o minúsculas |
-| `{? … }` | un tramo que solo está si ninguno de los textos de dentro está vacío |
-| `{{` · `}}` | una llave de verdad |
-
-Los nombres de un hueco se resuelven donde está escrita la cadena, no donde se use.
-
-## 12. Capas
-
-`layer nombre [~muelle] { reclamaciones }`. **Gana la primera reclamación que se cumple**, de arriba abajo; cuando deja de cumplirse se ve la siguiente, sola. Una reclamación es `nombre` seguido de cuándo —`while expr`, `for 700ms after suceso, otro`, `from suceso until suceso`, o nada (por defecto)— y, si quiere, un bloque con su coreografía: adónde va cada propiedad, con qué muelle y con qué retraso. El destino es una expresión que se evalúa cuando le llega la hora. `capa.reclamacion` vale 1 mientras gana, y se puede leer en cualquier expresión.
-
-## 13. Reglas
-
-`on disparador { efectos }` y `every 2s..7s [while expr] { efectos }`.
-
-| Disparador | Cuándo |
-| --- | --- |
-| `press zona` · `press right zona` · `press middle zona` | se pulsa. Usar `right` en alguna regla quita la salida de emergencia del prototipo (el botón derecho cierra) |
-| `release zona` | se suelta lo que se pulsó ahí, esté donde esté ya el ratón |
-| `hold zona for 500ms` | lleva ese rato pulsada |
-| `enter zona` · `leave zona` | el ratón entra o sale |
-| `hover zona for 320ms` · `away zona for 420ms` | lleva ese rato encima; estuvo encima y lleva ese rato fuera |
-| `scroll zona` | la rueda, sobre cualquier zona que tenga debajo. Se lee en `wheel` |
-| `drag zona` | se mueve con el botón puesto; sigue aunque se salga, hasta soltar. `local.x`, `drag.dx`. Como la rueda, vale para cualquier zona que estuviera debajo al pulsar, no solo la de arriba: así una lista se arrastra agarrándola por una fila |
-| `change expr` | esa cuenta deja de valer lo que valía. Al nacer no cuenta: se dispara al cambiar |
-| `key Escape` · `key Ctrl+k` | una tecla; la superficie tiene que pedir teclado. Modificadores: `Ctrl+` `Alt+` `Super+` |
-| `submit campo` | Intro dentro de ese `input` |
-| `focus` · `blur` | la superficie gana o pierde el teclado |
-| `drop zona` | sueltan sobre ella algo arrastrado desde otra aplicación |
-| `idle for 14s` | nadie toca nada en ese rato |
-| `nombre_de_suceso` | ocurre ese suceso: lo emite la lógica, otra regla, un gesto, o viene de fuera |
-
-**Cualquier regla admite `while expr`** al final de su cabecera: se mira en el momento de dispararse. En `idle` y `every` decide además si el rato cuenta.
-
-| Efecto | |
-| --- | --- |
-| `prop: valor ~muelle after 70ms` | esa propiedad va hacia ahí |
-| `hecho = expr` | se evalúa al dispararse |
-| `toggle hecho` | |
-| `emit suceso` · `emit suceso(expr)` | con una carga, que le llega a la lógica |
-| `impulse prop -620` | un empujón: suma a la velocidad del muelle |
-| `play gesto` | lo pide; se le concederá o no, según su clase |
-| `focus campo` · `blur` | le da el cursor de escribir a un `input`, o lo quita |
-
-## 14. Lo que lleva sola
+Inside a text in quotes that is the content of a `text` or the argument of a component:
 
 | | |
 | --- | --- |
-| `blink eyelid every 2.4s..6s for 170ms` | de 1 a 0 y vuelta, de vez en cuando |
-| `wave breath = amplitud at 1.7` | amplitud · sin(1.7 t) |
-| `spin angle by 0.9` | += 0.9 por segundo |
-| `follow chip.w = label.width + 32` | persigue a la expresión, con su muelle |
-| `look gx, gy at cx, cy reach 5, 3.2 within 140 rest rx, ry` | dos propiedades que tiran hacia el ratón |
+| `{name}` | a live text, or the `text` field of a record |
+| `{expr}` · `{expr, n}` | an expression, with n decimals (0 if unsaid) |
+| `{upper(name)}` · `{lower(name)}` | that text, in upper or lower case |
+| `{? … }` | a stretch that is only there if none of the texts inside it is empty |
+| `{{` · `}}` | a real brace |
 
-## 15. Gestos
+The names of a slot are resolved where the string is written, not where it is used.
 
-Un gesto es una línea de tiempo sobre las propiedades de la pose (`pose`). `gesture nombre clase { fotogramas }`; clases, de menos a más: `ambient` < posturas < `reflex` < `asked` < `state`. **Un gesto solo corta a otro de su clase o inferior.** Un fotograma es una duración, y si quiere una curva, `hold 60ms` (aguanta ahí) y `emit suceso`; su bloque dice adónde va cada propiedad, y lo que no nombre vuelve a su base. Sin bloque, es la vuelta a la base. `posture nombre while expr { … }` se repite sola mientras sea verdad.
+## 12. Layers
 
-## 16. Ejemplos comprobados
+`layer name [~spring] { claims }`. **The first claim that holds wins**, from top to bottom; when it stops holding, the next one is seen, on its own. A claim is a `name` followed by when —`while expr`, `for 700ms after event, other`, `from event until event`, or nothing (the default)— and, if it likes, a block with its choreography: where each property goes, with which spring and with which delay. The destination is an expression evaluated when its turn comes. `layer.claim` is 1 while it wins, and it can be read in any expression.
 
-Estos se compilan con `./probar.sh`.
+## 13. Rules
 
-Una lista que viene de datos, con un componente, textos con huecos, y una regla por fila:
+`on trigger { effects }` and `every 2s..7s [while expr] { effects }`.
+
+| Trigger | When |
+| --- | --- |
+| `press zone` · `press right zone` · `press middle zone` | it is pressed. Using `right` in any rule removes the prototype's emergency exit (the right button closes) |
+| `release zone` | what was pressed there is released, wherever the mouse is by then |
+| `hold zone for 500ms` | it has been held down that long |
+| `enter zone` · `leave zone` | the mouse enters or leaves |
+| `hover zone for 320ms` · `away zone for 420ms` | it has been over it that long; it was over it and has been away that long |
+| `scroll zone` | the wheel, over any zone underneath it. Read in `wheel` |
+| `drag zone` | it moves with the button down; it keeps going even if it leaves, until release. `local.x`, `drag.dx`. Like the wheel, it works for any zone that was underneath at the press, not only the topmost one: that is how a list is dragged by grabbing it by a row |
+| `change expr` | that computation stops being worth what it was worth. Being born does not count: it fires on changing |
+| `key Escape` · `key Ctrl+k` | a key; the surface has to ask for the keyboard. Modifiers: `Ctrl+` `Alt+` `Super+` |
+| `submit field` | Enter inside that `input` |
+| `focus` · `blur` | the surface gains or loses the keyboard |
+| `drop zone` | something dragged from another application is dropped on it |
+| `idle for 14s` | nobody touches anything for that long |
+| `event_name` | that event happens: the logic emits it, or another rule, or a gesture, or it comes from outside |
+
+**Any rule accepts `while expr`** at the end of its header: it is looked at at the moment of firing. In `idle` and `every` it also decides whether the wait counts.
+
+| Effect | |
+| --- | --- |
+| `prop: value ~spring after 70ms` | that property heads there |
+| `fact = expr` | evaluated on firing |
+| `toggle fact` | |
+| `emit event` · `emit event(expr)` | with a payload, which reaches the logic |
+| `impulse prop -620` | a shove: it adds to the velocity of the spring |
+| `play gesture` | it asks for it; it will be granted or not, depending on its class |
+| `focus field` · `blur` | gives the writing cursor to an `input`, or takes it away |
+
+## 14. Movement that carries itself
+
+| | |
+| --- | --- |
+| `blink eyelid every 2.4s..6s for 170ms` | from 1 to 0 and back, every now and then |
+| `wave breath = amplitude at 1.7` | amplitude · sin(1.7 t) |
+| `spin angle by 0.9` | += 0.9 per second |
+| `follow chip.w = label.width + 32` | chases the expression, with its spring |
+| `look gx, gy at cx, cy reach 5, 3.2 within 140 rest rx, ry` | two properties that pull towards the mouse |
+
+## 15. Gestures
+
+A gesture is a timeline over the properties of the pose (`pose`). `gesture name class { frames }`; classes, from weakest to strongest: `ambient` < postures < `reflex` < `asked` < `state`. **A gesture only cuts off another of its own class or lower.** A frame is a duration, and if it likes a curve, `hold 60ms` (holds there) and `emit event`; its block says where each property goes, and whatever it does not name returns to its base. With no block, it is the return to the base. `posture name while expr { … }` repeats on its own while that is true.
+
+## 16. Checked examples
+
+These compile with `./probar.sh`.
+
+A list that comes from data, with a component, text with slots, and one rule per row:
 
 ```plm
 language 0.1
@@ -532,7 +545,7 @@ scene Reference1 {
     model notes max 4 { app: text; title: text; body: text; urgency: number = 1 }
     event opened ->
 
-    text "{notes.total} avisos" { at: 20, 20; anchor: left center; size: 15; weight: 600; color: ink }
+    text "{notes.total} alerts" { at: 20, 20; anchor: left center; size: 15; weight: 600; color: ink }
     column list ~calm { at: 20, 40; gap: 6
         for n in notes { Note(n) }
     }
@@ -549,7 +562,7 @@ scene Reference1 {
 }
 ```
 
-Una capa que decide, una emergente, y el teclado solo mientras hace falta:
+A layer that decides, a popup, and the keyboard only while it is needed:
 
 ```plm
 language 0.1
@@ -567,7 +580,7 @@ scene Reference2 {
         idle                          { tint: 0 ~slow }
     }
     box button { at: 150, 30; size: 120, 34; corner: 17; color: mix(#2e2f2f, #9ed6bd, max(tint, glow)); cursor: pointer }
-    text "Guardar" { at: 150, 30; anchor: center; size: 14; color: #f5f7f5; opacity: 60% + mood.idle * 40% }
+    text "Save" { at: 150, 30; anchor: center; size: 14; color: #f5f7f5; opacity: 60% + mood.idle * 40% }
 
     popup confirm { at: 90, 56; size: 120, 16 + choices.height; open: open
         body { color: #1b1c1c; box { from: 0, 0; size: 120, 16 + choices.height; corner: 10 } }
@@ -586,7 +599,7 @@ scene Reference2 {
 }
 ```
 
-Una pose, un gesto y lo que lleva solo: la cara es el ejemplo, pero sirve para cualquier cosa que tenga estados y se mueva entre ellos.
+A pose, a gesture and movement that carries itself: the face is the example, but it works for anything that has states and moves between them.
 
 ```plm
 language 0.1
@@ -626,9 +639,9 @@ scene Reference3 {
 }
 ```
 
-## 17. El vocabulario, tal como lo consulta el compilador
+## 17. The vocabulary, just as the compiler consults it
 
-Esto es la salida de `pleamar --gramatica`, copiada. No es una segunda lista: son las mismas tablas (`src/lenguaje/vocabulario.rs`) que el compilador consulta para aceptar o rechazar una palabra. `./probar.sh` compara este bloque con lo que imprime el programa —si alguien añade una palabra y no la apunta aquí, falla— y comprueba además que **cada palabra aparece en alguna prueba**.
+This is the output of `pleamar --gramatica`, copied. It is not a second list: these are the same tables (`src/lenguaje/vocabulario.rs`) the compiler consults to accept or reject a word. `./probar.sh` compares this block with what the program prints —if somebody adds a word and does not write it down here, it fails— and it also checks that **every word appears in some test**.
 
 ```vocabulario
 language: 0.1
@@ -682,12 +695,12 @@ text.align: left center right
 layout.align: start center end
 ```
 
-`properties.shape` son las comunes a `ellipse`, `box`, `arc` y `line`; `properties.layout`, las de `row` y `column`.
+`properties.shape` are the ones common to `ellipse`, `box`, `arc` and `line`; `properties.layout`, those of `row` and `column`.
 
-## 17.1. En el editor
+## 17.1. In the editor
 
-`pleamar --lsp` es un servidor de lenguaje por la entrada y la salida, con **este mismo compilador** detrás: los fallos con su sitio mientras se escribe, qué palabras valen aquí, y qué significa la que está bajo el cursor. `pleamar --resaltado vim` y `--resaltado vscode` escriben el fichero de sintaxis, sacado del vocabulario de arriba. Los dos, y cómo se instalan, están en `editor/`.
+`pleamar --lsp` is a language server over the input and the output, with **this same compiler** behind it: the errors with their place while it is being written, which words are valid here, and what the one under the cursor means. `pleamar --resaltado vim` and `--resaltado vscode` write the syntax file, taken from the vocabulary above. Both, and how they are installed, are in `editor/`.
 
-## 18. Lo que esta versión no tiene
+## 18. What this version does not have
 
-Para no buscarlo aquí: `import … as`, salto de línea en los repartos, horas y plurales en los huecos, y escribir en el campo de una ficha desde una regla. Todo está, con su plan, en [[pleamar · 08 Limitaciones conocidas]].
+So as not to look for it here: `import … as`, a line break in the layouts, times and plurals in the slots, and writing to the field of a record from a rule. It is all there, with its plan, in [[pleamar · 08 Limitaciones conocidas]].

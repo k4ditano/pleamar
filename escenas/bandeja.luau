@@ -1,12 +1,12 @@
--- La bandeja de avisos. Si este programa puede ser quien recibe las
--- notificaciones del escritorio, enseña las de verdad; si ese sitio ya lo
--- ocupa otro (otra barra), hace una demostración con avisos de mentira.
--- La lista se entrega tal cual: `model.notes = lista`.
+-- The notice tray. If this program can be the one that receives the
+-- desktop notifications, it shows the real ones; if that place is already
+-- taken by another (another bar), it runs a demo with made-up notices.
+-- The list is handed over as it comes: `model.notes = lista`.
 
 local real = sys.watch("notifications", function(list) model.notes = list end)
 
 if real then
-    -- Pulsar un aviso es su acción por defecto, si la tiene; y en todo caso, se va.
+    -- Pressing a notice is its default action, if it has one; and either way, it goes.
     on("opened", function(i)
         local n = model.notes[i + 1]
         local default = false
@@ -14,7 +14,7 @@ if real then
         if default then sys.call("notifications.invoke", n.id, "default") else sys.call("notifications.dismiss", n.id) end
     end)
 else
-    log("las notificaciones ya las recibe otro programa: va la demostración")
+    log("another program already receives the notifications: here goes the demo")
     local inbox = {
         { app = "Calendario", title = "Reunión en 5 min", body = "Revisión de diseño" },
         { app = "Mensajes",   title = "Lucía", body = "¿bajas a por café? ☕" },
@@ -31,7 +31,7 @@ else
     end)
     on("opened", function(i)
         local n = table.remove(inbox, i + 1)
-        if n then log("despachado:", n.title); model.notes = inbox end
+        if n then log("dismissed:", n.title); model.notes = inbox end
     end)
     model.notes = inbox
 end

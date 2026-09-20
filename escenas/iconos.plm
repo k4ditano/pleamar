@@ -1,32 +1,32 @@
-// La bandeja del sistema: los iconos de las aplicaciones que siguen vivas sin
-// ventana. Pulsar uno es su clic de siempre; el botón derecho abre su menú, que
-// es una superficie emergente: sale de la barra y se pinta como todo lo demás.
+// The system tray: the icons of the applications that stay alive with no
+// window. Pressing one is its usual click; the right button opens its menu, which
+// is a popup surface: it comes out of the bar and is painted like everything else.
 
 import "comun/paleta.plm"
 import "comun/menu.plm"
 
 scene TrayIcons {
     surface { size: 420, 52; anchor: top; margin: 60; screens: "HDMI-A-1" }
-    //  Lo que `iconos.luau` puede tocar: la bandeja, y nada más.
+    //  What `iconos.luau` may touch: the tray, and nothing else.
     permissions { services: "tray", "tray.*" }
 
 
-    // ── la frontera: dos listas que pone la lógica ───────────────
+    // ── the boundary: two lists the logic fills ──────────────────
     model icons max 8 { icon: image 28, 28 }
     model rows max 14 {
         label: text
         separator: bool
         enabled: bool = true
-        checked: number = -1              // -1: no es una casilla · 0: vacía · 1: marcada
-        children: number                  // cuántos tiene dentro: lleva a otro menú
+        checked: number = -1              // -1: not a checkbox · 0: empty · 1: checked
+        children: number                  // how many it has inside: leads to another menu
     }
     fact menu_open = false
-    fact slot = 0                         // de qué icono es el menú abierto
-    event activate ->                     // (i): el clic de siempre
-    event menu ->                         // (i): quiere ver su menú
-    event choose ->                       // (i): ha elegido esa fila
+    fact slot = 0                         // which icon the open menu belongs to
+    event activate ->                     // (i): the usual click
+    event menu ->                         // (i): wants to see its menu
+    event choose ->                       // (i): that row has been chosen
 
-    // ── la píldora ───────────────────────────────────────────────
+    // ── the pill ─────────────────────────────────────────────────
     row tray ~quick {
         at: 210, 0
         anchor: center
@@ -48,8 +48,8 @@ scene TrayIcons {
         on press right hit { slot = i.index; emit menu(i.index) }
     }
 
-    // ── el menú ──────────────────────────────────────────────────
-    //  Debajo de su icono, y tan alto como su lista.
+    // ── the menu ─────────────────────────────────────────────────
+    //  Under its icon, and as tall as its list.
     popup tray_menu {
         at: 210 - tray.width / 2 + 10 + slot * 42 - 8, 50
         size: 236, 16 + list.height

@@ -1,6 +1,6 @@
-// Caminos: lo que no cabe en un círculo ni en una caja. Un camino es una línea
-// quebrada o curva, que cerrada se rellena; por dentro es la misma distancia con
-// signo que las demás formas, así que se funde, tiene sombra, filo y luz.
+// Paths: what fits neither in a circle nor in a box. A path is a broken
+// or curved line, filled when closed; inside it is the same signed distance
+// as every other shape, so it blends, and it has shadow, rim and light.
 
 import "comun/paleta.plm"
 
@@ -14,7 +14,7 @@ scene Paths {
 
     box { from: 0, 0; size: 460, 300; corner: 18; color: coal }
 
-    // ── un gráfico que respira ───────────────────────────────────
+    // ── a chart that breathes ────────────────────────────────────
     text "a line that breathes" { at: 26, 24; size: 10.5; color: ink; opacity: 40% }
     path {
         at: 26, 40
@@ -29,7 +29,7 @@ scene Paths {
         line 156, 16
     }
 
-    // ── una flecha rellena, con su sombra ────────────────────────
+    // ── a filled arrow, with its shadow ──────────────────────────
     text "filled, with a shadow" { at: 250, 24; size: 10.5; color: ink; opacity: 40% }
     body {
         color: sand; shadow: 0, 6, 16, 36%; rim: 6%
@@ -46,7 +46,7 @@ scene Paths {
         }
     }
 
-    // ── un hexágono que gira, fundido con un punto ───────────────
+    // ── a hexagon that spins, blended with a dot ─────────────────
     body {
         color: mint; light: 4%, 150, 90
         path {
@@ -64,7 +64,7 @@ scene Paths {
         ellipse { at: 94 + breath * 16, 189; radius: 13; blend: 10 }
     }
 
-    // ── una curva con trazo ──────────────────────────────────────
+    // ── a stroked curve ──────────────────────────────────────────
     path {
         at: 240, 150
         stroke: 3.5

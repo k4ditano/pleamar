@@ -1,17 +1,17 @@
-// Un plugin: una biblioteca con su lógica al lado (reloj.luau). Trae un componente,
-// su propia frontera —que vive bajo su nombre: `Clock.now`— y los permisos que su
-// lógica necesita, que son suyos y no los de la escena que lo use.
+// A plugin: a library with its logic beside it (reloj.luau). It brings a component,
+// its own boundary —which lives under its name: `Clock.now`— and the permissions its
+// logic needs, which are its own and not those of the scene that uses it.
 
 import "../comun/paleta.plm"
 
 library Clock strict {
-    //  Ni un proceso: la hora es un servicio. `clock.seconds` avisa cada segundo.
+    //  Not one process: the clock is a service. `clock.seconds` fires every second.
     permissions { services: "clock" }
 
     text now = "--:--"
     text day = ""
-    fact seconds = false                  // la escena puede pedirlos: `Clock.seconds = true`
-    event tapped ->                       // le llega a la lógica del plugin, y a nadie más
+    fact seconds = false                  // the scene can ask for them: `Clock.seconds = true`
+    event tapped ->                       // it reaches the plugin's logic, and nobody else's
 
     component Clock(tone: color = ink) {
         row face { padding: 9; gap: 8; align: center; fill: coal; corner: 14; cursor: pointer

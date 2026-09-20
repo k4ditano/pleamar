@@ -1,5 +1,5 @@
--- La lógica de Marea. No sabe de muelles, de formas ni de coordenadas: dice qué
--- pone el aviso y que hay uno, y se entera de que alguien quiso verlo.
+-- Marea's logic. It knows nothing of springs, shapes or coordinates: it says what
+-- the notice reads and that there is one, and finds out that someone wanted to see it.
 
 local notices = {
     { app = "CALENDARIO",      title = "Reunión en 5 min",             detail = "Revisión de diseño · 18:00" },
@@ -17,19 +17,19 @@ local function arrive()
     text["notice.when"] = "Ahora"
     fact.asleep = false
     fact.open = true
-    -- Montar el contenido de un aviso cuesta. Al render le da lo mismo.
+    -- Building a notice's content costs. The renderer does not care.
     busy(600)
 end
 
--- Sin ratón, `--demo` hace de aviso que llega y se va.
+-- With no mouse, `--demo` plays a notice arriving and leaving.
 on("demo", function()
     if fact.open then fact.open = false else arrive() end
 end)
 
 on("view_event", function()
-    log("alguien quiere ver:", text["notice.title"])
-    -- Una orden del sistema: corre en otro hilo y contesta cuando acaba.
-    run("date", { "+%H:%M:%S" }, function(out) log("…y eran las", out) end)
+    log("someone wants to see:", text["notice.title"])
+    -- A system command: it runs on another thread and answers when it finishes.
+    run("date", { "+%H:%M:%S" }, function(out) log("…and it was", out) end)
 end)
 
-on("fact:asleep", function(asleep) if asleep then log("se ha dormido") end end)
+on("fact:asleep", function(asleep) if asleep then log("she fell asleep") end end)
