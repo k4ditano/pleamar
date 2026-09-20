@@ -3612,13 +3612,14 @@ impl<'a> Obra<'a> {
 
     fn comportamiento(&mut self, palabra: &str, c: &mut Cur) -> R<()> {
         let comp = match palabra {
-            // blink eyelid every 2.4s..6s for 170ms
+            // blink eyelid every 2.4s..6s for 170ms · blink lid every 5.2s for 120ms
             "blink" => {
                 let prop = self.prop(c)?;
                 c.exige_palabra("every")?;
                 let a = c.dur()?.as_secs_f32();
-                c.exige_sim("..")?;
-                let b = c.dur()?.as_secs_f32();
+                // Sin `..`, siempre el mismo rato. El periodo se cuenta de comienzo a
+                // comienzo: «cada 5,2 s» es cada 5,2 s, no 5,2 s después de cerrar.
+                let b = if c.sim("..") { c.dur()?.as_secs_f32() } else { a };
                 c.exige_palabra("for")?;
                 Comportamiento::Parpadeo { prop, cada: (a, b), dura: c.dur()?.as_secs_f32() }
             }

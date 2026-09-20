@@ -46,6 +46,9 @@ const AYUDA: &str = "pleamar [options]
   --segundos N        exits by itself after N seconds
   --margen PX         top margin, instead of the scene\u{2019}s
   --sin-hud           without the frame graph
+  --registrar NAMES   prints what those properties, facts or texts are worth on every
+                      frame, as «ms<tab>value…», to check an animation against its
+                      contract: «--registrar lid,body.y --segundos 20 > log.tsv»
   --sin-vsync         paint without waiting for the screen, to measure what a frame costs
   --movimiento-reducido  springs settle at once and gestures show their still face
 Right-click on it to close it.";
@@ -62,10 +65,12 @@ struct Args {
     hud: bool,
     reducido: bool,
     sin_vsync: bool,
+    /// Qué propiedades, hechos o textos apuntar en cada frame.
+    registrar: Vec<String>,
 }
 
 fn args() -> Args {
-    let mut a = Args { escena: String::new(), pantalla: None, bloqueo: 600, ingenuo: false, demo: false, raton: None, segundos: None, margen: None, hud: true, reducido: false, sin_vsync: false };
+    let mut a = Args { escena: String::new(), pantalla: None, bloqueo: 600, ingenuo: false, demo: false, raton: None, segundos: None, margen: None, hud: true, reducido: false, sin_vsync: false, registrar: Vec::new() };
     let mut it = std::env::args().skip(1);
     while let Some(op) = it.next() {
         let mut valor = || it.next().unwrap_or_else(|| { eprintln!("{AYUDA}"); std::process::exit(2) });
@@ -127,6 +132,7 @@ fn args() -> Args {
             "--sin-hud" => a.hud = false,
             "--movimiento-reducido" => a.reducido = true,
             "--sin-vsync" => a.sin_vsync = true,
+            "--registrar" => a.registrar = valor().split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect(),
             _ => { eprintln!("{AYUDA}"); std::process::exit(2) }
         }
     }
@@ -206,7 +212,7 @@ fn main() {
     let a_logica_para_ordenes = a_logica.clone();
     let render = {
         let bloqueada = bloqueada.clone();
-        let op = render::Opciones { hud: a.hud, ingenuo: a.ingenuo, reducido: a.reducido, sin_vsync: a.sin_vsync, arranque };
+        let op = render::Opciones { hud: a.hud, ingenuo: a.ingenuo, reducido: a.reducido, sin_vsync: a.sin_vsync, registrar: a.registrar.clone(), arranque };
         let instancia = instancia.clone();
         std::thread::Builder::new()
             .name("render".into())

@@ -16,6 +16,9 @@ pub struct Opciones {
     pub reducido: bool,
     /// Sin esperar a la pantalla y sin reposo: para medir lo que cuesta pintar.
     pub sin_vsync: bool,
+    /// Qué apuntar en cada frame: propiedades, hechos o textos, por su nombre.
+    /// Es como se comprueba que una animación dura lo que dice que dura.
+    pub registrar: Vec<String>,
     pub arranque: Instant,
 }
 
@@ -73,6 +76,8 @@ pub fn hilo(
     let mut emergentes: Vec<Option<[i32; 4]>> = Vec::new();
     let mut uniformes = [0f32; N_UNIFORMES];
     let mut tam = (720.0f32, 224.0f32);
+    // Si se pidió `--registrar`, la cabecera se escribe una vez.
+    let mut registro_dicho = false;
     let mut region: Vec<[i32; 4]> = vec![[i32::MIN; 4]];
 
     // ── estado ───────────────────────────────────────────────────
@@ -784,7 +789,12 @@ pub fn hilo(
             }
         }
 
-        // Comportamientos: la vida propia de la escena.
+        // Comportamientos: la vida propia de la escena. Lo que un gesto esté
+        // moviendo ahora mismo no lo tocan: un gesto manda sobre lo ambiental.
+        let de_un_gesto: Vec<PropId> = gesto
+            .as_ref()
+            .map(|r| escena.gestos[r.gesto].fotogramas.iter().flat_map(|f| f.valores.iter().map(|(p, _)| *p)).collect())
+            .unwrap_or_default();
         let mut vivo = false;
         let mut n_parpadeo = 0;
         for comp in &escena.comportamientos {
@@ -792,6 +802,15 @@ pub fn hilo(
                 Comportamiento::Parpadeo { prop, cada, dura } => {
                     let (proximo, desde) = &mut parpadeos[n_parpadeo];
                     n_parpadeo += 1;
+                    // Mientras un gesto lleve esta misma pose de la mano, lo ambiental
+                    // calla: el gesto ya dice qué hacen los párpados. Y su reloj se
+                    // para con él, para que al acabar no dispare de golpe lo que le
+                    // tocaba a mitad del gesto.
+                    if de_un_gesto.contains(prop) {
+                        *proximo += Duration::from_secs_f32(dt);
+                        *desde = None;
+                        continue;
+                    }
                     if desde.is_none() && ahora >= *proximo {
                         *desde = Some(ahora);
                     }
@@ -799,7 +818,10 @@ pub fn hilo(
                         let t = (ahora - d).as_secs_f32() / dura;
                         if t >= 1.0 {
                             *desde = None;
-                            *proximo = ahora + Duration::from_secs_f32(azar.entre(cada.0, cada.1));
+                            // El periodo se cuenta de comienzo a comienzo: «cada 5,2 s» es
+                            // eso, no 5,2 s **después** de cerrar el ojo.
+                            let siguiente = d + Duration::from_secs_f32(azar.entre(cada.0, cada.1));
+                            *proximo = siguiente.max(ahora);
                             props[prop.0 as usize].fijar(1.0);
                         } else {
                             props[prop.0 as usize].fijar((2.0 * t - 1.0).abs().powf(1.6));
@@ -809,6 +831,9 @@ pub fn hilo(
                     citas.push(*proximo);
                 }
                 Comportamiento::Onda { prop, frecuencia, amplitud } => {
+                    if de_un_gesto.contains(prop) {
+                        continue;
+                    }
                     let a = amplitud.evaluar(Ctx { props: &props, hechos: &hechos });
                     props[prop.0 as usize].fijar(a * (t_total * frecuencia).sin());
                     vivo |= a.abs() > 0.01;
@@ -1033,6 +1058,31 @@ pub fn hilo(
         }
 
         // ── 4. medir ────────────────────────────────────────────
+        //  Lo que se pidió apuntar, frame a frame: es como se comprueba que una
+        //  animación dura lo que su contrato dice que dura.
+        if !op.registrar.is_empty() {
+            if !registro_dicho {
+                registro_dicho = true;
+                println!("ms\t{}", op.registrar.join("\t"));
+            }
+            let valores: Vec<String> = op
+                .registrar
+                .iter()
+                .map(|n| {
+                    let n = n.as_str();
+                    if let Some(i) = escena.props.iter().position(|p| p.0 == n) {
+                        format!("{:.4}", props[i].x)
+                    } else if let Some(i) = escena.hechos.iter().position(|h| h.0 == n) {
+                        format!("{:.4}", hechos[i])
+                    } else if let Some(i) = escena.textos.iter().position(|t| t.0 == n) {
+                        textos.get(i).cloned().unwrap_or_default()
+                    } else {
+                        "?".into()
+                    }
+                })
+                .collect();
+            println!("{:.1}\t{}", t_total * 1000.0, valores.join("\t"));
+        }
         let ms = dt * 1000.0;
         // Un chivato permanente: cualquier frame que se pase de dos periodos, con su hora.
         if ms > periodo_ms * 2.4 && !primer_frame && ciclo.dts.len() > 1 && !op.sin_vsync && !op.ingenuo {

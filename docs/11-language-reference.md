@@ -120,7 +120,7 @@ effect       = transition | name "=" expr | "toggle" name
              | "emit" name [ "(" expr ")" ] | "impulse" name number
              | "play" name | "focus" name | "blur" ;
 
-behaviour    = "blink" name "every" duration ".." duration "for" duration
+behaviour    = "blink" name "every" duration [ ".." duration ] "for" duration
              | "wave" name "=" expr "at" number
              | "spin" name "by" expr
              | "follow" name "=" expr
@@ -521,7 +521,7 @@ The names of a slot are resolved where the string is written, not where it is us
 
 | | |
 | --- | --- |
-| `blink eyelid every 2.4s..6s for 170ms` | from 1 to 0 and back, every now and then |
+| `blink eyelid every 2.4s..6s for 170ms` · `blink lid every 5.2s for 120ms` | from 1 to 0 and back, every now and then. Without `..`, always the same wait. The period runs **start to start**: "every 5.2 s" is every 5.2 s, not 5.2 s after the eye closed |
 | `wave breath = amplitude at 1.7` | amplitude · sin(1.7 t) |
 | `spin angle by 0.9` | += 0.9 per second |
 | `follow chip.w = label.width + 32` | chases the expression, with its spring |
@@ -530,6 +530,12 @@ The names of a slot are resolved where the string is written, not where it is us
 ## 15. Gestures
 
 A gesture is a timeline over the properties of the pose (`pose`). `gesture name class { frames }`; classes, from weakest to strongest: `ambient` < postures < `reflex` < `asked` < `state`. **A gesture only cuts off another of its own class or lower.** A frame is a duration, and if it likes a curve, `hold 60ms` (holds there) and `emit event`; its block says where each property goes, and whatever it does not name returns to its base. With no block, it is the return to the base. `posture name while expr { … }` repeats on its own while that is true.
+
+**A gesture outranks whatever is ambient.** While it is holding a pose, any
+`blink`, `wave` or `spin` on that same pose goes quiet, **and its clock stops with
+it**: after the gesture, it picks up where it left off instead of firing at once
+everything it owed. That is what lets a breath carry its own blink without the
+regular one landing on top of it.
 
 ## 16. Checked examples
 
