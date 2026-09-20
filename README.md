@@ -78,7 +78,8 @@ scene Clock {
 ```
 
 `pleamar --escena clock.plm`. Save the file and it reloads without losing
-whatever was in motion.
+whatever was in motion; save it broken and the last good scene stays on screen,
+with a band on top saying what does not compile and where.
 
 ## Getting started
 

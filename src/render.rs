@@ -115,6 +115,9 @@ pub fn hilo(
     let mut ultimo_presentado = Instant::now();
     // A qué borde está pegada cada superficie ahora mismo, para no pedirlo dos veces.
     let mut anclas_puestas: Vec<crate::escena::Ancla> = Vec::new();
+    // La banda de «esto no compila», y la escena buena con ella encima.
+    let mut aviso: Option<Vec<Instr>> = None;
+    let mut con_aviso: Vec<Instr> = Vec::new();
     let mut proximo_frame = Instant::now();
     let mut frames_para_periodo = 0u32;
 
@@ -147,6 +150,24 @@ pub fn hilo(
         entrada.extend(rx.try_iter());
         for m in entrada {
             match m {
+                // Una recarga que no cuela se enseña en la superficie, no solo en
+                // una consola que puede que nadie esté mirando. Se compone una
+                // vez, al llegar: mientras dure, se pinta la escena buena con la
+                // banda encima.
+                ARender::FalloDeRecarga(que) => {
+                    // `size: full` no dice su ancho hasta que el compositor la
+                    // configura: entonces vale el de la pantalla, que es `screen.width`.
+                    let ancho = match escena.superficie().ancho {
+                        0 => hechos.first().copied().unwrap_or(900.0),
+                        w => w as f32,
+                    };
+                    aviso = que.map(|m| banda_de_fallo(&m, ancho));
+                    con_aviso.clear();
+                    if let Some(banda) = &aviso {
+                        con_aviso.extend(escena.instrs.iter().cloned());
+                        con_aviso.extend(banda.iter().cloned());
+                    }
+                }
                 ARender::Escena(nueva) => {
                     // Las propiedades que se llaman igual sobreviven al cambio.
                     let viejas: Vec<(&str, Animada)> =
@@ -163,6 +184,8 @@ pub fn hilo(
                     let en_caliente = !escena.props.is_empty();
                     hechos = nueva.hechos.iter().map(|(n, inicial)| escena.hechos.iter().position(|h| h.0 == *n).map_or(*inicial, |k| hechos[k])).collect();
                     dentro = vec![false; nueva.zonas.len()];
+                    aviso = None;
+                    con_aviso.clear();
                     anclas_puestas = nueva.superficies.iter().map(|s| s.ancla).collect();
                     parpadeos = nueva
                         .comportamientos
@@ -1034,7 +1057,8 @@ pub fn hilo(
         if let Some((_, _, _, cuando)) = &repite {
             citas.push(*cuando);
         }
-        dibujo.componer(&escena.instrs, c, &textos, &mut letras, vista, tam, op.hud);
+        let a_pintar: &[Instr] = if aviso.is_some() { &con_aviso } else { &escena.instrs };
+        dibujo.componer(a_pintar, c, &textos, &mut letras, vista, tam, op.hud);
         let Some(g) = &mut gpu else {
             // Aún no hay dónde: el tiempo corre igual, pero sin prisa.
             std::thread::sleep(Duration::from_millis(8));
@@ -1232,6 +1256,49 @@ pub fn hilo(
             dibujo.decir_lo_pendiente();
         }
     }
+}
+
+/// La banda que dice que lo que acabas de guardar no compila, con el fichero, la
+/// línea y el mensaje. Va arriba de la superficie principal, que es donde estás
+/// mirando, y se quita sola cuando la escena vuelve a estar bien. Debajo sigue
+/// corriendo la última escena buena: esto no para nada, solo lo cuenta.
+fn banda_de_fallo(mensaje: &str, ancho: f32) -> Vec<Instr> {
+    let ancho = if ancho > 0.0 { ancho } else { 900.0 };
+    // La primera línea es la que dice qué pasa; el resto es el dedo señalando.
+    let dicho = mensaje.lines().next().unwrap_or(mensaje).trim().to_string();
+    let alto = 52.0;
+    let caja = |x: f32, w: f32, r: f32| Forma::Caja {
+        centro: ((x + w * 0.5).into(), (alto * 0.5).into()),
+        mitad: ((w * 0.5).into(), (alto * 0.5).into()),
+        radio: r.into(),
+    };
+    vec![
+        Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0, 6.0), difusa: 18.0, alfa: 0.45 }) },
+        Instr::Forma { forma: caja(8.0, ancho - 16.0, 10.0), fusion: 0.0.into() },
+        Instr::Relleno { pintura: color(0.18, 0.05, 0.06).into(), alfa: 1.0.into(), filo: 0.05, luz: None, borde: None },
+        // Una pestaña del color de los errores, a la izquierda: se lee antes que el texto.
+        Instr::Grupo { sombra: None },
+        Instr::Forma { forma: caja(8.0, 5.0, 2.5), fusion: 0.0.into() },
+        Instr::Relleno { pintura: color(0.99, 0.41, 0.33).into(), alfa: 1.0.into(), filo: 0.05, luz: None, borde: None },
+        Instr::Texto {
+            contenido: Contenido::Fijo("this does not compile — the last good scene is still running".into()),
+            en: (26.0.into(), 17.0.into()),
+            ancla: (0.0, 0.5),
+            ancho: Some((ancho - 52.0).into()),
+            estilo: Estilo::de(10.5, color(0.99, 0.41, 0.33)).peso(600).lineas(1),
+            alfa: 1.0.into(),
+            mide: None,
+        },
+        Instr::Texto {
+            contenido: Contenido::Fijo(dicho),
+            en: (26.0.into(), 34.0.into()),
+            ancla: (0.0, 0.5),
+            ancho: Some((ancho - 52.0).into()),
+            estilo: Estilo::de(12.5, color(0.96, 0.96, 0.96)).lineas(1),
+            alfa: 1.0.into(),
+            mide: None,
+        },
+    ]
 }
 
 /// Una sola lámina espera a su pantalla —la del monitor más rápido— y las demás

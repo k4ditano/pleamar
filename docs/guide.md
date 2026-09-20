@@ -29,7 +29,9 @@ losing whatever was in motion.
 
 Get something wrong and it will not launch: it says which line, points at it
 with an arrow, and if the word looks like something it knows, adds a "did you
-mean…?".
+mean…?". And if you break it **while it is running**, the scene that was
+working stays on screen with a band across the top saying what does not compile
+and where; the band goes when the file is good again.
 
 ## 2. Letting the system report things
 

@@ -1179,6 +1179,11 @@ pub enum Orden {
 
 pub enum ARender {
     Escena(Escena),
+    /// Una recarga que no cuela. Un runtime que se recarga al guardar no puede
+    /// contarlo solo por una consola que a lo mejor nadie mira: se enseña en la
+    /// propia superficie, que es donde ya está mirando quien lo escribe. `None`
+    /// la quita: la escena ha vuelto a estar bien.
+    FalloDeRecarga(Option<String>),
     /// Una superficie más donde pintar: un monitor que ya estaba o que acaban
     /// de enchufar.
     Lamina(Box<crate::gpu::NuevaLamina>),
