@@ -39,6 +39,11 @@ impl<'a> Cur<'a> {
         }
         self.f.get(self.i).map(|x| &x.f)
     }
+    /// Se acaba de leer un nombre de los que se resuelven: es lo que el editor
+    /// subraya al preguntar dónde se usa algo. Se apunta antes de avanzar.
+    fn nombre_aqui(&self) {
+        NOMBRADO.with(|n| n.set(MIRANDO.with(std::cell::Cell::get)));
+    }
     fn pos(&self) -> (usize, usize) {
         self.f.get(self.i).map_or(self.fin, |x| (x.linea, x.col))
     }
@@ -68,6 +73,8 @@ impl<'a> Cur<'a> {
     fn id(&mut self, que: &str) -> R<String> {
         match self.mira() {
             Some(F::Id(x)) => {
+                // `mira` acaba de dejar ahí este nombre: se guarda antes de avanzar.
+                NOMBRADO.with(|n| n.set(MIRANDO.with(std::cell::Cell::get)));
                 self.i += 1;
                 Ok(x.clone())
             }
@@ -121,6 +128,9 @@ impl<'a> Cur<'a> {
 thread_local! {
     // Dónde está la última ficha que se ha mirado: (línea, columna).
     static MIRANDO: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    // Y dónde estaba el último NOMBRE que se leyó, que no es lo mismo: para cuando se
+    // resuelve ya se ha mirado la ficha siguiente. Es lo que el editor subraya.
+    static NOMBRADO: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 /// Una forma con nombre: será zona si alguna regla la nombra, si se declaró
@@ -254,6 +264,9 @@ struct Obra<'a> {
     fallos: Vec<Fallo>,
     /// Cada nombre que se declara, con su sitio: para el editor.
     declarados: Vec<Simbolo>,
+    /// Y cada vez que se nombra algo, para «dónde se usa» y para cambiarlo de nombre.
+    /// Como los nombres se resuelven sin poder escribir (`&self`), va en una celda.
+    usados: std::cell::RefCell<Vec<Simbolo>>,
     /// La sentencia que se está leyendo (`fact`, `prop`…), para saber de qué clase
     /// es lo que se declare dentro de ella.
     clase_actual: String,
@@ -304,7 +317,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
             "pose" => Muelle::POSE,
             otro => unreachable!("'{otro}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
-        bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(), declarados: Vec::new(), clase_actual: String::new(),
+        bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(), declarados: Vec::new(), usados: Default::default(), clase_actual: String::new(),
         scrolls: Vec::new(), fila_de_scroll: Default::default(), superficies_pendientes: Vec::new(), ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), vuelta: 0, siguiente_origen: 0.0, valores: HashMap::new(), ambiguos: Default::default(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
@@ -410,7 +423,10 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
     // Los nombres que se declararon, uno por nombre: las cuatro vueltas y las copias
     // de un `repeat` declaran el mismo muchas veces, y al editor le vale el primer sitio.
     let mut vistos = std::collections::HashSet::new();
-    let simbolos: Vec<Simbolo> = std::mem::take(&mut o.declarados).into_iter().filter(|s| vistos.insert(s.local.clone())).collect();
+    let mut simbolos: Vec<Simbolo> = std::mem::take(&mut o.declarados).into_iter().filter(|s| vistos.insert(s.local.clone())).collect();
+    // Y cada vez que se nombró algo, una vez por sitio: las vueltas repiten.
+    let mut donde = std::collections::HashSet::new();
+    simbolos.extend(o.usados.take().into_iter().filter(|s| donde.insert((s.local.clone(), s.linea, s.col))));
     (if o.fallos.is_empty() { Ok(o.e) } else { Err(o.fallos) }, simbolos)
 }
 
@@ -462,6 +478,13 @@ impl<'a> Obra<'a> {
     /// esta copia de un componente lleva su sufijo. Vale para el nombre entero o
     /// para su principio: `label.width` es de la medida `label`.
     fn global(&self, n: &str) -> String {
+        // Dónde se ha nombrado esto: es lo que el editor enseña en «dónde se usa».
+        if !self.sin_vigilar.get() {
+            let (linea, col) = NOMBRADO.with(|m| m.get());
+            if linea > 0 {
+                self.usados.borrow_mut().push(Simbolo { local: n.to_owned(), clase: "use".to_owned(), linea, col });
+            }
+        }
         let n = self.interpolar(n);
         for e in self.entornos.iter().rev() {
             let mut hasta = n.len();
@@ -529,7 +552,11 @@ impl<'a> Obra<'a> {
     /// El nombre con el que se declara algo desde aquí dentro.
     fn declarar(&mut self, local: &str) -> String {
         let interpolado = self.interpolar(local);
-        let (linea, col) = MIRANDO.with(|m| m.get());
+        // El sitio del nombre que se acaba de leer, si es de esta misma línea.
+        let (linea, col) = match (MIRANDO.with(std::cell::Cell::get), NOMBRADO.with(std::cell::Cell::get)) {
+            (m, n) if n.0 == m.0 => n,
+            (m, _) => m,
+        };
         if linea > 0 {
             let clase = if self.clase_actual.is_empty() { "name".to_owned() } else { self.clase_actual.clone() };
             self.declarados.push(Simbolo { local: interpolado.clone(), clase, linea, col });
@@ -799,6 +826,7 @@ impl<'a> Obra<'a> {
                 Ok(Expr::K(*s))
             }
             Some(F::Id(n)) => {
+                c.nombre_aqui();
                 c.i += 1;
                 if c.sim("(") {
                     return self.funcion(n, c);
@@ -1757,7 +1785,7 @@ impl<'a> Obra<'a> {
             Some(F::Id(nombre)) if self.entornos.iter().any(|e| e.cadenas.contains_key(nombre)) => {
                 Contenido::Fijo(self.entornos.iter().rev().find_map(|e| e.cadenas.get(nombre)).unwrap().clone())
             }
-            Some(F::Id(nombre)) => match self.textos.get(&self.global(nombre)) {
+            Some(F::Id(nombre)) => match self.textos.get(&{ c.nombre_aqui(); self.global(nombre) }) {
                 Some(t) => Contenido::Vivo(*t),
                 None => {
                     c.i += 1;

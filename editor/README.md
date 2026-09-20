@@ -14,7 +14,12 @@ escrita aparte: si el lenguaje cambia y esto no, `./probar.sh` lo dice.
   hechos y las propiedades **de esta escena**; tras `emit`, sus sucesos;
 - **qué significa** la palabra bajo el cursor, y de qué es nombre;
 - **ir a donde se declaró** un nombre, aunque esté en una biblioteca importada;
+- **dónde se usa** ese nombre, y **cambiarlo** en todos esos sitios de una vez;
 - **el esquema del fichero**: todo lo que declara, con su clase.
+
+Cambiar un nombre toca los `.plm`, no la lógica: si un `.luau` escribe `fact.volume`,
+eso hay que cambiarlo a mano. El compilador avisa igual, porque el nombre viejo ya no
+existe.
 
 ### Neovim
 

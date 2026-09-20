@@ -34,6 +34,8 @@ pub fn servir() {
                     "hoverProvider": true,
                     "definitionProvider": true,
                     "documentSymbolProvider": true,
+                    "referencesProvider": true,
+                    "renameProvider": true,
                 },
                 "serverInfo": { "name": "pleamar", "version": format!("{}.{}", crate::lenguaje::VERSION.0, crate::lenguaje::VERSION.1) },
             })),
@@ -70,7 +72,7 @@ pub fn servir() {
                 let palabra = palabra_en(&texto, donde);
                 // `rows.3.label` y `mon.$screen.title` llevan a `rows` y a `mon`.
                 let raiz = palabra.split('.').next().unwrap_or(&palabra);
-                match nombres.iter().find(|(_, s)| s.local == palabra || s.local == raiz) {
+                match nombres.iter().find(|(_, s)| s.clase != "use" && (s.local == palabra || s.local == raiz)) {
                     Some((fichero, s)) => {
                         let suyo = abiertos.get(fichero).cloned().unwrap_or_else(|| std::fs::read_to_string(fichero).unwrap_or_default());
                         let (l, c) = (s.linea.saturating_sub(1), en_utf16(&suyo, s.linea, s.col));
@@ -79,12 +81,30 @@ pub fn servir() {
                     None => contestar(id, Value::Null),
                 }
             }
+            // Dónde se usa este nombre, con su declaración delante.
+            "textDocument/references" => {
+                let (texto, donde) = donde_esta(&m, &abiertos);
+                let palabra = palabra_en(&texto, donde);
+                contestar(id, Value::Array(sitios_de(&palabra, &nombres, &abiertos).into_iter().map(|(u, r)| json!({ "uri": u, "range": r })).collect()));
+            }
+            // Cambiarle el nombre a algo: en su declaración y en cada sitio donde se usa.
+            "textDocument/rename" => {
+                let (texto, donde) = donde_esta(&m, &abiertos);
+                let palabra = palabra_en(&texto, donde);
+                let nuevo = m["params"]["newName"].as_str().unwrap_or("").to_owned();
+                let mut cambios: HashMap<String, Vec<Value>> = HashMap::new();
+                for (u, r) in sitios_de(&palabra, &nombres, &abiertos) {
+                    cambios.entry(u).or_default().push(json!({ "range": r, "newText": nuevo }));
+                }
+                contestar(id, json!({ "changes": cambios }));
+            }
             // El esquema del fichero: lo que declara, para el índice del editor.
             "textDocument/documentSymbol" => {
                 let Some(ruta) = ruta_de(m["params"]["textDocument"]["uri"].as_str().unwrap_or("")) else { continue };
                 let texto = abiertos.get(&ruta).cloned().unwrap_or_default();
                 let suyos: Vec<Value> = nombres
                     .iter()
+                    .filter(|(_, s)| s.clase != "use")
                     .filter(|(f, _)| f.canonicalize().ok() == ruta.canonicalize().ok())
                     .map(|(_, s)| {
                         let (l, c) = (s.linea.saturating_sub(1), en_utf16(&texto, s.linea, s.col));
@@ -98,7 +118,7 @@ pub fn servir() {
                 let (texto, donde) = donde_esta(&m, &abiertos);
                 let palabra = palabra_en(&texto, donde);
                 // Si es un nombre de la escena, lo primero es de qué es nombre.
-                let suyo = nombres.iter().find(|(_, s)| s.local == palabra).map(|(f, s)| {
+                let suyo = nombres.iter().find(|(_, s)| s.local == palabra && s.clase != "use").map(|(f, s)| {
                     format!("`{}` — {} declared in `{}`, line {}.", s.local, s.clase, f.file_name().unwrap_or_default().to_string_lossy(), s.linea)
                 });
                 match suyo.into_iter().chain(ayuda_de(&palabra)).collect::<Vec<_>>() {
@@ -193,6 +213,25 @@ fn revisar_y_contar(ruta: &Path, abiertos: &HashMap<PathBuf, String>) -> Vec<(Pa
         publicar(&fichero, avisos);
     }
     nombres
+}
+
+/// Cada sitio donde aparece ese nombre: donde se declaró y donde se usa. Un nombre
+/// con partes (`rows.3.label`) cuenta para su raíz, pero se señala solo la raíz.
+fn sitios_de(palabra: &str, nombres: &[(PathBuf, Simbolo)], abiertos: &HashMap<PathBuf, String>) -> Vec<(String, Value)> {
+    let raiz = palabra.split('.').next().unwrap_or(palabra);
+    let mut fuera = Vec::new();
+    for (fichero, s) in nombres {
+        if s.local != palabra && s.local.split('.').next() != Some(raiz) {
+            continue;
+        }
+        let texto = abiertos.get(fichero).cloned().unwrap_or_else(|| std::fs::read_to_string(fichero).unwrap_or_default());
+        let (l, c) = (s.linea.saturating_sub(1), en_utf16(&texto, s.linea, s.col));
+        fuera.push((uri_de(fichero), json!({
+            "start": { "line": l, "character": c },
+            "end": { "line": l, "character": c + raiz.chars().count() },
+        })));
+    }
+    fuera
 }
 
 /// La clase de símbolo que el editor entiende, para su icono.
@@ -300,6 +339,7 @@ fn completado(texto: &str, donde: usize, nombres: &[(PathBuf, Simbolo)]) -> Vec<
         let mut vistos = std::collections::HashSet::new();
         nombres
             .iter()
+            .filter(|(_, s)| s.clase != "use")
             .filter(|(_, s)| clases.is_empty() || clases.contains(&s.clase.as_str()))
             .filter(|(_, s)| vistos.insert(s.local.clone()))
             .map(|(_, s)| json!({ "label": s.local, "kind": clase_lsp(&s.clase), "detail": s.clase }))
