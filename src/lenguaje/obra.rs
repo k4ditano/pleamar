@@ -581,7 +581,7 @@ impl<'a> Obra<'a> {
         let n = self.global(&c.id("a property name")?);
         match self.props.get(&n) {
             Some(p) => Ok(*p),
-            None => self.desconocido(c, "ninguna propiedad", &n, self.props.keys().collect()),
+            None => self.desconocido(c, "no property", &n, self.props.keys().collect()),
         }
     }
     fn hecho(&self, c: &mut Cur) -> R<HechoId> {
@@ -842,6 +842,8 @@ impl<'a> Obra<'a> {
             "min" => toma()?.min(toma()?),
             "max" => toma()?.max(toma()?),
             "abs" => toma()?.abs(),
+            "floor" => toma()?.suelo(),
+            "ceil" => toma()?.techo(),
             "clamp" => {
                 let (x, lo, hi) = (toma()?, toma()?, toma()?);
                 x.max(lo).min(hi)
@@ -2573,6 +2575,12 @@ impl<'a> Obra<'a> {
             Some(c) => self.expr(c)?,
             None => Expr::K(60.0),
         };
+        // `content: rows.total * 30`: lo que habría si estuviera todo. Para una lista
+        // que no despliega más que su ventana, es el largo de verdad.
+        let contenido_dicho = match p.get_mut("content") {
+            Some(c) => Some(self.expr(c)?),
+            None => None,
+        };
         let opacidad = match p.get_mut("opacity") {
             Some(c) => Some(self.expr(c)?),
             None => None,
@@ -2806,7 +2814,12 @@ impl<'a> Obra<'a> {
         }
         let total_largo = corrido + relleno.clone();
         let total_ancho = maximo + relleno * 2.0;
-        let contenido = if fila { (total_largo, total_ancho) } else { (total_ancho, total_largo) };
+        let mut contenido = if fila { (total_largo, total_ancho) } else { (total_ancho, total_largo) };
+        // Lo que dice la escena manda: el reparto solo lleva la ventana, pero el
+        // desplazamiento va sobre la lista entera.
+        if let Some(e) = &contenido_dicho {
+            if fila { contenido.0 = e.clone() } else { contenido.1 = e.clone() }
+        }
         // Con `view:`, hacia fuera ocupa lo que se ve, no lo que lleva dentro.
         let tam = vista.clone().unwrap_or_else(|| contenido.clone());
 
@@ -2869,6 +2882,9 @@ impl<'a> Obra<'a> {
             destino.insert(format!("{nombre}.content"), largo_del_contenido);
             if let Some(prop) = &desplaza {
                 destino.insert(format!("{nombre}.scroll"), prop.e());
+                // Y como propiedad de verdad: una regla puede llevarlo donde quiera
+                // (`list.scroll: 0 ~calm`), no solo la rueda.
+                self.props.insert(format!("{nombre}.scroll"), *prop);
             }
             // Quien lo leyó antes de este punto leyó la propiedad adelantada: aquí se rellena.
             for (parte, a) in [("width", &tam.0), ("height", &tam.1), ("count", &cuantos)] {
@@ -2915,9 +2931,9 @@ impl<'a> Obra<'a> {
                 self.entornos.extend(ambito.iter().cloned());
                 let cabeza = self.cabeza_de_for(&mut c);
                 self.entornos.truncate(self.entornos.len() - ambito.len());
-                let (var, modelo, caben) = cabeza?;
+                let (var, modelo, caben, desde) = cabeza?;
                 for k in 0..caben {
-                    ambito.push(self.vuelta_de_for(&var, &modelo, k));
+                    ambito.push(self.vuelta_de_for(&var, &modelo, k, &desde));
                     self.desplegar(n.cuerpo.as_deref().unwrap_or(&[]).iter().collect(), ambito, hijos)?;
                     ambito.pop();
                 }
@@ -3187,34 +3203,38 @@ impl<'a> Obra<'a> {
     }
 
     /// `for r in rows`: el nombre de la ficha, el modelo y cuántas caben.
-    fn cabeza_de_for(&self, c: &mut Cur) -> R<(String, String, usize)> {
+    fn cabeza_de_for(&mut self, c: &mut Cur) -> R<(String, String, usize, Expr)> {
         let var = c.id("a name for the record")?;
         c.exige_palabra("in")?;
         let modelo = self.global(&c.id("the name of a model")?);
+        // `for r in rows from first`: la ficha 0 de lo desplegado es la `first` de la
+        // lista de verdad, así que `r.index` cuenta desde ahí. Es lo que hace que una
+        // lista de cinco mil quepa en doce copias.
+        let desde = if c.palabra("from") { self.expr(c)? } else { Expr::K(0.0) };
         c.nada_mas()?;
         match self.modelos.get(&modelo) {
-            Some(caben) => Ok((var, modelo, *caben)),
+            Some(caben) => Ok((var, modelo, *caben, desde)),
             None => self.desconocido(c, "no model", &modelo, self.modelos.keys().collect()),
         }
     }
 
     /// Dentro de la vuelta `k`, `r.label` es `rows.k.label`, `r.index` es `k`, y
     /// todo lo que se dibuje solo existe si la lista llega hasta ahí.
-    fn vuelta_de_for(&self, var: &str, modelo: &str, k: usize) -> Entorno {
+    fn vuelta_de_for(&self, var: &str, modelo: &str, k: usize, desde: &Expr) -> Entorno {
         let mut env = Entorno { sufijo: format!("#{var}{k}"), ..Default::default() };
         env.alias.insert(var.to_owned(), format!("{modelo}.{k}"));
         env.con_partes.insert(var.to_owned());
-        env.exprs.insert(format!("{var}.index"), Expr::K(k as f32));
+        env.exprs.insert(format!("{var}.index"), desde.clone() + Expr::K(k as f32));
         env.visible = Some(self.hechos[&format!("{modelo}.count")].e().mayor(Expr::K(k as f32 + 0.5)));
         env
     }
 
     /// Un `for` suelto, fuera de un reparto: cada vuelta se pinta donde diga, si existe.
     fn para(&mut self, n: &'a Nodo, c: &mut Cur) -> R<()> {
-        let (var, modelo, caben) = self.cabeza_de_for(c)?;
+        let (var, modelo, caben, desde) = self.cabeza_de_for(c)?;
         for k in 0..caben {
             let marca = self.reglas.len();
-            let env = self.vuelta_de_for(&var, &modelo, k);
+            let env = self.vuelta_de_for(&var, &modelo, k, &desde);
             let esta = env.visible.clone().unwrap();
             self.entornos.push(env);
             let desde = self.candidatas.len();

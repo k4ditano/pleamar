@@ -32,10 +32,10 @@ pub const PROPIEDADES: &[(&str, &[&str])] = &[
     ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show"]),
     ("popup", &["at", "size", "open"]),
     ("children", &["move"]),
-    ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "corner", "show", "opacity", "cursor", "view", "step"]),
+    ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "corner", "show", "opacity", "cursor", "view", "step", "content"]),
 ];
 
-pub const FUNCIONES: &[&str] = &["min", "max", "abs", "clamp", "smooth", "mix", "if", "vel"];
+pub const FUNCIONES: &[&str] = &["min", "max", "abs", "floor", "ceil", "clamp", "smooth", "mix", "if", "vel"];
 /// Dentro de un hueco de un texto.
 pub const DE_TEXTO: &[&str] = &["upper", "lower"];
 /// Lo que puede ir tras `on`. Cualquier otra palabra es el nombre de un suceso.

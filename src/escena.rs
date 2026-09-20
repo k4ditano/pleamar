@@ -156,6 +156,9 @@ pub enum Expr {
     Min(Box<Expr>, Box<Expr>),
     Max(Box<Expr>, Box<Expr>),
     Abs(Box<Expr>),
+    /// Redondeo hacia abajo o hacia arriba: hace falta para contar fichas.
+    Suelo(Box<Expr>),
+    Techo(Box<Expr>),
     /// smoothstep(a, b, x)
     Suave(f32, f32, Box<Expr>),
     // Condiciones: verdad es > 0.5, y devuelven 1 o 0.
@@ -180,6 +183,8 @@ impl Expr {
             Min(a, b) => a.evaluar(c).min(b.evaluar(c)),
             Max(a, b) => a.evaluar(c).max(b.evaluar(c)),
             Abs(a) => a.evaluar(c).abs(),
+            Suelo(a) => a.evaluar(c).floor(),
+            Techo(a) => a.evaluar(c).ceil(),
             Suave(a, b, x) => {
                 let t = ((x.evaluar(c) - a) / (b - a)).clamp(0.0, 1.0);
                 t * t * (3.0 - 2.0 * t)
@@ -216,6 +221,12 @@ impl Expr {
     }
     pub fn abs(self) -> Expr {
         Expr::Abs(Box::new(self))
+    }
+    pub fn suelo(self) -> Expr {
+        Expr::Suelo(Box::new(self))
+    }
+    pub fn techo(self) -> Expr {
+        Expr::Techo(Box::new(self))
     }
     pub fn suave(self, a: f32, b: f32) -> Expr {
         Expr::Suave(a, b, Box::new(self))

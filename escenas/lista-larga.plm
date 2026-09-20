@@ -1,0 +1,83 @@
+// Cinco mil filas en dieciséis copias.
+//
+// Una lista no se despliega entera: la escena declara la **ventana** —lo que cabe a
+// la vista y un poco más— y dice cuánto mide la lista de verdad con `content:`. La
+// rueda se mueve sobre el total; cuando pasa de fila, la escena le pide a la lógica
+// el trozo que toca, y las mismas dieciséis copias enseñan otras fichas.
+//
+// Lo que cuesta no depende de cuántas haya: dieciséis grupos, dieciséis zonas.
+
+import "comun/paleta.plm"
+
+scene LongList {
+    surface { size: 420, 462; anchor: center }
+
+    let step = 34
+    let window = 16
+
+    //  La ventana: lo único que se despliega.
+    model rows max 16 { label: text; tag: text }
+    fact total = 0                 // cuántas hay de verdad, de la lógica
+    fact first = 0                 // por cuál va la ventana, de la lógica
+    event slid ->                  // «se ha movido, mándame de aquí»
+
+    box { from: 0, 0; size: 420, 462; corner: 16; color: coal }
+
+    column list {
+        at: 10, 10
+        gap: 0
+        view: 400, 400
+        step: step
+        content: total * step      // el largo de la lista entera, no el de la ventana
+
+        //  `from first`: la copia 0 es la ficha `first` de la lista de verdad.
+        for r in rows from first {
+            group {
+                size: 400, step
+                //  Las copias van en su sitio de la lista entera, no en el de la ventana.
+                move: 0, first * step
+
+                zone box hit { from: 2, 1; size: 396, 32; corner: 8; cursor: pointer }
+                prop hot = 0 ~quick
+                on enter hit { hot: 1 }
+                on leave hit { hot: 0 }
+
+                box { from: 2, 1; size: 396, 32; corner: 8; color: mix(#202222, mint, hot * 0.25) }
+                text "{r.index}" { at: 14, 17; anchor: left center; size: 11; color: ink; opacity: 35% }
+                text r.label { at: 56, 17; anchor: left center; size: 12.5; color: ink }
+                text r.tag { at: 388, 17; anchor: right center; size: 11; color: sand; opacity: 70% }
+            }
+        }
+    }
+
+    //  La barrita: lo que se ve, sobre lo que hay.
+    let bar_h = max(400 * 400 / max(total * step, 400), 24)
+    box { at: 410, 10 + list.scroll / max(total * step - 400, 1) * (400 - bar_h); size: 4, bar_h; corner: 2; color: mint; opacity: 45% }
+
+    //  Abajo: por dónde va, y dos saltos. El scroll es una propiedad como otra
+    //  cualquiera, así que una regla puede llevarlo donde quiera.
+    row footer { at: 12, 424; gap: 10; align: center
+        group {
+            size: 150, 26
+            text number(floor(list.scroll / step) + 1, 0) { at: 0, 13; anchor: left center; size: 11; color: ink; opacity: 45% }
+            text number(ceil(total), 0) { at: 60, 13; anchor: left center; size: 11; color: ink; opacity: 25% }
+        }
+        group {
+            size: 60, 26
+            zone box up { from: 0, 0; size: 60, 26; corner: 8; cursor: pointer }
+            box { from: 0, 0; size: 60, 26; corner: 8; color: #202222 }
+            text "top" { at: 30, 13; anchor: center; size: 11; color: ink }
+            on press up { list.scroll: 0 ~calm; emit slid(0) }
+        }
+        group {
+            size: 60, 26
+            zone box down { from: 0, 0; size: 60, 26; corner: 8; cursor: pointer }
+            box { from: 0, 0; size: 60, 26; corner: 8; color: #202222 }
+            text "end" { at: 30, 13; anchor: center; size: 11; color: ink }
+            on press down { list.scroll: total * step - 400 ~calm; emit slid(total * step - 400) }
+        }
+    }
+
+    //  Al girar la rueda, la lógica se entera de por dónde va.
+    on scroll list { emit slid(list.scroll) }
+}

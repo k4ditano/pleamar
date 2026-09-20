@@ -24,7 +24,7 @@ Tipos instanciados, con las veces que aparecen entre las dos configuraciones:
 | `GradientStop` | 66 | 🟡 degradado lineal de dos colores; sin paradas ni radial |
 | `Image` | 63 | ✅ `image`, por fichero, por icono o desde un dato |
 | `TextInput` | 34 | ✅ `input` (una línea; sin IME) |
-| `ListView` · `Flickable` | 31 · 22 | 🟡 `view:` en un reparto: recorta y se corre con la rueda. Sin arrastrar, y lo de dentro se instancia todo |
+| `ListView` · `Flickable` | 31 · 22 | 🟡 `view:` en un reparto, con `content:` y `for … from` para listas de miles en unas pocas copias. Sin arrastrar |
 | `Flow` | 28 | ⬜ sin salto de línea en los repartos |
 | `QtObject` | 38 | 🟡 propiedades sueltas, sin agrupar |
 
@@ -55,7 +55,7 @@ Y lo que usan del objeto `Quickshell`: `env` (82), `shellPath` (32), `screens` (
 
 ### 🟡 Listas: lo que queda
 
-`view:` ya recorta y corre con la rueda. Falta **arrastrar** para moverlas (en un panel táctil es lo natural) y que **solo se instancie lo que se ve**: hoy las 200 fichas de una lista de 200 existen desde el principio, con sus zonas y sus reglas (G12).
+Una lista de cinco mil ya cabe en dieciséis copias (`content:` + `for … from`, §3.1), así que lo que hay no depende de lo que haya. Falta **arrastrar** para moverlas, que en un panel táctil es lo natural, y que las copias **nazcan y mueran solas** en vez de que la escena declare la ventana y la lógica corte el trozo (G12).
 
 ### 🟡 Carga diferida: `Loader`, `LazyLoader`, `Component`
 
@@ -81,6 +81,8 @@ Para no perderlo de vista, porque es la razón de que esto exista:
 - **Multiplataforma por diseño:** todo lo del sistema detrás de `src/plataforma/`, y `./portable.sh` comprueba que compila para Windows y macOS. Los escritorios y la ventana activa van por protocolos estándar, no por un compositor.
 
 ## 3.1. Lo que además salió de aquí
+
+**Una lista de cinco mil filas cuesta lo que dieciséis**, y se escribe en la escena: `content:` dice lo que mide de verdad, `for … from` numera las copias desde donde toca, y el desplazamiento es una propiedad que una regla puede llevar donde quiera. En Quickshell eso es `ListView`, que virtualiza él solo pero se lleva su propio hilo de instanciación por delante.
 
 **Un camino es una forma más**, no una isla: `Shape` en QtQuick es un motor aparte (triangula y pinta con otro camino de render), así que no se funde con lo de alrededor ni tiene sombra de balde. Aquí es la misma distancia con signo que un círculo, y `blend` lo funde con lo que tenga al lado.
 

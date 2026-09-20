@@ -95,7 +95,7 @@ argumentos   = argumento { "," argumento } { "," nombre ":" argumento }
              | nombre ":" argumento { "," nombre ":" argumento } ;
 argumento    = expr | color | texto | nombre ;
 repeat       = "repeat" nombre "in" entero ".." entero "{" { sentencia } "}" ;
-for          = "for" nombre "in" nombre "{" { sentencia } "}" ;
+for          = "for" nombre "in" nombre [ "from" expr ] "{" { sentencia } "}" ;
 reparto      = ( "row" | "column" ) [ nombre ] [ "~" ref_muelle ] "{" { propiedad_de | sentencia } "}" ;
 espacio      = "space" expr ;
 
@@ -292,6 +292,7 @@ De menos a más fuerza: `or` · `and` · `not` · `< > <= >= == !=` (no se encad
 | Función | |
 | --- | --- |
 | `min(a, b)` `max(a, b)` `abs(x)` | |
+| `floor(x)` `ceil(x)` | al entero de abajo o al de arriba |
 | `clamp(x, a, b)` | x, entre a y b |
 | `smooth(a, b, x)` | de 0 a 1 mientras x va de a a b, con entrada y salida suaves |
 | `mix(a, b, t)` | entre a y b. También entre dos colores |
@@ -318,7 +319,7 @@ Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sug
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `show` |
 | `group` | `pivot` · `rotate` · `scale: s` o `sx, sy` · `move: dx, dy` · `opacity` (se funden como una sola cosa) · `size` (para quien lo reparta) · `show` |
 | `popup` | `at` (dentro de la superficie) · `size` · `open:` un hecho |
-| `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `view: w, h` · `step` |
+| `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `view: w, h` · `step` · `content` |
 
 `anchor` de un texto: `left` `center` `right` y `top` `center` `bottom`, uno o los dos (`anchor: left center`). De un reparto: `left` `center` `right` y `top` `middle` `bottom` —sin ancla, `at` es su esquina de arriba a la izquierda—. `cursor:` `default` `pointer` `text` `grab` `grabbing`.
 
@@ -332,6 +333,18 @@ path {
 ```
 
 Un camino lleva **un solo trazo** (un `move`, el primero) y hasta 64 puntos ya aplanados; para varios, varios `path`. En un reparto hay que decirle lo que ocupa con `size:`, porque su caja no se sabe hasta evaluarlo.
+
+**Listas más largas que lo que se despliega.** Un modelo despliega sus `max` fichas al cargar, y ese es el tope (256). Para una lista de miles, la escena declara solo la **ventana** —lo que se ve y un poco más— y dice cuánto mide la lista entera:
+
+| | |
+| --- | --- |
+| `content: total * 34` | en un reparto con `view:`, el largo de verdad: el desplazamiento va sobre él, no sobre lo desplegado |
+| `for r in rows from first` | la copia 0 es la ficha `first` de la lista de verdad, así que `r.index` es el número que le toca |
+| `move: 0, first * 34` | pone las copias en su sitio de la lista entera |
+| `list.scroll` | además de leerse, **se escribe** como cualquier propiedad: `on press top { list.scroll: 0 ~calm }` |
+| `on scroll list { emit slid(list.scroll) }` | así se entera la lógica de que hay que mandarle otro trozo |
+
+`escenas/lista-larga` son cinco mil filas en dieciséis copias: 0,49 ms por frame, y los mismos dieciséis grupos y diecinueve zonas las haya que haya.
 
 `clip [inset n] forma` recorta todo lo que venga después, hasta el final de su `group`. Hasta cuatro anidados recortan por su forma; los de más afuera, por su caja.
 
@@ -606,8 +619,8 @@ properties.input: at width size weight color opacity family placeholder selectio
 properties.group: pivot rotate scale move opacity size show
 properties.popup: at size open
 properties.children: move
-properties.layout: at anchor gap padding align fill corner show opacity cursor view step
-functions: min max abs clamp smooth mix if vel
+properties.layout: at anchor gap padding align fill corner show opacity cursor view step content
+functions: min max abs floor ceil clamp smooth mix if vel
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop
 effects: toggle emit impulse play focus blur
