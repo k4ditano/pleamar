@@ -326,8 +326,9 @@ pub type Color = [Expr; 3];
 #[derive(Clone, Debug)]
 pub enum Pintura {
     Color(Color),
-    /// Un degradado de un punto a otro.
-    Lineal { de: Punto, a: Punto, c0: Color, c1: Color },
+    /// Un degradado de un punto a otro, o desde un centro hacia fuera. Las paradas
+    /// van en orden, cada una con dónde cae (de 0 a 1) y de qué color es.
+    Degradado { radial: bool, de: Punto, a: Punto, paradas: Vec<(Expr, Color)> },
 }
 impl From<Color> for Pintura {
     fn from(c: Color) -> Pintura {

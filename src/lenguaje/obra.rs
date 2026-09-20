@@ -1519,13 +1519,42 @@ impl<'a> Obra<'a> {
             return Err(Fallo::en(n.linea, n.col, "a 'body' with no shapes paints nothing"));
         }
         let pintura = if let Some(c) = p.get_mut("gradient") {
+            // `gradient: radial 20, 20 radius 30 { … }`: desde un centro hacia fuera.
+            let radial = c.palabra("radial");
             let de = self.punto(c)?;
-            c.exige_sim(",")?;
-            let a = self.punto(c)?;
-            c.exige_sim(",")?;
-            let c0 = self.color(c)?;
-            c.exige_sim(",")?;
-            Pintura::Lineal { de, a, c0, c1: self.color(c)? }
+            let a = if radial {
+                c.exige_palabra("radius")?;
+                (self.expr(c)?, Expr::K(0.0))
+            } else {
+                // `0, 0 to 0, 44` se lee igual que `0, 0, 0, 44`.
+                if !c.palabra("to") {
+                    c.exige_sim(",")?;
+                }
+                self.punto(c)?
+            };
+            // Los colores, separados por comas. Cada uno puede decir dónde cae
+            // (`sand 40%`); los que no lo digan se reparten por igual. Dos colores a
+            // secas es el degradado de siempre.
+            let mut paradas: Vec<(Expr, Color)> = Vec::new();
+            while c.sim(",") {
+                let col = self.color(c)?;
+                let donde = if !c.acabo() && !matches!(c.mira(), Some(F::Sim(","))) { self.expr(c)? } else { Expr::K(-1.0) };
+                paradas.push((donde, col));
+            }
+            c.nada_mas()?;
+            if paradas.len() < 2 {
+                return Err(Fallo::en(n.linea, n.col, "a gradient needs at least two colours: `gradient: 0, 0 to 0, 44, mint, sand 40%, coal`"));
+            }
+            if paradas.len() > 8 {
+                return Err(Fallo::en(n.linea, n.col, "a gradient holds at most 8 colours"));
+            }
+            let ultimo = paradas.len() - 1;
+            for (k, parada) in paradas.iter_mut().enumerate() {
+                if matches!(parada.0, Expr::K(v) if v < 0.0) {
+                    parada.0 = Expr::K(k as f32 / ultimo as f32);
+                }
+            }
+            Pintura::Degradado { radial, de, a, paradas }
         } else if let Some(c) = p.get_mut("color") {
             Pintura::Color(self.color(c)?)
         } else {

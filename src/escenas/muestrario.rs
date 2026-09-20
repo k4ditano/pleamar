@@ -35,7 +35,7 @@ impl Guion for Muestrario {
             fusion: 0.0.into(),
         });
         e.pintar(Instr::Relleno {
-            pintura: Pintura::Lineal { de: (45.0.into(), 70.0.into()), a: (145.0.into(), 146.0.into()), c0: color(0.62, 0.84, 0.74), c1: color(0.55, 0.42, 0.92) },
+            pintura: Pintura::Degradado { radial: false, de: (45.0.into(), 70.0.into()), a: (145.0.into(), 146.0.into()), paradas: vec![(0.0.into(), color(0.62, 0.84, 0.74)), (1.0.into(), color(0.55, 0.42, 0.92))] },
             alfa: 1.0.into(),
             filo: 0.0,
             luz: None,

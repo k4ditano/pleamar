@@ -35,7 +35,7 @@ Es un lenguaje **declarativo y que siempre termina**. No hay bucles libres, ni r
 | Texto | `"entre comillas"`. Con huecos, ver §11 |
 | Símbolos | `{ } ( ) , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
 
-Palabras del lenguaje (no se pueden usar como nombre de algo propio sin confundir a quien lee, aunque el compilador no lo prohíbe): `language import scene library surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, y dentro de sus sentencias `in max while for after from until at by reach within rest every inset right middle move curve close via as true false and or not`.
+Palabras del lenguaje (no se pueden usar como nombre de algo propio sin confundir a quien lee, aunque el compilador no lo prohíbe): `language import scene library surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, y dentro de sus sentencias `in max while for after from until at by reach within rest every inset right middle move curve close via as radial radius to change wrap true false and or not`.
 
 ## 4. Gramática
 
@@ -315,7 +315,7 @@ Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sug
 | `line` | `from` · `to` · `width` |
 | `path` | `at` (de dónde cuelgan sus puntos) · `size: w, h` (lo que ocupa en un reparto), y dentro sus pasos: `move x, y` (una vez, la primera) · `line x, y` · `curve x, y via cx, cy` · `close`. Cerrado se rellena; abierto o con `stroke`, es una línea |
 | …y todas las formas | `color` · `opacity` · `rotate` · `stroke` (solo el contorno) · `blend` (dentro de un `body`: cuánto se funde con lo anterior) · `active` · `cursor` · `show` |
-| `body` | `color` o `gradient: x0, y0, x1, y1, #c0, #c1` · `rim` · `light: cantidad, desde_y, alto` · `shadow: dx, dy, difusa, alfa` · `border: grosor, #color` · `opacity` · `show`, y dentro sus formas, fundidas en una silueta |
+| `body` | `color` o `gradient` (abajo) · `rim` · `light: cantidad, desde_y, alto` · `shadow: dx, dy, difusa, alfa` · `border: grosor, #color` · `opacity` · `show`, y dentro sus formas, fundidas en una silueta |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` |
 | `image` | `at` · `size` · `opacity` · `tint` · `show` |
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `show` |
@@ -353,6 +353,14 @@ Un reparto con `view:` **se arrastra** sin declarar nada: al pulsarlo se apunta 
 `escenas/lista-larga` son cinco mil filas en dieciséis copias: 0,49 ms por frame, y los mismos dieciséis grupos y diecinueve zonas las haya que haya.
 
 `clip [inset n] forma` recorta todo lo que venga después, hasta el final de su `group`. Hasta cuatro anidados recortan por su forma; los de más afuera, por su caja.
+
+**Degradados.** En un `body`, `gradient:` toma de dónde a dónde va y luego sus colores, separados por comas. Cada color puede decir **dónde cae** (`sand 40%`); los que no lo digan se reparten por igual. De dos a ocho.
+
+```
+gradient: 0, 0, 0, 44, mint, coal                        // de un punto a otro
+gradient: 0, 0 to 0, 44, mint, sand 30%, #e86a9a, coal   // lo mismo, con paradas
+gradient: radial 100, 160 radius 60, ink, mint 40%, coal // desde un centro hacia fuera
+```
 
 **Una forma con nombre es una zona** si alguna regla la nombra, si lleva `active`, o si se declaró con `zone`. Un nombre puesto solo para leerse mejor no para el clic. Una zona hereda las transformaciones de los grupos donde esté, y **lo que no está —un `show:` falso, una ficha que no existe— no es zona**. Un `row` o `column` con nombre también lo es: su caja entera, debajo de las de sus hijos.
 

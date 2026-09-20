@@ -16,6 +16,8 @@ pub const ALTO_INSTRUMENTOS: f32 = 84.0;
 const FORMAS_DE_SALIDA: usize = 1024;
 /// Floats (pares x, y) para los caminos. Crece como los demás.
 const PUNTOS_DE_SALIDA: usize = 1024;
+/// Floats (r, g, b, dónde) para las paradas de los degradados.
+const PARADAS_DE_SALIDA: usize = 512;
 const ELEMENTOS_DE_SALIDA: usize = 1024;
 
 /// La lista de dibujo convertida en lo que pinta la GPU: formas evaluadas y
@@ -26,6 +28,8 @@ pub struct Dibujo {
     pub formas: Vec<f32>,
     /// Los puntos de los caminos, en pares x, y: cada camino se lleva un tramo.
     pub puntos: Vec<f32>,
+    /// Las paradas de los degradados: r, g, b y dónde cae cada una.
+    pub paradas: Vec<f32>,
     pub elementos: Vec<f32>,
     tam: (f32, f32),
     /// Lo que han medido los textos que lo pidieron: propiedad y valor.
@@ -139,6 +143,7 @@ impl Dibujo {
         self.formas.clear();
         self.puntos.clear();
         self.elementos.clear();
+        let mut paradas_puestas: Vec<f32> = Vec::new();
         self.apartes.clear();
         let mut recortes: Vec<(usize, [f32; 4])> = Vec::new();
         // Cada entrada es ya el producto de todas las de encima.
@@ -224,11 +229,16 @@ impl Dibujo {
                         e[3] = a;
                         match pintura {
                             Pintura::Color(col) => e[8..11].copy_from_slice(&color(col)),
-                            Pintura::Lineal { de, a, c0, c1 } => {
-                                e[8..11].copy_from_slice(&color(c0));
-                                e[12..15].copy_from_slice(&color(c1));
-                                e[15] = 1.0;
+                            Pintura::Degradado { radial, de, a, paradas } => {
+                                e[15] = if *radial { 2.0 } else { 1.0 };
                                 e[16..20].copy_from_slice(&[de.0.evaluar(c), de.1.evaluar(c), a.0.evaluar(c), a.1.evaluar(c)]);
+                                // Las paradas van en su almacén: dónde cae cada una y de qué color.
+                                e[36] = (paradas_puestas.len() / 4) as f32;
+                                e[37] = paradas.len() as f32;
+                                for (donde, col) in paradas {
+                                    let rgb = color(col);
+                                    paradas_puestas.extend_from_slice(&[rgb[0], rgb[1], rgb[2], donde.evaluar(c).clamp(0.0, 1.0)]);
+                                }
                             }
                         }
                         e[11] = *filo;
@@ -392,7 +402,11 @@ impl Dibujo {
             // Los instrumentos ocupan la franja de abajo, que se añadió para ellos.
             self.elemento(9.0, [0.0, tam.1 - ALTO_INSTRUMENTOS, tam.0, tam.1], &[], |e| Afin::IDENTIDAD.codificar(&mut e[44..52]));
         }
+        self.paradas = paradas_puestas;
         // Un almacén vacío no se puede enlazar ni escribir.
+        if self.paradas.is_empty() {
+            self.paradas.resize(4, 0.0);
+        }
         if self.puntos.is_empty() {
             self.puntos.resize(2, 0.0);
         }
@@ -469,12 +483,13 @@ pub struct Gpu {
     tuberia: wgpu::RenderPipeline,
     bufer_formas: wgpu::Buffer,
     bufer_puntos: wgpu::Buffer,
+    bufer_paradas: wgpu::Buffer,
     bufer_elementos: wgpu::Buffer,
     atlas: wgpu::Texture,
     vista_del_atlas: wgpu::TextureView,
     muestreo: wgpu::Sampler,
     /// Cuántos floats caben ahora en cada almacén, y cuántos como mucho en esta tarjeta.
-    caben: (usize, usize, usize),
+    caben: (usize, usize, usize, usize),
     tope: usize,
     avisado_del_tope: bool,
     grupo_escena: wgpu::BindGroup,
@@ -517,6 +532,7 @@ impl Gpu {
         };
         let bufer_formas = almacen("formas", FORMAS_DE_SALIDA * POR_FORMA);
         let bufer_puntos = almacen("puntos", PUNTOS_DE_SALIDA);
+        let bufer_paradas = almacen("paradas", PARADAS_DE_SALIDA);
         let bufer_elementos = almacen("elementos", ELEMENTOS_DE_SALIDA * POR_ELEMENTO);
         let muestreo = dispositivo.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
@@ -559,10 +575,10 @@ impl Gpu {
             view_formats: &[],
         });
         let vista_del_atlas = atlas.create_view(&Default::default());
-        let grupo_escena = Self::grupo_de_escena(&dispositivo, &tuberia, &bufer_formas, &bufer_elementos, &bufer_puntos, &vista_del_atlas, &muestreo);
+        let grupo_escena = Self::grupo_de_escena(&dispositivo, &tuberia, &bufer_formas, &bufer_elementos, &bufer_puntos, &bufer_paradas, &vista_del_atlas, &muestreo);
         let tope = dispositivo.limits().max_storage_buffer_binding_size as usize / 4;
         let grupo_sin_capas = Self::capas_de(&dispositivo, &tuberia, formato, 1, 1).1;
-        Gpu { adaptador, dispositivo, cola, formato, alfa, sin_bloqueo, tuberia, bufer_formas, bufer_elementos, bufer_puntos, atlas, vista_del_atlas, muestreo, caben: (FORMAS_DE_SALIDA * POR_FORMA, ELEMENTOS_DE_SALIDA * POR_ELEMENTO, PUNTOS_DE_SALIDA), tope, avisado_del_tope: false, grupo_escena, grupo_sin_capas }
+        Gpu { adaptador, dispositivo, cola, formato, alfa, sin_bloqueo, tuberia, bufer_formas, bufer_elementos, bufer_puntos, bufer_paradas, atlas, vista_del_atlas, muestreo, caben: (FORMAS_DE_SALIDA * POR_FORMA, ELEMENTOS_DE_SALIDA * POR_ELEMENTO, PUNTOS_DE_SALIDA, PARADAS_DE_SALIDA), tope, avisado_del_tope: false, grupo_escena, grupo_sin_capas }
     }
 
     /// Sube al atlas lo que el taller haya pintado desde la última vez.
@@ -661,7 +677,7 @@ impl Gpu {
         );
     }
 
-    fn grupo_de_escena(dispositivo: &wgpu::Device, tuberia: &wgpu::RenderPipeline, formas: &wgpu::Buffer, elementos: &wgpu::Buffer, puntos: &wgpu::Buffer, atlas: &wgpu::TextureView, muestreo: &wgpu::Sampler) -> wgpu::BindGroup {
+    fn grupo_de_escena(dispositivo: &wgpu::Device, tuberia: &wgpu::RenderPipeline, formas: &wgpu::Buffer, elementos: &wgpu::Buffer, puntos: &wgpu::Buffer, paradas: &wgpu::Buffer, atlas: &wgpu::TextureView, muestreo: &wgpu::Sampler) -> wgpu::BindGroup {
         dispositivo.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &tuberia.get_bind_group_layout(0),
@@ -671,6 +687,7 @@ impl Gpu {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(atlas) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(muestreo) },
                 wgpu::BindGroupEntry { binding: 4, resource: puntos.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: paradas.as_entire_binding() },
             ],
         })
     }
@@ -678,16 +695,17 @@ impl Gpu {
     /// Lo que se va a pintar, a la tarjeta. Si no cabe, los almacenes crecen al
     /// doble —las veces que haga falta— y no vuelven a encoger.
     pub fn subir(&mut self, d: &Dibujo) {
-        let pide = (d.formas.len(), d.elementos.len(), d.puntos.len());
-        if pide.0 > self.caben.0 || pide.1 > self.caben.1 || pide.2 > self.caben.2 {
+        let pide = (d.formas.len(), d.elementos.len(), d.puntos.len(), d.paradas.len());
+        if pide.0 > self.caben.0 || pide.1 > self.caben.1 || pide.2 > self.caben.2 || pide.3 > self.caben.3 {
             let crecer = |cabe: usize, pide: usize| if pide > cabe { pide.next_power_of_two() } else { cabe }.min(self.tope);
-            let nuevo = (crecer(self.caben.0, pide.0) / POR_FORMA * POR_FORMA, crecer(self.caben.1, pide.1) / POR_ELEMENTO * POR_ELEMENTO, crecer(self.caben.2, pide.2) / 2 * 2);
+            let nuevo = (crecer(self.caben.0, pide.0) / POR_FORMA * POR_FORMA, crecer(self.caben.1, pide.1) / POR_ELEMENTO * POR_ELEMENTO, crecer(self.caben.2, pide.2) / 2 * 2, crecer(self.caben.3, pide.3) / 4 * 4);
             if nuevo != self.caben {
                 let almacen = |etiqueta, floats: usize| self.dispositivo.create_buffer(&wgpu::BufferDescriptor { label: Some(etiqueta), size: (floats * 4) as u64, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
                 if nuevo.0 != self.caben.0 { self.bufer_formas = almacen("formas", nuevo.0) }
                 if nuevo.1 != self.caben.1 { self.bufer_elementos = almacen("elementos", nuevo.1) }
                 if nuevo.2 != self.caben.2 { self.bufer_puntos = almacen("puntos", nuevo.2) }
-                self.grupo_escena = Self::grupo_de_escena(&self.dispositivo, &self.tuberia, &self.bufer_formas, &self.bufer_elementos, &self.bufer_puntos, &self.vista_del_atlas, &self.muestreo);
+                if nuevo.3 != self.caben.3 { self.bufer_paradas = almacen("paradas", nuevo.3) }
+                self.grupo_escena = Self::grupo_de_escena(&self.dispositivo, &self.tuberia, &self.bufer_formas, &self.bufer_elementos, &self.bufer_puntos, &self.bufer_paradas, &self.vista_del_atlas, &self.muestreo);
                 self.caben = nuevo;
                 println!("render · the scene has grown: now {} shapes and {} elements fit", nuevo.0 / POR_FORMA, nuevo.1 / POR_ELEMENTO);
             }
@@ -695,10 +713,11 @@ impl Gpu {
                 eprintln!("render · this card cannot take more than {} shapes and {} elements: the rest is not painted", self.caben.0 / POR_FORMA, self.caben.1 / POR_ELEMENTO);
             }
         }
-        let (f, e, pt) = (pide.0.min(self.caben.0), pide.1.min(self.caben.1), pide.2.min(self.caben.2));
+        let (f, e, pt, pa) = (pide.0.min(self.caben.0), pide.1.min(self.caben.1), pide.2.min(self.caben.2), pide.3.min(self.caben.3));
         self.cola.write_buffer(&self.bufer_formas, 0, bytemuck::cast_slice(&d.formas[..f]));
         self.cola.write_buffer(&self.bufer_elementos, 0, bytemuck::cast_slice(&d.elementos[..e]));
         self.cola.write_buffer(&self.bufer_puntos, 0, bytemuck::cast_slice(&d.puntos[..pt]));
+        self.cola.write_buffer(&self.bufer_paradas, 0, bytemuck::cast_slice(&d.paradas[..pa]));
     }
 
     /// Pinta el dibujo en una lámina. Devuelve si llegó a presentarse.

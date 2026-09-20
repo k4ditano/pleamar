@@ -24,13 +24,13 @@ struct Elemento {
     cab: vec4<f32>,       // tipo, primera forma (o nº de capa), nº de formas (o «teñido»), alfa
     caja: vec4<f32>,      // x0, y0, x1, y1
     color0: vec4<f32>,    // r, g, b, filo
-    color1: vec4<f32>,    // r, g, b, degradado (0 no, 1 lineal)
-    linea: vec4<f32>,     // degradado: de (x, y) a (x, y)
+    color1: vec4<f32>,    // -, -, -, degradado (0 no, 1 lineal, 2 radial)
+    linea: vec4<f32>,     // degradado: de (x, y) a (x, y); radial: centro (x, y), radio, -
     luz: vec4<f32>,       // cantidad, desde y, alto, grosor del borde
     borde: vec4<f32>,     // r, g, b, -
     sombra: vec4<f32>,    // dx, dy, difusa, alfa
     recortes: vec4<f32>,  // hasta cuatro formas a las que se recorta (-1 = ninguna)
-    destino: vec4<f32>,   // textura: x, y, ancho, alto
+    destino: vec4<f32>,   // textura: x, y, ancho, alto · degradado: primera parada, cuántas, -, -
     uv: vec4<f32>,
     t0: vec4<f32>,        // de pantalla a local, como en las formas
     t1: vec4<f32>,
@@ -56,6 +56,8 @@ const LEJOS: f32 = 1e6;
 @group(0) @binding(3) var muestreo: sampler;
 // Los puntos de los caminos, en pares x, y, relativos al centro de cada uno.
 @group(0) @binding(4) var<storage, read> puntos: array<f32>;
+// Las paradas de los degradados: r, g, b y dónde cae cada una, en orden.
+@group(0) @binding(5) var<storage, read> paradas: array<vec4<f32>>;
 // 2 · lo de cada superficie: su tamaño y su escala.
 @group(2) @binding(0) var<uniform> u: U;
 // Los grupos con opacidad se pintan aparte, aquí, y se funden de una vez.
@@ -122,6 +124,21 @@ fn camino(p: vec2<f32>, primero: u32, n: u32, cerrado: bool) -> f32 {
         }
     }
     return mejor * dentro;
+}
+
+// El color de un degradado en `t`: entre las dos paradas que lo rodean.
+fn entre_paradas(primera: u32, n: u32, t: f32) -> vec3<f32> {
+    var antes = paradas[primera];
+    if (t <= antes.w || n < 2u) { return antes.rgb; }
+    for (var i = 1u; i < n; i++) {
+        let ahora = paradas[primera + i];
+        if (t <= ahora.w) {
+            let d = max(ahora.w - antes.w, 1e-4);
+            return mix(antes.rgb, ahora.rgb, (t - antes.w) / d);
+        }
+        antes = ahora;
+    }
+    return antes.rgb;
 }
 
 fn min_suave(a: f32, b: f32, k: f32) -> f32 {
@@ -249,9 +266,15 @@ fn fs(e: Salida) -> @location(0) vec4<f32> {
     }
     var tono = el.color0.rgb;
     if (el.color1.w > 0.5) {
-        let eje = el.linea.zw - el.linea.xy;
-        let t = clamp(dot(local - el.linea.xy, eje) / max(dot(eje, eje), 0.0001), 0.0, 1.0);
-        tono = mix(el.color0.rgb, el.color1.rgb, t);
+        var t = 0.0;
+        if (el.color1.w > 1.5) {
+            // Radial: desde el centro hacia fuera, hasta el radio.
+            t = clamp(length(local - el.linea.xy) / max(el.linea.z, 0.0001), 0.0, 1.0);
+        } else {
+            let eje = el.linea.zw - el.linea.xy;
+            t = clamp(dot(local - el.linea.xy, eje) / max(dot(eje, eje), 0.0001), 0.0, 1.0);
+        }
+        tono = entre_paradas(u32(el.destino.x), u32(el.destino.y), t);
     }
     let luz = clamp(1.0 - (local.y - el.luz.y) / max(el.luz.z, 1.0), 0.0, 1.0) * el.luz.x;
     tono += vec3<f32>(luz) + vec3<f32>(el.color0.w) * smoothstep(-2.2, -0.4, d);

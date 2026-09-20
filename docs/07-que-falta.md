@@ -21,7 +21,7 @@ Tipos instanciados, con las veces que aparecen entre las dos configuraciones:
 | `Connections` | 145 | ✅ reglas `on suceso`, `on("fact:x")` |
 | `Shape` · `ShapePath` · `PathLine` | 40 · 78 · 56 | ✅ `path` con `move`, `line`, `curve` y `close`: relleno o con trazo, y se funde con lo demás |
 | `Component` · `Loader` | 67 · 64 | 🟡 `component` sí; carga diferida no · §2 |
-| `GradientStop` | 66 | 🟡 degradado lineal de dos colores; sin paradas ni radial |
+| `GradientStop` | 66 | ✅ hasta ocho paradas, cada una donde diga, y radial además de lineal |
 | `Image` | 63 | ✅ `image`, por fichero, por icono o desde un dato |
 | `TextInput` | 34 | ✅ `input` (una línea; sin IME) |
 | `ListView` · `Flickable` | 31 · 22 | 🟡 `view:` en un reparto, con `content:` y `for … from` para listas de miles en unas pocas copias. Sin arrastrar |
@@ -67,7 +67,7 @@ El teclado exclusivo, el clic fuera de una emergente, el arrastre real, la rueda
 
 ### ⚪ Lo demás
 
-Ventanas normales y bloqueo de sesión (S7); `ScreencopyView`; degradados con paradas y radial; `Flow`; IME (E7). De los ficheros queda el formato: se guarda texto, y el JSON se lo parsea quien escribe (F1).
+Ventanas normales y bloqueo de sesión (S7); `ScreencopyView`; IME (E7).
 
 ## 3. Lo que pleamar tiene y Quickshell no
 
