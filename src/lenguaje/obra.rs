@@ -1335,12 +1335,23 @@ impl<'a> Obra<'a> {
                     }
                     c.exige_sim("=")?;
                     // `let mint = #9ed6bd`: un color con nombre.
-                    let es_color = match (c.mira(), c.f.get(c.i + 2).map(|x| &x.f)) {
-                        (Some(F::Color(_)), _) => true,
-                        (Some(F::Id(m)), Some(F::Color(_))) if m == "mix" => true,
-                        (Some(F::Id(m)), Some(F::Id(k))) if m == "mix" && self.colores.contains_key(k) => true,
-                        (Some(F::Id(k)), _) if self.colores.contains_key(k) => true,
-                        _ => false,
+                    // `mix` vale para colores y para cuentas, así que se mira hacia
+                    // DENTRO hasta la primera cosa que no sea otro `mix`: es ella la
+                    // que dice de qué va esto. Antes solo se miraba un nivel, y
+                    // `mix(mix(#a, #b, x), #c, y)` —cuatro categorías, que es lo que
+                    // pide una bandeja de avisos— se leía como una cuenta.
+                    let es_color = {
+                        let mut k = c.i;
+                        while matches!(c.f.get(k).map(|x| &x.f), Some(F::Id(m)) if m == "mix")
+                            && matches!(c.f.get(k + 1).map(|x| &x.f), Some(F::Sim("(")))
+                        {
+                            k += 2;
+                        }
+                        match c.f.get(k).map(|x| &x.f) {
+                            Some(F::Color(_)) => true,
+                            Some(F::Id(n)) => self.colores.contains_key(n) || self.entornos.iter().any(|e| e.colores.contains_key(n)),
+                            _ => false,
+                        }
                     };
                     if es_color {
                         let k = self.color(&mut c)?;

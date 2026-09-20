@@ -67,7 +67,58 @@ fn logica_de(ruta: &str) -> String {
 /// funciona igual en cualquier sistema— y, si cambió, lo vuelve a leer. Si está
 /// bien, la escena nueva sustituye a la vieja sin perder lo que se movía; si no,
 /// dice por qué y la vieja sigue.
+/// El propio programa: si el binario cambia —acabas de recompilar—, se relanza
+/// con los mismos argumentos.
+///
+/// Un proceso vivo se queda con el compilador con el que nació, así que una
+/// escena que use algo nuevo del lenguaje no le compila por mucho que se
+/// guarde: se queda con la última buena y lo dice, que es lo correcto, pero
+/// parece que la recarga en caliente no va. Esto cierra ese agujero.
+///
+/// `PLEAMAR_SIN_RELANZAR=1` lo apaga, para quien no quiera que actualizar el
+/// paquete le reinicie la barra.
+fn vigilar_el_binario() {
+    if std::env::var_os("PLEAMAR_SIN_RELANZAR").is_some() {
+        return;
+    }
+    let Ok(yo) = std::env::current_exe() else { return };
+    let fecha = |r: &std::path::Path| std::fs::metadata(r).and_then(|m| m.modified()).ok();
+    let Some(mut ultima) = fecha(&yo) else { return };
+    let _ = std::thread::Builder::new().name("relanzar".into()).spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(400));
+        let Some(ahora) = fecha(&yo) else { continue };
+        if ahora == ultima {
+            continue;
+        }
+        ultima = ahora;
+        // Escribir un binario no es instantáneo: se espera a que se quede quieto,
+        // o se relanzaría con medio fichero.
+        loop {
+            std::thread::sleep(Duration::from_millis(150));
+            match fecha(&yo) {
+                Some(d) if d == ultima => break,
+                Some(d) => ultima = d,
+                None => continue,
+            }
+        }
+        println!("pleamar · the program changed on disk: starting again");
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            let fallo = std::process::Command::new(&yo).args(&args).exec();
+            eprintln!("pleamar · could not start again: {fallo}");
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = std::process::Command::new(&yo).args(&args).spawn();
+            std::process::exit(0);
+        }
+    });
+}
+
 pub fn vigilar(ruta: String, al_render: Sender<ARender>, a_logica: Sender<Evento>) {
+    vigilar_el_binario();
     // La lógica también se recarga: mismo truco, otro fichero.
     let logica = logica_de(&ruta);
     let a_la_logica = a_logica.clone();
