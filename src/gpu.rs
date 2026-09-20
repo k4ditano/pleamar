@@ -368,7 +368,7 @@ impl Dibujo {
                     let k = self.forma(p, 0.0);
                     recortes.push((k, [caja[0] - 1.0, caja[1] - 1.0, caja[2] + 1.0, caja[3] + 1.0]));
                     if recortes.len() == 5 && !std::mem::replace(&mut self.avisado_de_recortes, true) {
-                        eprintln!("render · más de cuatro recortes anidados: los de fuera recortan solo por su caja, no por su forma");
+                        eprintln!("render · more than four nested clips: the outer ones clip by their box only, not by their shape");
                     }
                 }
                 Instr::Recorte(None) => {
@@ -481,9 +481,9 @@ impl Gpu {
             power_preference: wgpu::PowerPreference::LowPower,
             ..Default::default()
         }))
-        .expect("no hay adaptador gráfico");
+        .expect("there is no graphics adapter");
         let (dispositivo, cola) =
-            pollster::block_on(adaptador.request_device(&wgpu::DeviceDescriptor::default())).expect("no hay dispositivo");
+            pollster::block_on(adaptador.request_device(&wgpu::DeviceDescriptor::default())).expect("there is no device");
         let caps = primera.get_capabilities(&adaptador);
         // Sin sRGB: el compositor mezcla los bytes tal cual, y el alfa
         // premultiplicado solo cuadra si nadie los recodifica por el camino.
@@ -491,7 +491,7 @@ impl Gpu {
         let alfa = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
             wgpu::CompositeAlphaMode::PreMultiplied
         } else {
-            eprintln!("aviso: sin alfa premultiplicado ({:?}); el fondo saldrá opaco", caps.alpha_modes);
+            eprintln!("warning: no premultiplied alpha ({:?}); the background will come out opaque", caps.alpha_modes);
             wgpu::CompositeAlphaMode::Auto
         };
         let sin_bloqueo = [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate].into_iter().find(|m| caps.present_modes.contains(m));
@@ -677,10 +677,10 @@ impl Gpu {
                 if nuevo.1 != self.caben.1 { self.bufer_elementos = almacen("elementos", nuevo.1) }
                 self.grupo_escena = Self::grupo_de_escena(&self.dispositivo, &self.tuberia, &self.bufer_formas, &self.bufer_elementos, &self.vista_del_atlas, &self.muestreo);
                 self.caben = nuevo;
-                println!("render · la escena ha crecido: ahora caben {} formas y {} elementos", nuevo.0 / POR_FORMA, nuevo.1 / POR_ELEMENTO);
+                println!("render · the scene has grown: now {} shapes and {} elements fit", nuevo.0 / POR_FORMA, nuevo.1 / POR_ELEMENTO);
             }
             if (pide.0 > self.caben.0 || pide.1 > self.caben.1) && !std::mem::replace(&mut self.avisado_del_tope, true) {
-                eprintln!("render · esta tarjeta no da para más de {} formas y {} elementos: lo que sobra no se pinta", self.caben.0 / POR_FORMA, self.caben.1 / POR_ELEMENTO);
+                eprintln!("render · this card cannot take more than {} shapes and {} elements: the rest is not painted", self.caben.0 / POR_FORMA, self.caben.1 / POR_ELEMENTO);
             }
         }
         let (f, e) = (pide.0.min(self.caben.0), pide.1.min(self.caben.1));

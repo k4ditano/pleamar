@@ -98,7 +98,7 @@ pub fn orden(que: &str, _: &[Valor]) -> Result<(), String> {
         "media.toggle" => "PlayPause",
         "media.next" => "Next",
         "media.previous" => "Previous",
-        _ => return Err(format!("«{que}» no existe: media.toggle, media.next, media.previous")),
+        _ => return Err(format!("'{que}' does not exist: media.toggle, media.next, media.previous")),
     };
     let c = Connection::session().map_err(|e| e.to_string())?;
     let (_, p, _) = elegido(&c).ok_or("no hay ningún reproductor abierto")?;

@@ -45,10 +45,10 @@ pub fn aplicaciones() -> Valor {
 /// sería una manera de ejecutar cualquier cosa con el permiso de «ver las apps».
 pub fn lanzar(orden: &str) -> Result<(), String> {
     use std::process::{Command, Stdio};
-    let Valor::Lista(apps) = aplicaciones() else { return Err("no sé qué aplicaciones hay".into()) };
+    let Valor::Lista(apps) = aplicaciones() else { return Err("I don't know what applications there are".into()) };
     let conocida = apps.iter().any(|a| matches!(a, Valor::Mapa(m) if m.iter().any(|(k, v)| k == "exec" && matches!(v, Valor::Texto(o) if o == orden))));
     if !conocida {
-        return Err(format!("«{orden}» no es ninguna de las aplicaciones instaladas: apps.launch solo lanza lo que el servicio `apps` ha contado"));
+        return Err(format!("'{orden}' is none of the installed applications: apps.launch only launches what the `apps` service has reported"));
     }
     let mut hijo = Command::new("setsid").args(["-f", "sh", "-c", orden]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
     std::thread::spawn(move || {

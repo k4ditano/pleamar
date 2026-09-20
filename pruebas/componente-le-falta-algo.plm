@@ -1,4 +1,4 @@
-// espera: fallo «a «Row» le falta «chosen» (un suceso): es Row(r: record, chosen: event, tone: color = …)»
+// espera: fallo «'Row' is missing 'chosen' (an event): it is Row(r: record, chosen: event, tone: color = …)»
 scene X {
     surface { size: 100, 100 }
     model rows max 2 { label: text }

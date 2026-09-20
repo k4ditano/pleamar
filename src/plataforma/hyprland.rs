@@ -17,7 +17,7 @@ pub fn esta() -> bool {
 
 /// Una pregunta o una orden, y lo que contesta.
 pub fn pedir(orden: &str) -> Result<String, String> {
-    let ruta = socket(".socket.sock").ok_or("no parece que esto sea Hyprland")?;
+    let ruta = socket(".socket.sock").ok_or("this does not look like Hyprland")?;
     let mut s = UnixStream::connect(ruta).map_err(|e| e.to_string())?;
     s.write_all(orden.as_bytes()).map_err(|e| e.to_string())?;
     let mut r = String::new();
@@ -87,6 +87,6 @@ pub fn orden(nombre: &str, args: &[Valor]) -> Result<(), String> {
     match (nombre, args) {
         // En esta casa la configuración de Hyprland es Lua, y sus órdenes también.
         ("workspaces.focus", [Valor::Num(n)]) => pedir(&format!("dispatch hl.dsp.focus({{ workspace = {} }})", *n as i64)).map(|_| ()),
-        _ => Err(format!("no sé hacer «{nombre}» con eso")),
+        _ => Err(format!("I don't know how to do '{nombre}' with that")),
     }
 }

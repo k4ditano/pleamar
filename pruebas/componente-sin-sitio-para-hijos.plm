@@ -1,4 +1,4 @@
-// espera: fallo «no tiene sitio para lo que se le mete dentro: a su componente le falta un `children`»
+// espera: fallo «has nowhere to put what goes inside it: its component is missing a `children`»
 scene X {
     surface { size: 100, 100 }
     component Dot { size: 10, 10; ellipse { at: 5, 5; radius: 5; color: #fff } }

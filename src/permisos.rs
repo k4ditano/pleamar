@@ -58,13 +58,13 @@ pub fn aprobar(p: &Plugin) -> Result<(), String> {
 /// Lo que pide, dicho para que se entienda, y avisando de lo que es pedirlo todo.
 pub fn en_claro(p: &Permisos) -> String {
     let lista = |l: &[String], marca: &dyn Fn(&str) -> bool| match l {
-        [] => "ninguno".to_owned(),
+        [] => "none".to_owned(),
         _ => l.iter().map(|x| if marca(x) { format!("{x} ⚠") } else { x.clone() }).collect::<Vec<_>>().join(", "),
     };
     let es_interprete = |o: &str| INTERPRETES.contains(&o.rsplit('/').next().unwrap_or(o));
-    let mut s = format!("órdenes: {} · servicios: {}", lista(&p.ordenes, &es_interprete), lista(&p.servicios, &|_| false));
+    let mut s = format!("commands: {} · services: {}", lista(&p.ordenes, &es_interprete), lista(&p.servicios, &|_| false));
     if p.ordenes.iter().any(|o| es_interprete(o)) {
-        s.push_str(" · ⚠ un intérprete ejecuta lo que se le diga: es pedirlo todo");
+        s.push_str(" · ⚠ an interpreter runs whatever it is told: that is asking for everything");
     }
     s
 }
@@ -81,17 +81,17 @@ pub fn preguntar(escena: &str, si_a_todo: bool) -> i32 {
     };
     let pendientes: Vec<&Plugin> = e.plugins.iter().filter(|p| !aprobado(p)).collect();
     if e.plugins.is_empty() {
-        println!("{escena} no usa ningún plugin: no hay nada que aprobar.");
+        println!("{escena} uses no plugins: there is nothing to approve.");
         return 0;
     }
     for p in e.plugins.iter().filter(|p| aprobado(p)) {
-        println!("✓ «{}» · {} · {}", p.nombre, p.logica.display(), if p.permisos == Permisos::default() { "no pide nada".to_owned() } else { format!("ya aprobado · {}", en_claro(&p.permisos)) });
+        println!("✓ '{}' · {} · {}", p.nombre, p.logica.display(), if p.permisos == Permisos::default() { "asks for nothing".to_owned() } else { format!("already approved · {}", en_claro(&p.permisos)) });
     }
     let mut negados = 0;
     for p in pendientes {
-        println!("\n? El plugin «{}» ({}) quiere:\n    {}", p.nombre, p.logica.display(), en_claro(&p.permisos));
+        println!("\n? Plugin '{}' ({}) wants:\n    {}", p.nombre, p.logica.display(), en_claro(&p.permisos));
         let si = si_a_todo || {
-            print!("  ¿Se lo apruebas? [s/N] ");
+            print!("  Approve it? [y/N] ");
             let _ = std::io::Write::flush(&mut std::io::stdout());
             let mut linea = String::new();
             let _ = std::io::stdin().read_line(&mut linea);
@@ -99,14 +99,14 @@ pub fn preguntar(escena: &str, si_a_todo: bool) -> i32 {
         };
         if si {
             match aprobar(p) {
-                Ok(()) => println!("  aprobado. Si su lógica o lo que pide cambia, habrá que volver a aprobarlo."),
+                Ok(()) => println!("  approved. If its logic or what it asks for changes, it will have to be approved again."),
                 Err(m) => {
-                    eprintln!("  no he podido guardarlo: {m}");
+                    eprintln!("  could not save it: {m}");
                     return 1;
                 }
             }
         } else {
-            println!("  no aprobado: correrá, pero sin poder tocar nada del sistema.");
+            println!("  not approved: it will run, but unable to touch anything of the system.");
             negados += 1;
         }
     }

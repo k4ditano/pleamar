@@ -1,4 +1,4 @@
-// espera: fallo «no tienen ningún campo de tipo text «lable». ¿Querías decir «label»?»
+// espera: fallo «have no field of type text called 'lable'. Did you mean 'label'?»
 scene Bad {
     surface { size: 300, 200 }
     model rows max 3 { label: text; enabled: bool = true }

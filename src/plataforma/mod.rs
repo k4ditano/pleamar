@@ -105,7 +105,7 @@ pub fn orden(nombre: &str, args: &[Valor]) -> Result<(), String> {
         return compositor::orden(nombre, args);
     }
     let _ = args;
-    Err(format!("este sistema no sabe hacer «{nombre}» todavía"))
+    Err(format!("this system cannot do '{nombre}' yet"))
 }
 
 /// Dónde guarda pleamar lo que tiene que recordar de una vez para otra —qué plugins se
@@ -131,7 +131,7 @@ pub fn consulta(nombre: &str, args: &[Valor]) -> Result<Valor, String> {
         return bandeja::consulta(nombre, args);
     }
     let _ = args;
-    Err(format!("este sistema no sabe contestar a «{nombre}» todavía"))
+    Err(format!("this system cannot answer '{nombre}' yet"))
 }
 
 /// Abre o cierra la emergente número `k` de la escena: una superficie hija de
@@ -203,14 +203,14 @@ fn ruta_de_ordenes(escena: &str) -> Option<std::path::PathBuf> {
 pub fn decir(escena: Option<&str>, orden: &str) -> Result<(), String> {
     use std::io::Write;
     let ruta = match escena {
-        Some(e) => ruta_de_ordenes(e).ok_or("no sé dónde están los sockets")?,
+        Some(e) => ruta_de_ordenes(e).ok_or("I don't know where the sockets are")?,
         None => {
-            let dir = ruta_de_ordenes("x").and_then(|r| r.parent().map(|p| p.to_owned())).ok_or("no sé dónde están los sockets")?;
-            let vivas: Vec<_> = std::fs::read_dir(&dir).map_err(|_| "no hay ninguna escena en marcha")?.filter_map(Result::ok).map(|e| e.path()).filter(|p| std::os::unix::net::UnixStream::connect(p).is_ok()).collect();
+            let dir = ruta_de_ordenes("x").and_then(|r| r.parent().map(|p| p.to_owned())).ok_or("I don't know where the sockets are")?;
+            let vivas: Vec<_> = std::fs::read_dir(&dir).map_err(|_| "there is no scene running")?.filter_map(Result::ok).map(|e| e.path()).filter(|p| std::os::unix::net::UnixStream::connect(p).is_ok()).collect();
             match vivas.as_slice() {
                 [una] => una.clone(),
-                [] => return Err("no hay ninguna escena en marcha".into()),
-                varias => return Err(format!("hay varias escenas en marcha; di cuál: {}", varias.iter().filter_map(|p| p.file_stem()).map(|n| n.to_string_lossy()).collect::<Vec<_>>().join(", "))),
+                [] => return Err("there is no scene running".into()),
+                varias => return Err(format!("there are several scenes running; say which: {}", varias.iter().filter_map(|p| p.file_stem()).map(|n| n.to_string_lossy()).collect::<Vec<_>>().join(", "))),
             }
         }
     };
@@ -231,7 +231,7 @@ pub fn decir(escena: Option<&str>, orden: &str) -> Result<(), String> {
 pub fn escuchar_ordenes(_: &str, _: Box<dyn Fn(String) -> Option<String> + Send>) {}
 #[cfg(not(unix))]
 pub fn decir(_: Option<&str>, _: &str) -> Result<(), String> {
-    Err("este sistema no tiene todavía por dónde recibir órdenes: falta la tubería con nombre".into())
+    Err("this system has nowhere to receive commands yet: the named pipe is missing".into())
 }
 
 /// El portapapeles del sistema. `arboard` lo habla en los tres sistemas; vive
@@ -291,7 +291,7 @@ pub use wayland::atender;
 /// portable— pero no hay dónde pintar.
 #[cfg(not(target_os = "linux"))]
 pub fn atender(_: Vec<Superficie>, _: u32, _: wgpu::Instance, _: Sender<ARender>) {
-    eprintln!("pleamar todavía no sabe poner ventanas en este sistema: falta src/plataforma/ para él");
+    eprintln!("pleamar cannot put windows on this system yet: its src/plataforma/ is missing");
     std::process::exit(1);
 }
 

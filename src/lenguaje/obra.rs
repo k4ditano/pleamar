@@ -60,10 +60,10 @@ impl<'a> Cur<'a> {
         si
     }
     fn exige_sim(&mut self, s: &str) -> R<()> {
-        if self.sim(s) { Ok(()) } else { self.fallo(format!("aquí esperaba «{s}»")) }
+        if self.sim(s) { Ok(()) } else { self.fallo(format!("expected '{s}' here")) }
     }
     fn exige_palabra(&mut self, p: &str) -> R<()> {
-        if self.palabra(p) { Ok(()) } else { self.fallo(format!("aquí esperaba «{p}»")) }
+        if self.palabra(p) { Ok(()) } else { self.fallo(format!("expected '{p}' here")) }
     }
     fn id(&mut self, que: &str) -> R<String> {
         match self.mira() {
@@ -71,7 +71,7 @@ impl<'a> Cur<'a> {
                 self.i += 1;
                 Ok(x.clone())
             }
-            _ => self.fallo(format!("aquí esperaba {que}")),
+            _ => self.fallo(format!("expected {que} here")),
         }
     }
     fn num(&mut self) -> R<f32> {
@@ -81,7 +81,7 @@ impl<'a> Cur<'a> {
                 self.i += 1;
                 Ok(if menos { -n } else { *n })
             }
-            _ => self.fallo("aquí esperaba un número"),
+            _ => self.fallo("expected a number here"),
         }
     }
     fn dur(&mut self) -> R<Duration> {
@@ -90,7 +90,7 @@ impl<'a> Cur<'a> {
                 self.i += 1;
                 Ok(Duration::from_secs_f32(*s))
             }
-            _ => self.fallo("aquí esperaba una duración, como 320ms o 14s"),
+            _ => self.fallo("expected a duration here, like 320ms or 14s"),
         }
     }
     fn cadena(&mut self) -> R<String> {
@@ -99,7 +99,7 @@ impl<'a> Cur<'a> {
                 self.i += 1;
                 Ok(s.clone())
             }
-            _ => self.fallo("aquí esperaba un texto entre comillas"),
+            _ => self.fallo("expected a quoted string here"),
         }
     }
     /// Una palabra de una lista del vocabulario. Si no es ninguna, dice cuáles valen.
@@ -110,8 +110,8 @@ impl<'a> Cur<'a> {
         }
         self.i -= 1;
         let todas: Vec<String> = lista.iter().map(|s| s.to_string()).collect();
-        let pista = parecido(&palabra, todas.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
-        self.fallo(format!("«{palabra}» no vale aquí: {que} es {}.{pista}", enumerar(lista)))
+        let pista = parecido(&palabra, todas.iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+        self.fallo(format!("'{palabra}' is not valid here: {que} is {}.{pista}", enumerar(lista)))
     }
     fn nada_mas(&self) -> R<()> {
         if self.acabo() { Ok(()) } else { self.fallo("esto sobra") }
@@ -268,9 +268,9 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
     let escena = match arbol {
         [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "scene") => n,
         [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "library") => {
-            return Err(vec![Fallo::en(n.linea, n.col, "esto es una biblioteca: no se abre, se importa desde una escena (`import \"…\"`)")]);
+            return Err(vec![Fallo::en(n.linea, n.col, "this is a library: it is not opened, it is imported from a scene (`import \"…\"`)")]);
         }
-        _ => return Err(vec![Fallo::en(1, 1, "un fichero es una escena: los `import` que quiera, y luego `scene Nombre { … }`")]),
+        _ => return Err(vec![Fallo::en(1, 1, "a file is a scene: as many `import`s as you want, then `scene Name { … }`")]),
     };
     let mut o = Obra {
         e: Escena::default(),
@@ -283,7 +283,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
             "slow" => Muelle::LENTO,
             "gentle" => Muelle::SUAVE,
             "pose" => Muelle::POSE,
-            otro => unreachable!("«{otro}» está en el vocabulario, pero no tiene rigidez ni freno"),
+            otro => unreachable!("'{otro}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
         scrolls: Vec::new(), superficies_pendientes: Vec::new(), ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), vuelta: 0, siguiente_origen: 0.0, valores: HashMap::new(), ambiguos: Default::default(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
@@ -299,7 +299,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
     let demo = o.e.suceso("demo");
     o.sucesos.insert("demo".into(), demo);
     let Some(cuerpo) = escena.cuerpo.as_ref() else {
-        return Err(vec![Fallo::en(escena.linea, escena.col, "a la escena le falta su bloque `{ … }`")]);
+        return Err(vec![Fallo::en(escena.linea, escena.col, "this scene is missing its `{ … }` block")]);
     };
     o.adelantar_medidas(cuerpo);
     // Cuatro vueltas: declaraciones; nombres y capas; dibujo; reglas.
@@ -336,8 +336,8 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
             Some(h) => o.e.superficies[cual].abierta = Some(h),
             None => {
                 let conocidos: Vec<&String> = o.hechos.keys().collect();
-                let pista = parecido(&hecho, conocidos.into_iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
-                o.anotar(Fallo::en(l, col, format!("no hay ningún hecho que se llame «{hecho}».{pista}")));
+                let pista = parecido(&hecho, conocidos.into_iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+                o.anotar(Fallo::en(l, col, format!("there is no fact called '{hecho}'.{pista}")));
             }
         }
     }
@@ -349,13 +349,13 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
         if let Some(logica) = &b.logica {
             o.e.plugins.push(Plugin { nombre: b.nombre.clone(), logica: logica.clone(), permisos: o.permisos_de.get(&b.fichero).cloned().unwrap_or_default() });
         } else if o.permisos_de.contains_key(&b.fichero) {
-            o.fallos.push(Fallo::en(b.fichero * super::POR_FICHERO + 1, 1, format!("la biblioteca «{}» pide permisos, pero no tiene lógica que los use: falta su `.luau` al lado", b.nombre)));
+            o.fallos.push(Fallo::en(b.fichero * super::POR_FICHERO + 1, 1, format!("library '{}' asks for permissions, but has no logic to use them: its `.luau` is missing next to it", b.nombre)));
         }
     }
     // Lo que un componente de biblioteca `strict` leyó de la escena sin pedirlo.
     for (componente, nombre, donde) in o.sin_pedir.take() {
         o.entornos.clear();
-        o.anotar(Fallo::en(donde.0, donde.1, format!("«{componente}» es de una biblioteca `strict` y lee «{nombre}», que es de la escena, sin pedirlo. Que lo reciba como parámetro, o que lo declare su biblioteca")));
+        o.anotar(Fallo::en(donde.0, donde.1, format!("'{componente}' belongs to a `strict` library and reads '{nombre}', which is the scene\'s, without asking for it. Take it as a parameter, or declare it in the library")));
     }
     if o.fallos.is_empty() { Ok(o.e) } else { Err(o.fallos) }
 }
@@ -504,7 +504,7 @@ impl<'a> Obra<'a> {
         // desde dónde se usó: a menudo lo que está mal es lo que se le pasó.
         if let Some((componente, linea)) = self.entornos.iter().rev().find_map(|e| e.copia.as_ref()) {
             if *linea != f.linea {
-                f.mensaje = format!("{} (dentro de «{componente}», puesto en {})", f.mensaje, super::sitio(self.ficheros, *linea));
+                f.mensaje = format!("{} (inside '{componente}', used at {})", f.mensaje, super::sitio(self.ficheros, *linea));
             }
         }
         let repetido = self.fallos.iter().any(|g| g.linea == f.linea && g.col == f.col && g.mensaje == f.mensaje);
@@ -527,44 +527,44 @@ impl<'a> Obra<'a> {
             // Existe, pero es de otra clase: un número donde hace falta un texto, o al revés.
             if let Some(c) = m.campos.iter().find(|c| c.nombre == campo) {
                 let (es, hace_falta) = match c.tipo {
-                    TipoDeCampo::Texto => ("text", "un número (number, bool o un enumerado)"),
-                    TipoDeCampo::Imagen(..) => ("image", "un número (number, bool o un enumerado)"),
-                    TipoDeCampo::Numero => ("number", "un text"),
-                    TipoDeCampo::Bool => ("bool", "un text"),
-                    TipoDeCampo::Enum(_) => ("un enumerado", "un text"),
-                    TipoDeCampo::Lista(_) => ("una lista", "un campo suelto: se recorre con `for`"),
+                    TipoDeCampo::Texto => ("text", "a number (number, bool or an enum)"),
+                    TipoDeCampo::Imagen(..) => ("image", "a number (number, bool or an enum)"),
+                    TipoDeCampo::Numero => ("number", "a text"),
+                    TipoDeCampo::Bool => ("bool", "a text"),
+                    TipoDeCampo::Enum(_) => ("an enum", "a text"),
+                    TipoDeCampo::Lista(_) => ("a list", "a plain field: walk it with `for`"),
                 };
-                return Err(Fallo::en(l, col, format!("el campo «{campo}» de «{}» es {es}, y aquí hace falta {hace_falta}.", m.nombre)));
+                return Err(Fallo::en(l, col, format!("field '{campo}' of '{}' is {es}, and here {hace_falta} is needed.", m.nombre)));
             }
             let mut campos: Vec<String> = m.campos.iter().map(|c| c.nombre.clone()).collect();
             campos.push("index".into());
-            let pista = parecido(campo, campos.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
-            let de_que = match que { "ningún texto" => " de tipo text", _ => "" };
-            return Err(Fallo::en(l, col, format!("las fichas de «{}» no tienen ningún campo{de_que} «{campo}».{pista} Sus campos son: {}.", m.nombre, campos.join(", "))));
+            let pista = parecido(campo, campos.iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+            let de_que = match que { "no text" => " of type text", _ => "" };
+            return Err(Fallo::en(l, col, format!("records of '{}' have no field{de_que} called '{campo}'.{pista} Its fields are: {}.", m.nombre, campos.join(", "))));
         }
-        let pista = parecido(nombre, conocidos.into_iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
-        Err(Fallo::en(l, col, format!("no hay {que} que se llame «{nombre}».{pista} Un `let` tiene que ir antes de quien lo usa; lo demás, donde quieras.")))
+        let pista = parecido(nombre, conocidos.into_iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+        Err(Fallo::en(l, col, format!("there is {que} called '{nombre}'.{pista} A `let` has to come before whatever uses it; everything else can go anywhere.")))
     }
 
     fn prop(&self, c: &mut Cur) -> R<PropId> {
-        let n = self.global(&c.id("el nombre de una propiedad")?);
+        let n = self.global(&c.id("a property name")?);
         match self.props.get(&n) {
             Some(p) => Ok(*p),
             None => self.desconocido(c, "ninguna propiedad", &n, self.props.keys().collect()),
         }
     }
     fn hecho(&self, c: &mut Cur) -> R<HechoId> {
-        let n = self.global(&c.id("el nombre de un hecho")?);
+        let n = self.global(&c.id("a fact name")?);
         match self.hechos.get(&n) {
             Some(h) => Ok(*h),
-            None => self.desconocido(c, "ningún hecho", &n, self.hechos.keys().collect()),
+            None => self.desconocido(c, "no fact", &n, self.hechos.keys().collect()),
         }
     }
     fn suceso(&self, c: &mut Cur) -> R<SucesoId> {
-        let n = self.global(&c.id("el nombre de un suceso")?);
+        let n = self.global(&c.id("an event name")?);
         match self.sucesos.get(&n) {
             Some(s) => Ok(*s),
-            None => self.desconocido(c, "ningún suceso", &n, self.sucesos.keys().collect()),
+            None => self.desconocido(c, "no event", &n, self.sucesos.keys().collect()),
         }
     }
     fn sucesos(&self, c: &mut Cur) -> R<Vec<SucesoId>> {
@@ -575,14 +575,14 @@ impl<'a> Obra<'a> {
         Ok(v)
     }
     fn zona(&self, c: &mut Cur) -> R<ZonaId> {
-        let n = self.global(&c.id("el nombre de una forma o de una zona")?);
+        let n = self.global(&c.id("the name of a shape or a zone")?);
         match self.zonas.get(&n) {
             Some(z) => Ok(*z),
-            None => self.desconocido(c, "ninguna forma con nombre ni zona", &n, self.zonas.keys().collect()),
+            None => self.desconocido(c, "no named shape or zone", &n, self.zonas.keys().collect()),
         }
     }
     fn muelle(&self, c: &mut Cur) -> R<Muelle> {
-        let n = c.id("el nombre de un muelle")?;
+        let n = c.id("a spring name")?;
         if n == "spring" {
             c.exige_sim("(")?;
             let rigidez = c.num()?;
@@ -599,7 +599,7 @@ impl<'a> Obra<'a> {
         }
         match self.muelles.get(&n) {
             Some(m) => Ok(*m),
-            None => self.desconocido(c, "ningún muelle", &n, self.muelles.keys().collect()),
+            None => self.desconocido(c, "no spring", &n, self.muelles.keys().collect()),
         }
     }
 
@@ -637,7 +637,7 @@ impl<'a> Obra<'a> {
                                 c.i += 1;
                                 Expr::K(k as f32)
                             }
-                            None => return c.fallo(format!("«{v}» no es un valor de «{hecho}»: vale {}", enumerar(&nombres.iter().map(String::as_str).collect::<Vec<_>>()))),
+                            None => return c.fallo(format!("'{v}' is not a value of '{hecho}': it can be {}", enumerar(&nombres.iter().map(String::as_str).collect::<Vec<_>>()))),
                         }
                     }
                     _ => self.expr_suma(c)?,
@@ -703,7 +703,7 @@ impl<'a> Obra<'a> {
         match self.enumerado_entre(c, desde, hasta) {
             Some((hecho, nombres)) => {
                 let f = &c.f[desde];
-                Err(Fallo::en(f.linea, f.col, format!("«{hecho}» es un enumerado ({}): con él no se hacen cuentas. Se compara: `{hecho} == {}`", nombres.join(", "), nombres.last().cloned().unwrap_or_default())))
+                Err(Fallo::en(f.linea, f.col, format!("'{hecho}' is an enum ({}): you do not do arithmetic with it. You compare it: `{hecho} == {}`", nombres.join(", "), nombres.last().cloned().unwrap_or_default())))
             }
             None => Ok(()),
         }
@@ -770,20 +770,20 @@ impl<'a> Obra<'a> {
                     // La forma larga, que no se confunde con nada: `mode.critical`.
                     Ok(Expr::K(k as f32))
                 } else if self.ambiguos.contains(n.as_str()) {
-                    c.fallo(format!("«{n}» es un valor de varios enumerados, con números distintos: aquí no se sabe de cuál. Compáralo con su hecho (`mode == {n}`) o escríbelo entero (`mode.{n}`)"))
+                    c.fallo(format!("'{n}' is a value of several enums, with different numbers: here there is no telling which. Compare it with its fact (`mode == {n}`) or write it in full (`mode.{n}`)"))
                 } else {
                     let conocidos: Vec<&String> = self.lets.keys().chain(self.props.keys()).chain(self.hechos.keys()).chain(self.valores.keys()).collect();
-                    self.desconocido(c, "nada", n, conocidos)
+                    self.desconocido(c, "nothing", n, conocidos)
                 }
             }
-            _ => c.fallo("aquí esperaba un número, un nombre o un paréntesis"),
+            _ => c.fallo("expected a number, a name or a parenthesis here"),
         }
     }
     fn funcion(&self, nombre: &str, c: &mut Cur) -> R<Expr> {
         if !voz::FUNCIONES.contains(&nombre) {
             let todas: Vec<String> = voz::FUNCIONES.iter().map(|s| s.to_string()).collect();
-            let pista = parecido(nombre, todas.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
-            return c.fallo(format!("no conozco la función «{nombre}»: hay {}.{pista}", voz::FUNCIONES.join(", ")));
+            let pista = parecido(nombre, todas.iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+            return c.fallo(format!("I don\'t know the function '{nombre}': there are {}.{pista}", voz::FUNCIONES.join(", ")));
         }
         let (l, col) = c.f.get(c.i.saturating_sub(2)).map_or(c.fin, |x| (x.linea, x.col));
         if nombre == "vel" {
@@ -803,10 +803,10 @@ impl<'a> Obra<'a> {
         }
         let cte = |e: &Expr| match e {
             Expr::K(v) => Ok(*v),
-            _ => Err(Fallo::en(l, col, format!("en «{nombre}», los dos primeros tienen que ser números"))),
+            _ => Err(Fallo::en(l, col, format!("in '{nombre}', the first two have to be numbers"))),
         };
         let mut a = a.into_iter();
-        let mut toma = || a.next().ok_or_else(|| Fallo::en(l, col, format!("a «{nombre}» le faltan argumentos")));
+        let mut toma = || a.next().ok_or_else(|| Fallo::en(l, col, format!("'{nombre}' is missing arguments")));
         Ok(match nombre {
             "min" => toma()?.min(toma()?),
             "max" => toma()?.max(toma()?),
@@ -828,7 +828,7 @@ impl<'a> Obra<'a> {
                 let (si, x, y) = (toma()?, toma()?, toma()?);
                 y.clone() + (x - y) * si
             }
-            otra => unreachable!("«{otra}» está en el vocabulario, pero `funcion` no sabe calcularla"),
+            otra => unreachable!("'{otra}' is in the vocabulary, but `funcion` cannot compute it"),
         })
     }
 
@@ -865,7 +865,7 @@ impl<'a> Obra<'a> {
                 let [b0, b1, b2] = b;
                 Ok([a0.clone() + (b0 - a0) * t.clone(), a1.clone() + (b1 - a1) * t.clone(), a2.clone() + (b2 - a2) * t])
             }
-            _ => c.fallo("aquí esperaba un color: #151616, el nombre de uno, o mix(#a, #b, cuánto)"),
+            _ => c.fallo("expected a colour here: #151616, the name of one, or mix(#a, #b, how much)"),
         }
     }
 
@@ -877,8 +877,8 @@ impl<'a> Obra<'a> {
             if let Entrada::Prop { nombre, valor, linea, col } = e {
                 if !validas.contains(&nombre.as_str()) {
                     let v: Vec<String> = validas.iter().map(|s| s.to_string()).collect();
-                    let pista = parecido(nombre, v.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
-                    return Err(Fallo::en(*linea, *col, format!("aquí no existe «{nombre}».{pista} Valen: {}", validas.join(", "))));
+                    let pista = parecido(nombre, v.iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+                    return Err(Fallo::en(*linea, *col, format!("'{nombre}' does not exist here.{pista} Valid ones: {}", validas.join(", "))));
                 }
                 m.insert(nombre.as_str(), Cur::de(valor, *linea, *col));
             }
@@ -891,18 +891,18 @@ impl<'a> Obra<'a> {
     /// `ellipse orb { at: …; radius: … }` → la forma, su nombre, y lo que lleve de pintura.
     fn forma(&mut self, n: &Nodo, desde: usize) -> R<FormaLeida> {
         let mut c = Cur::de(&n.cabeza[desde..], n.linea, n.col);
-        let clase = c.id("una forma: ellipse, box, arc o line")?;
-        let nombre = if c.acabo() { None } else { Some(c.id("un nombre para la forma")?) };
+        let clase = c.id("a shape: ellipse, box, arc or line")?;
+        let nombre = if c.acabo() { None } else { Some(c.id("a name for the shape")?) };
         c.nada_mas()?;
         let comunes = voz::propiedades("shape");
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let propias: &[&str] = match clase.as_str() {
             "ellipse" | "box" | "arc" | "line" => voz::propiedades(&clase),
-            otra => return Err(Fallo::en(n.linea, n.col, format!("no conozco la forma «{otra}»: hay ellipse, box, arc y line"))),
+            otra => return Err(Fallo::en(n.linea, n.col, format!("I don\'t know the shape '{otra}': there are ellipse, box, arc and line"))),
         };
         let validas: Vec<&str> = propias.iter().chain(comunes.iter()).copied().collect();
         let mut p = self.propiedades(n, &validas)?;
-        let falta = |que: &str| Fallo::en(n.linea, n.col, format!("a este «{clase}» le falta «{que}»"));
+        let falta = |que: &str| Fallo::en(n.linea, n.col, format!("this '{clase}' is missing '{que}'"));
         let mut una = |o: &Obra, k: &str| -> R<Option<Expr>> {
             match p.get_mut(k) {
                 Some(c) => {
@@ -955,7 +955,7 @@ impl<'a> Obra<'a> {
                     (None, None) if en_hueco => (w.clone() * 0.5, h.clone() * 0.5),
                     (Some(a), None) => a,
                     (None, Some((x, y))) => (x + w.clone() * 0.5, y + h.clone() * 0.5),
-                    _ => return Err(Fallo::en(n.linea, n.col, "una caja se coloca con «at» (su centro) o con «from» (su esquina), una de las dos")),
+                    _ => return Err(Fallo::en(n.linea, n.col, "a box is placed with 'at' (its centre) or with 'from' (its corner), one of the two")),
                 };
                 Forma::Caja { centro, mitad: (w * 0.5, h * 0.5), radio: corner.unwrap_or(Expr::K(0.0)) }
             }
@@ -998,11 +998,11 @@ impl<'a> Obra<'a> {
     fn sentencia(&mut self, n: &'a Nodo, recortes: &mut usize) -> R<()> {
         {
             let mut c = Cur::de(&n.cabeza, n.linea, n.col);
-            let palabra = c.id("una declaración")?;
+            let palabra = c.id("a declaration")?;
             if !voz::SENTENCIAS.contains(&palabra.as_str()) && !self.componentes.contains_key(&palabra) {
                 let validas: Vec<String> = voz::SENTENCIAS.iter().map(|s| s.to_string()).chain(self.componentes.keys().cloned()).collect();
-                let pista = parecido(&palabra, validas.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
-                return Err(Fallo::en(n.linea, n.col, format!("no sé qué es «{palabra}».{pista}")));
+                let pista = parecido(&palabra, validas.iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+                return Err(Fallo::en(n.linea, n.col, format!("I don\'t know what '{palabra}' is.{pista}")));
             }
             match palabra.as_str() {
                 "surface" => self.superficie(n)?,
@@ -1025,7 +1025,7 @@ impl<'a> Obra<'a> {
                     }
                 }
                 "spring" => {
-                    let nombre = c.id("un nombre para el muelle")?;
+                    let nombre = c.id("a name for the spring")?;
                     if n.linea >= super::POR_FICHERO {
                         self.de_biblioteca.insert(nombre.clone());
                     }
@@ -1035,7 +1035,7 @@ impl<'a> Obra<'a> {
                     self.muelles.insert(nombre, Muelle { rigidez, freno: c.num()? });
                 }
                 "prop" | "pose" => {
-                    let nombre = self.declarar(&c.id("un nombre para la propiedad")?);
+                    let nombre = self.declarar(&c.id("a name for the property")?);
                     c.exige_sim("=")?;
                     let v = c.num()?;
                     let muelle = if c.sim("~") { self.muelle(&mut c)? } else if palabra == "pose" { Muelle::POSE } else { Muelle::VIVO };
@@ -1048,15 +1048,15 @@ impl<'a> Obra<'a> {
                 }
                 "fact" => {
                     // fact open = false · fact count: number = 0 · fact mode: low | normal | critical = normal
-                    let nombre = self.declarar(&c.id("un nombre para el hecho")?);
+                    let nombre = self.declarar(&c.id("a name for the fact")?);
                     let declarado = if c.sim(":") { Some(self.tipo_de_hecho(&mut c)?) } else { None };
                     c.exige_sim("=")?;
                     let (v, tipo) = match declarado {
                         Some(Some(TipoDeHecho::Enum(nombres))) => {
-                            let cual = c.una_de(&nombres.iter().map(String::as_str).collect::<Vec<_>>(), "un valor de este hecho")?;
+                            let cual = c.una_de(&nombres.iter().map(String::as_str).collect::<Vec<_>>(), "a value of this fact")?;
                             (nombres.iter().position(|x| *x == cual).unwrap() as f32, Some(TipoDeHecho::Enum(nombres)))
                         }
-                        Some(Some(TipoDeHecho::Bool)) => (if c.palabra("true") { 1.0 } else if c.palabra("false") { 0.0 } else { return c.fallo("un hecho `bool` vale true o false") }, Some(TipoDeHecho::Bool)),
+                        Some(Some(TipoDeHecho::Bool)) => (if c.palabra("true") { 1.0 } else if c.palabra("false") { 0.0 } else { return c.fallo("a `bool` fact is true or false") }, Some(TipoDeHecho::Bool)),
                         Some(None) => (if c.sim("-") { -c.num()? } else { c.num()? }, None),
                         // Sin tipo, lo dice lo que valga: `true` y `false` hacen un sí o no; un número, un número.
                         None => if c.palabra("true") { (1.0, Some(TipoDeHecho::Bool)) } else if c.palabra("false") { (0.0, Some(TipoDeHecho::Bool)) } else { (if c.sim("-") { -c.num()? } else { c.num()? }, None) },
@@ -1069,19 +1069,19 @@ impl<'a> Obra<'a> {
                     self.hechos.insert(nombre, h);
                 }
                 "event" => {
-                    let nombre = self.declarar(&c.id("un nombre para el suceso")?);
+                    let nombre = self.declarar(&c.id("a name for the event")?);
                     let s = if c.sim("->") { self.e.suceso_que_sale(fijo(&nombre)) } else { self.e.suceso(fijo(&nombre)) };
                     c.nada_mas()?;
                     self.sucesos.insert(nombre, s);
                 }
                 "text" if matches!(c.f.get(2).map(|x| &x.f), Some(F::Sim("="))) => {
-                    let nombre = self.declarar(&c.id("un nombre para el texto")?);
+                    let nombre = self.declarar(&c.id("a name for the text")?);
                     c.exige_sim("=")?;
                     let t = self.e.texto_vivo(fijo(&nombre), &c.cadena()?);
                     self.textos.insert(nombre, t);
                 }
                 "image" if matches!(c.f.get(2).map(|x| &x.f), Some(F::Sim("="))) => {
-                    let nombre = self.declarar(&c.id("un nombre para la imagen")?);
+                    let nombre = self.declarar(&c.id("a name for the image")?);
                     c.exige_sim("=")?;
                     let fuente = if c.palabra("icon") {
                         Fuente::Icono(c.cadena()?)
@@ -1093,13 +1093,13 @@ impl<'a> Obra<'a> {
                         Fuente::Ruta(match carpeta { Some(k) if escrita.is_relative() => k.join(escrita), _ => escrita })
                     } else if c.palabra("from") {
                         // La que diga un texto vivo: así elige la lógica una imagen.
-                        let t = self.global(&c.id("el nombre de un texto")?);
+                        let t = self.global(&c.id("the name of a text")?);
                         match self.textos.get(&t) {
                             Some(t) => Fuente::Viva(*t),
-                            None => return self.desconocido(&c, "ningún texto", &t, self.textos.keys().collect()),
+                            None => return self.desconocido(&c, "no text", &t, self.textos.keys().collect()),
                         }
                     } else {
-                        return c.fallo("una imagen es `icon \"nombre\"`, `file \"ruta\"` o `from un_texto`");
+                        return c.fallo("an image is `icon \"name\"`, `file \"path\"` or `from some_text`");
                     };
                     c.exige_sim(",")?;
                     let w = c.num()?;
@@ -1108,7 +1108,7 @@ impl<'a> Obra<'a> {
                     self.imagenes.insert(nombre, i);
                 }
                 "measure" => {
-                    let local = c.id("un nombre para la medida")?;
+                    let local = c.id("a name for the measure")?;
                     let nombre = self.declarar(&local);
                     let parte = self.interpolar_en(&local);
                     if let Some(e) = self.entornos.last_mut() {
@@ -1120,7 +1120,7 @@ impl<'a> Obra<'a> {
                     self.medidas.insert(nombre, (w, h));
                 }
                 "let" => {
-                    let nombre = c.id("un nombre")?;
+                    let nombre = c.id("a name")?;
                     if n.linea >= super::POR_FICHERO {
                         self.de_biblioteca.insert(nombre.clone());
                     }
@@ -1177,7 +1177,7 @@ impl<'a> Obra<'a> {
                 "children" => self.hijos_de_fuera(n)?,
                 // Dentro de un reparto, con varias cosas, hace de grupo; suelto no es nada.
                 "between" if self.en_hueco => self.grupo_con_propiedades(n, n.cuerpo.as_deref().unwrap_or(&[]))?,
-                "between" => return Err(Fallo::en(n.linea, n.col, "`between` solo vale dentro de un `row` o un `column`: es lo que va entre cada dos hijos")),
+                "between" => return Err(Fallo::en(n.linea, n.col, "`between` only works inside a `row` or a `column`: it is what goes between every two children")),
                 "component" => self.declarar_componente(n, &mut c)?,
                 "repeat" => self.repetir(n, &mut c)?,
                 "for" => self.para(n, &mut c)?,
@@ -1193,7 +1193,7 @@ impl<'a> Obra<'a> {
                 "gesture" | "posture" => self.gesto(n, &palabra, &mut c)?,
                 // La puerta de arriba solo deja pasar lo que está en el vocabulario: si se llega
                 // aquí, es que se apuntó una palabra y nadie la atiende.
-                otra => unreachable!("«{otra}» está en el vocabulario, pero `sentencia` no sabe qué hacer con ella"),
+                otra => unreachable!("'{otra}' is in the vocabulary, but `sentencia` does not know what to do with it"),
             }
         }
         Ok(())
@@ -1286,12 +1286,12 @@ impl<'a> Obra<'a> {
         let cual = match n.cabeza.get(1).map(|f| &f.f) {
             Some(F::Id(p)) => p.clone(),
             None => String::new(),
-            Some(_) => return Err(Fallo::en(n.linea, n.col, "tras `children` solo puede ir el nombre del hueco: `children header`")),
+            Some(_) => return Err(Fallo::en(n.linea, n.col, "after `children` only the slot name can go: `children header`")),
         };
         let Some(copia) = self.hijos_de_copia.last_mut() else {
-            return Err(Fallo::en(n.linea, n.col, "`children` solo vale dentro de un componente: es donde va lo que cada copia traiga dentro"));
+            return Err(Fallo::en(n.linea, n.col, "`children` only works inside a component: it is where whatever each copy brings goes"));
         };
-        let h = copia.huecos.iter_mut().find(|h| h.0 == cual).expect("los huecos se apuntaron al declarar el componente");
+        let h = copia.huecos.iter_mut().find(|h| h.0 == cual).expect("the slots were noted when the component was declared");
         h.2 = true;
         Ok((h.1.clone(), copia.fuera.clone()))
     }
@@ -1328,21 +1328,21 @@ impl<'a> Obra<'a> {
     /// hija. Lo de dentro se dibuja con (0, 0) en su esquina, como si fuera otra
     /// escena; en realidad es un trozo de esta, puesto lejos.
     fn emergente(&mut self, n: &'a Nodo, c: &mut Cur) -> R<()> {
-        let local = c.id("un nombre para la emergente")?;
+        let local = c.id("a name for the popup")?;
         let nombre = self.declarar(&local);
         if !self.entornos.is_empty() || !self.bajo.is_empty() {
-            return Err(Fallo::en(n.linea, n.col, "una `popup` va en el nivel de la escena, no dentro de un grupo ni de un componente"));
+            return Err(Fallo::en(n.linea, n.col, "a `popup` goes at the scene level, not inside a group or a component"));
         }
         let mut p = self.propiedades(n, voz::propiedades("popup"))?;
-        let falta = |q: &str| Fallo::en(n.linea, n.col, format!("a esta `popup` le falta «{q}»"));
+        let falta = |q: &str| Fallo::en(n.linea, n.col, format!("this `popup` is missing '{q}'"));
         let en = self.punto(p.get_mut("at").ok_or_else(|| falta("at"))?)?;
         let tam = self.punto(p.get_mut("size").ok_or_else(|| falta("size"))?)?;
         let abierta = {
             let c = p.get_mut("open").ok_or_else(|| falta("open"))?;
-            let h = self.global(&c.id("el hecho que la abre")?);
+            let h = self.global(&c.id("the fact that opens it")?);
             match self.hechos.get(&h) {
                 Some(h) => *h,
-                None => return self.desconocido(c, "ningún hecho", &h, self.hechos.keys().collect()),
+                None => return self.desconocido(c, "no fact", &h, self.hechos.keys().collect()),
             }
         };
         // Cada una en su sitio, lejos de la superficie y de las demás.
@@ -1390,7 +1390,7 @@ impl<'a> Obra<'a> {
             }
         }
         if formas == 0 {
-            return Err(Fallo::en(n.linea, n.col, "un «body» sin formas no pinta nada"));
+            return Err(Fallo::en(n.linea, n.col, "a 'body' with no shapes paints nothing"));
         }
         let pintura = if let Some(c) = p.get_mut("gradient") {
             let de = self.punto(c)?;
@@ -1403,7 +1403,7 @@ impl<'a> Obra<'a> {
         } else if let Some(c) = p.get_mut("color") {
             Pintura::Color(self.color(c)?)
         } else {
-            return Err(Fallo::en(n.linea, n.col, "a este «body» le falta «color» o «gradient»"));
+            return Err(Fallo::en(n.linea, n.col, "this 'body' is missing 'color' or 'gradient'"));
         };
         let luz = match p.get_mut("light") {
             Some(c) => {
@@ -1473,7 +1473,7 @@ impl<'a> Obra<'a> {
                 }
                 ('}', _) => {
                     let (l, c) = aqui(*i);
-                    return Err(Fallo::en(l, c, "esta `}` no cierra nada. Si es una llave de verdad, escríbela dos veces: `}}`"));
+                    return Err(Fallo::en(l, c, "this `}` closes nothing. If it is a real brace, write it twice: `}}`"));
                 }
                 ('{', Some('?')) => {
                     if !fijo.is_empty() { fuera.push(Trozo::Fijo(std::mem::take(&mut fijo))) }
@@ -1482,7 +1482,7 @@ impl<'a> Obra<'a> {
                     let opcional = self.trozos(s, i, true, donde)?;
                     if s.get(*i - 1) != Some(&'}') || *i > s.len() {
                         let (l, c) = aqui(abre);
-                        return Err(Fallo::en(l, c, "a este tramo `{? …}` le falta su `}`"));
+                        return Err(Fallo::en(l, c, "this `{? …}` part is missing its `}`"));
                     }
                     fuera.push(Trozo::Opcional(opcional));
                 }
@@ -1491,7 +1491,7 @@ impl<'a> Obra<'a> {
                     let abre = *i;
                     let Some(cierra) = s[abre..].iter().position(|c| *c == '}').map(|k| abre + k) else {
                         let (l, c) = aqui(abre);
-                        return Err(Fallo::en(l, c, "a este hueco le falta su `}`. Si es una llave de verdad, escríbela dos veces: `{{`"));
+                        return Err(Fallo::en(l, c, "this hole is missing its `}`. If it is a real brace, write it twice: `{{`"));
                     };
                     let fuente: String = s[abre + 1..cierra].iter().collect();
                     fuera.push(self.hueco(&fuente, aqui(abre + 1))?);
@@ -1522,7 +1522,7 @@ impl<'a> Obra<'a> {
         }
         let mut c = Cur::de(&fichas, linea, col);
         if fichas.is_empty() {
-            return c.fallo("un hueco vacío: dentro va el nombre de un texto o una expresión");
+            return c.fallo("an empty hole: inside goes the name of a text or an expression");
         }
         let es_texto = |o: &Self, n: &str| o.textos.get(&o.global(n)).copied();
         // upper(nombre) · lower(nombre)
@@ -1530,15 +1530,15 @@ impl<'a> Obra<'a> {
             let letras = voz::DE_TEXTO.contains(&f.as_str()).then(|| match f.as_str() {
                 "upper" => Letras::Mayusculas,
                 "lower" => Letras::Minusculas,
-                otra => unreachable!("«{otra}» está en el vocabulario, pero un hueco no sabe aplicarla"),
+                otra => unreachable!("'{otra}' is in the vocabulary, but a hole cannot apply it"),
             });
             if let Some(letras) = letras {
                 c.i += 2;
-                let nombre = c.id("el nombre de un texto")?;
+                let nombre = c.id("the name of a text")?;
                 // Primero lo de dentro: un parámetro de texto gana a un texto de la escena que se llame igual.
                 if let Some(e) = self.entornos.iter().rev().find(|e| e.cadenas.contains_key(&nombre)) {
                     if e.contenidos.contains_key(&nombre) {
-                        return c.fallo(format!("«{nombre}» llegó con huecos, y `{f}` solo sabe de un texto entero: pon el `{f}` dentro de esos huecos, donde se escribió"));
+                        return c.fallo(format!("'{nombre}' arrived with holes, and `{f}` only knows whole texts: put the `{f}` inside those holes, where it was written"));
                     }
                     c.exige_sim(")")?;
                     c.nada_mas()?;
@@ -1548,9 +1548,9 @@ impl<'a> Obra<'a> {
                 let Some(t) = es_texto(self, &nombre) else {
                     let g = self.global(&nombre);
                     if self.hechos.contains_key(&g) || self.props.contains_key(&g) {
-                        return c.fallo(format!("«{nombre}» es un número, y `{f}` es para textos"));
+                        return c.fallo(format!("'{nombre}' is a number, and `{f}` is for texts"));
                     }
-                    return self.desconocido(&c, "ningún texto", &nombre, self.textos.keys().collect());
+                    return self.desconocido(&c, "no text", &nombre, self.textos.keys().collect());
                 };
                 c.exige_sim(")")?;
                 c.nada_mas()?;
@@ -1606,17 +1606,17 @@ impl<'a> Obra<'a> {
                 Some(t) => Contenido::Vivo(*t),
                 None => {
                     c.i += 1;
-                    return self.desconocido(&c, "ningún texto", nombre, self.textos.keys().collect());
+                    return self.desconocido(&c, "no text", nombre, self.textos.keys().collect());
                 }
             },
-            _ => return c.fallo("un texto es `text \"literal\" { … }` o `text nombre { … }`"),
+            _ => return c.fallo("a text is `text \"literal\" { … }` or `text name { … }`"),
         };
         let mut p = self.propiedades(n, voz::propiedades("text"))?;
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let en = match p.get_mut("at") {
             Some(c) => self.punto(c)?,
             None if en_hueco => (0.0.into(), 0.0.into()),
-            None => return Err(Fallo::en(n.linea, n.col, "a este texto le falta «at»")),
+            None => return Err(Fallo::en(n.linea, n.col, "this text is missing 'at'")),
         };
         let mut estilo = Estilo::de(14.0, color(1.0, 1.0, 1.0));
         if let Some(c) = p.get_mut("size") {
@@ -1638,7 +1638,7 @@ impl<'a> Obra<'a> {
             estilo.color = self.color(c)?;
         }
         if let Some(c) = p.get_mut("align") {
-            estilo.alineado = match c.una_de(voz::ALINEADOS_DE_TEXTO, "el alineado de un texto")?.as_str() {
+            estilo.alineado = match c.una_de(voz::ALINEADOS_DE_TEXTO, "the alignment of a text")?.as_str() {
                 "left" => Alineado::Izquierda,
                 "center" => Alineado::Centro,
                 "right" => Alineado::Derecha,
@@ -1660,7 +1660,7 @@ impl<'a> Obra<'a> {
                         let k = if ejes[0].is_none() { 0 } else { 1 };
                         ejes[k] = Some(0.5);
                     }
-                    _ => return c.fallo("un ancla es left, center o right, y top, center o bottom"),
+                    _ => return c.fallo("an anchor is left, center or right, and top, center or bottom"),
                 }
             }
             ancla = (ejes[0].unwrap_or(0.5), ejes[1].unwrap_or(if ejes[0] == Some(0.5) { 0.5 } else { 0.0 }));
@@ -1675,7 +1675,7 @@ impl<'a> Obra<'a> {
         };
         let mide = match p.get_mut("measure") {
             Some(c) => {
-                let nombre = self.global(&c.id("el nombre de una medida")?);
+                let nombre = self.global(&c.id("the name of a measure")?);
                 match self.medidas.get(&nombre) {
                     Some(m) => Some(*m),
                     None => return self.desconocido(c, "ninguna medida", &nombre, self.medidas.keys().collect()),
@@ -1695,21 +1695,21 @@ impl<'a> Obra<'a> {
     /// campo donde escribir, que edita el texto vivo de ese nombre.
     fn campo(&mut self, n: &Nodo) -> R<()> {
         let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
-        let local = c.id("el nombre del texto que edita")?;
+        let local = c.id("the name of the text it edits")?;
         let nombre = self.global(&local);
         let Some(texto) = self.textos.get(&nombre).copied() else {
-            return self.desconocido(&c, "ningún texto", &nombre, self.textos.keys().collect());
+            return self.desconocido(&c, "no text", &nombre, self.textos.keys().collect());
         };
         let mut p = self.propiedades(n, voz::propiedades("input"))?;
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let en = match p.get_mut("at") {
             Some(c) => self.punto(c)?,
             None if en_hueco => (0.0.into(), 0.0.into()),
-            None => return Err(Fallo::en(n.linea, n.col, "a este campo le falta «at»")),
+            None => return Err(Fallo::en(n.linea, n.col, "this input is missing 'at'")),
         };
         let ancho = match p.get_mut("width") {
             Some(c) => self.expr(c)?,
-            None => return Err(Fallo::en(n.linea, n.col, "a este campo le falta «width»")),
+            None => return Err(Fallo::en(n.linea, n.col, "this input is missing 'width'")),
         };
         let mut estilo = Estilo::de(15.0, color(1.0, 1.0, 1.0));
         if let Some(c) = p.get_mut("size") {
@@ -1752,13 +1752,13 @@ impl<'a> Obra<'a> {
 
     fn imagen(&mut self, n: &Nodo) -> R<()> {
         let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
-        let nombre = self.global(&c.id("el nombre de una imagen")?);
+        let nombre = self.global(&c.id("the name of an image")?);
         let Some(imagen) = self.imagenes.get(&nombre).copied() else {
             return self.desconocido(&c, "ninguna imagen", &nombre, self.imagenes.keys().collect());
         };
         let mut p = self.propiedades(n, voz::propiedades("image"))?;
         let en_hueco = std::mem::take(&mut self.en_hueco);
-        let falta = |q: &str| Fallo::en(n.linea, n.col, format!("a esta imagen le falta «{q}»"));
+        let falta = |q: &str| Fallo::en(n.linea, n.col, format!("this image is missing '{q}'"));
         let (x, y) = match p.get_mut("at") {
             Some(c) => self.punto(c)?,
             None if en_hueco => (0.0.into(), 0.0.into()),
@@ -1784,13 +1784,13 @@ impl<'a> Obra<'a> {
     fn superficie(&mut self, n: &'a Nodo) -> R<()> {
         let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
         let nombre = match c.mira() {
-            Some(F::Id(_)) => self.declarar(&c.id("un nombre para la superficie")?),
+            Some(F::Id(_)) => self.declarar(&c.id("a name for the surface")?),
             _ => String::new(),
         };
         c.nada_mas()?;
         let dibuja = n.cuerpo.as_deref().unwrap_or(&[]).iter().any(|e| matches!(e, Entrada::Nodo(_)));
         if nombre.is_empty() && dibuja {
-            return Err(Fallo::en(n.linea, n.col, "una superficie que lleva dentro lo que dibuja necesita nombre: `surface bar { … }`. Sin nombre es la de la escena, y dibuja lo que hay suelto"));
+            return Err(Fallo::en(n.linea, n.col, "a surface that carries what it draws needs a name: `surface bar { … }`. Without a name it is the scene\'s own, and it draws whatever is loose"));
         }
         // Vuelta 2: lo que dibuja, en su trozo del plano.
         if self.vuelta == 2 {
@@ -1809,8 +1809,8 @@ impl<'a> Obra<'a> {
         }
         if self.e.superficies.iter().any(|s| s.nombre == nombre) {
             return Err(Fallo::en(n.linea, n.col, match nombre.as_str() {
-                "" => "la escena ya tiene su superficie: las demás llevan nombre (`surface panel { … }`)".to_owned(),
-                _ => format!("ya hay una superficie «{nombre}»"),
+                "" => "the scene already has its surface: the others carry a name (`surface panel { … }`)".to_owned(),
+                _ => format!("there is already a surface called '{nombre}'"),
             }));
         }
         // La principal es la primera, tenga nombre o no.
@@ -1825,7 +1825,7 @@ impl<'a> Obra<'a> {
         let mut p = self.propiedades(n, voz::propiedades("surface"))?;
         let mut abierta_pendiente = None;
         if let Some(c) = p.get_mut("open") {
-            abierta_pendiente = Some((c.id("el hecho que la abre")?, c.pos()));
+            abierta_pendiente = Some((c.id("the fact that opens it")?, c.pos()));
         }
         if let Some((hecho, donde)) = abierta_pendiente {
             // Como el `while` del teclado: puede nombrar un hecho declarado más abajo.
@@ -1839,7 +1839,7 @@ impl<'a> Obra<'a> {
             s.alto = c.num()? as u32;
         }
         if let Some(c) = p.get_mut("anchor") {
-            s.ancla = match c.una_de(voz::ANCLAS_DE_SUPERFICIE, "el ancla de una superficie")?.as_str() {
+            s.ancla = match c.una_de(voz::ANCLAS_DE_SUPERFICIE, "the anchor of a surface")?.as_str() {
                 "top" => Ancla::Arriba,
                 "bottom" => Ancla::Abajo,
                 "left" => Ancla::Izquierda,
@@ -1861,7 +1861,7 @@ impl<'a> Obra<'a> {
             }
         }
         if let Some(c) = p.get_mut("level") {
-            s.nivel = match c.una_de(voz::NIVELES, "un nivel")?.as_str() {
+            s.nivel = match c.una_de(voz::NIVELES, "a level")?.as_str() {
                 "background" => Nivel::Fondo,
                 "bottom" => Nivel::Debajo,
                 "top" => Nivel::Encima,
@@ -1870,7 +1870,7 @@ impl<'a> Obra<'a> {
             };
         }
         if let Some(c) = p.get_mut("keyboard") {
-            s.teclado = match c.una_de(voz::TECLADOS, "cómo se pide el teclado")?.as_str() {
+            s.teclado = match c.una_de(voz::TECLADOS, "how the keyboard is asked for")?.as_str() {
                 "none" => Teclado::Nunca,
                 "on_demand" => Teclado::AlPulsar,
                 "exclusive" => Teclado::Siempre,
@@ -1904,17 +1904,17 @@ impl<'a> Obra<'a> {
 
     /// `layer card ~calm { open while open { orb.x: 140 ~lively after 70ms } rest { … } }`
     fn capa(&mut self, n: &Nodo, c: &mut Cur) -> R<()> {
-        let nombre = self.declarar(&c.id("un nombre para la capa")?);
+        let nombre = self.declarar(&c.id("a name for the layer")?);
         let muelle = if c.sim("~") { self.muelle(c)? } else { Muelle::RAPIDO };
         c.nada_mas()?;
         let mut reclamaciones = Vec::new();
         let mut nombres = Vec::new();
         for e in n.cuerpo.as_deref().unwrap_or(&[]) {
             let Entrada::Nodo(r) = e else {
-                return Err(Fallo::en(n.linea, n.col, "dentro de una capa solo hay reclamaciones: `nombre while …`, `nombre for 700ms after …`, `nombre { … }`"));
+                return Err(Fallo::en(n.linea, n.col, "a layer holds only claims: `name while …`, `name for 700ms after …`, `name { … }`"));
             };
             let mut c = Cur::de(&r.cabeza, r.linea, r.col);
-            let quien = c.id("un nombre para la reclamación")?;
+            let quien = c.id("a name for the claim")?;
             let cuando = if c.palabra("while") {
                 Cuando::Mientras(self.expr(&mut c)?)
             } else if c.palabra("for") {
@@ -1933,14 +1933,14 @@ impl<'a> Obra<'a> {
             for s in r.cuerpo.as_deref().unwrap_or(&[]) {
                 match s {
                     Entrada::Prop { nombre, valor, linea, col } => fija.push(self.transicion(nombre, valor, *linea, *col)?),
-                    Entrada::Nodo(x) => return Err(Fallo::en(x.linea, x.col, "aquí van propiedades y su destino: `orb.x: 140 ~lively after 70ms`")),
+                    Entrada::Nodo(x) => return Err(Fallo::en(x.linea, x.col, "here go properties and where they travel to: `orb.x: 140 ~lively after 70ms`")),
                 }
             }
             nombres.push(quien.clone());
             reclamaciones.push(Reclamacion { nombre: fijo(&quien), cuando, fija });
         }
         if reclamaciones.is_empty() {
-            return Err(Fallo::en(n.linea, n.col, "una capa sin reclamaciones no decide nada"));
+            return Err(Fallo::en(n.linea, n.col, "a layer with no claims decides nothing"));
         }
         let capa = self.e.capa(fijo(&nombre), muelle, reclamaciones);
         // `card.open` vale 1 mientras gane, y va y viene con el muelle de la capa.
@@ -1955,8 +1955,8 @@ impl<'a> Obra<'a> {
         MIRANDO.with(|m| m.set((linea, col)));
         let nombre = &self.global(nombre);
         let Some(prop) = self.props.get(nombre).copied() else {
-            let pista = parecido(nombre, self.props.keys()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
-            return Err(Fallo::en(linea, col, format!("no hay ninguna propiedad que se llame «{nombre}».{pista}")));
+            let pista = parecido(nombre, self.props.keys()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+            return Err(Fallo::en(linea, col, format!("there is no property called '{nombre}'.{pista}")));
         };
         let mut c = Cur::de(valor, linea, col);
         let a = self.expr(&mut c)?;
@@ -1970,18 +1970,18 @@ impl<'a> Obra<'a> {
 
     /// `component Chip(label, tone) { size: …; … }`
     fn declarar_componente(&mut self, n: &'a Nodo, c: &mut Cur) -> R<()> {
-        let nombre = c.id("un nombre para el componente")?;
+        let nombre = c.id("a name for the component")?;
         let estricta = self.estrictos.contains(&(n.linea / super::POR_FICHERO));
         // (r: record, chosen: event, tone: color = mint, height = 30)
         let mut parametros: Vec<Parametro> = Vec::new();
         if c.sim("(") && !c.sim(")") {
             loop {
-                let nombre = c.id("el nombre de un parámetro")?;
+                let nombre = c.id("a parameter name")?;
                 if parametros.iter().any(|p| p.nombre == nombre) {
                     c.i -= 1;
-                    return c.fallo(format!("«{nombre}» ya es un parámetro de este componente"));
+                    return c.fallo(format!("'{nombre}' is already a parameter of this component"));
                 }
-                let tipo = if c.sim(":") { Some(c.una_de(voz::TIPOS_DE_PARAMETRO, "el tipo de un parámetro")?) } else { None };
+                let tipo = if c.sim(":") { Some(c.una_de(voz::TIPOS_DE_PARAMETRO, "the type of a parameter")?) } else { None };
                 let por_defecto = if c.sim("=") {
                     // Hasta la coma o el paréntesis que lo cierre, sin contar los de dentro.
                     let (desde, mut hondo) = (c.i, 0);
@@ -1996,14 +1996,14 @@ impl<'a> Obra<'a> {
                         c.i += 1;
                     }
                     if c.i == desde {
-                        return c.fallo("aquí falta lo que vale por defecto");
+                        return c.fallo("the default value is missing here");
                     }
                     Some(c.f[desde..c.i].to_vec())
                 } else {
                     // Tras uno con valor por defecto, todos: si no, no se sabría cuál se ha saltado.
                     if parametros.last().is_some_and(|p| p.por_defecto.is_some()) {
                         c.i -= 1;
-                        return c.fallo(format!("«{nombre}» va detrás de un parámetro con valor por defecto, así que necesita el suyo"));
+                        return c.fallo(format!("'{nombre}' comes after a parameter with a default, so it needs one too"));
                     }
                     None
                 };
@@ -2016,10 +2016,10 @@ impl<'a> Obra<'a> {
         }
         c.nada_mas()?;
         if let Some(ya) = self.componentes.get(&nombre) {
-            return Err(Fallo::en(n.linea, n.col, format!("ya hay un componente «{nombre}», en {}. Dos con el mismo nombre no pueden convivir: cambia uno", super::sitio(self.ficheros, ya.nodo.linea))));
+            return Err(Fallo::en(n.linea, n.col, format!("there is already a component '{nombre}', at {}. Two with the same name cannot live together: change one", super::sitio(self.ficheros, ya.nodo.linea))));
         }
         if n.cuerpo.is_none() {
-            return Err(Fallo::en(n.linea, n.col, "a este componente le falta su bloque `{ … }`"));
+            return Err(Fallo::en(n.linea, n.col, "this component is missing its `{ … }` block"));
         }
         // Qué huecos tiene: se necesita saber al usarlo, para repartir lo que traiga la copia.
         fn huecos_de(entradas: &[Entrada], en: &mut Vec<String>) {
@@ -2036,11 +2036,11 @@ impl<'a> Obra<'a> {
         let mut huecos = Vec::new();
         huecos_de(n.cuerpo.as_deref().unwrap_or(&[]), &mut huecos);
         if let Some(palabra) = huecos.iter().find(|h| voz::SENTENCIAS.contains(&h.as_str())) {
-            return Err(Fallo::en(n.linea, n.col, format!("un hueco no se puede llamar «{palabra}», que es una palabra del lenguaje: en la copia, `{palabra} {{ … }}` ya significa otra cosa")));
+            return Err(Fallo::en(n.linea, n.col, format!("a slot cannot be called '{palabra}', which is a word of the language: in the copy, `{palabra} {{ … }}` already means something else")));
         }
         if let Some(repetido) = huecos.iter().enumerate().find(|(k, h)| huecos[..*k].contains(h)).map(|(_, h)| h.clone()) {
-            let cual = if repetido.is_empty() { "un solo `children` sin nombre".to_owned() } else { format!("un solo hueco «{repetido}»") };
-            return Err(Fallo::en(n.linea, n.col, format!("un componente tiene {cual}: ponle nombre al otro (`children footer`)")));
+            let cual = if repetido.is_empty() { "a single unnamed `children`".to_owned() } else { format!("a single slot called '{repetido}'") };
+            return Err(Fallo::en(n.linea, n.col, format!("a component has {cual}: give the other one a name (`children footer`)")));
         }
         self.componentes.insert(nombre, Componente { estricta, huecos, parametros, nodo: n });
         Ok(())
@@ -2050,7 +2050,7 @@ impl<'a> Obra<'a> {
     /// lo que es y un fallo dice qué se esperaba; sin él, se adivina por su forma.
     fn argumento(&self, componente: &str, p: &Parametro, c: &mut Cur, env: &mut Entorno) -> R<()> {
         let nombre = &p.nombre;
-        let esperaba = |c: &Cur, que: &str| c.fallo::<()>(format!("«{nombre}», de «{componente}», es {que}, y esto no lo es")).unwrap_err();
+        let esperaba = |c: &Cur, que: &str| c.fallo::<()>(format!("'{nombre}', of '{componente}', is {que}, and this is not")).unwrap_err();
         match p.tipo.as_deref() {
             Some("number" | "bool") => {
                 env.exprs.insert(nombre.clone(), self.expr(c)?);
@@ -2059,16 +2059,16 @@ impl<'a> Obra<'a> {
                 env.muelles.insert(nombre.clone(), self.muelle(c)?);
             }
             Some("gesture") => {
-                let Some(F::Id(x)) = c.mira() else { return Err(esperaba(c, "un gesto")) };
+                let Some(F::Id(x)) = c.mira() else { return Err(esperaba(c, "a gesture")) };
                 if !self.gestos.contains_key(x) {
                     c.i += 1;
-                    return self.desconocido(c, "ningún gesto", x, self.gestos.keys().collect());
+                    return self.desconocido(c, "no gesture", x, self.gestos.keys().collect());
                 }
                 env.alias.insert(nombre.clone(), x.clone());
                 c.i += 1;
             }
             Some("color") => {
-                env.colores.insert(nombre.clone(), self.color(c).map_err(|_| esperaba(c, "un color"))?);
+                env.colores.insert(nombre.clone(), self.color(c).map_err(|_| esperaba(c, "a colour"))?);
             }
             Some("text") => match c.mira() {
                 Some(F::Cadena(t)) => {
@@ -2090,11 +2090,11 @@ impl<'a> Obra<'a> {
                     }
                     c.i += 1;
                 }
-                _ => return Err(esperaba(c, "un texto: entre comillas, o el nombre de un texto vivo")),
+                _ => return Err(esperaba(c, "a text: quoted, or the name of a live text")),
             },
             Some("record") => {
-                let Some(F::Id(x)) = c.mira() else { return Err(esperaba(c, "una ficha de un modelo")) };
-                let Some((ficha, indice)) = self.ficha(x) else { return Err(esperaba(c, "una ficha de un modelo (la de un `for`, o `rows.0`)")) };
+                let Some(F::Id(x)) = c.mira() else { return Err(esperaba(c, "a record of a model")) };
+                let Some((ficha, indice)) = self.ficha(x) else { return Err(esperaba(c, "a record of a model (the one from a `for`, or `rows.0`)")) };
                 env.alias.insert(nombre.clone(), ficha);
                 env.con_partes.insert(nombre.clone());
                 env.exprs.insert(format!("{nombre}.index"), Expr::K(indice as f32));
@@ -2102,17 +2102,17 @@ impl<'a> Obra<'a> {
             }
             Some("event") => {
                 // Dentro, `emit chosen` y `on chosen` hablan del suceso que se pasó.
-                let Some(F::Id(x)) = c.mira() else { return Err(esperaba(c, "un suceso")) };
+                let Some(F::Id(x)) = c.mira() else { return Err(esperaba(c, "an event")) };
                 let g = self.global(x);
                 if !self.sucesos.contains_key(&g) {
                     c.i += 1;
-                    return self.desconocido(c, "ningún suceso", &g, self.sucesos.keys().collect());
+                    return self.desconocido(c, "no event", &g, self.sucesos.keys().collect());
                 }
                 env.alias.insert(nombre.clone(), g);
                 c.i += 1;
             }
             Some("image") => {
-                let Some(F::Id(x)) = c.mira() else { return Err(esperaba(c, "una imagen")) };
+                let Some(F::Id(x)) = c.mira() else { return Err(esperaba(c, "an image")) };
                 let g = self.global(x);
                 if !self.imagenes.contains_key(&g) {
                     c.i += 1;
@@ -2121,7 +2121,7 @@ impl<'a> Obra<'a> {
                 env.alias.insert(nombre.clone(), g);
                 c.i += 1;
             }
-            Some(otro) => unreachable!("«{otro}» está en el vocabulario, pero `argumento` no sabe leerlo"),
+            Some(otro) => unreachable!("'{otro}' is in the vocabulary, but `argumento` cannot read it"),
             None => self.argumento_sin_tipo(nombre, c, env)?,
         }
         Ok(())
@@ -2210,28 +2210,28 @@ impl<'a> Obra<'a> {
                 let con_nombre = matches!((c.mira(), c.f.get(c.i + 1).map(|x| &x.f)), (Some(F::Id(_)), Some(F::Sim(":"))));
                 let cual = if con_nombre {
                     por_nombre = true;
-                    let n = c.id("el nombre de un parámetro")?;
+                    let n = c.id("a parameter name")?;
                     c.exige_sim(":")?;
                     match parametros.iter().position(|p| p.nombre == n) {
                         Some(k) => k,
                         None => {
                             c.i -= 2;
                             let todos: Vec<String> = parametros.iter().map(|p| p.nombre.clone()).collect();
-                            let pista = parecido(&n, todos.iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
-                            return c.fallo(format!("«{nombre}» no tiene ningún parámetro «{n}».{pista} Es {nombre}({})", firma()));
+                            let pista = parecido(&n, todos.iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+                            return c.fallo(format!("'{nombre}' has no parameter called '{n}'.{pista} It is {nombre}({})", firma()));
                         }
                     }
                 } else if por_nombre {
-                    return c.fallo("después de un argumento con nombre, todos llevan el suyo");
+                    return c.fallo("after one named argument, they all carry their name");
                 } else {
                     k += 1;
                     k - 1
                 };
                 if cual >= parametros.len() {
-                    return c.fallo(format!("a «{nombre}» le sobran argumentos: es {nombre}({})", firma()));
+                    return c.fallo(format!("'{nombre}' has too many arguments: it is {nombre}({})", firma()));
                 }
                 if std::mem::replace(&mut dados[cual], true) {
-                    return c.fallo(format!("«{}» ya se ha dado", parametros[cual].nombre));
+                    return c.fallo(format!("'{}' has already been given", parametros[cual].nombre));
                 }
                 self.argumento(&nombre, &parametros[cual], c, &mut env)?;
                 if c.sim(")") {
@@ -2247,7 +2247,7 @@ impl<'a> Obra<'a> {
             }
             let Some(fichas) = &p.por_defecto else {
                 let que = p.tipo.as_ref().map_or(String::new(), |t| format!(" ({})", nombre_de_tipo(t)));
-                return Err(Fallo::en(n.linea, n.col, format!("a «{nombre}» le falta «{}»{que}: es {nombre}({})", p.nombre, firma())));
+                return Err(Fallo::en(n.linea, n.col, format!("'{nombre}' is missing '{}'{que}: it is {nombre}({})", p.nombre, firma())));
             };
             let mut d = Cur::de(fichas, n.linea, n.col);
             self.argumento(&nombre, p, &mut d, &mut env)?;
@@ -2278,9 +2278,9 @@ impl<'a> Obra<'a> {
                     Some(h) => h.1.extend(x.cuerpo.as_deref().unwrap_or(&[]).iter()),
                     None => {
                         let con_nombre: Vec<String> = huecos_que_hay.iter().filter(|h| !h.is_empty()).cloned().collect();
-                        let pista = parecido(&p, con_nombre.iter()).map_or(String::new(), |q| format!(" ¿Querías decir «{q}»?"));
-                        let tiene = if con_nombre.is_empty() { "no tiene huecos con nombre".to_owned() } else { format!("tiene {}", con_nombre.join(", ")) };
-                        return Err(Fallo::en(x.linea, x.col, format!("«{nombre}» no tiene ningún hueco «{p}»: {tiene}.{pista}")));
+                        let pista = parecido(&p, con_nombre.iter()).map_or(String::new(), |q| format!(" Did you mean '{q}'?"));
+                        let tiene = if con_nombre.is_empty() { "has no named slots".to_owned() } else { format!("has {}", con_nombre.join(", ")) };
+                        return Err(Fallo::en(x.linea, x.col, format!("'{nombre}' has no slot called '{p}': it {tiene}.{pista}")));
                     }
                 },
                 None => match huecos.iter_mut().find(|h| h.0.is_empty()) {
@@ -2290,7 +2290,7 @@ impl<'a> Obra<'a> {
             }
         }
         if let Some((l, col)) = sin_sitio {
-            return Err(Fallo::en(l, col, format!("«{nombre}» no tiene sitio para lo que se le mete dentro: a su componente le falta un `children`")));
+            return Err(Fallo::en(l, col, format!("'{nombre}' has nowhere to put what goes inside it: its component is missing a `children`")));
         }
         self.hijos_de_copia.push(HijosDeCopia { fuera: self.entornos.clone(), huecos });
         self.entornos.push(env);
@@ -2336,12 +2336,12 @@ impl<'a> Obra<'a> {
     }
 
     fn cabeza_de_repeat(&self, c: &mut Cur) -> R<(String, i64, i64)> {
-        let var = c.id("un nombre para el contador")?;
+        let var = c.id("a name for the counter")?;
         c.exige_palabra("in")?;
         let cte = |o: &Self, c: &mut Cur| -> R<i64> {
             match o.expr(c)? {
                 Expr::K(v) => Ok(v as i64),
-                _ => c.fallo("los límites de un `repeat` tienen que ser números: se despliega al cargar"),
+                _ => c.fallo("the bounds of a `repeat` have to be numbers: it unfolds when loading"),
             }
         };
         let desde = cte(self, c)?;
@@ -2349,7 +2349,7 @@ impl<'a> Obra<'a> {
         let hasta = cte(self, c)?;
         c.nada_mas()?;
         if hasta - desde > 512 {
-            return c.fallo("más de 512 vueltas en un `repeat` es que algo va mal");
+            return c.fallo("more than 512 turns in a `repeat` means something is wrong");
         }
         Ok((var, desde, hasta))
     }
@@ -2367,7 +2367,7 @@ impl<'a> Obra<'a> {
     /// que si uno crece los demás se corren, y con un muelle se corren animados.
     fn reparto(&mut self, n: &'a Nodo, c: &mut Cur, fila: bool) -> R<()> {
         let nombre = match c.mira() {
-            Some(F::Id(_)) => Some(c.id("un nombre")?),
+            Some(F::Id(_)) => Some(c.id("a name")?),
             _ => None,
         };
         let muelle = if c.sim("~") { Some(self.muelle(c)?) } else { None };
@@ -2391,7 +2391,7 @@ impl<'a> Obra<'a> {
         let (hueco, relleno, esquina) = (una(self, "gap", 0.0)?, una(self, "padding", 0.0)?, una(self, "corner", 0.0)?);
         let esquina_de_zona = esquina.clone();
         let alinea = match p.get_mut("align") {
-            Some(c) => match c.una_de(voz::ALINEADOS_DE_REPARTO, "el alineado de un reparto")?.as_str() {
+            Some(c) => match c.una_de(voz::ALINEADOS_DE_REPARTO, "the alignment of a layout")?.as_str() {
                 "start" => 0.0,
                 "center" => 0.5,
                 "end" => 1.0,
@@ -2429,7 +2429,7 @@ impl<'a> Obra<'a> {
                     "bottom" => ancla.1 = 1.0,
                     "center" => ancla.0 = 0.5,
                     "middle" => ancla.1 = 0.5,
-                    _ => return c.fallo("un ancla es left, center o right, y top, middle o bottom"),
+                    _ => return c.fallo("an anchor is left, center or right, and top, middle or bottom"),
                 }
             }
         }
@@ -2485,13 +2485,13 @@ impl<'a> Obra<'a> {
                 continue;
             }
             if separador.is_some() {
-                return Err(Fallo::en(x.linea, x.col, "un reparto tiene un solo `between`"));
+                return Err(Fallo::en(x.linea, x.col, "a layout has a single `between`"));
             }
             // `between i { … }`: dentro, `i` es entre quiénes está: 1 tras el primer hijo, 2 tras el segundo…
             let contador = match x.cabeza.as_slice() {
                 [_] => None,
                 [_, Ficha { f: F::Id(v), .. }] => Some(v.clone()),
-                _ => return Err(Fallo::en(x.linea, x.col, "tras `between` solo puede ir un nombre para su posición: `between i { … }`")),
+                _ => return Err(Fallo::en(x.linea, x.col, "after `between` only a name for its position can go: `between i { … }`")),
             };
             let cuerpo = x.cuerpo.as_deref().unwrap_or(&[]);
             let dentro: Vec<&'a Nodo> = cuerpo.iter().filter_map(|e| if let Entrada::Nodo(y) = e { Some(y) } else { None }).collect();
@@ -2501,8 +2501,8 @@ impl<'a> Obra<'a> {
                 ([una], false) => (*una, contador),
                 // Varias (o una con su sitio alrededor): el `between` hace de grupo, y dice cuánto ocupa.
                 ([_, ..], true) => (x, contador),
-                ([], _) => return Err(Fallo::en(x.linea, x.col, "un `between` vacío no separa nada: `between { box { size: 200, 1; color: ink } }`")),
-                _ => return Err(Fallo::en(x.linea, x.col, "un `between` con varias cosas tiene que decir cuánto ocupa: `between { size: 200, 9; … }`")),
+                ([], _) => return Err(Fallo::en(x.linea, x.col, "an empty `between` separates nothing: `between { box { size: 200, 1; color: ink } }`")),
+                _ => return Err(Fallo::en(x.linea, x.col, "a `between` with several things has to say how much room it takes: `between { size: 200, 9; … }`")),
             });
         }
         // Los hijos van saliendo de una cola: tras cada uno (menos el primero) se cuela su separador,
@@ -2587,7 +2587,7 @@ impl<'a> Obra<'a> {
             }
             r?;
             let Some(tam) = self.ultimo_tam.take() else {
-                return Err(Fallo::en(hijo.linea, hijo.col, "no sé cuánto ocupa esto dentro de un reparto: mételo en un `group` con `size: ancho, alto`"));
+                return Err(Fallo::en(hijo.linea, hijo.col, "I don\'t know how much room this takes inside a layout: put it in a `group` with `size: width, height`"));
             };
             if let Some(esta) = &esta {
                 for c in &mut self.candidatas[desde..] {
@@ -2776,8 +2776,8 @@ impl<'a> Obra<'a> {
         if let Some(nombres) = self.enumerado(c)? {
             return Ok(Some(TipoDeHecho::Enum(nombres)));
         }
-        let o_enumerado = |mut f: Fallo| { f.mensaje.push_str(" O un enumerado: `low | normal | critical`."); f };
-        Ok(match c.una_de(voz::TIPOS_DE_HECHO, "el tipo de un hecho").map_err(o_enumerado)?.as_str() {
+        let o_enumerado = |mut f: Fallo| { f.mensaje.push_str(" Or an enum: `low | normal | critical`."); f };
+        Ok(match c.una_de(voz::TIPOS_DE_HECHO, "the type of a fact").map_err(o_enumerado)?.as_str() {
             "number" => None,
             "bool" => Some(TipoDeHecho::Bool),
             _ => unreachable!(),
@@ -2790,12 +2790,12 @@ impl<'a> Obra<'a> {
         if !matches!((c.mira(), c.f.get(c.i + 1).map(|x| &x.f)), (Some(F::Id(_)), Some(F::Sim("|")))) {
             return Ok(None);
         }
-        let mut nombres = vec![c.id("un valor")?];
+        let mut nombres = vec![c.id("a value")?];
         while c.sim("|") {
             let n = c.id("otro valor del enumerado")?;
             if nombres.contains(&n) {
                 c.i -= 1;
-                return c.fallo(format!("«{n}» está dos veces"));
+                return c.fallo(format!("'{n}' is there twice"));
             }
             nombres.push(n);
         }
@@ -2812,7 +2812,7 @@ impl<'a> Obra<'a> {
                 _ => { self.valores.insert(n.clone(), k as f32); }
             }
             if self.hechos.contains_key(n) || self.props.contains_key(n) || self.lets.contains_key(n) {
-                return c.fallo(format!("«{n}» ya es otra cosa en esta escena, y como valor de un enumerado la taparía"));
+                return c.fallo(format!("'{n}' is already something else in this scene, and as an enum value it would hide it"));
             }
         }
         Ok(Some(nombres))
@@ -2820,7 +2820,7 @@ impl<'a> Obra<'a> {
 
     /// `model rows max 14 { label: text;  enabled: bool = true;  list items max 8 { … } }`
     fn modelo(&mut self, n: &'a Nodo, c: &mut Cur) -> R<()> {
-        let nombre = self.declarar(&c.id("un nombre para el modelo")?);
+        let nombre = self.declarar(&c.id("a name for the model")?);
         let caben = if c.palabra("max") { c.num()? as usize } else { 16 };
         c.nada_mas()?;
         let campos = self.campos_de(n, caben)?;
@@ -2834,7 +2834,7 @@ impl<'a> Obra<'a> {
     /// Los campos de un modelo, o de una lista de dentro de un modelo.
     fn campos_de(&mut self, n: &'a Nodo, caben: usize) -> R<Vec<Campo>> {
         if !(1..=256).contains(&caben) {
-            return Err(Fallo::en(n.linea, n.col, "en una lista caben entre 1 y 256 fichas: cada una se despliega al cargar"));
+            return Err(Fallo::en(n.linea, n.col, "a list holds between 1 and 256 records: each one unfolds when loading"));
         }
         let mut campos: Vec<Campo> = Vec::new();
         let mut recursiva: Option<(String, usize, usize)> = None;
@@ -2843,8 +2843,8 @@ impl<'a> Obra<'a> {
                 // `list items max 8 { label: text }`: fichas dentro de la ficha.
                 Entrada::Nodo(x) => {
                     let mut c = Cur::de(&x.cabeza, x.linea, x.col);
-                    c.una_de(voz::DE_MODELO, "lo que lleva un modelo además de campos")?;
-                    let nombre = c.id("un nombre para la lista")?;
+                    c.una_de(voz::DE_MODELO, "what a model holds besides fields")?;
+                    let nombre = c.id("a name for the list")?;
                     let caben = if c.palabra("max") { c.num()? as usize } else { 8 };
                     // `list children max 6 depth 3`, sin bloque: fichas como la de fuera, unas dentro de
                     // otras hasta esa hondura. Un árbol: el menú de una aplicación, con sus submenús.
@@ -2852,13 +2852,13 @@ impl<'a> Obra<'a> {
                         let hondura = c.num()? as usize;
                         c.nada_mas()?;
                         if x.cuerpo.is_some() {
-                            return Err(Fallo::en(x.linea, x.col, "una lista con `depth` no lleva bloque: sus fichas son como la de fuera"));
+                            return Err(Fallo::en(x.linea, x.col, "a list with `depth` carries no block: its records are like the outer one"));
                         }
                         if !(1..=6).contains(&hondura) || !(1..=256).contains(&caben) {
-                            return Err(Fallo::en(x.linea, x.col, "`depth` va de 1 a 6, y `max` de 1 a 256: cada nivel multiplica las fichas que se despliegan"));
+                            return Err(Fallo::en(x.linea, x.col, "`depth` goes from 1 to 6, and `max` from 1 to 256: every level multiplies the records that unfold"));
                         }
                         if recursiva.is_some() {
-                            return Err(Fallo::en(x.linea, x.col, "una ficha tiene una sola lista con `depth`"));
+                            return Err(Fallo::en(x.linea, x.col, "a record has a single list with `depth`"));
                         }
                         recursiva = Some((nombre, caben, hondura));
                         continue;
@@ -2871,16 +2871,16 @@ impl<'a> Obra<'a> {
                     let mut c = Cur::de(valor, *linea, *col);
                     let (tipo, por_defecto) = if let Some(nombres) = self.enumerado(&mut c)? {
                         let v = if c.sim("=") {
-                            let cual = c.una_de(&nombres.iter().map(String::as_str).collect::<Vec<_>>(), "un valor de este campo")?;
+                            let cual = c.una_de(&nombres.iter().map(String::as_str).collect::<Vec<_>>(), "a value of this field")?;
                             nombres.iter().position(|x| *x == cual).unwrap() as f32
                         } else { 0.0 };
                         (TipoDeCampo::Enum(nombres), ValorDeCampo::Numero(v))
                     } else {
-                        let o_enumerado = |mut f: Fallo| { f.mensaje.push_str(" O un enumerado: `low | normal | critical`."); f };
-                        match c.una_de(voz::TIPOS, "el tipo de un campo").map_err(o_enumerado)?.as_str() {
+                        let o_enumerado = |mut f: Fallo| { f.mensaje.push_str(" Or an enum: `low | normal | critical`."); f };
+                        match c.una_de(voz::TIPOS, "the type of a field").map_err(o_enumerado)?.as_str() {
                             "text" => (TipoDeCampo::Texto, ValorDeCampo::Texto(if c.sim("=") { c.cadena()? } else { String::new() })),
                             "number" => (TipoDeCampo::Numero, ValorDeCampo::Numero(if c.sim("=") { if c.sim("-") { -c.num()? } else { c.num()? } } else { 0.0 })),
-                            "bool" => (TipoDeCampo::Bool, ValorDeCampo::Numero(if !c.sim("=") || c.palabra("false") { 0.0 } else if c.palabra("true") { 1.0 } else { return c.fallo("un bool vale true o false") })),
+                            "bool" => (TipoDeCampo::Bool, ValorDeCampo::Numero(if !c.sim("=") || c.palabra("false") { 0.0 } else if c.palabra("true") { 1.0 } else { return c.fallo("a bool is true or false") })),
                             // `icon: image 24, 24`: el nombre de un icono o una ruta, y la imagen que diga.
                             "image" => {
                                 let w = c.num()?;
@@ -2896,10 +2896,10 @@ impl<'a> Obra<'a> {
             };
             let (l, col) = match e { Entrada::Nodo(x) => (x.linea, x.col), Entrada::Prop { linea, col, .. } => (*linea, *col) };
             if ["index", "count", "total"].contains(&campo.nombre.as_str()) {
-                return Err(Fallo::en(l, col, format!("`{}` ya existe: lo pone el lenguaje", campo.nombre)));
+                return Err(Fallo::en(l, col, format!("`{}` already exists: the language provides it", campo.nombre)));
             }
             if campos.iter().any(|k| k.nombre == campo.nombre) {
-                return Err(Fallo::en(l, col, format!("el campo «{}» está dos veces", campo.nombre)));
+                return Err(Fallo::en(l, col, format!("field '{}' is there twice", campo.nombre)));
             }
             campos.push(campo);
         }
@@ -2910,7 +2910,7 @@ impl<'a> Obra<'a> {
         // ya no tiene hijos; cada uno de los de encima, una lista de los de debajo.
         if let Some((nombre, caben, hondura)) = recursiva {
             if campos.iter().any(|k| k.nombre == nombre) {
-                return Err(Fallo::en(n.linea, n.col, format!("el campo «{nombre}» está dos veces")));
+                return Err(Fallo::en(n.linea, n.col, format!("field '{nombre}' is there twice")));
             }
             let mut nivel = campos.clone();
             for _ in 0..hondura {
@@ -2929,7 +2929,7 @@ impl<'a> Obra<'a> {
         for k in 0..m.caben {
             *cuantas += 1;
             if *cuantas > 4096 {
-                return Err("este modelo despliega más de 4096 fichas entre todas sus listas: baja algún `max`".into());
+                return Err("this model unfolds more than 4096 records across its lists: lower some `max`".into());
             }
             for campo in &m.campos {
                 let entero = format!("{prefijo}.{k}.{}", campo.nombre);
@@ -2977,13 +2977,13 @@ impl<'a> Obra<'a> {
 
     /// `for r in rows`: el nombre de la ficha, el modelo y cuántas caben.
     fn cabeza_de_for(&self, c: &mut Cur) -> R<(String, String, usize)> {
-        let var = c.id("un nombre para la ficha")?;
+        let var = c.id("a name for the record")?;
         c.exige_palabra("in")?;
-        let modelo = self.global(&c.id("el nombre de un modelo")?);
+        let modelo = self.global(&c.id("the name of a model")?);
         c.nada_mas()?;
         match self.modelos.get(&modelo) {
             Some(caben) => Ok((var, modelo, *caben)),
-            None => self.desconocido(c, "ningún modelo", &modelo, self.modelos.keys().collect()),
+            None => self.desconocido(c, "no model", &modelo, self.modelos.keys().collect()),
         }
     }
 
@@ -3072,7 +3072,7 @@ impl<'a> Obra<'a> {
             let b = if c.sim("..") { c.dur()?.as_secs_f32() } else { a };
             Disparador::Cada { entre: (a, b), mientras: mientras(self, c)? }
         } else {
-            let que = c.id("qué tiene que pasar: press, release, scroll, drag, hold, key, submit, focus, blur, drop, enter, leave, hover, away, idle, o un suceso")?;
+            let que = c.id("what has to happen: press, release, scroll, drag, hold, key, submit, focus, blur, drop, enter, leave, hover, away, idle, or an event")?;
             // Solo es un disparador lo que el vocabulario diga; lo demás es el nombre de un suceso.
             match if voz::DISPARADORES.contains(&que.as_str()) { que.as_str() } else { "" } {
                 // `on press orb`, o con otro botón: `on press right orb`.
@@ -3096,17 +3096,17 @@ impl<'a> Obra<'a> {
                 }
                 // `on key Escape`, `on key Ctrl+k`: el nombre puede llevar un `+`.
                 "key" => {
-                    let mut nombre = c.id("el nombre de una tecla: Escape, Return, a, Ctrl+k…")?;
+                    let mut nombre = c.id("the name of a key: Escape, Return, a, Ctrl+k…")?;
                     while c.sim("+") {
-                        nombre = format!("{nombre}+{}", c.id("la tecla")?);
+                        nombre = format!("{nombre}+{}", c.id("the key")?);
                     }
                     Disparador::Tecla(nombre)
                 }
                 "submit" => {
-                    let n = self.global(&c.id("el nombre del campo")?);
+                    let n = self.global(&c.id("the name of the input")?);
                     match self.textos.get(&n) {
                         Some(t) => Disparador::Envia(*t),
-                        None => return self.desconocido(c, "ningún texto", &n, self.textos.keys().collect()),
+                        None => return self.desconocido(c, "no text", &n, self.textos.keys().collect()),
                     }
                 }
                 "focus" => Disparador::GanaFoco,
@@ -3125,7 +3125,7 @@ impl<'a> Obra<'a> {
                     let durante = c.dur()?;
                     Disparador::Quieto { durante, mientras: mientras(self, c)? }
                 }
-                otra if voz::DISPARADORES.contains(&otra) => unreachable!("«{otra}» está en el vocabulario, pero `regla` no la atiende"),
+                otra if voz::DISPARADORES.contains(&otra) => unreachable!("'{otra}' is in the vocabulary, but `regla` does not handle it"),
                 _ => {
                     c.i -= 1;
                     Disparador::Al(self.suceso(c)?)
@@ -3142,15 +3142,15 @@ impl<'a> Obra<'a> {
                 Entrada::Prop { nombre, valor, linea, col } => efectos.push(Efecto::Animar(self.transicion(nombre, valor, *linea, *col)?)),
                 Entrada::Nodo(x) => {
                     let mut c = Cur::de(&x.cabeza, x.linea, x.col);
-                    let p = c.id("un efecto")?;
+                    let p = c.id("an effect")?;
                     efectos.push(match if voz::EFECTOS.contains(&p.as_str()) { p.as_str() } else { "" } {
                         "toggle" => Efecto::Alternar(self.hecho(&mut c)?),
                         "blur" => Efecto::Enfocar(None),
                         "focus" => {
-                            let n = self.global(&c.id("el nombre del campo")?);
+                            let n = self.global(&c.id("the name of the input")?);
                             match self.textos.get(&n) {
                                 Some(t) => Efecto::Enfocar(Some(*t)),
-                                None => return self.desconocido(&c, "ningún texto", &n, self.textos.keys().collect()),
+                                None => return self.desconocido(&c, "no text", &n, self.textos.keys().collect()),
                             }
                         }
                         // `emit opened` o, con carga, `emit opened(i)`.
@@ -3167,13 +3167,13 @@ impl<'a> Obra<'a> {
                         }
                         "impulse" => Efecto::Impulso(self.prop(&mut c)?, c.num()?),
                         "play" => {
-                            let g = self.global(&c.id("el nombre de un gesto")?);
+                            let g = self.global(&c.id("the name of a gesture")?);
                             match self.gestos.get(&g) {
                                 Some(id) => Efecto::Gesto(*id),
-                                None => return self.desconocido(&c, "ningún gesto", &g, self.gestos.keys().collect()),
+                                None => return self.desconocido(&c, "no gesture", &g, self.gestos.keys().collect()),
                             }
                         }
-                        otra if voz::EFECTOS.contains(&otra) => unreachable!("«{otra}» está en el vocabulario, pero `regla` no sabe hacerla"),
+                        otra if voz::EFECTOS.contains(&otra) => unreachable!("'{otra}' is in the vocabulary, but `regla` cannot carry it out"),
                         _ => {
                             // `open = true`
                             c.i -= 1;
@@ -3188,7 +3188,7 @@ impl<'a> Obra<'a> {
                                         c.i += 1;
                                         Expr::K(k as f32)
                                     }
-                                    None => return c.fallo(format!("«{v}» no es un valor de «{hecho}»: vale {}", enumerar(&nombres.iter().map(String::as_str).collect::<Vec<_>>()))),
+                                    None => return c.fallo(format!("'{v}' is not a value of '{hecho}': it can be {}", enumerar(&nombres.iter().map(String::as_str).collect::<Vec<_>>()))),
                                 },
                                 // Una expresión, que se evalúa al dispararse: `level = clamp(local.x / 64, 0, 1)`.
                                 _ => self.expr(&mut c)?,
@@ -3267,12 +3267,12 @@ impl<'a> Obra<'a> {
 
     /// `gesture nod reflex { 130ms out_quad { look.y: 4; eyes: 10 } … }`
     fn gesto(&mut self, n: &Nodo, palabra: &str, c: &mut Cur) -> R<()> {
-        let nombre = self.declarar(&c.id("un nombre para el gesto")?);
+        let nombre = self.declarar(&c.id("a name for the gesture")?);
         let (clase, mientras) = if palabra == "posture" {
             c.exige_palabra("while")?;
             (Clase::Postura, Some(self.expr(c)?))
         } else {
-            let k = match c.una_de(voz::CLASES, "la clase de un gesto")?.as_str() {
+            let k = match c.una_de(voz::CLASES, "the class of a gesture")?.as_str() {
                 "ambient" => Clase::Ambiente,
                 "reflex" => Clase::Reflejo,
                 "asked" => Clase::Pedido,
@@ -3285,14 +3285,14 @@ impl<'a> Obra<'a> {
         let mut fotogramas = Vec::new();
         for e in n.cuerpo.as_deref().unwrap_or(&[]) {
             let Entrada::Nodo(f) = e else {
-                return Err(Fallo::en(n.linea, n.col, "un gesto son fotogramas: `130ms out_quad { eyes: 10 }`"));
+                return Err(Fallo::en(n.linea, n.col, "a gesture is made of frames: `130ms out_quad { eyes: 10 }`"));
             };
             let mut c = Cur::de(&f.cabeza, f.linea, f.col);
             let ms = (c.dur()?.as_secs_f32() * 1000.0) as u32;
             let mut foto = foto(ms, Curva::InOutSine);
             while !c.acabo() {
                 let de_fotograma: Vec<&str> = voz::CURVAS.iter().chain(voz::DE_FOTOGRAMA).copied().collect();
-                let p = c.una_de(&de_fotograma, "lo que lleva un fotograma")?;
+                let p = c.una_de(&de_fotograma, "what a frame carries")?;
                 match p.as_str() {
                     "hold" => foto.aguanta = (c.dur()?.as_secs_f32() * 1000.0) as u32,
                     "emit" => foto.emite = Some(self.suceso(&mut c)?),
@@ -3310,11 +3310,11 @@ impl<'a> Obra<'a> {
                 let Entrada::Prop { nombre, valor, linea, col } = v else { continue };
                 let nombre = &self.global(nombre);
                 let Some(prop) = self.props.get(nombre).copied() else {
-                    let pista = parecido(nombre, self.props.keys()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
-                    return Err(Fallo::en(*linea, *col, format!("no hay ninguna propiedad que se llame «{nombre}».{pista}")));
+                    let pista = parecido(nombre, self.props.keys()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+                    return Err(Fallo::en(*linea, *col, format!("there is no property called '{nombre}'.{pista}")));
                 };
                 if !self.e.pose.contains(&prop) {
-                    return Err(Fallo::en(*linea, *col, format!("«{nombre}» no es de la pose: un gesto solo lleva de la mano lo que se declaró con `pose`")));
+                    return Err(Fallo::en(*linea, *col, format!("'{nombre}' is not part of the pose: a gesture only leads by the hand what was declared with `pose`")));
                 }
                 let mut c = Cur::de(valor, *linea, *col);
                 foto.valores.push((prop, self.expr(&mut c)?));
@@ -3323,7 +3323,7 @@ impl<'a> Obra<'a> {
             fotogramas.push(foto);
         }
         if fotogramas.is_empty() {
-            return Err(Fallo::en(n.linea, n.col, "un gesto sin fotogramas no hace nada"));
+            return Err(Fallo::en(n.linea, n.col, "a gesture with no frames does nothing"));
         }
         let g = self.e.gesto(fijo(&nombre), clase, fotogramas);
         if let Some(m) = mientras {
@@ -3339,27 +3339,27 @@ fn enumerar(lista: &[&str]) -> String {
     match lista {
         [] => String::new(),
         [una] => (*una).to_owned(),
-        [antes @ .., ultima] => format!("{} o {ultima}", antes.join(", ")),
+        [antes @ .., ultima] => format!("{} or {ultima}", antes.join(", ")),
     }
 }
 
 fn nombre_de_tipo(t: &str) -> &'static str {
     match t {
-        "number" => "un número",
-        "color" => "un color",
-        "text" => "un texto",
-        "record" => "una ficha de un modelo",
-        "event" => "un suceso",
-        "image" => "una imagen",
-        "bool" => "un sí o no",
-        "spring" => "un muelle",
-        "gesture" => "un gesto",
+        "number" => "a number",
+        "color" => "a colour",
+        "text" => "a text",
+        "record" => "a record of a model",
+        "event" => "an event",
+        "image" => "an image",
+        "bool" => "a yes or no",
+        "spring" => "a spring",
+        "gesture" => "a gesture",
         _ => "algo",
     }
 }
 
 fn leer_cursor(c: &mut Cur) -> R<Cursor> {
-    Ok(match c.una_de(voz::CURSORES, "un cursor")?.as_str() {
+    Ok(match c.una_de(voz::CURSORES, "a cursor")?.as_str() {
         "default" => Cursor::Normal,
         "pointer" => Cursor::Mano,
         "text" => Cursor::Texto,

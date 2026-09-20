@@ -21,17 +21,17 @@ pub struct Cara {
 }
 
 const GUION: &[(u64, &str)] = &[
-    (1000, "grabando = sí"),
-    (1500, "buscando = sí            · la lupa se reclama, pero rec está por encima"),
+    (1000, "recording = yes"),
+    (1500, "searching = yes          · the lens claims it, but rec is above"),
     (1500, "suceso confirmado + happy · contenta se reclama, y tampoco se ve"),
-    (1800, "grabando = no            · nadie pide la lupa otra vez: tiene que salir sola"),
-    (1500, "suceso confirmado        · contenta 620 ms, y de vuelta a la lupa"),
+    (1800, "recording = no           · nobody claims the lens again: it has to come out by itself"),
+    (1500, "event confirmed          · happy for 620 ms, then back to the lens"),
     (1500, "buscando = no            · ojos"),
     (1200, "suceso aviso_urgente     · 700 ms"),
-    (1500, "trabajando = sí          · una postura: se repite sola"),
-    (1500, "gesto asentir (reflejo)  · corta a la postura, que es de menos clase"),
+    (1500, "working = yes            · a posture: it repeats by itself"),
+    (1500, "gesture nod (reflex)     · cuts the posture, which is of a lower class"),
     (1200, "gesto happy (pedido)"),
-    (250, "gesto asentir (reflejo)  · rechazado: hay algo pedido puesto"),
+    (250, "gesture nod (reflex)     · refused: something asked for is running"),
     (1800, "trabajando = no"),
 ];
 
@@ -215,7 +215,7 @@ impl Guion for Cara {
                     c.alarma("paso", *espera);
                 }
             }
-            Evento::GestoRechazado(g) => println!("lógica · la escena no concede «{g}»"),
+            Evento::GestoRechazado(g) => println!("logic  · the scene does not grant '{g}'"),
             _ => {}
         }
     }

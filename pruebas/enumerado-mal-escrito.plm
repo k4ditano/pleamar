@@ -1,4 +1,4 @@
-// espera: fallo «no hay nada que se llame «critcal». ¿Querías decir «critical»?»
+// espera: fallo «there is nothing called 'critcal'. Did you mean 'critical'?»
 scene X {
     surface { size: 10, 10 }
     fact mode: low | normal | critical = low

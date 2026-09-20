@@ -1,4 +1,4 @@
-// espera: fallo ««string» no vale aquí: el tipo de un campo es text, number, bool o image. O un enumerado»
+// espera: fallo «'string' is not valid here: the type of a field is text, number, bool or image. Or an enum»
 scene Bad2 {
     surface { size: 300, 200 }
     model rows { label: string; index: number }

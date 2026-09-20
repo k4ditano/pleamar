@@ -1,3 +1,3 @@
-// espera: fallo «una biblioteca solo declara»
+// espera: fallo «a library only declares»
 import "comun/pinta.plm"
 scene X { surface { size: 10, 10 } }

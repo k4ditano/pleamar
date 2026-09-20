@@ -70,7 +70,7 @@ impl Lectura {
     /// Trocea y agrupa un fichero, con su número metido en las líneas.
     fn abrir(&mut self, ruta: &Path) -> Result<Vec<arbol::Entrada>, Fallo> {
         let k = self.ficheros.len();
-        let fuente = std::fs::read_to_string(ruta).map_err(|e| Fallo::en(0, 0, format!("no puedo leer {}: {e}", ruta.display())))?;
+        let fuente = std::fs::read_to_string(ruta).map_err(|e| Fallo::en(0, 0, format!("cannot read {}: {e}", ruta.display())))?;
         self.ficheros.push((ruta.to_owned(), fuente));
         let aqui = |mut f: Fallo| { f.linea += k * POR_FICHERO; f };
         let mut fichas = fichas::trocear(&self.ficheros[k].1).map_err(aqui)?;
@@ -97,9 +97,9 @@ impl Lectura {
             };
             // Las rutas son relativas al fichero que importa, no a desde dónde se lance.
             let destino = ruta.parent().unwrap_or(Path::new(".")).join(cual);
-            let destino = destino.canonicalize().map_err(|e| Fallo::en(n.linea, n.cabeza[1].col, format!("no encuentro «{cual}» (lo busco en {}): {e}", destino.display())))?;
+            let destino = destino.canonicalize().map_err(|e| Fallo::en(n.linea, n.cabeza[1].col, format!("cannot find '{cual}' (looking in {}): {e}", destino.display())))?;
             if self.abiertos.contains(&destino) {
-                return Err(Fallo::en(n.linea, n.cabeza[1].col, format!("«{cual}» acaba importándose a sí misma: {}", self.abiertos.iter().chain([&destino]).map(|p| p.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(" → "))));
+                return Err(Fallo::en(n.linea, n.cabeza[1].col, format!("'{cual}' ends up importing itself: {}", self.abiertos.iter().chain([&destino]).map(|p| p.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(" → "))));
             }
             if self.ficheros.iter().any(|(r, _)| r == &destino) {
                 continue;
@@ -110,14 +110,14 @@ impl Lectura {
             let suyas = self.resolver(&destino, suyas, traido)?;
             self.abiertos.pop();
             let [arbol::Entrada::Nodo(b)] = suyas.as_slice() else {
-                return Err(Fallo::en(n.linea, n.cabeza[1].col, format!("«{cual}» no es una biblioteca: tiene que ser `library Nombre {{ … }}`, y nada más")));
+                return Err(Fallo::en(n.linea, n.cabeza[1].col, format!("'{cual}' is not a library: it has to be `library Name {{ … }}`, and nothing else")));
             };
             if !matches!(b.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "library") {
-                return Err(Fallo::en(b.linea, b.col, "lo que se importa es una biblioteca: `library Nombre { … }`. Una escena no se importa"));
+                return Err(Fallo::en(b.linea, b.col, "what you import is a library: `library Name { … }`. A scene is not imported"));
             }
             let Some(arbol::Entrada::Nodo(b)) = suyas.into_iter().next() else { unreachable!() };
             let F::Id(nombre_de_biblioteca) = &b.cabeza.get(1).map(|f| f.f.clone()).unwrap_or(F::Id(String::new())) else {
-                return Err(Fallo::en(b.linea, b.col, "a esta biblioteca le falta su nombre: `library Nombre { … }`"));
+                return Err(Fallo::en(b.linea, b.col, "this library is missing its name: `library Name { … }`"));
             };
             let logica = destino.with_extension("luau");
             self.bibliotecas.push(obra::Biblioteca { fichero: numero, nombre: nombre_de_biblioteca.clone(), logica: logica.is_file().then_some(logica) });
@@ -125,7 +125,7 @@ impl Lectura {
             match b.cabeza.get(2).map(|f| &f.f) {
                 None => {}
                 Some(F::Id(p)) if p == "strict" && b.cabeza.len() == 3 => self.estrictos.push(numero),
-                Some(_) => return Err(Fallo::en(b.linea, b.cabeza[2].col, "tras el nombre de una biblioteca solo puede ir `strict`")),
+                Some(_) => return Err(Fallo::en(b.linea, b.cabeza[2].col, "after a library name only `strict` can go")),
             }
             for d in b.cuerpo.unwrap_or_default() {
                 // Una biblioteca declara; no pinta, ni reacciona, ni tiene frontera con la lógica.
@@ -134,7 +134,7 @@ impl Lectura {
                     && (!["text", "image"].contains(&p.as_str()) || matches!(x.cabeza.get(2).map(|f| &f.f), Some(F::Sim("="))))));
                 if !vale {
                     let (l, c) = match &d { arbol::Entrada::Nodo(x) => (x.linea, x.col), arbol::Entrada::Prop { linea, col, .. } => (*linea, *col) };
-                    return Err(Fallo::en(l, c, "una biblioteca solo declara: `let`, `spring`, `component`, su frontera (`fact`, `text`, `model`, `event`, `image x = …`, `permissions`) y lo que mueve por dentro (`prop`, `pose`, `gesture`, `posture`, `layer`). Lo que se pinta y las reglas sueltas son cosa de la escena"));
+                    return Err(Fallo::en(l, c, "a library only declares: `let`, `spring`, `component`, its frontier (`fact`, `text`, `model`, `event`, `image x = …`, `permissions`) and what it moves inside (`prop`, `pose`, `gesture`, `posture`, `layer`). What gets painted, and loose rules, belong to the scene"));
                 }
                 traido.push(d);
             }
@@ -151,12 +151,12 @@ fn version_pedida(mut entradas: Vec<arbol::Entrada>) -> Result<Vec<arbol::Entrad
         return Ok(entradas);
     }
     let (Some(F::Num(v)), 2, None) = (n.cabeza.get(1).map(|f| &f.f), n.cabeza.len(), &n.cuerpo) else {
-        return Err(Fallo::en(n.linea, n.col, format!("la versión se pide así: `language {}.{}`", VERSION.0, VERSION.1)));
+        return Err(Fallo::en(n.linea, n.col, format!("the version is asked for like this: `language {}.{}`", VERSION.0, VERSION.1)));
     };
     // `0.1` llega como un número: la parte entera y el primer decimal.
     let pedida = (v.trunc() as u32, ((v.fract() * 10.0).round()) as u32);
     if pedida.0 != VERSION.0 || pedida.1 > VERSION.1 {
-        return Err(Fallo::en(n.linea, n.cabeza[1].col, format!("este fichero pide el lenguaje {}.{}, y este pleamar entiende el {}.{}", pedida.0, pedida.1, VERSION.0, VERSION.1)));
+        return Err(Fallo::en(n.linea, n.cabeza[1].col, format!("this file asks for language {}.{}, and this pleamar understands {}.{}", pedida.0, pedida.1, VERSION.0, VERSION.1)));
     }
     entradas.remove(0);
     Ok(entradas)
@@ -194,7 +194,7 @@ pub fn leer_fichero(ruta: &str) -> Result<(Escena, Vec<PathBuf>), String> {
         Err(fallos) => {
             let n = fallos.len();
             let texto: Vec<String> = fallos.iter().map(|f| f.con_fuente(&l.ficheros)).collect();
-            Err(format!("{}\n{}", texto.join("\n\n"), if n == 1 { "un fallo".to_owned() } else { format!("{n} fallos") }))
+            Err(format!("{}\n{}", texto.join("\n\n"), if n == 1 { "one error".to_owned() } else { format!("{n} errors") }))
         }
     }
 }

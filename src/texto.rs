@@ -136,7 +136,7 @@ impl Tipografo {
     fn nuevo() -> Self {
         let t0 = std::time::Instant::now();
         let fuentes = FontSystem::new();
-        println!("texto  · {} fuentes del sistema en {} ms", fuentes.db().len(), t0.elapsed().as_millis());
+        println!("text   · {} system fonts in {} ms", fuentes.db().len(), t0.elapsed().as_millis());
         Tipografo { fuentes, swash: SwashCache::new(), estantes: Estantes::nuevo(), glifos: HashMap::new(), por_subir: Vec::new(), escala: 1.0 }
     }
 
@@ -187,7 +187,7 @@ impl Tipografo {
             }
         }
         if lleno {
-            eprintln!("texto  · el atlas de {LADO_DEL_ATLAS}² está lleno: algunos glifos no se pintan");
+            eprintln!("text   · the {LADO_DEL_ATLAS}² atlas is full: some glyphs are not painted");
         }
         // Sin ancho fijo, el alineado es respecto a lo que mida el propio texto.
         if cursores.is_empty() {
@@ -244,7 +244,7 @@ impl Tipografo {
                     Some(hueco)
                 });
                 if hueco.is_none() {
-                    eprintln!("imagen · no puedo cargar {fuente:?}");
+                    eprintln!("image  · cannot load {fuente:?}");
                 }
                 hueco
             })

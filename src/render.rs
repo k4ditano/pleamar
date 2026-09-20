@@ -47,7 +47,7 @@ impl Ciclo {
         let media = o.iter().sum::<f32>() / o.len() as f32;
         let p99 = o[((o.len() as f32 * 0.99) as usize).min(o.len() - 1)];
         println!(
-            "ciclo · {:>4} frames · media {:>5.2} ms · p99 {:>6.2} ms · máx {:>6.2} ms · con la lógica bloqueada: {} frames, máx {:.2} ms",
+            "cycle  · {:>4} frames · mean {:>5.2} ms · p99 {:>6.2} ms · max {:>6.2} ms · with the logic blocked: {} frames, max {:.2} ms",
             o.len(), media, p99, o[o.len() - 1], self.frames_bloqueada, self.max_bloqueada
         );
         *self = Ciclo::default();
@@ -182,7 +182,7 @@ pub fn hilo(
                     textos = nueva.textos.iter().map(|(n, inicial)| escena.textos.iter().position(|t| t.0 == *n).map_or_else(|| inicial.clone(), |k| textos[k].clone())).collect();
                     atlas_por_rehacer = true;
                     println!(
-                        "render · escena: {} propiedades, {} instrucciones, {} hechos, {} capas, {} gestos, {} reglas, {} zonas",
+                        "render · scene: {} properties, {} instructions, {} facts, {} layers, {} gestures, {} rules, {} zones",
                         nueva.props.len(), nueva.instrs.len(), nueva.hechos.len(), nueva.capas.len(),
                         nueva.gestos.len(), nueva.reglas.len(), nueva.zonas.len()
                     );
@@ -202,14 +202,14 @@ pub fn hilo(
                             _ => {}
                         }
                     }
-                    println!("render · lámina {} en {} · {}×{} · escala {} · {:.0} Hz", n.id, n.nombre, n.tam.0, n.tam.1, n.escala, n.mhz as f32 / 1000.0);
+                    println!("render · surface {} on {} · {}×{} · scale {} · {:.0} Hz", n.id, n.nombre, n.tam.0, n.tam.1, n.escala, n.mhz as f32 / 1000.0);
                     laminas.push(g.lamina(*n, tam));
                     repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
                     region = vec![[i32::MIN; 4]];
                 }
                 ARender::LaminaFuera(id) => {
                     laminas.retain(|l| l.id != id);
-                    println!("render · lámina {id} fuera; quedan {}", laminas.len());
+                    println!("render · surface {id} gone; {} left", laminas.len());
                     if let Some(g) = &gpu {
                         repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
                     }
@@ -218,7 +218,7 @@ pub fn hilo(
                 ARender::Escala(id, e) => {
                     if let (Some(g), Some(l)) = (&gpu, laminas.iter_mut().find(|l| l.id == id)) {
                         if (l.escala - e).abs() > 0.001 {
-                            println!("render · lámina {id}: escala {} → {e}", l.escala);
+                            println!("render · surface {id}: scale {} → {e}", l.escala);
                             l.escala = e;
                             g.configurar(l, tam);
                         }
@@ -229,11 +229,11 @@ pub fn hilo(
                 ARender::Orden(Orden::Bloquear(d)) => bloquear = Some(d),
                 ARender::Texto(nombre, valor) => match escena.textos.iter().position(|t| t.0 == nombre) {
                     Some(i) => textos[i] = valor,
-                    None => eprintln!("render · no conozco el texto «{nombre}»"),
+                    None => eprintln!("render · I don't know the text '{nombre}'"),
                 },
                 ARender::Hecho(nombre, v) => match escena.hechos.iter().position(|h| h.0 == nombre) {
                     Some(i) => hechos[i] = v,
-                    None => eprintln!("render · no conozco el hecho «{nombre}»"),
+                    None => eprintln!("render · I don't know the fact '{nombre}'"),
                 },
                 ARender::EmergenteCerrada(k) => {
                     // Han pulsado fuera: primero se suelta lo que pintaba en ella, luego ella.
@@ -261,10 +261,10 @@ pub fn hilo(
                                 // No lo ha puesto la lógica: que se entere.
                                 let _ = a_logica.send(Evento::Hecho(nombre, v));
                             }
-                            None => eprintln!("render · «{nombre}» no puede valer «{escrito}»"),
+                            None => eprintln!("render · '{nombre}' cannot be '{escrito}'"),
                         }
                     }
-                    None => eprintln!("render · no conozco el hecho «{nombre}»"),
+                    None => eprintln!("render · I don't know the fact '{nombre}'"),
                 },
                 ARender::Pregunta(nombre, a_quien) => {
                     let numero = |v: f32| if v.fract() == 0.0 { format!("{}", v as i64) } else { format!("{v}") };
@@ -279,21 +279,21 @@ pub fn hilo(
                     } else if let Some(i) = escena.props.iter().position(|p| p.0 == nombre) {
                         numero(props[i].x)
                     } else {
-                        format!("? no conozco «{nombre}»")
+                        format!("? I don't know '{nombre}'")
                     };
                     let _ = a_quien.send(r);
                 }
                 ARender::Suceso(nombre) => match escena.sucesos.iter().position(|s| s.0 == nombre) {
                     Some(i) => sucesos.push((i, true, None)),
-                    None => eprintln!("render · no conozco el suceso «{nombre}»"),
+                    None => eprintln!("render · I don't know the event '{nombre}'"),
                 },
                 ARender::SucesoDeFuera(nombre, carga) => match escena.sucesos.iter().position(|s| s.0 == nombre) {
                     Some(i) => sucesos.push((i, false, carga)),
-                    None => eprintln!("render · no conozco el suceso «{nombre}»"),
+                    None => eprintln!("render · I don't know the event '{nombre}'"),
                 },
                 ARender::Gesto(nombre) => match escena.gestos.iter().position(|g| g.nombre == nombre) {
                     Some(i) => gestos_pedidos.push(i),
-                    None => eprintln!("render · no conozco el gesto «{nombre}»"),
+                    None => eprintln!("render · I don't know the gesture '{nombre}'"),
                 },
                 ARender::Puntero(p) => {
                     puntero = p;
@@ -944,7 +944,7 @@ pub fn hilo(
             std::thread::sleep(Duration::from_millis(8));
         } else if primer_frame {
             primer_frame = false;
-            println!("render · primer frame a los {} ms de arrancar", op.arranque.elapsed().as_millis());
+            println!("render · first frame {} ms after starting", op.arranque.elapsed().as_millis());
         }
 
         // Lo que midieron los textos pasa a sus propiedades: el frame que viene,
@@ -962,7 +962,7 @@ pub fn hilo(
         let ms = dt * 1000.0;
         // Un chivato permanente: cualquier frame que se pase de dos periodos, con su hora.
         if ms > periodo_ms * 2.4 && !primer_frame && ciclo.dts.len() > 1 && !op.sin_vsync && !op.ingenuo {
-            println!("render · frame lento: {ms:.0} ms a los {t_total:.2} s");
+            println!("render · slow frame: {ms:.0} ms at {t_total:.2} s");
         }
         historial.copy_within(1.., 0);
         historial[119] = if bloqueada { -ms } else { ms };

@@ -1,4 +1,4 @@
-// espera: fallo «es de una biblioteca `strict` y lee «secret», que es de la escena, sin pedirlo»
+// espera: fallo «belongs to a `strict` library and reads 'secret', which is the scene's, without asking»
 import "comun/estricta.plm"
 scene StrictNosy {
     surface { size: 200, 60 }

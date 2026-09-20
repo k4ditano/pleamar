@@ -34,11 +34,11 @@ impl Guion for DeFichero {
             // Sin ratón, `--demo` dispara el suceso «demo»: la escena dirá qué hace con él.
             Evento::Demo => c.suceso("demo"),
             Evento::Capa(_, _) => c.trabajar(),
-            Evento::Texto(n, v) => println!("lógica · «{n}» dice ahora: {v:?}"),
-            Evento::Envia(n, v) => println!("lógica · intro en «{n}»: {v:?}"),
-            Evento::Recibido(z, tipo, d) => println!("lógica · han soltado en «{z}» un {tipo}: {d:?}"),
-            Evento::Suceso(s, None) => println!("lógica · ha pasado «{s}»"),
-            Evento::Suceso(s, Some(v)) => println!("lógica · ha pasado «{s}», con {v:.2}"),
+            Evento::Texto(n, v) => println!("logic  · '{n}' now says: {v:?}"),
+            Evento::Envia(n, v) => println!("logic  · enter in '{n}': {v:?}"),
+            Evento::Recibido(z, tipo, d) => println!("logic  · something was dropped on '{z}', a {tipo}: {d:?}"),
+            Evento::Suceso(s, None) => println!("logic  · '{s}' happened"),
+            Evento::Suceso(s, Some(v)) => println!("logic  · '{s}' happened, with {v:.2}"),
             _ => {}
         }
     }
@@ -71,7 +71,7 @@ pub fn vigilar(ruta: String, al_render: Sender<ARender>, a_logica: Sender<Evento
     let a_la_logica = a_logica.clone();
     let escena_de_la_logica = ruta.clone();
     std::thread::Builder::new()
-        .name("recarga-lógica".into())
+        .name("reload-logic".into())
         .spawn(move || {
             // La de la escena y la de sus plugins: tocar cualquiera las recarga.
             let todas = |escena: &str| -> Vec<String> {
@@ -125,7 +125,7 @@ pub fn vigilar(ruta: String, al_render: Sender<ARender>, a_logica: Sender<Evento
                 let t0 = std::time::Instant::now();
                 match crate::lenguaje::leer_fichero(&ruta) {
                     Ok((e, ficheros)) => {
-                        println!("recarga · {ruta} leída en {:.1} ms{}", t0.elapsed().as_secs_f32() * 1000.0, if ficheros.len() > 1 { format!(" · con {} bibliotecas", ficheros.len() - 1) } else { String::new() });
+                        println!("reload · {ruta} read in {:.1} ms{}", t0.elapsed().as_secs_f32() * 1000.0, if ficheros.len() > 1 { format!(" · with {} libraries", ficheros.len() - 1) } else { String::new() });
                         // Puede que ahora importe otras cosas.
                         vigilados = ficheros;
                         let _ = a_la_logica.send(Evento::EscenaNueva(e.hechos.clone(), e.textos.clone(), e.permisos.clone(), e.modelos.clone(), e.tipos.clone(), e.plugins.clone(), e.sucesos.iter().map(|s| s.0).collect()));
@@ -133,7 +133,7 @@ pub fn vigilar(ruta: String, al_render: Sender<ARender>, a_logica: Sender<Evento
                             return;
                         }
                     }
-                    Err(m) => eprintln!("recarga · la escena sigue como estaba:\n{m}"),
+                    Err(m) => eprintln!("reload · the scene stays as it was:\n{m}"),
                 }
                 ultima = fecha(&vigilados);
             }

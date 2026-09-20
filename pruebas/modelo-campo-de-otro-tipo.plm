@@ -1,4 +1,4 @@
-// espera: fallo «el campo «enabled» de «rows» es bool, y aquí hace falta un text»
+// espera: fallo «field 'enabled' of 'rows' is bool, and here a text is needed»
 scene Bad3 {
     surface { size: 300, 200 }
     model rows max 3 { label: text; enabled: bool = true }

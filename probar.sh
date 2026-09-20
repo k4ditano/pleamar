@@ -13,7 +13,7 @@ for f in pruebas/*.plm escenas/*.plm "$ejemplos"/*.plm; do
     [ -z "$espera" ] && espera="bien"
     salida=$(./target/release/pleamar --comprobar "$f" 2>&1)
     case "$espera" in
-        bien) echo "$salida" | grep -q ": bien ·" || { echo "✗ $f: tenía que estar bien"; echo "$salida" | head -3; mal=$((mal + 1)); } ;;
+        bien) echo "$salida" | grep -q ": ok ·" || { echo "✗ $f: tenía que estar bien"; echo "$salida" | head -3; mal=$((mal + 1)); } ;;
         fallo*) trozo=$(echo "$espera" | sed 's|^fallo «||; s|»$||')
             echo "$salida" | grep -qF "$trozo" || { echo "✗ $f: esperaba un fallo con «$trozo»"; echo "$salida" | head -3; mal=$((mal + 1)); } ;;
     esac

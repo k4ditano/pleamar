@@ -132,7 +132,7 @@ pub fn hilo(mut guion: Box<dyn Guion>, rx: Receiver<Evento>, tx: Sender<ARender>
             // En la demo manda el reloj, no el ratón.
             Ok(e) if !(demo && matches!(e, Evento::Entra(_) | Evento::Sale(_) | Evento::Pulsa(_))) => {
                 if c.op.eco {
-                    println!("lógica · {e:?}");
+                    println!("logic  · {e:?}");
                 }
                 guion.evento(e, &mut c)
             }

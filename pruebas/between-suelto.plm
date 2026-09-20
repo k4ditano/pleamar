@@ -1,4 +1,4 @@
-// espera: fallo «`between` solo vale dentro de un `row` o un `column`»
+// espera: fallo «`between` only works inside a `row` or a `column`»
 scene X {
     surface { size: 100, 100 }
     between { box { size: 4, 4; color: #fff } }

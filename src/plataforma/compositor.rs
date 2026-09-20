@@ -282,13 +282,13 @@ pub fn servicio(nombre: &str, avisar: Box<dyn Fn(Valor) + Send>) -> bool {
 
 pub fn orden(nombre: &str, args: &[Valor]) -> Result<(), String> {
     let ("workspaces.focus", [Valor::Num(n)]) = (nombre, args) else {
-        return Err(format!("este compositor no sabe hacer «{nombre}»"));
+        return Err(format!("this compositor cannot do '{nombre}'"));
     };
-    let mando = MANDO.get().ok_or("no hay escritorios que valgan aquí")?;
+    let mando = MANDO.get().ok_or("there are no workspaces that count here")?;
     let e = mando.estado.lock().unwrap();
     let cual = e.escritorios.iter().find(|(_, x)| x.numero == *n as i64).map(|(k, _)| *k);
-    let (Some(k), Some(m)) = (cual, e.mando.clone()) else { return Err(format!("no hay ningún escritorio {n}")) };
-    let Some(h) = e.handles.get(&k) else { return Err(format!("el escritorio {n} ya no está")) };
+    let (Some(k), Some(m)) = (cual, e.mando.clone()) else { return Err(format!("there is no workspace {n}")) };
+    let Some(h) = e.handles.get(&k) else { return Err(format!("workspace {n} is gone")) };
     h.activate();
     m.commit();
     drop(e);

@@ -1,4 +1,4 @@
-// espera: fallo ««fast» no es un valor de «mode»: vale low, normal o critical»
+// espera: fallo «'fast' is not a value of 'mode': it can be low, normal or critical»
 scene X {
     surface { size: 10, 10 }
     fact mode: low | normal | critical = low

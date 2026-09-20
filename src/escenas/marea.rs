@@ -204,7 +204,7 @@ impl Guion for Marea {
             //  Lo único que le queda a la lógica: enterarse y hacer SU trabajo
             //  —montar el contenido, abrir el calendario—, que puede tardar.
             Evento::Capa("tarjeta", _) => c.trabajar(),
-            Evento::Suceso("ver-evento", _) => println!("lógica · alguien quiere ver el evento"),
+            Evento::Suceso("ver-evento", _) => println!("logic  · someone wants to see the event"),
             //  Sin ratón, la demo hace de aviso que llega y se va.
             Evento::Demo => {
                 self.abierta = !self.abierta;

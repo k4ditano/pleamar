@@ -1,4 +1,4 @@
-// espera: fallo «(dentro de «Badge», puesto en import-fallo-con-contexto.plm:6)»
+// espera: fallo «(inside 'Badge', used at import-fallo-con-contexto.plm:6)»
 import "comun/rota.plm"
 scene X {
     surface { size: 100, 40 }

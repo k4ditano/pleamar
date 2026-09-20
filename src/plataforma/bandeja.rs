@@ -163,7 +163,7 @@ pub fn servicio(avisar: Box<dyn Fn(Valor) + Send>) -> bool {
     // ¿Hay ya vigía? Si no, nosotros. Sin hacer cola: o se es o no se es.
     let somos = c.request_name_with_flags(VIGIA, zbus::fdo::RequestNameFlags::DoNotQueue.into()).is_ok();
     if somos {
-        println!("bandeja · no había vigía: las aplicaciones se apuntan aquí");
+        println!("tray   · there was no watcher: applications register here");
     } else {
         // Anfitrión de la bandeja de otro: hay que tener un nombre y decírselo.
         let _ = c.object_server().remove::<Vigia, _>(RUTA_VIGIA);
@@ -227,8 +227,8 @@ pub fn servicio(avisar: Box<dyn Fn(Valor) + Send>) -> bool {
 const MENU: &str = "com.canonical.dbusmenu";
 
 fn menu_de(c: &Connection, clave: &str) -> Result<Proxy<'static>, String> {
-    let p = elemento(c, clave).ok_or("ese icono ya no está")?;
-    let ruta: zbus::zvariant::OwnedObjectPath = p.get_property("Menu").map_err(|_| "ese icono no tiene menú")?;
+    let p = elemento(c, clave).ok_or("that icon is gone")?;
+    let ruta: zbus::zvariant::OwnedObjectPath = p.get_property("Menu").map_err(|_| "that icon has no menu")?;
     let (servicio, _) = partir(clave);
     zbus::blocking::proxy::Builder::new(c).destination(servicio.to_owned()).map_err(|e| e.to_string())?.path(ruta).map_err(|e| e.to_string())?.interface(MENU).map_err(|e| e.to_string())?.cache_properties(CacheProperties::No).build().map_err(|e| e.to_string())
 }
@@ -264,8 +264,8 @@ fn nodo(v: &zbus::zvariant::Value) -> Option<Valor> {
 
 /// `sys.ask("tray.menu", key)` → `{ { id, label, enabled, separator, checked, children }, … }`
 pub fn consulta(que: &str, args: &[Valor]) -> Result<Valor, String> {
-    let c = CONEXION.get().ok_or("la bandeja no está en marcha: falta sys.watch(\"tray\", …)")?;
-    let ("tray.menu", [Valor::Texto(clave)]) = (que, args) else { return Err(format!("«{que}» no se pregunta así: tray.menu(key)")) };
+    let c = CONEXION.get().ok_or("the tray is not running: sys.watch(\"tray\", …) is missing")?;
+    let ("tray.menu", [Valor::Texto(clave)]) = (que, args) else { return Err(format!("'{que}' is not asked like that: tray.menu(key)")) };
     let menu = menu_de(c, clave)?;
     // Muchos no rellenan su menú hasta que se les dice que se va a enseñar.
     let _ = menu.call_method("AboutToShow", &(0i32,));
@@ -273,7 +273,7 @@ pub fn consulta(que: &str, args: &[Valor]) -> Result<Valor, String> {
     let cuerpo = respuesta.body();
     // De la raíz solo interesan sus hijos: ella misma no es nada que se pueda pulsar.
     type Raiz = (i32, std::collections::HashMap<String, zbus::zvariant::OwnedValue>, Vec<zbus::zvariant::OwnedValue>);
-    let (_, (_, _, hijos)): (u32, Raiz) = cuerpo.deserialize().map_err(|e| format!("no entiendo el menú que ha mandado esa aplicación: {e}"))?;
+    let (_, (_, _, hijos)): (u32, Raiz) = cuerpo.deserialize().map_err(|e| format!("I don't understand the menu that application sent: {e}"))?;
     Ok(Valor::Lista(hijos.iter().filter_map(|h| nodo(h)).collect()))
 }
 
@@ -281,9 +281,9 @@ pub fn consulta(que: &str, args: &[Valor]) -> Result<Valor, String> {
 /// medio—, `tray.context(key)` —que la aplicación enseñe su menú, si sabe— y
 /// `tray.scroll(key, muescas)`.
 pub fn orden(que: &str, args: &[Valor]) -> Result<(), String> {
-    let c = CONEXION.get().ok_or("la bandeja no está en marcha: falta sys.watch(\"tray\", …)")?;
-    let [Valor::Texto(clave), resto @ ..] = args else { return Err(format!("«{que}» quiere la `key` del icono")) };
-    let p = elemento(c, clave).ok_or("ese icono ya no está")?;
+    let c = CONEXION.get().ok_or("the tray is not running: sys.watch(\"tray\", …) is missing")?;
+    let [Valor::Texto(clave), resto @ ..] = args else { return Err(format!("'{que}' wants the icon's `key`")) };
+    let p = elemento(c, clave).ok_or("that icon is gone")?;
     let hecho = match (que, resto) {
         // Dónde se pulsó, en la pantalla. No lo sabemos (Wayland no lo cuenta): 0, 0.
         ("tray.activate", []) => p.call_method("Activate", &(0i32, 0i32)),
@@ -296,7 +296,7 @@ pub fn orden(que: &str, args: &[Valor]) -> Result<(), String> {
             let ahora = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
             return menu.call_method("Event", &(*id as i32, "clicked", zbus::zvariant::Value::I32(0), ahora)).map(|_| ()).map_err(|e| e.to_string());
         }
-        _ => return Err(format!("«{que}» no existe: tray.activate, tray.secondary, tray.context, tray.scroll, tray.menu_click")),
+        _ => return Err(format!("'{que}' does not exist: tray.activate, tray.secondary, tray.context, tray.scroll, tray.menu_click")),
     };
     hecho.map(|_| ()).map_err(|e| e.to_string())
 }

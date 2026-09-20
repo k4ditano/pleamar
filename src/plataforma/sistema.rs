@@ -67,14 +67,14 @@ pub fn audio(avisar: Box<dyn Fn(Valor) + Send>) -> bool {
 }
 
 pub fn audio_orden(que: &str, args: &[Valor]) -> Result<(), String> {
-    let pedir = |a: &[&str]| salida_de("wpctl", a).map(|_| ()).ok_or_else(|| "wpctl no ha querido".to_string());
+    let pedir = |a: &[&str]| salida_de("wpctl", a).map(|_| ()).ok_or_else(|| "wpctl refused".to_string());
     match (que, args) {
         ("audio.volume", [Valor::Num(v)]) => pedir(&["set-volume", SALIDA, &format!("{:.3}", v.clamp(0.0, 1.0))]),
         // Un paso, en tanto por uno: 0.05 sube, -0.05 baja. Nunca por encima del 100 %.
         ("audio.step", [Valor::Num(d)]) => pedir(&["set-volume", "-l", "1.0", SALIDA, &format!("{:.3}{}", d.abs(), if *d < 0.0 { "-" } else { "+" })]),
         ("audio.mute", []) => pedir(&["set-mute", SALIDA, "toggle"]),
         ("audio.mute", [Valor::Si(si)]) => pedir(&["set-mute", SALIDA, if *si { "1" } else { "0" }]),
-        _ => Err(format!("«{que}» no se pide así: audio.volume(0..1), audio.step(±0.05), audio.mute([true|false])")),
+        _ => Err(format!("'{que}' is not asked like that: audio.volume(0..1), audio.step(±0.05), audio.mute([true|false])")),
     }
 }
 

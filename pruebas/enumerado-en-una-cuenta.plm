@@ -1,4 +1,4 @@
-// espera: fallo «es un enumerado (low, normal, critical): con él no se hacen cuentas»
+// espera: fallo «is an enum (low, normal, critical): you do not do arithmetic with it»
 scene X {
     surface { size: 10, 10 }
     fact mode: low | normal | critical = low

@@ -38,7 +38,7 @@ pub fn trocear(fuente: &str) -> Result<Vec<Ficha>, Fallo> {
             } else if ch == '/' && c.get(i + 1) == Some(&'/') {
                 break;
             } else if ch == '"' {
-                let fin = c[i + 1..].iter().position(|x| *x == '"').ok_or_else(|| Fallo::en(n + 1, col, "esta cadena no se cierra: falta la comilla"))?;
+                let fin = c[i + 1..].iter().position(|x| *x == '"').ok_or_else(|| Fallo::en(n + 1, col, "this string is not closed: the quote is missing"))?;
                 poner(F::Cadena(c[i + 1..i + 1 + fin].iter().collect()));
                 i += fin + 2;
             } else if ch == '#' {
@@ -48,7 +48,7 @@ pub fn trocear(fuente: &str) -> Result<Vec<Ficha>, Fallo> {
                 let hex: String = match largo {
                     6 => hex,
                     3 => hex.chars().flat_map(|c| [c, c]).collect(),
-                    _ => return Err(Fallo::en(n + 1, col, "un color son seis cifras hexadecimales (#151616) o tres (#fff)")),
+                    _ => return Err(Fallo::en(n + 1, col, "a colour is six hex digits (#151616) or three (#fff)")),
                 };
                 let v = |k: usize| u8::from_str_radix(&hex[k..k + 2], 16).unwrap() as f32 / 255.0;
                 poner(F::Color([v(0), v(2), v(4)]));
@@ -58,7 +58,7 @@ pub fn trocear(fuente: &str) -> Result<Vec<Ficha>, Fallo> {
                 while j < c.len() && (c[j].is_ascii_digit() || (c[j] == '.' && c.get(j + 1) != Some(&'.'))) {
                     j += 1;
                 }
-                let numero: f32 = c[i..j].iter().collect::<String>().parse().map_err(|_| Fallo::en(n + 1, col, "este número no se entiende"))?;
+                let numero: f32 = c[i..j].iter().collect::<String>().parse().map_err(|_| Fallo::en(n + 1, col, "this number cannot be read"))?;
                 let unidad: String = c[j..].iter().take_while(|x| x.is_ascii_alphabetic() || **x == '%').collect();
                 let f = match unidad.as_str() {
                     "" | "px" => F::Num(numero),
@@ -66,8 +66,8 @@ pub fn trocear(fuente: &str) -> Result<Vec<Ficha>, Fallo> {
                     "deg" => F::Num(numero.to_radians()),
                     "ms" => F::Dur(numero / 1000.0),
                     "s" => F::Dur(numero),
-                    otra if super::vocabulario::UNIDADES.contains(&otra) => unreachable!("«{otra}» está en el vocabulario, pero el troceador no sabe convertirla"),
-                    otra => return Err(Fallo::en(n + 1, j + 1, format!("no conozco la unidad «{otra}»: valen {}", super::vocabulario::UNIDADES.join(", ")))),
+                    otra if super::vocabulario::UNIDADES.contains(&otra) => unreachable!("'{otra}' is in the vocabulary, but the tokenizer cannot convert it"),
+                    otra => return Err(Fallo::en(n + 1, j + 1, format!("I don't know the unit '{otra}': valid ones are {}", super::vocabulario::UNIDADES.join(", ")))),
                 };
                 poner(f);
                 i = j + unidad.chars().count();
@@ -80,7 +80,7 @@ pub fn trocear(fuente: &str) -> Result<Vec<Ficha>, Fallo> {
                 i = j;
             } else {
                 let resto: String = c[i..].iter().take(2).collect();
-                let s = SIMBOLOS.iter().find(|s| resto.starts_with(**s)).ok_or_else(|| Fallo::en(n + 1, col, format!("no sé qué hacer con «{ch}»")))?;
+                let s = SIMBOLOS.iter().find(|s| resto.starts_with(**s)).ok_or_else(|| Fallo::en(n + 1, col, format!("I don't know what to do with '{ch}'")))?;
                 match *s {
                     "(" => parentesis += 1,
                     ")" => parentesis = parentesis.saturating_sub(1),

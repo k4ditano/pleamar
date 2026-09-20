@@ -1,4 +1,4 @@
-// espera: fallo «una `popup` va en el nivel de la escena»
+// espera: fallo «a `popup` goes at the scene level»
 scene PopupInGroup {
     surface { size: 300, 60 }
     fact open = false

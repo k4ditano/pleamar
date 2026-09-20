@@ -229,7 +229,7 @@ impl Estado {
                             NonNull::new(capa.wl_surface().id().as_ptr() as *mut _).unwrap(),
                         )),
                     })
-                    .expect("no se pudo crear la superficie gráfica")
+                    .expect("the graphics surface could not be created")
             };
             self.puestas.push(Puesta { id, cual, capa, salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, pendiente: Some((superficie, nombre.clone(), mhz)) });
             }
@@ -335,7 +335,7 @@ pub fn emergente(k: usize, que: Option<([i32; 4], (f32, f32))>) {
     };
     match abrir() {
         Some(a) => e.abiertas.lock().unwrap().push(a),
-        None => eprintln!("emergente · el compositor no ha dejado abrirla"),
+        None => eprintln!("popup  · the compositor did not let it open"),
     }
     let _ = e.conexion.flush();
 }
@@ -381,7 +381,7 @@ impl PopupHandler for Estado {
 /// Pone las superficies que pida la escena y atiende a Wayland hasta que
 /// alguien cierre. Se queda con el hilo que la llama.
 pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance, a_render: Sender<ARender>) {
-    let conexion = Connection::connect_to_env().expect("no hay sesión Wayland");
+    let conexion = Connection::connect_to_env().expect("there is no Wayland session");
     let (globales, mut eventos) = registry_queue_init::<Estado>(&conexion).unwrap();
     let qh = eventos.handle();
     let compositor = CompositorState::bind(&globales, &qh).expect("sin wl_compositor");
@@ -389,7 +389,7 @@ pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance
         registro: RegistryState::new(&globales),
         asientos: SeatState::new(&globales, &qh),
         salidas: OutputState::new(&globales, &qh),
-        capas: LayerShell::bind(&globales, &qh).expect("el compositor no tiene layer-shell"),
+        capas: LayerShell::bind(&globales, &qh).expect("the compositor has no layer-shell"),
         ventanillas: globales.bind(&qh, 1..=1, Mudo).ok(),
         escalas: globales.bind(&qh, 1..=1, Mudo).ok(),
         compositor,
@@ -429,10 +429,10 @@ pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance
                 siguiente_id: AtomicU32::new(0),
             });
         }
-        Err(_) => eprintln!("aviso: el compositor no tiene xdg-shell; no habrá superficies emergentes"),
+        Err(_) => eprintln!("warning: the compositor has no xdg-shell; there will be no popup surfaces"),
     }
     if estado.ventanillas.is_none() || estado.escalas.is_none() {
-        eprintln!("aviso: el compositor no da escala fraccional; se pintará a la escala entera que diga");
+        eprintln!("warning: the compositor gives no fractional scale; it will paint at whatever whole scale it says");
     }
     // Los monitores que ya están llegan con las primeras vueltas; los que se
     // enchufen después, por `new_output`.
@@ -442,7 +442,7 @@ pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance
         estado.poner_en(&salida, &qh);
     }
     if estado.puestas.is_empty() {
-        eprintln!("aviso: ningún monitor de los pedidos ({:?}) está enchufado; espero a que aparezca", estado.pide.iter().map(|s| &s.pantallas).collect::<Vec<_>>());
+        eprintln!("warning: none of the monitors asked for ({:?}) is plugged in; waiting for one to appear", estado.pide.iter().map(|s| &s.pantallas).collect::<Vec<_>>());
     }
     while !estado.salir {
         eventos.blocking_dispatch(&mut estado).unwrap();
@@ -641,8 +641,8 @@ impl KeyboardHandler for Estado {
             RepeatInfo::Disable => None,
         };
         match r {
-            Some((espera, cada)) => println!("teclado · repite a los {espera} ms, y luego cada {cada} ms"),
-            None => println!("teclado · sin repetición"),
+            Some((espera, cada)) => println!("keyboard · repeats after {espera} ms, then every {cada} ms"),
+            None => println!("keyboard · no repeat"),
         }
         let _ = self.a_render.send(ARender::Repeticion(r));
     }

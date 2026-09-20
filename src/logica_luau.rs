@@ -113,7 +113,7 @@ fn leer_fichas(cambios: &mut Vec<Cambio>, prefijo: &str, m: &crate::escena::Mode
     for i in 0..total.min(m.caben) {
         let ficha: Value = lista.raw_get(i + 1)?;
         let Value::Table(ficha) = ficha else {
-            return Err(mlua::Error::runtime(format!("«{prefijo}» es una lista de fichas, y la número {} no es una tabla", i + 1)));
+            return Err(mlua::Error::runtime(format!("'{prefijo}' is a list of records, and number {} is not a table", i + 1)));
         };
         for campo in &m.campos {
             let nombre = format!("{prefijo}.{i}.{}", campo.nombre);
@@ -170,15 +170,15 @@ fn a_numero(nombre: &str, tipo: Option<&crate::escena::TipoDeHecho>, v: &Value) 
             let t = t.to_string_lossy();
             match nombres.iter().position(|n| *n == t) {
                 Some(k) => Ok(k as f64),
-                None => Err(mlua::Error::runtime(format!("«{nombre}» no puede valer «{t}»{}: vale {}", pista(&t, nombres.iter()), nombres.join(", ")))),
+                None => Err(mlua::Error::runtime(format!("'{nombre}' cannot be '{t}'{}: it can be {}", pista(&t, nombres.iter()), nombres.join(", ")))),
             }
         }
         (Some(TipoDeHecho::Enum(nombres)), _) => match numero {
             Some(n) if n >= 0.0 && (n as usize) < nombres.len() && n.fract() == 0.0 => Ok(n),
-            _ => Err(mlua::Error::runtime(format!("«{nombre}» es un enumerado: vale {}", nombres.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")))),
+            _ => Err(mlua::Error::runtime(format!("'{nombre}' is an enum: it can be {}", nombres.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")))),
         },
-        (Some(TipoDeHecho::Bool), _) => numero.map(|n| (n != 0.0) as u8 as f64).ok_or_else(|| mlua::Error::runtime(format!("«{nombre}» es un sí o no: true o false, no un {}", v.type_name()))),
-        (None, _) => numero.ok_or_else(|| mlua::Error::runtime(format!("«{nombre}» es un número, no un {}", v.type_name()))),
+        (Some(TipoDeHecho::Bool), _) => numero.map(|n| (n != 0.0) as u8 as f64).ok_or_else(|| mlua::Error::runtime(format!("'{nombre}' is a yes or no: true or false, not a {}", v.type_name()))),
+        (None, _) => numero.ok_or_else(|| mlua::Error::runtime(format!("'{nombre}' is a number, not a {}", v.type_name()))),
     }
 }
 
@@ -203,9 +203,9 @@ fn en_claro(p: &crate::escena::Permisos) -> String {
 fn denegado(c: &Mutex<Compartido>, para_que: &str, como: &str) -> mlua::Error {
     let c = c.lock().unwrap();
     mlua::Error::runtime(match &c.plugin {
-        None => format!("la escena no da permiso para {para_que}. Si debe poder, decláralo en el .plm: permissions {{ {como} }}"),
-        Some(p) if c.sin_aprobar => format!("el plugin «{p}» quiere {para_que}, pero nadie le ha aprobado sus permisos: corre sin ninguno. Para verlos y decidir: pleamar --aprobar ESCENA"),
-        Some(p) => format!("el plugin «{p}» no tiene permiso para {para_que}. Si debe poder, decláralo en su .plm (los de la escena no le valen): permissions {{ {como} }}"),
+        None => format!("the scene gives no permission to {para_que}. If it should be able to, declare it in the .plm: permissions {{ {como} }}"),
+        Some(p) if c.sin_aprobar => format!("plugin '{p}' wants to {para_que}, but nobody has approved its permissions: it runs with none. To see them and decide: pleamar --aprobar SCENE"),
+        Some(p) => format!("plugin '{p}' has no permission to {para_que}. If it should be able to, declare it in its own .plm (the scene's do not count): permissions {{ {como} }}"),
     })
 }
 
@@ -214,7 +214,7 @@ fn permiso_de_orden(c: &Mutex<Compartido>, orden: &str) -> mlua::Result<()> {
     if c.lock().unwrap().permisos.ordenes.iter().any(|o| o == orden) {
         return Ok(());
     }
-    Err(denegado(c, &format!("lanzar «{orden}»"), &format!("run: \"{orden}\"")))
+    Err(denegado(c, &format!("run '{orden}'"), &format!("run: \"{orden}\"")))
 }
 
 /// Lo mismo para un servicio. **Escuchar no es mandar**: `services: "audio"` deja saber el
@@ -226,12 +226,12 @@ fn permiso_de_servicio(c: &Mutex<Compartido>, nombre: &str, manda: bool) -> mlua
         if tiene(nombre) || tiene(&format!("{servicio}.*")) {
             return Ok(());
         }
-        return Err(denegado(c, &format!("pedirle «{nombre}» al sistema"), &format!("services: \"{nombre}\"  (o \"{servicio}.*\" para todo lo de {servicio})")));
+        return Err(denegado(c, &format!("ask the system for '{nombre}'"), &format!("services: \"{nombre}\"  (or \"{servicio}.*\" for everything of {servicio})")));
     }
     if tiene(servicio) || tiene(&format!("{servicio}.*")) {
         return Ok(());
     }
-    Err(denegado(c, &format!("usar el servicio «{servicio}»"), &format!("services: \"{servicio}\"")))
+    Err(denegado(c, &format!("use the '{servicio}' service"), &format!("services: \"{servicio}\"")))
 }
 
 /// Un dato del sistema, como lo ve Luau: tablas, números, textos.
@@ -259,7 +259,7 @@ fn a_lua(lua: &Lua, v: &Valor) -> mlua::Result<Value> {
 }
 
 fn pista<'a>(k: &str, conocidos: impl Iterator<Item = &'a String>) -> String {
-    crate::lenguaje::parecido(k, conocidos).map_or(String::new(), |p| format!(". ¿Querías decir «{p}»?"))
+    crate::lenguaje::parecido(k, conocidos).map_or(String::new(), |p| format!(". Did you mean '{p}'?"))
 }
 
 pub struct GuionLuau {
@@ -298,11 +298,11 @@ fn afuera(prefijo: &Option<String>, k: &str) -> String {
 /// «No existe», dicho a quien toca: a un plugin se le habla de lo suyo, con el nombre que él usa.
 fn no_existe<'a>(prefijo: &Option<String>, que: &str, entero: &str, conocidos: impl Iterator<Item = &'a String>) -> mlua::Error {
     match prefijo {
-        None => mlua::Error::runtime(format!("la escena no tiene {que} «{entero}»{}", pista(entero, conocidos))),
+        None => mlua::Error::runtime(format!("the scene has {que} called '{entero}'{}", pista(entero, conocidos))),
         Some(p) => {
             let corto = entero.strip_prefix(&format!("{p}.")).unwrap_or(entero);
             let suyos: Vec<String> = conocidos.filter_map(|k| k.strip_prefix(&format!("{p}.")).map(str::to_owned)).collect();
-            mlua::Error::runtime(format!("el plugin «{p}» no tiene {que} «{corto}»{}. Un plugin solo ve lo que declara su biblioteca", pista(corto, suyos.iter())))
+            mlua::Error::runtime(format!("plugin '{p}' has {que} called '{corto}'{}. A plugin only sees what its library declares", pista(corto, suyos.iter())))
         }
     }
 }
@@ -332,7 +332,7 @@ impl GuionLuau {
     /// Pone a un plugin a correr en su hilo. Desde ahí atiende su buzón y sus temporizadores.
     fn arrancar(mut plugin: GuionLuau) -> PluginVivo {
         let (buzon, cartas) = std::sync::mpsc::channel::<Evento>();
-        let definicion = plugin.definicion.clone().expect("solo se arranca la lógica de un plugin");
+        let definicion = plugin.definicion.clone().expect("only a plugin's logic is started");
         let nombre = format!("plugin {}", definicion.nombre);
         let _ = std::thread::Builder::new().name(nombre).spawn(move || {
             let mut ctx = Contexto::de_plugin(plugin.tx.clone(), plugin.bloqueada.clone());
@@ -384,7 +384,7 @@ impl GuionLuau {
         self.soltar();
         // Se dice antes de cargar: si el script tropieza con un permiso que no tiene, que se sepa por qué.
         if let (Some(p), true) = (&self.prefijo, self.c.lock().unwrap().sin_aprobar) {
-            println!("lógica · plugin «{p}» · ⚠ SIN APROBAR: corre sin poder tocar el sistema. Para ver qué pide y decidir: pleamar --aprobar {}", self.escena);
+            println!("logic  · plugin '{p}' · ⚠ NOT APPROVED: runs unable to touch the system. To see what it asks for and decide: pleamar --aprobar {}", self.escena);
         }
         // Una escena puede no tener lógica propia y sí plugins que la tengan.
         if self.prefijo.is_none() && !std::path::Path::new(&self.logica).is_file() {
@@ -392,7 +392,7 @@ impl GuionLuau {
         }
         let fuente = match std::fs::read_to_string(&self.logica) {
             Ok(f) => f,
-            Err(e) => return eprintln!("lógica · {}: {e}", self.logica),
+            Err(e) => return eprintln!("logic  · {}: {e}", self.logica),
         };
         let t0 = Instant::now();
         match self.preparar().and_then(|lua| {
@@ -403,13 +403,13 @@ impl GuionLuau {
             Ok(lua) => {
                 self.lua = Some(lua);
                 let c = self.c.lock().unwrap();
-                println!("lógica · {} en marcha en {:.1} ms · {} manejadores, {} temporizadores", self.logica, t0.elapsed().as_secs_f32() * 1000.0, c.manejadores.values().map(Vec::len).sum::<usize>(), c.temporizadores.len());
+                println!("logic  · {} running in {:.1} ms · {} handlers, {} timers", self.logica, t0.elapsed().as_secs_f32() * 1000.0, c.manejadores.values().map(Vec::len).sum::<usize>(), c.temporizadores.len());
                 match &self.prefijo {
-                    Some(p) => println!("lógica · plugin «{p}» · permisos · {}", en_claro(&c.permisos)),
-                    None => println!("lógica · permisos · {}", en_claro(&c.permisos)),
+                    Some(p) => println!("logic  · plugin '{p}' · permissions · {}", en_claro(&c.permisos)),
+                    None => println!("logic  · permissions · {}", en_claro(&c.permisos)),
                 }
             }
-            Err(e) => eprintln!("lógica · la anterior sigue como estaba:\n{e}"),
+            Err(e) => eprintln!("logic  · the previous one stays as it was:\n{e}"),
         }
         self.c.lock().unwrap().limite = None;
     }
@@ -425,7 +425,7 @@ impl GuionLuau {
         // Un manejador que no acaba no puede quedarse con el hilo para siempre.
         let c = self.c.clone();
         lua.set_interrupt(move |_| match c.lock().unwrap().limite {
-            Some(l) if Instant::now() > l => Err(mlua::Error::runtime(format!("un manejador lleva más de {} s sin acabar: cortado", PACIENCIA.as_secs()))),
+            Some(l) if Instant::now() > l => Err(mlua::Error::runtime(format!("a handler has been running for more than {} s: cut off", PACIENCIA.as_secs()))),
             _ => Ok(VmState::Continue),
         });
 
@@ -436,7 +436,7 @@ impl GuionLuau {
             let k = afuera(&pre, &k);
             // Un nombre mal escrito es un error aquí, con su línea, y no un aviso perdido en el render.
             if !c.lock().unwrap().hechos.contains_key(&k) {
-                return Err(no_existe(&pre, "ningún hecho", &k, c.lock().unwrap().hechos.keys()));
+                return Err(no_existe(&pre, "no fact", &k, c.lock().unwrap().hechos.keys()));
             }
             let tipo = c.lock().unwrap().tipos.get(&k).cloned();
             let n = a_numero(&k, tipo.as_ref(), &v)?;
@@ -462,7 +462,7 @@ impl GuionLuau {
         let poner = lua.create_function(move |_, (_, k, v): (Table, String, String)| {
             let k = afuera(&pre, &k);
             if !c.lock().unwrap().textos.contains_key(&k) {
-                return Err(no_existe(&pre, "ningún texto", &k, c.lock().unwrap().textos.keys()));
+                return Err(no_existe(&pre, "no text", &k, c.lock().unwrap().textos.keys()));
             }
             c.lock().unwrap().textos.insert(k.clone(), v.clone());
             let _ = tx.send(ARender::Texto(internar(&k), v));
@@ -482,11 +482,11 @@ impl GuionLuau {
         let poner = lua.create_function(move |_, (_, k, lista): (Table, String, Value)| {
             let k = afuera(&pre, &k);
             let Value::Table(lista) = lista else {
-                return Err(mlua::Error::runtime(format!("a «model.{k}» se le da una lista de fichas: model.{k} = {{ {{ … }}, {{ … }} }}")));
+                return Err(mlua::Error::runtime(format!("'model.{k}' takes a list of records: model.{k} = {{ {{ … }}, {{ … }} }}")));
             };
             let mut c = c.lock().unwrap();
             let Some(m) = c.modelos.iter().find(|m| m.nombre == k).cloned() else {
-                return Err(no_existe(&pre, "ningún modelo", &k, c.modelos.iter().map(|m| &m.nombre)));
+                return Err(no_existe(&pre, "no model", &k, c.modelos.iter().map(|m| &m.nombre)));
             };
             repartir(&mut c, &tx, &k, &m, &lista)?;
             almacen.raw_set(k, lista)
@@ -502,7 +502,7 @@ impl GuionLuau {
             // Un suceso que no existe era un aviso perdido en el render: aquí es un error, con su línea.
             if !c.lock().unwrap().sucesos.contains(&n) {
                 let conocidos: Vec<String> = c.lock().unwrap().sucesos.iter().cloned().collect();
-                return Err(no_existe(&pre, "ningún suceso", &n, conocidos.iter()));
+                return Err(no_existe(&pre, "no event", &n, conocidos.iter()));
             }
             Ok(tx.send(ARender::Suceso(internar(&n))).is_ok())
         })?)?;
@@ -511,7 +511,7 @@ impl GuionLuau {
         let pre = self.prefijo.clone();
         g.set("focus", lua.create_function(move |_, n: Option<String>| {
             if pre.is_some() {
-                return Err(mlua::Error::runtime("un plugin no mueve el cursor de escribir: eso es de la escena"));
+                return Err(mlua::Error::runtime("a plugin does not move the text cursor: that belongs to the scene"));
             }
             Ok(tx.send(ARender::Enfocar(n.map(|n| internar(&n)))).is_ok())
         })?)?;
@@ -519,7 +519,7 @@ impl GuionLuau {
         let pre = self.prefijo.clone();
         g.set("play", lua.create_function(move |_, n: String| {
             if pre.is_some() {
-                return Err(mlua::Error::runtime("un plugin no pide gestos: los gestos son de la escena. Que emita un suceso suyo, y la escena decidirá"));
+                return Err(mlua::Error::runtime("a plugin does not ask for gestures: gestures belong to the scene. Let it emit an event of its own, and the scene will decide"));
             }
             Ok(tx.send(ARender::Gesto(internar(&n))).is_ok())
         })?)?;
@@ -602,7 +602,7 @@ impl GuionLuau {
             crate::plataforma::morir_con_el_padre(&mut lanzar);
             let mut hijo = lanzar
                 .spawn()
-                .map_err(|e| mlua::Error::runtime(format!("no puedo lanzar «{orden}»: {e}")))?;
+                .map_err(|e| mlua::Error::runtime(format!("cannot run '{orden}': {e}")))?;
             let salida = hijo.stdout.take();
             let hijo = Arc::new(Mutex::new(Some(hijo)));
             HIJOS.lock().unwrap().push(hijo.clone());
@@ -690,7 +690,7 @@ impl GuionLuau {
         g.set("require", lua.create_function(move |lua, nombre: String| {
             let limpio = !nombre.is_empty() && nombre.split('/').all(|t| !t.is_empty() && t != ".." && t != "." && t.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-'));
             if !limpio {
-                return Err(mlua::Error::runtime(format!("require(\"{nombre}\"): un módulo es un fichero de la carpeta de esta lógica, o de una de dentro. Sin `..`, sin rutas enteras y sin extensión")));
+                return Err(mlua::Error::runtime(format!("require(\"{nombre}\"): a module is a file in this logic's folder, or in one inside it. No `..`, no full paths and no extension")));
             }
             if let Ok(Value::Table(t)) = cargados.raw_get::<Value>(nombre.as_str()) {
                 return t.raw_get::<Value>("valor");
@@ -729,8 +729,8 @@ impl GuionLuau {
         if let Err(e) = f.call::<()>(args) {
             // Que se sepa de quién es el fallo: con plugins, «la lógica» son varias.
             match &self.prefijo {
-                Some(p) => eprintln!("lógica · plugin «{p}» · {e}"),
-                None => eprintln!("lógica · {e}"),
+                Some(p) => eprintln!("logic  · plugin '{p}' · {e}"),
+                None => eprintln!("logic  · {e}"),
             }
         }
         self.c.lock().unwrap().limite = None;
@@ -845,7 +845,7 @@ impl Guion for GuionLuau {
                             }
                             None => {
                                 let v = Self::arrancar(self.de_plugin(p, k + 100));
-                                println!("lógica · llega el plugin «{}»", p.nombre);
+                                println!("logic  · plugin '{}' arrives", p.nombre);
                                 let _ = v.buzon.send(nueva.clone());
                                 let _ = v.buzon.send(Evento::RecargarLogica);
                                 v
@@ -856,7 +856,7 @@ impl Guion for GuionLuau {
                     }
                     for fuera in std::mem::replace(&mut self.plugins, siguen) {
                         // Al soltar su buzón, su hilo acaba y para lo que dejó corriendo.
-                        println!("lógica · el plugin «{}» ya no está", fuera.definicion.nombre);
+                        println!("logic  · plugin '{}' is gone", fuera.definicion.nombre);
                     }
                 }
                 let mut c = self.c.lock().unwrap();
@@ -865,7 +865,7 @@ impl Guion for GuionLuau {
                 c.sucesos = sucesos.iter().map(|s| (*s).to_owned()).collect();
                 // Los permisos sí se sustituyen: quitar uno de la escena lo quita ya.
                 if c.permisos != permisos {
-                    println!("lógica · permisos ahora: {}", en_claro(&permisos));
+                    println!("logic  · permissions now: {}", en_claro(&permisos));
                     c.permisos = permisos;
                 }
                 for (n, v) in hechos {
@@ -886,7 +886,7 @@ impl Guion for GuionLuau {
                 let quienes = self.c.lock().unwrap().vigias.get(&nombre).cloned().unwrap_or_default();
                 match a_lua(lua, &valor) {
                     Ok(v) => quienes.iter().for_each(|f| self.llamar(f, v.clone())),
-                    Err(e) => eprintln!("lógica · {e}"),
+                    Err(e) => eprintln!("logic  · {e}"),
                 }
             }
             Evento::Proceso(id, salida, codigo) => {

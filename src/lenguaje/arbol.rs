@@ -35,13 +35,13 @@ fn bloque(f: &[Ficha], i: &mut usize, dentro: bool) -> Result<Vec<Entrada>, Fall
         let Some(primera) = f.get(*i) else {
             if dentro {
                 let u = f.last().unwrap();
-                return Err(Fallo::en(u.linea, u.col, "falta una «}»: algún bloque se quedó abierto"));
+                return Err(Fallo::en(u.linea, u.col, "a '}' is missing: some block was left open"));
             }
             return Ok(entradas);
         };
         if primera.f == F::Sim("}") {
             if !dentro {
-                return Err(Fallo::en(primera.linea, primera.col, "esta «}» no cierra nada"));
+                return Err(Fallo::en(primera.linea, primera.col, "this '}' closes nothing"));
             }
             *i += 1;
             return Ok(entradas);
@@ -55,7 +55,7 @@ fn bloque(f: &[Ficha], i: &mut usize, dentro: bool) -> Result<Vec<Entrada>, Fall
                 *i += 1;
             }
             if desde == *i {
-                return Err(Fallo::en(linea, col, format!("«{nombre}:» se quedó sin valor")));
+                return Err(Fallo::en(linea, col, format!("'{nombre}:' was left without a value")));
             }
             entradas.push(Entrada::Prop { nombre: nombre.clone(), valor: f[desde..*i].to_vec(), linea, col });
             continue;

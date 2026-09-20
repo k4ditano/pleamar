@@ -64,7 +64,7 @@ pub const ALINEADOS_DE_REPARTO: &[&str] = &["start", "center", "end"];
 
 /// Las propiedades de un elemento. Reventar aquí es un fallo de quien programa, no de quien escribe la escena.
 pub fn propiedades(de: &str) -> &'static [&'static str] {
-    PROPIEDADES.iter().find(|(n, _)| *n == de).map(|(_, p)| *p).unwrap_or_else(|| panic!("el vocabulario no sabe qué propiedades tiene «{de}»"))
+    PROPIEDADES.iter().find(|(n, _)| *n == de).map(|(_, p)| *p).unwrap_or_else(|| panic!("the vocabulary does not know what properties '{de}' has"))
 }
 
 /// Todo, como texto: una línea por lista. Es lo que imprime `pleamar --gramatica`

@@ -1,4 +1,4 @@
-// espera: fallo ««normal» es un valor de varios enumerados, con números distintos»
+// espera: fallo «'normal' is a value of several enums, with different numbers»
 scene X {
     surface { size: 10, 10 }
     fact mode: low | normal | critical = low

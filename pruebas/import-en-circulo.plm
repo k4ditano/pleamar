@@ -1,3 +1,3 @@
-// espera: fallo «acaba importándose a sí misma: import-en-circulo.plm → a.plm → b.plm → a.plm»
+// espera: fallo «ends up importing itself: import-en-circulo.plm → a.plm → b.plm → a.plm»
 import "comun/a.plm"
 scene X { surface { size: 10, 10 } }

@@ -1,4 +1,4 @@
-// espera: fallo «es un número, y `upper` es para textos»
+// espera: fallo «is a number, and `upper` is for texts»
 scene BadHole {
     surface { size: 300, 100 }
     fact volume = 0.5

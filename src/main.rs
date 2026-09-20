@@ -23,28 +23,28 @@ use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const AYUDA: &str = "pleamar [opciones]
-  --escena FICHERO    la escena que se abre (.plm); se recarga sola al guardarla. También valen los
-                      bancos de ensayo escritos en Rust: marea, isla, cara, muestrario, enjambre
-  --comprobar FICHERO lee una escena, dice si está bien y sale
-  --aprobar ESCENA    enseña lo que piden los plugins de una escena y pregunta si se les aprueba
-                      (con --si detrás, no pregunta). Sin aprobar, un plugin corre sin tocar el sistema
-  --gramatica         las palabras que el lenguaje acepta, tal como las consulta el compilador
-  --version           la versión del programa y la del lenguaje que entiende
-  --decir [ESCENA] ORDEN   le dice algo a una escena en marcha y sale. Órdenes:
-                      «emit suceso [n]», «fact hecho valor», «text nombre lo que ponga», «focus campo», «get nombre» (contesta), «quit»
-  --pantalla NOMBRES  «todas», o monitores separados por comas (por defecto, lo que pida la escena).
-                      Un nombre repetido da dos superficies en el mismo monitor.
-  --bloqueo MS        lo que se bloquea la lógica tras cada decisión (600)
-  --ingenuo           la lógica bloquea el hilo que pinta, como en QtQuick
-  --demo              abre y cierra sola, sin ratón
-  --raton GUION       ratón de mentira: «360,90@1000 pulsa@2500 baja@… sube@… rueda+@… fuera@4000» (ms)
-  --segundos N        salir sola al cabo de N segundos
-  --margen PX         margen superior, en vez del de la escena
-  --sin-hud           sin la gráfica de frames
-  --sin-vsync         pintar sin esperar a la pantalla, para medir lo que cuesta un frame
-  --movimiento-reducido  los muelles se posan y los gestos enseñan su cara quieta
-Botón derecho sobre ella para cerrarla.";
+const AYUDA: &str = "pleamar [options]
+  --escena FILE       the scene to open (.plm); it reloads itself when you save it. The test
+                      benches written in Rust also work: marea, isla, cara, muestrario, enjambre
+  --comprobar FILE    reads a scene, says whether it is fine, and exits
+  --aprobar SCENE     shows what the plugins of a scene ask for, and asks whether to approve them
+                      (with --si after it, it does not ask). Unapproved, a plugin runs touching nothing
+  --gramatica         the words the language accepts, exactly as the compiler consults them
+  --version           the version of the program and of the language it understands
+  --decir [SCENE] CMD says something to a running scene and exits. Commands:
+                      «emit event [n]», «fact name value», «text name whatever it says», «focus input», «get name» (answers), «quit»
+  --pantalla NAMES    «todas», or monitors separated by commas (by default, whatever the scene asks for).
+                      A repeated name gives two surfaces on the same monitor.
+  --bloqueo MS        how long the logic blocks after every decision (600)
+  --ingenuo           the logic blocks the painting thread, as in QtQuick
+  --demo              opens and closes by itself, with no mouse
+  --raton SCRIPT      fake mouse: «360,90@1000 pulsa@2500 baja@… sube@… rueda+@… fuera@4000» (ms)
+  --segundos N        exits by itself after N seconds
+  --margen PX         top margin, instead of the scene\u{2019}s
+  --sin-hud           without the frame graph
+  --sin-vsync         paint without waiting for the screen, to measure what a frame costs
+  --movimiento-reducido  springs settle at once and gestures show their still face
+Right-click on it to close it.";
 
 struct Args {
     escena: String,
@@ -82,7 +82,7 @@ fn args() -> Args {
                 });
             }
             "--version" => {
-                println!("pleamar {} · lenguaje {}.{}", env!("CARGO_PKG_VERSION"), lenguaje::VERSION.0, lenguaje::VERSION.1);
+                println!("pleamar {} · language {}.{}", env!("CARGO_PKG_VERSION"), lenguaje::VERSION.0, lenguaje::VERSION.1);
                 std::process::exit(0);
             }
             "--aprobar" => {
@@ -98,7 +98,7 @@ fn args() -> Args {
                 let ruta = valor();
                 std::process::exit(match escenas::de_fichero::leer(&ruta) {
                     Ok(e) => {
-                        println!("{ruta}: bien · {} propiedades, {} instrucciones, {} capas, {} reglas, {} zonas, {} gestos", e.props.len(), e.instrs.len(), e.capas.len(), e.reglas.len(), e.zonas.len(), e.gestos.len());
+                        println!("{ruta}: ok · {} properties, {} instructions, {} layers, {} rules, {} zones, {} gestures", e.props.len(), e.instrs.len(), e.capas.len(), e.reglas.len(), e.zonas.len(), e.gestos.len());
                         0
                     }
                     Err(m) => {
@@ -110,8 +110,8 @@ fn args() -> Args {
             "--pantalla" => a.pantalla = Some(valor()),
             "--bloqueo" => a.bloqueo = valor().parse().expect("--bloqueo quiere milisegundos"),
             "--raton" => a.raton = Some(valor()),
-            "--segundos" => a.segundos = Some(valor().parse().expect("--segundos quiere un número")),
-            "--margen" => a.margen = Some(valor().parse().expect("--margen quiere píxeles")),
+            "--segundos" => a.segundos = Some(valor().parse().expect("--segundos wants a number")),
+            "--margen" => a.margen = Some(valor().parse().expect("--margen wants pixels")),
             "--ingenuo" => a.ingenuo = true,
             "--demo" => a.demo = true,
             "--sin-hud" => a.hud = false,
@@ -141,7 +141,7 @@ fn main() {
         "enjambre" => Box::<escenas::enjambre::Enjambre>::default(),
         ruta if std::path::Path::new(ruta).is_file() => escenas::de_fichero::guion_para(ruta, a_render.clone(), a_logica.clone(), bloqueada.clone()),
         otra => {
-            eprintln!("no conozco la escena «{otra}», ni es un fichero\n{AYUDA}");
+            eprintln!("I don't know the scene '{otra}', and it is not a file\n{AYUDA}");
             std::process::exit(2)
         }
     };
@@ -162,8 +162,8 @@ fn main() {
     let pide = escena.superficies.clone();
 
     println!(
-        "pleamar · modo {} · la lógica se bloquea {} ms tras cada decisión",
-        if a.ingenuo { "INGENUO (un solo hilo)" } else { "separado (render independiente)" },
+        "pleamar · {} mode · the logic blocks {} ms after every decision",
+        if a.ingenuo { "NAIVE (single thread)" } else { "separado (render independiente)" },
         a.bloqueo
     );
     let _ = a_render.send(ARender::Escena(escena));
@@ -202,7 +202,7 @@ fn main() {
             if que == "get" {
                 let (pregunta, respuesta) = std::sync::mpsc::channel();
                 let _ = tx.send(ARender::Pregunta(escena::internar(quien), pregunta));
-                return Some(respuesta.recv_timeout(std::time::Duration::from_secs(1)).unwrap_or_else(|_| "? el render no contesta".into()));
+                return Some(respuesta.recv_timeout(std::time::Duration::from_secs(1)).unwrap_or_else(|_| "? the render does not answer".into()));
             }
             let _ = match que {
                 "emit" => tx.send(ARender::SucesoDeFuera(escena::internar(quien), resto.parse().ok())),
@@ -216,8 +216,8 @@ fn main() {
                 "focus" => tx.send(ARender::Enfocar(Some(escena::internar(quien)))),
                 "quit" => salir(),
                 _ => {
-                    eprintln!("órdenes · no entiendo «{linea}»");
-                    return Some(format!("? no entiendo «{}»: emit, fact, text, focus, get, quit", linea.trim()));
+                    eprintln!("orders · I don't understand '{linea}'");
+                    return Some(format!("? I don't understand '{}': emit, fact, text, focus, get, quit", linea.trim()));
                 }
             };
             None
@@ -229,11 +229,11 @@ fn main() {
         std::thread::spawn(move || {
             let inicio = std::time::Instant::now();
             for paso in guion.split_whitespace() {
-                let (que, cuando) = paso.split_once('@').expect("--raton: falta @ms");
+                let (que, cuando) = paso.split_once('@').expect("--raton: @ms is missing");
                 let cuando = Duration::from_millis(cuando.parse().expect("--raton: ms"));
                 std::thread::sleep(cuando.saturating_sub(inicio.elapsed()));
                 // Cada paso se dice, para saber a qué responde lo que venga detrás.
-                println!("ratón  · {que}");
+                println!("mouse  · {que}");
                 let _ = match que {
                     // Un clic entero: bajar y subir.
                     "pulsa" => tx.send(ARender::Boton(0, true)).and_then(|_| tx.send(ARender::Boton(0, false))),

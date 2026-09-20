@@ -962,7 +962,7 @@ pub struct Permisos {
 impl Escena {
     /// La principal: la que se declara sin nombre, o la primera.
     pub fn superficie(&self) -> &Superficie {
-        self.superficies.first().expect("toda escena tiene al menos una superficie")
+        self.superficies.first().expect("every scene has at least one surface")
     }
     pub fn superficie_mut(&mut self) -> &mut Superficie {
         if self.superficies.is_empty() {

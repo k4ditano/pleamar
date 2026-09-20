@@ -1,4 +1,4 @@
-// espera: fallo «rota.plm:4:23: no hay nada que se llame «totl»»
+// espera: fallo «rota.plm:4:23: there is nothing called 'totl'»
 import "comun/rota.plm"
 scene X {
     surface { size: 100, 40 }

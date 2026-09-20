@@ -213,7 +213,7 @@ pub fn servicio(avisar: Box<dyn Fn(Valor) + Send>) -> bool {
 
 /// `notifications.dismiss(id)`, `notifications.invoke(id, "default")`, `notifications.clear()`.
 pub fn orden(que: &str, args: &[Valor]) -> Result<(), String> {
-    let central = CENTRAL.get().ok_or("el servicio de notificaciones no está en marcha: falta sys.watch(\"notifications\", …)")?;
+    let central = CENTRAL.get().ok_or("the notifications service is not running: sys.watch(\"notifications\", …) is missing")?;
     match (que, args) {
         ("notifications.dismiss", [Valor::Num(id)]) => {
             central.cerrar(*id as u32, 2);
@@ -227,7 +227,7 @@ pub fn orden(que: &str, args: &[Valor]) -> Result<(), String> {
             let ids: Vec<u32> = central.estado.lock().unwrap().avisos.iter().map(|a| a.id).collect();
             ids.into_iter().for_each(|id| { central.cerrar(id, 2); });
         }
-        _ => return Err(format!("«{que}» no se pide así: notifications.dismiss(id), notifications.invoke(id, clave), notifications.clear()")),
+        _ => return Err(format!("'{que}' is not asked like that: notifications.dismiss(id), notifications.invoke(id, key), notifications.clear()")),
     }
     central.decir(Cosa::Cambio);
     Ok(())
