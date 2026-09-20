@@ -190,3 +190,19 @@ they show up, not at the end.
 | [`.claude/skills/pleamar/`](.claude/skills/pleamar/) | So an AI writes `.plm` without making things up |
 
 The working notes (01, 03–06, 09) are the design logbook: how this got here.
+
+## Licence
+
+**The code is here to be read, but this is not open source.** pleamar is under the
+[PolyForm Noncommercial License 1.0.0](LICENSE): use it, study it, change it and
+share it for anything **noncommercial** — your own desktop, a hobby project,
+research, teaching, a charity — and that includes changing it and passing it on.
+
+**Anything commercial needs permission.** Selling it, shipping it inside a
+product, or running it as part of a business is not covered. Ask, and it can be
+arranged.
+
+Every dependency is permissive (MIT, Apache-2.0, BSD-3-Clause, Zlib), so none of
+them forces anything on this code. If binaries ever get handed out, their
+copyright notices have to travel with them: `THIRD-PARTY.md` has the list, and
+`cargo about` regenerates the full texts.
