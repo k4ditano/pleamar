@@ -38,6 +38,13 @@ pub struct Contexto {
     alarmas: Vec<(Instant, &'static str)>,
 }
 
+impl Contexto {
+    /// El de la lógica de un plugin, que corre en su propio hilo: ni demo, ni eco, ni bloqueo de ensayo.
+    pub fn de_plugin(tx: Sender<ARender>, bloqueada: Arc<AtomicBool>) -> Contexto {
+        Contexto { tx, bloqueada, op: Opciones { bloqueo: Duration::ZERO, demo: false, ingenuo: false, eco: false }, alarmas: Vec::new() }
+    }
+}
+
 #[allow(dead_code)] // animar e impulso siguen ahí para guiones que aún manden intenciones sueltas
 impl Contexto {
     pub fn animar(&self, prop: PropId, a: f32, muelle: Muelle, retraso_ms: u64) {
