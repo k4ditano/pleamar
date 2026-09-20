@@ -102,7 +102,8 @@ pub enum Teclado {
 
 impl Default for Superficie {
     fn default() -> Self {
-        Superficie { nombre: String::new(), origen: (0.0, 0.0), abierta: None, ancho: 720, alto: 224, ancla: Ancla::Arriba, margen: [40, 0, 0, 0], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Estas(vec!["HDMI-A-1".into()]), teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
+        // Neutra: todo el ancho, arriba, en todos los monitores. Lo que pida la escena manda.
+        Superficie { nombre: String::new(), origen: (0.0, 0.0), abierta: None, ancho: 0, alto: 40, ancla: Ancla::Arriba, margen: [0; 4], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Todas, teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
     }
 }
 
@@ -1062,7 +1063,7 @@ impl Muelle {
     pub const SERENO: Muelle = Muelle { rigidez: 150.0, freno: 23.0 };
     pub const RAPIDO: Muelle = Muelle { rigidez: 420.0, freno: 40.0 };
     pub const LENTO: Muelle = Muelle { rigidez: 28.0, freno: 11.0 };
-    pub const OJOS: Muelle = Muelle { rigidez: 190.0, freno: 24.0 };
+    pub const SUAVE: Muelle = Muelle { rigidez: 190.0, freno: 24.0 };
     pub const POSE: Muelle = Muelle { rigidez: 260.0, freno: 28.0 };
 }
 

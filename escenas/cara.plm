@@ -31,8 +31,8 @@ scene Face {
     pose look.y = 0
 
     prop eyelid = 1
-    prop gaze.x = 0 ~eyes
-    prop gaze.y = 0 ~eyes
+    prop gaze.x = 0 ~gentle
+    prop gaze.y = 0 ~gentle
 
     let s  = 1.5                       // la bolita, a vez y media
     let cx = 360

@@ -199,7 +199,7 @@ Una biblioteca puede traer también **lo que mueve por dentro** —`prop`, `pose
 | `image fox = icon "firefox", 48, 48` | Una imagen, y a qué tamaño lógico se pinta como mucho. `icon "nombre"`, `file "ruta"`, o `from un_texto`: la que ese texto diga (un nombre de icono, o una ruta si empieza por `/`) |
 | `measure label` | Crea `label.width` y `label.height`, que rellena el texto que lleve `measure: label` |
 | `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | Un nombre para una expresión, o para un color |
-| `spring bouncy = 170, 12` | Un muelle propio: rigidez, freno. De casa: `lively`, `calm`, `quick`, `slow`, `eyes`, `pose`. En línea: `~spring(170, 12)` |
+| `spring bouncy = 170, 12` | Un muelle propio: rigidez, freno. De casa: `lively`, `calm`, `quick`, `slow`, `gentle`, `pose`. En línea: `~spring(170, 12)` |
 | `zone box whole { at: …; size: …; active: expr }` | Una zona que no se pinta |
 
 **Varias ventanas en un proceso.** `surface { … }` sin nombre es la de la escena, y dibuja lo que hay suelto. Con nombre, `surface panel { … }` es una de varias y **lleva dentro lo que dibuja**:
@@ -485,7 +485,7 @@ scene Reference2 {
 }
 ```
 
-Una cara: una pose, un gesto, y lo que lleva sola:
+Una pose, un gesto y lo que lleva solo: la cara es el ejemplo, pero sirve para cualquier cosa que tenga estados y se mueva entre ellos.
 
 ```plm
 language 0.1
@@ -495,8 +495,8 @@ scene Reference3 {
     pose look.y = 0
     prop lid = 1
     prop breath = 0
-    prop gaze.x = 0 ~eyes
-    prop gaze.y = 0 ~eyes
+    prop gaze.x = 0 ~gentle
+    prop gaze.y = 0 ~gentle
     fact searching = false
     event shutter
 
@@ -559,7 +559,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 parameter_types: number bool color text record event image gesture spring
-springs: lively calm quick slow eyes pose
+springs: lively calm quick slow gentle pose
 units: px % deg ms s
 cursors: default pointer text grab grabbing
 surface.anchor: top bottom left right top_left top_right bottom_left bottom_right center

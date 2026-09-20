@@ -24,8 +24,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const AYUDA: &str = "pleamar [opciones]
-  --escena NOMBRE     un fichero de escena (.plm), que se recarga solo al guardarlo; o una de las
-                      escritas en Rust: marea (por defecto), isla, cara, muestrario, enjambre
+  --escena FICHERO    la escena que se abre (.plm); se recarga sola al guardarla. También valen los
+                      bancos de ensayo escritos en Rust: marea, isla, cara, muestrario, enjambre
   --comprobar FICHERO lee una escena, dice si está bien y sale
   --aprobar ESCENA    enseña lo que piden los plugins de una escena y pregunta si se les aprueba
                       (con --si detrás, no pregunta). Sin aprobar, un plugin corre sin tocar el sistema
@@ -61,7 +61,7 @@ struct Args {
 }
 
 fn args() -> Args {
-    let mut a = Args { escena: "marea".into(), pantalla: None, bloqueo: 600, ingenuo: false, demo: false, raton: None, segundos: None, margen: None, hud: true, reducido: false, sin_vsync: false };
+    let mut a = Args { escena: String::new(), pantalla: None, bloqueo: 600, ingenuo: false, demo: false, raton: None, segundos: None, margen: None, hud: true, reducido: false, sin_vsync: false };
     let mut it = std::env::args().skip(1);
     while let Some(op) = it.next() {
         let mut valor = || it.next().unwrap_or_else(|| { eprintln!("{AYUDA}"); std::process::exit(2) });
@@ -119,6 +119,10 @@ fn args() -> Args {
             "--sin-vsync" => a.sin_vsync = true,
             _ => { eprintln!("{AYUDA}"); std::process::exit(2) }
         }
+    }
+    if a.escena.is_empty() {
+        eprintln!("{AYUDA}");
+        std::process::exit(2);
     }
     a
 }

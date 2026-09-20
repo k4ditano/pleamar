@@ -11,6 +11,8 @@ impl Guion for Enjambre {
     fn escena(&mut self) -> Escena {
         let n: usize = std::env::var("PLEAMAR_N").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
         let mut e = Escena::default();
+        // Banco de ensayo: mide lo suyo. `--pantalla` dice en cuál se abre.
+        e.superficies = vec![Superficie { ancho: 720, alto: 600, margen: [40, 0, 0, 0], ..Default::default() }];
         let late = e.prop("late", 0.0);
         let columnas = ((n as f32 * 3.2).sqrt().ceil() as usize).max(1);
         let filas = n.div_ceil(columnas);

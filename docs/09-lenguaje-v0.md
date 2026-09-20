@@ -87,7 +87,7 @@ Números con unidad: `40`, `40px`, `34%` (= 0.34), `138deg` (a radianes), `320ms
 | `measure label` | Crea `label.width` y `label.height`, que rellena el texto que lleve `measure: label` |
 | `let panel.x = orb.x + 62` | Un nombre para una expresión |
 | `let mint = #9ed6bd` · `let warm = mix(mint, #f84, 50%)` | Un nombre para un color |
-| `spring bouncy = 170, 12` | Un muelle propio: rigidez, freno. De casa: lively, calm, quick, slow, eyes, pose. En línea: `~spring(170, 12)` |
+| `spring bouncy = 170, 12` | Un muelle propio: rigidez, freno. De casa: lively, calm, quick, slow, gentle, pose. En línea: `~spring(170, 12)` |
 
 ## Expresiones
 

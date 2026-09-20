@@ -36,8 +36,8 @@ scene Marea {
     prop glow    = 0          // el realce del botón
     prop eyelid  = 1
     prop breath  = 0
-    prop gaze.x  = 0 ~eyes
-    prop gaze.y  = 0 ~eyes
+    prop gaze.x  = 0 ~gentle
+    prop gaze.y  = 0 ~gentle
 
     let panel.x = orb.x + 62
     let panel.y = orb.y - 70

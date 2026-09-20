@@ -1,14 +1,24 @@
 # pleamar
 
-Prototipo de una idea: **en una shell de escritorio, animar no debería depender
-de la lógica**. La vista declara transiciones («el ancho va a 406 con este
-muelle, dentro de 70 ms») y un hilo de render las recorre a la cadencia de la
-pantalla, pase lo que pase en el hilo que decide. Es lo que hace Core Animation
-en iOS, y lo que QtQuick —y por tanto Quickshell— no puede hacer con un
-`Behavior` o un `SpringAnimation`.
+**Una alternativa a [Quickshell](https://quickshell.outfoxxed.me): escribir el
+escritorio —barras, lanzadores, notificaciones, bandeja— en un lenguaje
+declarativo propio, sobre un runtime en Rust.**
 
-Imita a [Marea](../proyecto-marea): la bolita grafito, sus ojos, y la tarjeta de
-aviso que le nace del costado.
+La idea de fondo: **animar no debería depender de la lógica**. La vista declara
+transiciones («el ancho va a 406 con este muelle, dentro de 70 ms») y un hilo de
+render las recorre a la cadencia de la pantalla, pase lo que pase en el hilo que
+decide. Es lo que hace Core Animation en iOS, y lo que QtQuick —y por tanto
+Quickshell— no puede hacer con un `Behavior` o un `SpringAnimation`. Con la
+lógica bloqueada 600 ms, aquí salen 38 frames a ~17 ms; en el mismo ensayo en
+QML, un hueco de 600 ms.
+
+Y lo demás que sale de escribirlo en Rust con un lenguaje propio: todos los
+nombres se comprueban al cargar, nada de lo declarado puede colgarse, y un
+plugin de otro corre con los permisos que le apruebes, no con los tuyos.
+
+Qué falta para igualar a Quickshell, medido contra configuraciones de verdad:
+`docs/07-que-falta.md`. Las escenas `marea` y `cara` son bancos de ensayo: la
+prueba de esfuerzo inicial fue caber una shell existente.
 
 ```sh
 cargo build --release

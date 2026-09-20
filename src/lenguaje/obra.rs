@@ -281,7 +281,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
             "calm" => Muelle::SERENO,
             "quick" => Muelle::RAPIDO,
             "slow" => Muelle::LENTO,
-            "eyes" => Muelle::OJOS,
+            "gentle" => Muelle::SUAVE,
             "pose" => Muelle::POSE,
             otro => unreachable!("«{otro}» está en el vocabulario, pero no tiene rigidez ni freno"),
         })).collect(),

@@ -38,6 +38,8 @@ const GUION: &[(u64, &str)] = &[
 impl Guion for Cara {
     fn escena(&mut self) -> Escena {
         let mut e = Escena::default();
+        // Banco de ensayo: mide lo suyo. `--pantalla` dice en cuál se abre.
+        e.superficies = vec![Superficie { ancho: 720, alto: 260, margen: [40, 0, 0, 0], ..Default::default() }];
 
         // ── la frontera ──────────────────────────────────────────
         let grabando = e.hecho("grabando", 0.0);
@@ -71,8 +73,8 @@ impl Guion for Cara {
         let mira_y = e.prop_de_pose("mira.y", 0.0);
 
         let parpado = e.prop("párpado", 1.0);
-        let puntero_x = e.prop_con("puntero.x", 0.0, Muelle::OJOS);
-        let puntero_y = e.prop_con("puntero.y", 0.0, Muelle::OJOS);
+        let puntero_x = e.prop_con("puntero.x", 0.0, Muelle::SUAVE);
+        let puntero_y = e.prop_con("puntero.y", 0.0, Muelle::SUAVE);
 
         // ── el dibujo ────────────────────────────────────────────
         let cy = CY + sube * S;

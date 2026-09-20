@@ -22,6 +22,8 @@ pub struct Marea {
 impl Guion for Marea {
     fn escena(&mut self) -> Escena {
         let mut e = Escena::default();
+        // Banco de ensayo: mide lo suyo. `--pantalla` dice en cuál se abre.
+        e.superficies = vec![Superficie { ancho: 720, alto: 224, margen: [40, 0, 0, 0], ..Default::default() }];
         let orbe_x = e.prop("orbe.x", REPOSO_X);
         let orbe_y = e.prop("orbe.y", ORBE_Y);
         let panel_w = e.prop("panel.ancho", 0.0);
@@ -32,8 +34,8 @@ impl Guion for Marea {
         let boton = e.prop("boton", 0.0);
         let parpado = e.prop("párpado", 1.0);
         let respira = e.prop("respira", 0.0);
-        let mira_x = e.prop_con("mirada.x", 0.0, Muelle::OJOS);
-        let mira_y = e.prop_con("mirada.y", 0.0, Muelle::OJOS);
+        let mira_x = e.prop_con("mirada.x", 0.0, Muelle::SUAVE);
+        let mira_y = e.prop_con("mirada.y", 0.0, Muelle::SUAVE);
 
         // Estirarse con la velocidad: una expresión, no código.
         let estira = ((orbe_x.vel().abs() - orbe_y.vel().abs()) / 2400.0).acotar(-0.22, 0.22);
