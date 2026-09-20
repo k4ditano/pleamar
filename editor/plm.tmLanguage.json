@@ -45,7 +45,7 @@
       "name": "support.function.plm"
     },
     {
-      "match": "\\b(press|release|scroll|drag|hold|enter|leave|hover|away|idle|key|submit|focus|blur|drop|change)\\b",
+      "match": "\\b(press|release|scroll|drag|hold|enter|leave|hover|away|idle|key|submit|focus|blur|drop|change|still)\\b",
       "name": "entity.name.tag.plm"
     },
     {

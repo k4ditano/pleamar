@@ -3518,6 +3518,12 @@ impl<'a> Obra<'a> {
                 "blur" => Disparador::PierdeFoco,
                 // `on change floor(list.scroll / 34) { … }`: cuando esa cuenta cambie.
                 "change" => Disparador::Cambia(self.expr(c)?),
+                // `on still audio.volume for 1.1s { … }`: cuando lleve ese rato igual.
+                "still" => {
+                    let que = self.expr(c)?;
+                    c.exige_palabra("for")?;
+                    Disparador::Quieta { que, durante: c.dur()? }
+                }
                 "drop" => Disparador::Recibe(self.zona(c)?),
                 "enter" => Disparador::Entra(self.zona(c)?),
                 "leave" => Disparador::Sale(self.zona(c)?),

@@ -504,6 +504,7 @@ The names of a slot are resolved where the string is written, not where it is us
 | `scroll zone` | the wheel, over any zone underneath it. Read in `wheel` |
 | `drag zone` | it moves with the button down; it keeps going even if it leaves, until release. `local.x`, `drag.dx`. Like the wheel, it works for any zone that was underneath at the press, not only the topmost one: that is how a list is dragged by grabbing it by a row |
 | `change expr` | that computation stops being worth what it was worth. Being born does not count: it fires on changing |
+| `still expr for 1.1s` | that computation has been worth the same for that long. The reverse of `change`, and like it, being born does not count. Every change puts the clock back to zero, so a run —the volume key pressed six times— is one wait and not six, and what it fires happens once when the run ends |
 | `key Escape` · `key Ctrl+k` | a key; the surface has to ask for the keyboard. Modifiers: `Ctrl+` `Alt+` `Super+` |
 | `submit field` | Enter inside that `input` |
 | `focus` · `blur` | the surface gains or loses the keyboard |
@@ -684,7 +685,7 @@ properties.children: move
 properties.layout: at anchor gap padding align fill corner show opacity cursor view step content wrap
 functions: min max abs floor ceil clamp smooth mix if vel
 text_functions: upper lower
-triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change
+triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change still
 effects: toggle emit impulse play focus blur
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back
 frame: hold emit

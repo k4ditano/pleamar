@@ -820,6 +820,12 @@ pub enum Disparador {
     /// Cuando esa cuenta deje de valer lo que valía. La primera vez no cuenta: se
     /// dispara al cambiar, no al nacer.
     Cambia(Expr),
+    /// Cuando esa cuenta lleve este rato valiendo lo mismo. Es el reverso de
+    /// `Cambia`, y como ella, nacer no cuenta: hace falta un cambio antes, o una
+    /// escena que arranca quieta se dispararía sola al abrirse. Cada cambio
+    /// vuelve a poner el reloj a cero, así que una ráfaga —la tecla de volumen
+    /// pulsada seis veces— es una sola espera y no seis.
+    Quieta { que: Expr, durante: Duration },
     Al(SucesoId),
 }
 

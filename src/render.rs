@@ -607,6 +607,28 @@ pub fn hilo(
                         let antes = e.valia.replace(ahora);
                         antes.is_some_and(|v| (v - ahora).abs() > 0.001)
                     }
+                    // `on still audio.volume for 1.1s { … }`: cuando eso lleve ese
+                    // rato quieto. Cada cambio pone el reloj a cero, así que seis
+                    // toques seguidos a la tecla del volumen son una sola espera.
+                    Disparador::Quieta { que, durante } => {
+                        let valor = que.evaluar(c);
+                        let antes = e.valia.replace(valor);
+                        if antes.is_some_and(|v| (v - valor).abs() > 0.001) {
+                            e.armada = true;
+                            e.proxima = Some(ahora + *durante);
+                        }
+                        match e.proxima.filter(|_| e.armada) {
+                            Some(p) if ahora >= p => {
+                                e.armada = false;
+                                true
+                            }
+                            Some(p) => {
+                                citas.push(p);
+                                false
+                            }
+                            None => false,
+                        }
+                    }
                     Disparador::Tecla(t) => teclas.iter().any(|x| x == t),
                     Disparador::Envia(t) => enviados.contains(&(t.0 as usize)),
                     Disparador::GanaFoco => cambios_de_foco.contains(&true),
