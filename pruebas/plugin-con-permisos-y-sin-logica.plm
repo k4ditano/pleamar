@@ -1,0 +1,3 @@
+// espera: fallo «la biblioteca «NoLogic» pide permisos, pero no tiene lógica que los use»
+import "plugins/sin-logica.plm"
+scene X { surface { size: 10, 10 } }

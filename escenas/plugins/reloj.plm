@@ -1,0 +1,22 @@
+// Un plugin: una biblioteca con su lógica al lado (reloj.luau). Trae un componente,
+// su propia frontera —que vive bajo su nombre: `Clock.now`— y los permisos que su
+// lógica necesita, que son suyos y no los de la escena que lo use.
+
+import "../comun/paleta.plm"
+
+library Clock strict {
+    permissions { run: "date" }
+
+    text now = "--:--"
+    text day = ""
+    fact seconds = false                  // la escena puede pedirlos: `Clock.seconds = true`
+    event tapped ->                       // le llega a la lógica del plugin, y a nadie más
+
+    component Clock(tone: color = ink) {
+        row face { padding: 9; gap: 8; align: center; fill: coal; corner: 14; cursor: pointer
+            text now { size: 14; weight: 600; color: tone }
+            text day { size: 11.5; color: tone; opacity: 55% }
+        }
+        on press face { emit tapped }
+    }
+}

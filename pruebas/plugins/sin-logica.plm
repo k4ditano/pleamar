@@ -1,0 +1,4 @@
+library NoLogic {
+    permissions { run: "date" }
+    component Thing { size: 1, 1 }
+}

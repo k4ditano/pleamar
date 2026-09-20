@@ -13,7 +13,7 @@ pub const SENTENCIAS: &[&str] = &[
 ];
 
 /// Lo que una biblioteca puede declarar.
-pub const DE_BIBLIOTECA: &[&str] = &["let", "spring", "component"];
+pub const DE_BIBLIOTECA: &[&str] = &["let", "spring", "component", "permissions", "fact", "text", "model", "event"];
 
 /// Qué propiedades acepta cada elemento. `shape` son las comunes a todas las formas.
 pub const PROPIEDADES: &[(&str, &[&str])] = &[

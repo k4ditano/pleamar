@@ -159,6 +159,8 @@ struct Entorno {
     /// Marca de un hijo que viene de fuera del componente (`children`): se lee con
     /// los nombres de quien lo escribió, no con los de dentro.
     ambito_de_fuera: Option<Vec<Entorno>>,
+    /// La copia de un componente de biblioteca: de qué fichero.
+    biblioteca: Option<usize>,
     /// De una biblioteca `strict`: aquí dentro solo vale lo que se pide, lo que se
     /// declara y lo de la propia biblioteca.
     estricta: bool,
@@ -171,6 +173,13 @@ struct Componente<'a> {
     huecos: Vec<String>,
     parametros: Vec<Parametro>,
     nodo: &'a Nodo,
+}
+
+/// Una biblioteca importada: de qué fichero viene, cómo se llama, y su lógica si la tiene.
+pub struct Biblioteca {
+    pub fichero: usize,
+    pub nombre: String,
+    pub logica: Option<std::path::PathBuf>,
 }
 
 /// Lo que una copia trae para los huecos de su componente, y el ámbito de quien lo escribió.
@@ -196,6 +205,12 @@ struct Obra<'a> {
     ficheros: &'a [String],
     /// Qué ficheros, por su número, son bibliotecas `strict`.
     estrictos: &'a [usize],
+    bibliotecas: &'a [Biblioteca],
+    /// La frontera que declara cada biblioteca, por el número de su fichero: cómo se
+    /// llama dentro (`now`) y cómo se llama de verdad (`Clock.now`).
+    frontera_de: HashMap<usize, HashMap<String, String>>,
+    /// Y los permisos que pide para su lógica.
+    permisos_de: HashMap<usize, Permisos>,
     /// Los nombres de los valores de los enumerados, como números: `critical` es 2.
     valores: HashMap<String, f32>,
     /// Lo que cada copia en curso trae para el `children` de su componente: los
@@ -237,7 +252,7 @@ struct Obra<'a> {
     bajo: Vec<Transformacion>,
 }
 
-pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], estrictos: &'a [usize]) -> Result<Escena, Vec<Fallo>> {
+pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], estrictos: &'a [usize], bibliotecas: &'a [Biblioteca]) -> Result<Escena, Vec<Fallo>> {
     let escena = match arbol {
         [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "scene") => n,
         [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "library") => {
@@ -259,7 +274,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], estrictos: &'a
             otro => unreachable!("«{otro}» está en el vocabulario, pero no tiene rigidez ni freno"),
         })).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
-        ficheros, estrictos, valores: HashMap::new(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
+        ficheros, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), valores: HashMap::new(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
@@ -301,6 +316,14 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], estrictos: &'a
     let (w, h) = (o.e.superficie.ancho as f32, o.e.superficie.alto as f32);
     o.e.hechos[0].1 = if w > 0.0 { w } else { 1920.0 };
     o.e.hechos[1].1 = h;
+    // Una biblioteca con un `.luau` al lado es un plugin: su lógica, con sus permisos.
+    for b in bibliotecas {
+        if let Some(logica) = &b.logica {
+            o.e.plugins.push(Plugin { nombre: b.nombre.clone(), logica: logica.clone(), permisos: o.permisos_de.get(&b.fichero).cloned().unwrap_or_default() });
+        } else if o.permisos_de.contains_key(&b.fichero) {
+            o.fallos.push(Fallo::en(b.fichero * super::POR_FICHERO + 1, 1, format!("la biblioteca «{}» pide permisos, pero no tiene lógica que los use: falta su `.luau` al lado", b.nombre)));
+        }
+    }
     // Lo que un componente de biblioteca `strict` leyó de la escena sin pedirlo.
     for (componente, nombre, donde) in o.sin_pedir.take() {
         o.entornos.clear();
@@ -367,6 +390,19 @@ impl<'a> Obra<'a> {
                 }
             }
         }
+        // Dentro de un componente de una biblioteca, `now` es el `Clock.now` de su frontera.
+        if let Some(mia) = self.entornos.iter().rev().find_map(|e| e.biblioteca).and_then(|k| self.frontera_de.get(&k)) {
+            let mut hasta = n.len();
+            loop {
+                if let Some(g) = mia.get(&n[..hasta]) {
+                    return format!("{g}{}", &n[hasta..]);
+                }
+                match n[..hasta].rfind('.') {
+                    Some(p) => hasta = p,
+                    None => break,
+                }
+            }
+        }
         self.vigilar(&n);
         n
     }
@@ -407,7 +443,19 @@ impl<'a> Obra<'a> {
                 e.alias.insert(interpolado, g.clone());
                 g
             }
-            _ => interpolado,
+            _ => {
+                // En el nivel de una biblioteca: su frontera vive bajo su nombre, para que dos
+                // plugins puedan tener cada uno su `count` sin pisarse, y sin pisar a la escena.
+                let fichero = MIRANDO.with(|m| m.get().0) / super::POR_FICHERO;
+                match self.bibliotecas.iter().find(|b| b.fichero == fichero && fichero > 0) {
+                    Some(b) => {
+                        let g = format!("{}.{interpolado}", b.nombre);
+                        self.frontera_de.entry(fichero).or_default().insert(interpolado, g.clone());
+                        g
+                    }
+                    None => interpolado,
+                }
+            }
         }
     }
 
@@ -867,7 +915,11 @@ impl<'a> Obra<'a> {
                             lista.push(c.cadena()?);
                         }
                         c.nada_mas()?;
-                        if destino == 0 { self.e.permisos.ordenes = lista } else { self.e.permisos.servicios = lista }
+                        let de_quien = match n.linea / super::POR_FICHERO {
+                            0 => &mut self.e.permisos,
+                            k => self.permisos_de.entry(k).or_default(),
+                        };
+                        if destino == 0 { de_quien.ordenes = lista } else { de_quien.servicios = lista }
                     }
                 }
                 "spring" => {
@@ -2048,6 +2100,7 @@ impl<'a> Obra<'a> {
         env.sufijo = format!("#{nombre}{}", self.copias);
         env.copia = Some((nombre.clone(), n.linea));
         env.estricta = self.componentes[&nombre].estricta;
+        env.biblioteca = Some(self.componentes[&nombre].nodo.linea / super::POR_FICHERO).filter(|k| *k > 0);
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let desde = self.reglas.len();
         // Lo que la copia trae dentro de su bloque va donde el componente diga `children`,

@@ -67,6 +67,9 @@ struct Compartido {
     modelos: Vec<crate::escena::Modelo>,
     /// De los hechos que no son números a secas, qué son: la lógica los ve como `true` o como `"critical"`.
     tipos: HashMap<String, crate::escena::TipoDeHecho>,
+    sucesos: std::collections::HashSet<String>,
+    /// Si es la lógica de un plugin, cómo se llama: para que los errores hablen de él y no de la escena.
+    plugin: Option<String>,
     /// Hasta cuándo puede correr lo que está corriendo.
     limite: Option<Instant>,
 }
@@ -200,7 +203,9 @@ fn permiso_de_orden(c: &Mutex<Compartido>, orden: &str) -> mlua::Result<()> {
     if c.lock().unwrap().permisos.ordenes.iter().any(|o| o == orden) {
         return Ok(());
     }
-    Err(mlua::Error::runtime(format!("la escena no da permiso para lanzar «{orden}». Si debe poder, decláralo en el .plm: permissions {{ run: \"{orden}\" }}")))
+    let quien = c.lock().unwrap().plugin.as_ref().map_or("la escena no da permiso".to_owned(), |p| format!("el plugin «{p}» no tiene permiso"));
+    let donde = if c.lock().unwrap().plugin.is_some() { "en su .plm (los de la escena no le valen)" } else { "en el .plm" };
+    Err(mlua::Error::runtime(format!("{quien} para lanzar «{orden}». Si debe poder, decláralo {donde}: permissions {{ run: \"{orden}\" }}")))
 }
 
 /// Lo mismo para un servicio: `audio.step` es del servicio `audio`.
@@ -209,7 +214,9 @@ fn permiso_de_servicio(c: &Mutex<Compartido>, nombre: &str) -> mlua::Result<()> 
     if c.lock().unwrap().permisos.servicios.iter().any(|s| s == servicio) {
         return Ok(());
     }
-    Err(mlua::Error::runtime(format!("la escena no da permiso para usar el servicio «{servicio}». Si debe poder, decláralo en el .plm: permissions {{ services: \"{servicio}\" }}")))
+    let quien = c.lock().unwrap().plugin.as_ref().map_or("la escena no da permiso".to_owned(), |p| format!("el plugin «{p}» no tiene permiso"));
+    let donde = if c.lock().unwrap().plugin.is_some() { "en su .plm (los de la escena no le valen)" } else { "en el .plm" };
+    Err(mlua::Error::runtime(format!("{quien} para usar el servicio «{servicio}». Si debe poder, decláralo {donde}: permissions {{ services: \"{servicio}\" }}")))
 }
 
 /// Un dato del sistema, como lo ve Luau: tablas, números, textos.
@@ -248,11 +255,65 @@ pub struct GuionLuau {
     bloqueada: Arc<AtomicBool>,
     lua: Option<Lua>,
     c: Arc<Mutex<Compartido>>,
+    /// Si es la lógica de un plugin: su nombre. Todo lo que nombre va bajo él (`Clock.now`),
+    /// así que no puede tocar —ni oír— nada que no sea suyo.
+    prefijo: Option<String>,
+    /// La lógica de la escena lleva consigo la de sus plugins: cada una, su propio estado.
+    plugins: Vec<GuionLuau>,
+}
+
+/// El nombre de verdad de lo que una lógica nombra: en un plugin, bajo su nombre.
+fn afuera(prefijo: &Option<String>, k: &str) -> String {
+    match prefijo {
+        Some(p) => format!("{p}.{k}"),
+        None => k.to_owned(),
+    }
+}
+
+/// «No existe», dicho a quien toca: a un plugin se le habla de lo suyo, con el nombre que él usa.
+fn no_existe<'a>(prefijo: &Option<String>, que: &str, entero: &str, conocidos: impl Iterator<Item = &'a String>) -> mlua::Error {
+    match prefijo {
+        None => mlua::Error::runtime(format!("la escena no tiene {que} «{entero}»{}", pista(entero, conocidos))),
+        Some(p) => {
+            let corto = entero.strip_prefix(&format!("{p}.")).unwrap_or(entero);
+            let suyos: Vec<String> = conocidos.filter_map(|k| k.strip_prefix(&format!("{p}.")).map(str::to_owned)).collect();
+            mlua::Error::runtime(format!("el plugin «{p}» no tiene {que} «{corto}»{}. Un plugin solo ve lo que declara su biblioteca", pista(corto, suyos.iter())))
+        }
+    }
+}
+
+/// Lo mismo para lo que se escucha: `fact:ticking` es `fact:Clock.ticking`, y `tapped`, `Clock.tapped`.
+/// Así un plugin no oye el teclado, ni el ratón, ni los sucesos de la escena: solo lo suyo.
+fn afuera_de_escucha(prefijo: &Option<String>, que: &str) -> String {
+    match (prefijo, que.split_once(':')) {
+        (None, _) => que.to_owned(),
+        (Some(p), Some((clase, nombre))) => format!("{clase}:{p}.{nombre}"),
+        (Some(p), None) => format!("{p}.{que}"),
+    }
 }
 
 impl GuionLuau {
     pub fn nuevo(escena: &str, logica: &str, tx: Sender<ARender>, a_logica: Sender<Evento>, bloqueada: Arc<AtomicBool>) -> Self {
-        GuionLuau { escena: escena.to_owned(), logica: logica.to_owned(), tx, a_logica, bloqueada, lua: None, c: Arc::default() }
+        GuionLuau { escena: escena.to_owned(), logica: logica.to_owned(), tx, a_logica, bloqueada, lua: None, c: Arc::default(), prefijo: None, plugins: Vec::new() }
+    }
+
+    /// La lógica de un plugin. El número es para que sus temporizadores y procesos no se
+    /// llamen igual que los de otra lógica: todas comparten el buzón.
+    fn de_plugin(&self, p: &crate::escena::Plugin, numero: usize) -> Self {
+        let c = Compartido { siguiente: (numero as u32 + 1) * 1_000_000, plugin: Some(p.nombre.clone()), ..Default::default() };
+        GuionLuau { escena: self.escena.clone(), logica: p.logica.to_string_lossy().into_owned(), tx: self.tx.clone(), a_logica: self.a_logica.clone(), bloqueada: self.bloqueada.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefijo: Some(p.nombre.clone()), plugins: Vec::new() }
+    }
+
+    /// Lo que la escena tiene, visto desde esta lógica. Un plugin lo ve todo por dentro
+    /// —se comprueba contra ello—, pero solo puede nombrar lo que empieza por su nombre.
+    fn conocer(&self, e: &Escena, permisos: crate::escena::Permisos) {
+        let mut c = self.c.lock().unwrap();
+        c.hechos = e.hechos.iter().map(|(n, v)| (n.to_string(), *v as f64)).collect();
+        c.textos = e.textos.iter().map(|(n, v)| (n.to_string(), v.clone())).collect();
+        c.permisos = permisos;
+        c.modelos = e.modelos.clone();
+        c.tipos = e.tipos.iter().cloned().collect();
+        c.sucesos = e.sucesos.iter().map(|s| s.0.to_owned()).collect();
     }
 
     /// Un estado de Luau nuevo, con la frontera puesta, y el fichero ejecutado.
@@ -270,6 +331,10 @@ impl GuionLuau {
                 }
             }
         }
+        // Una escena puede no tener lógica propia y sí plugins que la tengan.
+        if self.prefijo.is_none() && !std::path::Path::new(&self.logica).is_file() {
+            return;
+        }
         let fuente = match std::fs::read_to_string(&self.logica) {
             Ok(f) => f,
             Err(e) => return eprintln!("lógica · {}: {e}", self.logica),
@@ -284,7 +349,10 @@ impl GuionLuau {
                 self.lua = Some(lua);
                 let c = self.c.lock().unwrap();
                 println!("lógica · {} en marcha en {:.1} ms · {} manejadores, {} temporizadores", self.logica, t0.elapsed().as_secs_f32() * 1000.0, c.manejadores.values().map(Vec::len).sum::<usize>(), c.temporizadores.len());
-                println!("lógica · permisos · {}", en_claro(&c.permisos));
+                match &self.prefijo {
+                    Some(p) => println!("lógica · plugin «{p}» · permisos · {}", en_claro(&c.permisos)),
+                    None => println!("lógica · permisos · {}", en_claro(&c.permisos)),
+                }
             }
             Err(e) => eprintln!("lógica · la anterior sigue como estaba:\n{e}"),
         }
@@ -308,10 +376,12 @@ impl GuionLuau {
 
         // fact.open = true · fact.open
         let (tx, c) = (self.tx.clone(), self.c.clone());
+        let pre = self.prefijo.clone();
         let poner = lua.create_function(move |_, (_, k, v): (Table, String, Value)| {
+            let k = afuera(&pre, &k);
             // Un nombre mal escrito es un error aquí, con su línea, y no un aviso perdido en el render.
             if !c.lock().unwrap().hechos.contains_key(&k) {
-                return Err(mlua::Error::runtime(format!("la escena no tiene ningún hecho «{k}»{}", pista(&k, c.lock().unwrap().hechos.keys()))));
+                return Err(no_existe(&pre, "ningún hecho", &k, c.lock().unwrap().hechos.keys()));
             }
             let tipo = c.lock().unwrap().tipos.get(&k).cloned();
             let n = a_numero(&k, tipo.as_ref(), &v)?;
@@ -320,7 +390,9 @@ impl GuionLuau {
             Ok(())
         })?;
         let c = self.c.clone();
+        let pre = self.prefijo.clone();
         let leer = lua.create_function(move |lua, (_, k): (Table, String)| {
+            let k = afuera(&pre, &k);
             let c = c.lock().unwrap();
             match c.hechos.get(&k) {
                 Some(v) => de_numero(lua, c.tipos.get(&k), *v),
@@ -331,16 +403,19 @@ impl GuionLuau {
 
         // text["notice.title"] = "…"
         let (tx, c) = (self.tx.clone(), self.c.clone());
+        let pre = self.prefijo.clone();
         let poner = lua.create_function(move |_, (_, k, v): (Table, String, String)| {
+            let k = afuera(&pre, &k);
             if !c.lock().unwrap().textos.contains_key(&k) {
-                return Err(mlua::Error::runtime(format!("la escena no tiene ningún texto «{k}»{}", pista(&k, c.lock().unwrap().textos.keys()))));
+                return Err(no_existe(&pre, "ningún texto", &k, c.lock().unwrap().textos.keys()));
             }
             c.lock().unwrap().textos.insert(k.clone(), v.clone());
             let _ = tx.send(ARender::Texto(internar(&k), v));
             Ok(())
         })?;
         let c = self.c.clone();
-        let leer = lua.create_function(move |_, (_, k): (Table, String)| Ok(c.lock().unwrap().textos.get(&k).cloned()))?;
+        let pre = self.prefijo.clone();
+        let leer = lua.create_function(move |_, (_, k): (Table, String)| Ok(c.lock().unwrap().textos.get(&afuera(&pre, &k)).cloned()))?;
         g.set("text", Self::tabla_viva(&lua, leer, poner)?)?;
 
         // model.rows = { { label = "Abrir", enabled = true }, … }: una lista entera, de una vez.
@@ -348,30 +423,56 @@ impl GuionLuau {
         // y solo viaja lo que haya cambiado.
         let guardadas = lua.create_table()?;
         let (tx, c, almacen) = (self.tx.clone(), self.c.clone(), guardadas.clone());
+        let pre = self.prefijo.clone();
         let poner = lua.create_function(move |_, (_, k, lista): (Table, String, Value)| {
+            let k = afuera(&pre, &k);
             let Value::Table(lista) = lista else {
                 return Err(mlua::Error::runtime(format!("a «model.{k}» se le da una lista de fichas: model.{k} = {{ {{ … }}, {{ … }} }}")));
             };
             let mut c = c.lock().unwrap();
             let Some(m) = c.modelos.iter().find(|m| m.nombre == k).cloned() else {
-                return Err(mlua::Error::runtime(format!("la escena no tiene ningún modelo «{k}»{}", pista(&k, c.modelos.iter().map(|m| &m.nombre)))));
+                return Err(no_existe(&pre, "ningún modelo", &k, c.modelos.iter().map(|m| &m.nombre)));
             };
             repartir(&mut c, &tx, &k, &m, &lista)?;
             almacen.raw_set(k, lista)
         })?;
-        let leer = lua.create_function(move |_, (_, k): (Table, String)| guardadas.raw_get::<Value>(k))?;
+        let pre = self.prefijo.clone();
+        let leer = lua.create_function(move |_, (_, k): (Table, String)| guardadas.raw_get::<Value>(afuera(&pre, &k)))?;
         g.set("model", Self::tabla_viva(&lua, leer, poner)?)?;
 
         let tx = self.tx.clone();
-        g.set("emit", lua.create_function(move |_, n: String| Ok(tx.send(ARender::Suceso(internar(&n))).is_ok()))?)?;
+        let (pre, c) = (self.prefijo.clone(), self.c.clone());
+        g.set("emit", lua.create_function(move |_, n: String| {
+            let n = afuera(&pre, &n);
+            // Un suceso que no existe era un aviso perdido en el render: aquí es un error, con su línea.
+            if !c.lock().unwrap().sucesos.contains(&n) {
+                let conocidos: Vec<String> = c.lock().unwrap().sucesos.iter().cloned().collect();
+                return Err(no_existe(&pre, "ningún suceso", &n, conocidos.iter()));
+            }
+            Ok(tx.send(ARender::Suceso(internar(&n))).is_ok())
+        })?)?;
         // focus("query") pone el cursor de texto en un campo; focus() lo quita.
         let tx = self.tx.clone();
-        g.set("focus", lua.create_function(move |_, n: Option<String>| Ok(tx.send(ARender::Enfocar(n.map(|n| internar(&n)))).is_ok()))?)?;
+        let pre = self.prefijo.clone();
+        g.set("focus", lua.create_function(move |_, n: Option<String>| {
+            if pre.is_some() {
+                return Err(mlua::Error::runtime("un plugin no mueve el cursor de escribir: eso es de la escena"));
+            }
+            Ok(tx.send(ARender::Enfocar(n.map(|n| internar(&n)))).is_ok())
+        })?)?;
         let tx = self.tx.clone();
-        g.set("play", lua.create_function(move |_, n: String| Ok(tx.send(ARender::Gesto(internar(&n))).is_ok()))?)?;
+        let pre = self.prefijo.clone();
+        g.set("play", lua.create_function(move |_, n: String| {
+            if pre.is_some() {
+                return Err(mlua::Error::runtime("un plugin no pide gestos: los gestos son de la escena. Que emita un suceso suyo, y la escena decidirá"));
+            }
+            Ok(tx.send(ARender::Gesto(internar(&n))).is_ok())
+        })?)?;
 
         let c = self.c.clone();
+        let pre = self.prefijo.clone();
         g.set("on", lua.create_function(move |_, (que, f): (String, Function)| {
+            let que = afuera_de_escucha(&pre, &que);
             c.lock().unwrap().manejadores.entry(que).or_default().push(f);
             Ok(())
         })?)?;
@@ -527,9 +628,10 @@ impl GuionLuau {
         })?)?;
         g.set("sys", sys)?;
 
-        g.set("log", lua.create_function(|_, v: MultiValue| {
+        let quien = self.prefijo.as_ref().map_or(String::new(), |p| format!("[{p}] "));
+        g.set("log", lua.create_function(move |_, v: MultiValue| {
             let trozos: Vec<String> = v.iter().map(|x| x.to_string().unwrap_or_else(|_| format!("{x:?}"))).collect();
-            println!("luau   · {}", trozos.join(" "));
+            println!("luau   · {quien}{}", trozos.join(" "));
             Ok(())
         })?)?;
 
@@ -577,16 +679,23 @@ impl Guion for GuionLuau {
             std::process::exit(1)
         });
         // Lo que la escena da por cierto al nacer es lo que la lógica cree hasta que alguien diga otra cosa.
-        let mut c = self.c.lock().unwrap();
-        c.hechos = e.hechos.iter().map(|(n, v)| (n.to_string(), *v as f64)).collect();
-        c.textos = e.textos.iter().map(|(n, v)| (n.to_string(), v.clone())).collect();
-        c.permisos = e.permisos.clone();
-        c.modelos = e.modelos.clone();
-        c.tipos = e.tipos.iter().cloned().collect();
+        self.conocer(&e, e.permisos.clone());
+        self.plugins = e.plugins.iter().enumerate().map(|(k, p)| {
+            let plugin = self.de_plugin(p, k);
+            plugin.conocer(&e, p.permisos.clone());
+            plugin
+        }).collect();
         e
     }
 
-    fn evento(&mut self, e: Evento, _: &mut Contexto) {
+    fn evento(&mut self, e: Evento, ctx: &mut Contexto) {
+        // Cada plugin recibe lo mismo, pero solo tiene manejadores con su nombre delante:
+        // de lo que no es suyo no se entera.
+        if !matches!(e, Evento::EscenaNueva(..)) {
+            for p in &mut self.plugins {
+                p.evento(e.clone(), ctx);
+            }
+        }
         let numero = |v: f32| Value::Number(v as f64);
         match e {
             // El fichero se ejecuta ya en el hilo de la lógica, con la escena entregada.
@@ -635,10 +744,31 @@ impl Guion for GuionLuau {
             }
             // La escena se recargó: lo que tenga de nuevo ya se puede nombrar; lo que
             // ya se sabía, se sigue sabiendo.
-            Evento::EscenaNueva(hechos, textos, permisos, modelos, tipos) => {
+            Evento::EscenaNueva(hechos, textos, permisos, modelos, tipos, plugins, sucesos) => {
+                // Los plugins que sigan, con lo nuevo; los que lleguen, arrancan; los que ya no estén, se van.
+                let mut siguen: Vec<GuionLuau> = Vec::new();
+                for (k, p) in plugins.iter().enumerate() {
+                    let mut plugin = match self.plugins.iter().position(|x| x.prefijo.as_deref() == Some(p.nombre.as_str()) && x.logica == p.logica.to_string_lossy()) {
+                        Some(i) => self.plugins.remove(i),
+                        None => {
+                            let mut nuevo = self.de_plugin(p, k + 100);
+                            nuevo.evento(Evento::EscenaNueva(hechos.clone(), textos.clone(), p.permisos.clone(), modelos.clone(), tipos.clone(), Vec::new(), sucesos.clone()), ctx);
+                            nuevo.cargar();
+                            nuevo
+                        }
+                    };
+                    plugin.evento(Evento::EscenaNueva(hechos.clone(), textos.clone(), p.permisos.clone(), modelos.clone(), tipos.clone(), Vec::new(), sucesos.clone()), ctx);
+                    siguen.push(plugin);
+                }
+                for mut fuera in std::mem::replace(&mut self.plugins, siguen) {
+                    println!("lógica · el plugin «{}» ya no está", fuera.prefijo.clone().unwrap_or_default());
+                    fuera.c.lock().unwrap().temporizadores.clear();
+                    fuera.lua = None;
+                }
                 let mut c = self.c.lock().unwrap();
                 c.modelos = modelos;
                 c.tipos = tipos.into_iter().collect();
+                c.sucesos = sucesos.iter().map(|s| (*s).to_owned()).collect();
                 // Los permisos sí se sustituyen: quitar uno de la escena lo quita ya.
                 if c.permisos != permisos {
                     println!("lógica · permisos ahora: {}", en_claro(&permisos));
@@ -677,10 +807,14 @@ impl Guion for GuionLuau {
     }
 
     fn proxima(&self) -> Option<Instant> {
-        self.c.lock().unwrap().temporizadores.iter().map(|t| t.cuando).min()
+        let mia = self.c.lock().unwrap().temporizadores.iter().map(|t| t.cuando).min();
+        self.plugins.iter().filter_map(|p| p.proxima()).chain(mia).min()
     }
 
-    fn tic(&mut self, _: &mut Contexto) {
+    fn tic(&mut self, ctx: &mut Contexto) {
+        for p in &mut self.plugins {
+            p.tic(ctx);
+        }
         let ahora = Instant::now();
         let vencidos: Vec<Function> = {
             let mut c = self.c.lock().unwrap();

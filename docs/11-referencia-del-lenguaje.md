@@ -44,7 +44,8 @@ En EBNF: `[ x ]` es opcional, `{ x }` cero o más veces, `|` alternativas, `"x"`
 ```
 fichero      = [ "language" numero fin ] { "import" texto fin } ( escena | biblioteca ) ;
 escena       = "scene" nombre "{" { sentencia } "}" ;
-biblioteca   = "library" nombre [ "strict" ] "{" { let | muelle | componente } "}" ;
+biblioteca   = "library" nombre [ "strict" ] "{" { let | muelle | componente | frontera } "}" ;
+frontera     = permisos | hecho | suceso | texto_vivo | modelo ;          (* lo de un plugin: vive bajo el nombre de la biblioteca *)
 
 sentencia    = declaracion | dibujo | estructura | capa | regla | comportamiento | gesto ;
 
@@ -146,6 +147,28 @@ color        = "#" hex | nombre | "mix" "(" color "," color "," expr ")" ;
 **Un fichero es una escena o una biblioteca.** Una escena se abre; una biblioteca se importa. `import "ruta.plm"` va antes de `scene` o `library`, y la ruta es relativa **al fichero que importa**. Una biblioteca importada por dos caminos se lee una vez; un círculo es un fallo que dice su camino. Una biblioteca solo declara: `let`, `spring` y `component`. Lo importado se comporta como si estuviera escrito al principio de la escena.
 
 **`library Nombre strict { … }`**: sus componentes solo pueden leer lo que piden por parámetro, lo que ellos declaran, lo de su biblioteca (y lo que esta importe), y los nombres que siempre existen. Leer un hecho, un color o un suceso de la escena sin pedirlo es un fallo al cargar —`«Nosy» es de una biblioteca strict y lee «secret», que es de la escena, sin pedirlo`—: así una biblioteca de otro no depende de cómo se llamen las cosas en tu escena, ni las toca. Sin `strict`, un componente ve todo lo de quien lo usa, que es lo cómodo para las bibliotecas propias.
+
+**Un plugin es una biblioteca con su lógica al lado**: `reloj.plm` y `reloj.luau`. Puede declarar, además, su propia frontera —`fact`, `text`, `model`, `event`— y sus `permissions`:
+
+```
+library Clock strict {
+    permissions { run: "date" }           // los de SU lógica, no los de la escena
+    text now = "--:--"
+    fact seconds = false
+    event tapped ->
+    component Clock(tone: color = ink) {
+        row face { padding: 9; fill: coal; corner: 14;  text now { size: 14; color: tone } }
+        on press face { emit tapped }
+    }
+}
+```
+
+- Su frontera **vive bajo el nombre de la biblioteca**: dentro se escribe `now`; desde la escena, `Clock.now`. Dos plugins pueden tener cada uno su `count`, y ninguno pisa el de la escena.
+- Su lógica corre en **su propio estado de Luau**, y ahí `text.now` es `Clock.now`: no puede nombrar —ni leer, ni escribir, ni emitir— nada que no sea suyo, ni de la escena ni de otro plugin. No oye el teclado, ni el ratón, ni los sucesos de nadie más; no pide gestos ni mueve el cursor de escribir.
+- Lo que toque del sistema lo dicen **sus** `permissions`. Los de la escena no le valen, y los suyos no le valen a la escena. Al arrancar se imprime: `lógica · plugin «Clock» · permisos · órdenes: date`.
+- Una escena puede no tener lógica propia y usar plugins que sí. Guardar el `.plm` o el `.luau` de un plugin recarga en caliente, como lo demás.
+
+Pedir permisos sin tener un `.luau` al lado es un fallo: no hay quien los use.
 
 **El fichero se lee en cuatro vueltas** —declaraciones; `let` y capas; dibujo; reglas—, así que el orden de lo escrito es el que le convenga a quien lee: una regla puede ir antes que la forma que nombra, y un `prop` al final. Dos excepciones: un `let` tiene que ir antes de quien lo usa, y **se pinta en el orden en que se escribe** (y de las zonas, la que se declara después queda encima).
 
@@ -472,7 +495,7 @@ Esto es la salida de `pleamar --gramatica`, copiada. No es una segunda lista: so
 ```vocabulario
 language: 0.1
 statements: surface permissions model spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
-library: let spring component
+library: let spring component permissions fact text model event
 properties.surface: size anchor margin level reserve screens keyboard
 properties.permissions: run services
 properties.shape: rotate stroke color opacity blend active show cursor
@@ -513,4 +536,4 @@ layout.align: start center end
 
 ## 18. Lo que esta versión no tiene
 
-Para no buscarlo aquí: `import … as`, bibliotecas con lógica, salto de línea en los repartos, horas y plurales en los huecos, y escribir en el campo de una ficha desde una regla. Todo está, con su plan, en [[pleamar · 08 Limitaciones conocidas]].
+Para no buscarlo aquí: `import … as`, salto de línea en los repartos, horas y plurales en los huecos, y escribir en el campo de una ficha desde una regla. Todo está, con su plan, en [[pleamar · 08 Limitaciones conocidas]].

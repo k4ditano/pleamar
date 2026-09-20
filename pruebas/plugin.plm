@@ -1,0 +1,15 @@
+// espera: bien
+language 0.1
+// Un plugin: una biblioteca con su `.luau` al lado, su frontera bajo su nombre y sus
+// permisos. La escena lee esa frontera por su nombre entero, y tiene la suya aparte.
+import "plugins/contador.plm"
+scene UsesPlugin {
+    surface { size: 200, 120 }
+    fact count = 5                        // no es el del plugin: ese es `Counter.count`
+    column { at: 10, 10; gap: 6
+        Counter
+        text "el mío: {count} · el suyo: {Counter.count} · {Counter.mode}" { size: 11; color: #fff
+             opacity: if(Counter.mode == busy or Counter.steps.count > 0, 1, 0.5) }
+    }
+    on Counter.bumped { count = count + 1 }
+}

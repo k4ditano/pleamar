@@ -844,6 +844,17 @@ pub struct Escena {
     pub modelos: Vec<Modelo>,
     /// De los hechos que no son números a secas, qué son. Por nombre.
     pub tipos: Vec<(String, TipoDeHecho)>,
+    pub plugins: Vec<Plugin>,
+}
+
+/// Una biblioteca con lógica propia. Su frontera —hechos, textos, modelos, sucesos—
+/// vive bajo su nombre (`Clock.now`), su lógica corre en su propio estado de Luau, solo
+/// puede nombrar lo suyo, y lo que toque del sistema lo dicen **sus** permisos.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Plugin {
+    pub nombre: String,
+    pub logica: std::path::PathBuf,
+    pub permisos: Permisos,
 }
 
 /// Datos con forma que cruzan la frontera: una lista de fichas, todas con los
@@ -1086,7 +1097,7 @@ pub enum ARender {
     Salir,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Evento {
     Entra(&'static str),
     Sale(&'static str),
@@ -1115,7 +1126,7 @@ pub enum Evento {
     /// El fichero de la lógica ha cambiado.
     RecargarLogica,
     /// La escena se ha recargado: estos son ahora sus hechos y sus textos.
-    EscenaNueva(Vec<(&'static str, f32)>, Vec<(&'static str, String)>, Permisos, Vec<Modelo>, Vec<(String, TipoDeHecho)>),
+    EscenaNueva(Vec<(&'static str, f32)>, Vec<(&'static str, String)>, Permisos, Vec<Modelo>, Vec<(String, TipoDeHecho)>, Vec<Plugin>, Vec<&'static str>),
     /// Una capa ha cambiado de manos: (capa, quién gana ahora).
     Capa(&'static str, &'static str),
     /// Se pidió un gesto y había uno de más clase puesto.
