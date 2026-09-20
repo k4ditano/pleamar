@@ -357,7 +357,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `show` |
 | `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` |
-| `image` | `at` · `size` · `opacity` · `tint` · `show` |
+| `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `show` |
 | `figure` | `at` (where the piece's centre goes) · `size: w, h` or `scale:` (without either, one unit of the svg is one pixel) · `pivot: x, y` (in the svg's units, from its centre: the point it **turns** around, which does not move it) · `rotate` · `color` (instead of the one in the file) · `opacity` · `blend` · `stroke` · `show` |
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `show` |
 | `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` |

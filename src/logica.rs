@@ -132,7 +132,15 @@ pub fn hilo(mut guion: Box<dyn Guion>, rx: Receiver<Evento>, tx: Sender<ARender>
             // En la demo manda el reloj, no el ratón.
             Ok(e) if !(demo && matches!(e, Evento::Entra(_) | Evento::Sale(_) | Evento::Pulsa(_))) => {
                 if c.op.eco {
-                    println!("logic  · {e:?}");
+                    // El eco del ratón de mentira cuenta lo que llega, no lo
+                    // vuelca: la salida de un `run` pueden ser ochocientos
+                    // kilobytes de rutas de tu casa, y eso ni se lee ni se
+                    // quiere en un log.
+                    let dicho = format!("{e:?}");
+                    match dicho.char_indices().nth(160) {
+                        Some((k, _)) => println!("logic  · {}… ({} caracteres)", &dicho[..k], dicho.chars().count()),
+                        None => println!("logic  · {dicho}"),
+                    }
                 }
                 guion.evento(e, &mut c)
             }
