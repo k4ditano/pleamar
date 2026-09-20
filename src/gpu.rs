@@ -41,6 +41,15 @@ pub struct Dibujo {
     /// Los trozos de la escena que alguna emergente abierta está enseñando.
     pub vistas: Vec<[f32; 4]>,
     avisado_de_recortes: bool,
+    /// Una sombra cortada, esperando a decirse: lo peor visto y cómo contarlo.
+    /// No se dice en cuanto se ve —una tarjeta que se abre se sale más a cada
+    /// frame, y el primer píxel no es el que hay que arreglar—, sino cuando la
+    /// cuenta deja de crecer o la escena se queda quieta.
+    sombra: Option<(f32, String)>,
+    sombra_sin_crecer: u8,
+    sombra_dicha: bool,
+    /// Lo que mide la superficie de la escena, sin la franja de instrumentos.
+    suya: (f32, f32),
 }
 
 /// El campo donde se está escribiendo, visto desde quien pinta.
@@ -111,6 +120,55 @@ impl Dibujo {
         });
     }
 
+    /// Una sombra no se corta a propósito nunca. Si la forma entra entera en la
+    /// superficie y su sombra no, el borde queda recto y quien lo ve no tiene
+    /// dónde mirar: la sombra no se declara con un tamaño, sale de dos números.
+    /// La cuenta ya está hecha ahí arriba; decirla cuesta cuatro restas.
+    fn mirar_la_sombra(&mut self, forma: [f32; 4], s: &Sombra) {
+        if self.sombra_dicha {
+            return;
+        }
+        let (w, alto) = self.suya;
+        // Lo que pide la sombra son sus propios números: desplazamiento y
+        // difusión. Los márgenes que el render se guarda no cuentan, o el aviso
+        // diría dos píxeles que nadie escribió.
+        let (dx, dy, d) = (s.desplazada.0, s.desplazada.1, s.difusa);
+        let falta = [d - dx - forma[0], d - dy - forma[1], forma[2] + dx + d - w, forma[3] + dy + d - alto];
+        // Solo por los lados donde la forma flota dentro. Una barra pegada al
+        // borde de arriba tiene la sombra cortada por arriba, claro: ahí no
+        // había sitio ni lo quería. Lo que no se explica solo es una tarjeta que
+        // cabe entera y cuya sombra, aun así, choca contra el borde.
+        let flota = [forma[0] > 0.5, forma[1] > 0.5, forma[2] < w - 0.5, forma[3] < alto - 0.5];
+        let lados = ["on the left", "above", "on the right", "below"];
+        let dichos: Vec<String> = (0..4)
+            .filter(|&k| flota[k] && falta[k] > 0.5)
+            .map(|k| format!("{:.0} px {}", falta[k].ceil(), lados[k]))
+            .collect();
+        let peor = falta.iter().zip(flota).filter(|(_, f)| *f).map(|(v, _)| *v).fold(0.0f32, f32::max);
+        if dichos.is_empty() || peor <= self.sombra.as_ref().map_or(0.0, |(p, _)| *p) {
+            return;
+        }
+        self.sombra_sin_crecer = 0;
+        self.sombra = Some((
+            peor,
+            format!(
+                "render · a shadow is cut: it needs {} more than this {:.0} x {:.0} surface has. The shape fits; its shadow does not",
+                dichos.join(" and "),
+                w,
+                alto
+            ),
+        ));
+    }
+
+    /// Lo de la sombra, cuando ya se sabe del todo: la escena se ha quedado
+    /// quieta, o la cuenta lleva un cuarto de segundo sin crecer.
+    pub fn decir_lo_pendiente(&mut self) {
+        if let Some((_, dicho)) = self.sombra.take() {
+            self.sombra_dicha = true;
+            eprintln!("{dicho}");
+        }
+    }
+
     /// Un elemento solo existe si su caja, recortada, toca la pantalla.
     fn elemento(&mut self, tipo: f32, caja: [f32; 4], recortes: &[(usize, [f32; 4])], rellenar: impl FnOnce(&mut [f32])) {
         // Lo que no cae en la superficie ni en ninguna emergente abierta, no existe.
@@ -140,6 +198,7 @@ impl Dibujo {
         self.medidas.clear();
         self.campos.clear();
         self.tam = tam;
+        self.suya = (tam.0, tam.1 - if hud { ALTO_INSTRUMENTOS } else { 0.0 });
         self.formas.clear();
         self.puntos.clear();
         self.elementos.clear();
@@ -215,6 +274,7 @@ impl Dibujo {
                 Instr::Relleno { pintura, alfa, filo, luz, borde } => {
                     let Some(g) = cuerpo.take() else { continue };
                     let Some(mut caja) = g.caja else { continue };
+                    let forma_sola = caja;
                     let h = g.holgura + 2.0;
                     caja = [caja[0] - h, caja[1] - h, caja[2] + h, caja[3] + h];
                     if let Some(s) = &g.sombra {
@@ -222,6 +282,9 @@ impl Dibujo {
                         caja = unir(Some(caja), [caja[0] + s.desplazada.0 - d, caja[1] + s.desplazada.1 - d, caja[2] + s.desplazada.0 + d, caja[3] + s.desplazada.1 + d]);
                     }
                     let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
+                    if let Some(s) = g.sombra.as_ref().filter(|_| a > 0.01) {
+                        self.mirar_la_sombra(forma_sola, s);
+                    }
                     self.elemento(0.0, caja, &recortes, |e| {
                         afin.codificar(&mut e[44..52]);
                         e[1] = g.primera as f32;
@@ -396,6 +459,12 @@ impl Dibujo {
                 Instr::Transformar(None) => {
                     giros.pop();
                 }
+            }
+        }
+        if self.sombra.is_some() {
+            self.sombra_sin_crecer += 1;
+            if self.sombra_sin_crecer >= 15 {
+                self.decir_lo_pendiente();
             }
         }
         if hud {

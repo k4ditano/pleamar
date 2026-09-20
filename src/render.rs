@@ -1118,6 +1118,8 @@ pub fn hilo(
             ciclo.cerrar();
             proxima_cita = citas.iter().min().copied();
             en_reposo = true;
+            // Quieta ya: si algo se salía, esto es lo que se queda mirando.
+            dibujo.decir_lo_pendiente();
         }
     }
 }

@@ -86,6 +86,11 @@ scene Name {
   comparison works as `t`: `mix(ink, mint, open)`.
 - **Text with holes** is `text "{a} · {b}"`, where `a` and `b` are live texts or
   facts. For a number with decimals, `text number(expr, 2, " %")`.
+- **A surface does not grow with what it holds, and a shadow needs room.**
+  `shadow: 0, 18, 44` reaches 62 px past its shape: leave it in `surface {
+  size: … }` or the shadow is cut into a straight line. The renderer warns once
+  ("a shadow is cut: it needs 30 px below…"), but only while it runs, never in
+  `--comprobar`.
 - **Zones are what catch the mouse.** A named shape only becomes a zone if a rule
   names it, if it carries `active`, or if it is declared with `zone`.
 - **Permissions are per service and listening is not commanding**:

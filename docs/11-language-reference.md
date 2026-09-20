@@ -223,6 +223,12 @@ surface panel {
 
 They all **share properties, facts, models and rules**: a bar and its panel talk through a fact, without a round trip through the system and without knowing about each other. Inside, each one looks at a different slice of the same plane, just like a popup. A closed surface is not seen and cannot be pressed.
 
+**A surface does not grow with what it draws**, and a shadow counts: `shadow: 0, 18, 44` reaches 62 px below its shape, so a card that ends 20 px from the bottom edge has its shadow cut there, and the cut is a straight line where a fade should be. Declare the surface with that room; the input region lets the click through the empty part, so nothing is lost by declaring it large. When a shape that is well clear of an edge has its shadow cut against it, the renderer says so, once, as soon as nothing is moving:
+
+```
+render · a shadow is cut: it needs 30 px below more than this 760 x 520 surface has. The shape fits; its shadow does not
+```
+
 **Types.** For the renderer everything is numbers; types are for whoever writes and for whoever talks to the scene from outside. A fact is a number, a yes or no (`bool`; with no type, that is what one born `true` or `false` is) or an **enum**: `fact mode: low | normal | critical = normal`. The names of its values are valid in any expression (`mode == critical`, `mode = low` in a rule) and they are their position: `low` is 0. **An enum is compared against its own values, and the compiler checks it**: `mode == fast`, if `fast` belongs to another one, is an error that says which ones are valid; and arithmetic is not done with an enum (`mode + 1` means nothing; with a yes or no it does: `r.separator * 21`). The same name can be in two enums: compared against its fact, each one is its own; on its own, if it means different numbers, it is an error that asks for the long form, `mode.normal`, which is always valid. In a slot of a text, an enum is shown by its name: `"mode: {mode}"` → `mode: critical`. The logic reads and writes them as what they are —`fact.open` is `true`, `fact.mode` is `"critical"`—, and so does `--decir`.
 
 The fields of a model have those types and two more: **`image w, h`** —an icon name or a path, and the image that says: `image r.icon { … }` without declaring anything else— and **`list`**, records inside the record:
