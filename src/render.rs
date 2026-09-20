@@ -1227,6 +1227,30 @@ pub fn hilo(
         if !op.registrar.is_empty() {
             if !registro_dicho {
                 registro_dicho = true;
+                // Un nombre que no existe se apuntaba como «?» durante toda la
+                // medición, y no había manera de saber si estaba mal escrito o
+                // es que la escena no lo movía. Ahora se dice, una vez, con los
+                // que se le parecen: dentro de una copia los nombres llevan su
+                // marca (`px#Hat1`), y eso no hay quien lo adivine.
+                for n in &op.registrar {
+                    let n = n.as_str();
+                    let hay = escena.props.iter().any(|p| p.0 == n) || escena.hechos.iter().any(|h| h.0 == n) || escena.textos.iter().any(|t| t.0 == n);
+                    if !hay {
+                        let mut cerca: Vec<&str> = escena
+                            .props
+                            .iter()
+                            .map(|p| p.0)
+                            .chain(escena.hechos.iter().map(|h| h.0))
+                            .chain(escena.textos.iter().map(|t| t.0))
+                            .filter(|c| c.contains(n) || n.contains(*c) || c.split('#').next() == Some(n))
+                            .collect();
+                        cerca.sort_unstable();
+                        cerca.dedup();
+                        cerca.truncate(6);
+                        let pista = if cerca.is_empty() { String::new() } else { format!(" · there is {}", cerca.join(", ")) };
+                        println!("record · there is nothing called '{n}'{pista}");
+                    }
+                }
                 println!("ms\t{}", op.registrar.join("\t"));
             }
             let valores: Vec<String> = op

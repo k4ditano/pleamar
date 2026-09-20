@@ -179,7 +179,7 @@ Asking for permissions without a `.luau` next to it is an error: there is nobody
 
 **A plugin's permissions are approved by whoever uses it.** Declaring them is not having them: `pleamar --aprobar scene.plm` shows what each plugin of that scene asks for, and asks. What is approved is stored outside the plugin, with the fingerprint of its logic and of what it asked for: if either of the two changes, it goes back to unapproved. **Unapproved, a plugin runs with no permissions at all**, and its errors say why and how to approve it. An interpreter (`sh`, `python`…) comes out flagged: it is asking for everything. The scene one opens does not go through this: opening it is already deciding.
 
-A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `posture`, `layer`— and **images** (`image logo = file "logo.png", 16, 16`: the path is relative to the file that writes it, so the image travels with it). All under its name, like its boundary. What it cannot do is draw outside a component, or hold loose rules: that belongs to the scene.
+A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `posture`, `layer`— and **images and figures** (`image logo = file "logo.png", 16, 16`, `figure hat = file "hat.svg"`: the path is relative to the file that writes it, so the piece travels with it). All under its name, like its boundary. What it cannot do is draw outside a component, or hold loose rules: that belongs to the scene.
 
 **The scene talks to a plugin by emitting one of its events** (`on press button { emit Face.cheer }`), which the plugin's components hear (`on cheer { … }`) and its logic too (`on("cheer", …)`); and it can read and set the facts of its boundary (`Face.happy = false`): the scene is the owner. A plugin has no surface of its own: if something needs one, it is a scene.
 
@@ -722,7 +722,7 @@ This is the output of `pleamar --gramatica`, copied. It is not a second list: th
 ```vocabulario
 language: 0.1
 statements: surface permissions model service spring prop pose fact event text image figure measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
-library: let spring component permissions fact text model service event image prop pose gesture posture layer
+library: let spring component permissions fact text model service event image figure prop pose gesture posture layer
 properties.surface: size anchor margin level reserve screens keyboard open kind title
 properties.permissions: run services
 properties.shape: rotate stroke color opacity blend active show cursor grow
