@@ -1,0 +1,14 @@
+// espera: bien
+language 0.1
+// Un muelle dicho en tiempo: llega ahí en ese rato y no rebota.
+scene Timed {
+    surface { size: 200, 80 }
+    fact go = false
+    prop x = 0 ~620ms
+    prop y = 0 ~1.3s
+    follow x = if(go, 100, 0)
+    follow y = if(go, 20, 0)
+    box { at: 40 + x, 40 + y; size: 20, 20; corner: 6; color: #9ed6bd }
+    zone box hit { at: 40 + x, 40 + y; size: 20, 20 }
+    on press hit { toggle go }
+}

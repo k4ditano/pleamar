@@ -1105,6 +1105,14 @@ impl Muelle {
     pub const LENTO: Muelle = Muelle { rigidez: 28.0, freno: 11.0 };
     pub const SUAVE: Muelle = Muelle { rigidez: 190.0, freno: 24.0 };
     pub const POSE: Muelle = Muelle { rigidez: 260.0, freno: 28.0 };
+
+    /// El muelle que llega en ese rato sin pasarse. Críticamente amortiguado
+    /// (`freno = 2 · √rigidez`), que es el que no rebota; con eso, llegar al 99 %
+    /// tarda unas 6,64 constantes de tiempo, y de ahí sale la rigidez.
+    pub fn en(segundos: f32) -> Muelle {
+        let w = 6.64 / segundos.max(0.016);
+        Muelle { rigidez: w * w, freno: 2.0 * w }
+    }
 }
 
 pub enum Orden {

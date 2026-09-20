@@ -70,7 +70,7 @@ image_decl   = "image" name "=" ( "icon" text | "file" text | "from" name ) "," 
 measure      = "measure" name ;
 let          = "let" name "=" ( expr | color ) ;
 zone         = "zone" shape ;
-spring_ref   = name | "spring" "(" number "," number ")" ;
+spring_ref   = name | "spring" "(" number "," number ")" | duration ;   (* ~620ms: gets there in that long *)
 
 drawing      = body | shape | text | image | field | clip | group | popup ;
 body         = "body" "{" { element_prop | shape } "}" ;
@@ -203,7 +203,7 @@ A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `po
 | `image fox = icon "firefox", 48, 48` | An image, and the largest logical size it is painted at. `icon "name"`, `file "path"`, or `from some_text`: whichever that text says (an icon name, or a path if it starts with `/`) |
 | `measure label` | Creates `label.width` and `label.height`, filled by the text that carries `measure: label` |
 | `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | A name for an expression, or for a color |
-| `spring bouncy = 170, 12` | A spring of one's own: stiffness, damping. From the house: `lively`, `calm`, `quick`, `slow`, `gentle`, `pose`. Inline: `~spring(170, 12)` |
+| `spring bouncy = 170, 12` | A spring of one's own: stiffness, damping. From the house: `lively`, `calm`, `quick`, `slow`, `gentle`, `pose`. Inline: `~spring(170, 12)`, or **`~620ms`**: the spring that gets there in that long without overshooting |
 | `zone box whole { at: …; size: …; active: expr }` | A zone that is not painted |
 
 **Several windows in one process.** `surface { … }` with no name is the scene's, and draws whatever is loose. With a name, `surface panel { … }` is one of several and **carries inside it what it draws**:
@@ -530,6 +530,13 @@ The names of a slot are resolved where the string is written, not where it is us
 ## 15. Gestures
 
 A gesture is a timeline over the properties of the pose (`pose`). `gesture name class { frames }`; classes, from weakest to strongest: `ambient` < postures < `reflex` < `asked` < `state`. **A gesture only cuts off another of its own class or lower.** A frame is a duration, and if it likes a curve, `hold 60ms` (holds there) and `emit event`; its block says where each property goes, and whatever it does not name returns to its base. With no block, it is the return to the base. `posture name while expr { … }` repeats on its own while that is true.
+
+**A spring can be said in time.** `~620ms` is the spring that arrives in 620 ms
+and does not bounce: critically damped, worked out from the time asked for.
+Animation contracts are written in milliseconds, and this is how they get
+transcribed without stopping being springs — they keep their speed, they can be
+interrupted halfway, and they survive a hot reload. Measured: `~620ms` reaches
+99 % at 617 ms.
 
 **A gesture outranks whatever is ambient.** While it is holding a pose, any
 `blink`, `wave` or `spin` on that same pose goes quiet, **and its clock stops with

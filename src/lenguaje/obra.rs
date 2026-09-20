@@ -668,6 +668,12 @@ impl<'a> Obra<'a> {
         }
     }
     fn muelle(&self, c: &mut Cur) -> R<Muelle> {
+        // `~620ms`: un muelle dicho en tiempo. Llega ahí en ese rato y no rebota,
+        // que es como están escritos los contratos de animación de la casa.
+        if let Some(F::Dur(_)) = c.mira() {
+            let t = c.dur()?.as_secs_f32().max(0.016);
+            return Ok(Muelle::en(t));
+        }
         let n = c.id("a spring name")?;
         if n == "spring" {
             c.exige_sim("(")?;
