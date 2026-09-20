@@ -185,7 +185,13 @@ fn main() {
     // El taller de texto e imágenes. Lo primero que hace es leer las fuentes del
     // sistema, que es lo más lento del arranque: que vaya yendo.
     let letras = texto::Textos::abrir(a_render.clone());
-    let instancia = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, ..wgpu::InstanceDescriptor::new_without_display_handle() });
+    // Sin las comprobaciones de wgpu: en una barra que repinta 60 veces por segundo,
+    // lo que se ahorra por frame se nota en el consumo. Para depurar, `PLEAMAR_VALIDAR=1`.
+    let mut flags = wgpu::InstanceFlags::empty();
+    if std::env::var_os("PLEAMAR_VALIDAR").is_some() {
+        flags = wgpu::InstanceFlags::VALIDATION | wgpu::InstanceFlags::DEBUG;
+    }
+    let instancia = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, flags, ..wgpu::InstanceDescriptor::new_without_display_handle() });
     let pide = escena.superficies.clone();
 
     println!(

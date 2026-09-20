@@ -727,6 +727,11 @@ impl Gpu {
         let (v, o) = (l.vista.tam, l.vista.origen);
         (u[0], u[1], u[4], u[7]) = (v.0, v.1, o.0, o.1);
         self.cola.write_buffer(&l.uniformes, 0, bytemuck::cast_slice(&u));
+        // Con `PLEAMAR_CRONO=1`, cuánto se va en pedir el hueco de la pantalla y
+        // cuánto en mandarle el trabajo a la tarjeta. Es la cuenta que dice si un
+        // frame cuesta por lo que dibuja o por esperar al monitor.
+        let crono = std::env::var_os("PLEAMAR_CRONO").is_some();
+        let t0 = crono.then(std::time::Instant::now);
         let marco = match l.superficie.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
@@ -772,10 +777,34 @@ impl Gpu {
         principal.push(desde..d.n_elementos() as u32);
         // …y luego todo lo demás, con las capas ya hechas entre medias.
         pase_a(&mut codificador, &vista, &l.grupo_capas, &principal);
-        self.cola.submit(Some(codificador.finish()));
+        let t1 = crono.then(std::time::Instant::now);
+        let orden = codificador.finish();
+        let t2 = crono.then(std::time::Instant::now);
+        self.cola.submit(Some(orden));
+        let t3 = crono.then(std::time::Instant::now);
         self.cola.present(marco);
+        if let (Some(t0), Some(t1), Some(t2), Some(t3)) = (t0, t1, t2, t3) {
+            let ms = |a: std::time::Instant, b: std::time::Instant| b.duration_since(a).as_secs_f32() * 1000.0;
+            CRONO.with(|c| {
+                let mut v = c.get();
+                v.0 += ms(t0, t1);
+                v.1 += ms(t1, t2);
+                v.2 += ms(t2, t3);
+                v.3 += t3.elapsed().as_secs_f32() * 1000.0;
+                v.4 += 1.0;
+                if v.4 >= 300.0 {
+                    println!("crono  · hueco {:.2} · apuntar {:.2} · cerrar {:.2} · mandar+presentar {:.2} ms", v.0 / v.4, v.1 / v.4, v.2 / v.4, v.3 / v.4);
+                    v = (0.0, 0.0, 0.0, 0.0, 0.0);
+                }
+                c.set(v);
+            });
+        }
         true
     }
+}
+
+thread_local! {
+    static CRONO: std::cell::Cell<(f32, f32, f32, f32, f32)> = const { std::cell::Cell::new((0.0, 0.0, 0.0, 0.0, 0.0)) };
 }
 
 impl Lamina {
