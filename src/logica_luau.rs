@@ -238,6 +238,31 @@ fn permiso_de_servicio(c: &Mutex<Compartido>, nombre: &str, manda: bool) -> mlua
     Err(denegado(c, &format!("use the '{servicio}' service"), &format!("services: \"{servicio}\"")))
 }
 
+/// Lo que la lógica le pasa al sistema: números, textos y tablas. Una tabla con
+/// claves 1..n es una lista; cualquier otra, un mapa. Hasta seis niveles: más hondo
+/// que eso, lo que se está pasando no es un dato.
+fn de_lua(v: &Value, hondura: usize) -> Valor {
+    match v {
+        Value::Boolean(b) => Valor::Si(*b),
+        Value::Integer(i) => Valor::Num(*i as f64),
+        Value::Number(n) => Valor::Num(*n),
+        Value::String(s) => Valor::Texto(s.to_string_lossy()),
+        Value::Table(t) if hondura < 6 => {
+            let largo = t.raw_len();
+            let lista: Vec<Valor> = (1..=largo).map(|k| de_lua(&t.raw_get::<Value>(k).unwrap_or(Value::Nil), hondura + 1)).collect();
+            // Con parte de lista y parte de mapa, gana el mapa: no se pierde nada.
+            let mut mapa: Vec<(String, Valor)> = Vec::new();
+            for par in t.clone().pairs::<Value, Value>().flatten() {
+                if let Value::String(k) = par.0 {
+                    mapa.push((k.to_string_lossy(), de_lua(&par.1, hondura + 1)));
+                }
+            }
+            if mapa.is_empty() { Valor::Lista(lista) } else { Valor::Mapa(mapa) }
+        }
+        _ => Valor::Nulo,
+    }
+}
+
 /// Un dato del sistema, como lo ve Luau: tablas, números, textos.
 fn a_lua(lua: &Lua, v: &Valor) -> mlua::Result<Value> {
     Ok(match v {
@@ -764,26 +789,14 @@ impl GuionLuau {
         let (c, mio) = (self.c.clone(), quien.clone());
         sys.set("call", lua.create_function(move |_, (nombre, args): (String, mlua::Variadic<Value>)| {
             permiso_de_servicio(&c, &nombre, true)?;
-            let args: Vec<Valor> = args.iter().map(|v| match v {
-                Value::Boolean(b) => Valor::Si(*b),
-                Value::Integer(i) => Valor::Num(*i as f64),
-                Value::Number(n) => Valor::Num(*n),
-                Value::String(s) => Valor::Texto(s.to_string_lossy()),
-                _ => Valor::Nulo,
-            }).collect();
+            let args: Vec<Valor> = args.iter().map(|v| de_lua(v, 0)).collect();
             crate::plataforma::orden(&mio, &nombre, &args).map_err(mlua::Error::runtime)
         })?)?;
         // Lo mismo, pero contesta: `sys.ask("tray.menu", key)` devuelve el menú.
         let (c, mio) = (self.c.clone(), quien.clone());
         sys.set("ask", lua.create_function(move |lua, (nombre, args): (String, mlua::Variadic<Value>)| {
             permiso_de_servicio(&c, &nombre, false)?;
-            let args: Vec<Valor> = args.iter().map(|v| match v {
-                Value::Boolean(b) => Valor::Si(*b),
-                Value::Integer(i) => Valor::Num(*i as f64),
-                Value::Number(n) => Valor::Num(*n),
-                Value::String(s) => Valor::Texto(s.to_string_lossy()),
-                _ => Valor::Nulo,
-            }).collect();
+            let args: Vec<Valor> = args.iter().map(|v| de_lua(v, 0)).collect();
             a_lua(lua, &crate::plataforma::consulta(&mio, &nombre, &args).map_err(mlua::Error::runtime)?)
         })?)?;
         g.set("sys", sys)?;

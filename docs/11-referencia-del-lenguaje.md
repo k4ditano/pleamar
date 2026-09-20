@@ -255,9 +255,11 @@ Los permisos son los de la escena, y son los mismos de `sys.watch`: `services: "
 
 | | |
 | --- | --- |
-| `sys.ask("files.read", "settings.txt")` | lo que diga, o `nil` si no está |
+| `sys.ask("files.read", "settings.json")` | lo que diga, o `nil` si no está |
+| `sys.ask("files.read", n, "json")` | eso mismo, ya como tabla. Si el fichero está roto, es un fallo con su sitio, no una tabla a medias |
 | `sys.ask("files.exists", n)` · `sys.ask("files.list")` · `sys.ask("files.folder")` | si está · lo que hay · dónde |
 | `sys.call("files.write", n, texto)` · `sys.call("files.remove", n)` | escribir (entero o nada: primero al lado, luego en su sitio) · borrar |
+| `sys.call("files.write", n, { tone = 2 })` | una tabla se guarda como JSON, con sus saltos de línea: lo que se guarda también se lee a mano |
 | `sys.watch("files:settings.txt", f)` | avisa cuando ese fichero cambie, también si lo toca otro |
 
 Un plugin tiene la suya, bajo su nombre: lo que guarde no lo ve la escena, ni al revés.

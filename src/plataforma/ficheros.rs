@@ -33,9 +33,47 @@ fn dentro(de: &str, nombre: &str) -> Result<PathBuf, String> {
     Ok(carpeta(de).join(nombre))
 }
 
-/// `sys.ask("files.read", "settings.json")` · `("files.list")` · `("files.exists", n)`
+/// De JSON a lo que la lógica ve: tablas, números y textos.
+fn de_json(v: serde_json::Value) -> Valor {
+    use serde_json::Value as J;
+    match v {
+        J::Null => Valor::Nulo,
+        J::Bool(b) => Valor::Si(b),
+        J::Number(n) => Valor::Num(n.as_f64().unwrap_or(0.0)),
+        J::String(s) => Valor::Texto(s),
+        J::Array(l) => Valor::Lista(l.into_iter().map(de_json).collect()),
+        J::Object(m) => Valor::Mapa(m.into_iter().map(|(k, v)| (k, de_json(v))).collect()),
+    }
+}
+
+/// Y al revés, para guardarlo.
+fn a_json(v: &Valor) -> serde_json::Value {
+    use serde_json::Value as J;
+    match v {
+        Valor::Nulo => J::Null,
+        Valor::Si(b) => J::Bool(*b),
+        // Un entero se escribe sin coma: por dentro todo son números con coma, pero
+        // esto lo lee gente.
+        Valor::Num(n) if n.fract() == 0.0 && n.abs() < 9e15 => J::Number((*n as i64).into()),
+        Valor::Num(n) => serde_json::Number::from_f64(*n).map_or(J::Null, J::Number),
+        Valor::Texto(s) => J::String(s.clone()),
+        Valor::Lista(l) => J::Array(l.iter().map(a_json).collect()),
+        Valor::Mapa(m) => J::Object(m.iter().map(|(k, v)| (k.clone(), a_json(v))).collect()),
+    }
+}
+
+/// `sys.ask("files.read", "settings.json")` · `("files.read", n, "json")` ·
+/// `("files.list")` · `("files.exists", n)`
 pub fn consulta(de: &str, que: &str, args: &[Valor]) -> Result<Valor, String> {
     match (que, args) {
+        // Con `"json"` detrás, lo que sale es una tabla y no un texto. Un fichero a
+        // medio escribir es un fallo con su sitio, no una tabla a medias.
+        ("files.read", [Valor::Texto(nombre), Valor::Texto(formato)]) if formato == "json" => match std::fs::read_to_string(dentro(de, nombre)?) {
+            Ok(t) => serde_json::from_str(&t).map(de_json).map_err(|e| format!("'{nombre}' is not valid JSON: {e}")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Valor::Nulo),
+            Err(e) => Err(format!("cannot read '{nombre}': {e}")),
+        },
+        ("files.read", [_, Valor::Texto(otro)]) => Err(format!("'{otro}' is not a format: the only one is \"json\", and without it you get the text")),
         ("files.read", [Valor::Texto(nombre)]) => match std::fs::read_to_string(dentro(de, nombre)?) {
             Ok(t) => Ok(Valor::Texto(t)),
             // Que no esté todavía no es un fallo: es la primera vez.
@@ -55,7 +93,7 @@ pub fn consulta(de: &str, que: &str, args: &[Valor]) -> Result<Valor, String> {
             Ok(Valor::Lista(nombres.into_iter().map(Valor::Texto).collect()))
         }
         ("files.folder", []) => Ok(Valor::Texto(carpeta(de).to_string_lossy().into_owned())),
-        _ => Err(format!("'{que}' is not asked like that: files.read(name), files.exists(name), files.list(), files.folder()")),
+        _ => Err(format!("'{que}' is not asked like that: files.read(name[, \"json\"]), files.exists(name), files.list(), files.folder()")),
     }
 }
 
@@ -64,11 +102,14 @@ pub fn orden(de: &str, que: &str, args: &[Valor]) -> Result<(), String> {
     match (que, args) {
         ("files.write", [Valor::Texto(nombre), contenido]) => {
             let ruta = dentro(de, nombre)?;
+            // Una tabla se guarda como JSON, con sus saltos de línea: lo que se
+            // guarda también se lee a mano de vez en cuando.
             let texto = match contenido {
                 Valor::Texto(t) => t.clone(),
                 Valor::Num(n) => n.to_string(),
                 Valor::Si(b) => b.to_string(),
-                otro => return Err(format!("what gets written is a text, not a {otro:?}")),
+                Valor::Nulo => String::new(),
+                tabla => serde_json::to_string_pretty(&a_json(tabla)).map(|t| t + "\n").map_err(|e| format!("cannot write '{nombre}': {e}"))?,
             };
             if let Some(padre) = ruta.parent() {
                 std::fs::create_dir_all(padre).map_err(|e| format!("cannot create {}: {e}", padre.display()))?;
