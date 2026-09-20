@@ -33,7 +33,7 @@ The mouse goes **to the renderer**, which is the one that knows what is undernea
 - **Layers**: claims in order of priority — `while <expr>`, `N ms after <event>`, `from … until`, or the default one. The first one that holds wins. Each claim has a **presence** (a property that goes to 1 when it wins), to paint according to who is in charge, and it can **pin** properties with their spring and their delay: that is a choreography.
 - **Gestures**: keyframes with a duration, a curve (`OutBack`, `InQuad`…) and a hold, over the **pose** properties. Whatever a keyframe does not name goes back to its base; when it ends, the springs pick the pose up. **Classes**: `Estado > Pedido > Reflejo > Postura > Ambiente`; one only cuts off another of its own class or lower. A **posture** repeats on its own while something is true.
 - **Rules**: `Entra`, `Sale`, `Pulsa`, `Encima{durante}`, `Fuera{durante}`, `Quieto{durante}`, `Cada{a..b}`, `Al(suceso)` → effects (`Animar`, `Hecho`, `Alternar`, `Suceso`, `Impulso`, `Gesto`). **The renderer runs all of it.**
-- **Reduced motion** (`--movimiento-reducido`): the springs settle and each gesture shows, held still, the keyframe furthest from the base.
+- **Reduced motion** (`--movimiento-reducido`): the springs settle, each gesture shows the keyframe furthest from the base held still, and what carries itself goes quiet — a `blink` stays open, a `wave` rests at the middle of its travel and a `spin` stops where it was. Nothing is left going round on its own.
 
 ## The renderer: one quad per element (`render.rs`, `forma.wgsl`, `formas.rs`)
 

@@ -881,6 +881,15 @@ pub fn hilo(
                         *desde = None;
                         continue;
                     }
+                    // Con movimiento reducido lo ambiental calla: un parpadeo se
+                    // queda con el ojo abierto. Los muelles se posan y los gestos
+                    // enseñan su cara quieta; lo que va solo y en bucle es justo
+                    // lo que no debe seguir dando vueltas.
+                    if op.reducido {
+                        *desde = None;
+                        props[prop.0 as usize].fijar(1.0);
+                        continue;
+                    }
                     if desde.is_none() && ahora >= *proximo {
                         *desde = Some(ahora);
                     }
@@ -904,6 +913,12 @@ pub fn hilo(
                     if de_un_gesto.contains(prop) {
                         continue;
                     }
+                    // Y una onda se queda en su descanso —la mitad del viaje—, que
+                    // es donde estaba al empezar.
+                    if op.reducido {
+                        props[prop.0 as usize].fijar(0.0);
+                        continue;
+                    }
                     let a = amplitud.evaluar(Ctx { props: &props, hechos: &hechos });
                     props[prop.0 as usize].fijar(a * (t_total * frecuencia).sin());
                     vivo |= a.abs() > 0.01;
@@ -919,6 +934,10 @@ pub fn hilo(
                     p.fijar(v);
                 }
                 Comportamiento::Avance { prop, por_segundo } => {
+                    // Un giro no tiene descanso al que volver: se queda donde va.
+                    if op.reducido {
+                        continue;
+                    }
                     let v = por_segundo.evaluar(Ctx { props: &props, hechos: &hechos });
                     let a = &mut props[prop.0 as usize];
                     a.fijar(a.x + v * dt);

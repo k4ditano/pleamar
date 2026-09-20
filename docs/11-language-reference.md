@@ -555,6 +555,12 @@ The names of a slot are resolved where the string is written, not where it is us
 | `follow chip.w = label.width + 32` | chases the expression, with its spring |
 | `look gx, gy at cx, cy reach 5, 3.2 within 140 rest rx, ry` | two properties that pull towards the mouse |
 
+With reduced motion (`--movimiento-reducido`) the first three go quiet: `blink`
+stays open, `wave` rests at the middle of its travel and `spin` stops where it
+was. What carries itself is exactly what must not be left going round on its
+own. `follow` and `look` are not loops —they chase something— so they stay,
+with their springs settling at once like every other one.
+
 ## 15. Gestures
 
 A gesture is a timeline over the properties of the pose (`pose`). `gesture name class { frames }`; classes, from weakest to strongest: `ambient` < postures < `reflex` < `asked` < `state`. **A gesture only cuts off another of its own class or lower.** A frame is a duration, and if it likes a curve, `hold 60ms` (holds there) and `emit event` —which fires when the frame **begins**: to say "done", give it a short frame of its own at the end—; its block says where each property goes, and whatever it does not name returns to its base. With no block, it is the return to the base. `posture name while expr { … }` repeats on its own while that is true.
