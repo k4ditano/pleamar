@@ -1,0 +1,40 @@
+// espera: bien
+language 0.1
+// `grow:`: un hijo de una maquetación pide el sitio que sobra a lo largo, y el
+// reparto se lo da. Y si es un texto, o lleva textos dentro, ese sitio es su
+// ancho: lo que no cabe se corta en vez de meterse debajo del vecino.
+scene Crece {
+    surface { size: 320, 200; anchor: top }
+    let ink = #f5f7f5
+    fact puesto = true
+
+    box { from: 0, 0; size: 320, 200; color: #151616 }
+    //  Una tarjeta: icono, lo que se lee, e interruptor. Nadie escribe anchos.
+    row tarjeta {
+        at: 16, 20
+        gap: 10
+        padding: 10
+        size: 288, 66
+        fill: #1b1b1c
+        corner: 14
+        group { size: 22, 22; ellipse { at: 11, 11; radius: 11; color: #6fb1e6 } }
+        column { grow: 1; gap: 2
+            text "Wi-Fi" { size: 13; color: ink }
+            text "un nombre de red larguísimo que no cabe de ninguna manera" { size: 11.5; lines: 1; color: #8b8f95 }
+        }
+        group {
+            size: 40, 23
+            box { from: 0, 0; size: 40, 23; corner: 11.5; color: mix(#2a2b2c, #9ed6bd, puesto) }
+            ellipse { at: if(puesto, 28.5, 11.5), 11.5; radius: 8.5; color: #ffffff }
+        }
+    }
+    //  Con pesos: el segundo pide el doble, así que su HUECO es el doble. Lo
+    //  que un `group` dibuja dentro sigue siendo suyo —eso no se estira—; lo
+    //  que cambia es el sitio que ocupa, y por tanto dónde empieza el de al
+    //  lado. Para que se estire de verdad, el que crece es un texto.
+    row pesos { at: 16, 110; gap: 8; size: 288, 40
+        group { grow: 1; size: 10, 30; box { from: 0, 0; size: 10, 30; corner: 5; color: #9ed6bd } }
+        group { grow: 2; size: 10, 30; box { from: 0, 0; size: 10, 30; corner: 5; color: #e8c07a } }
+    }
+    text "{tarjeta.width, 0} de ancho" { at: 160, 176; anchor: center; size: 11; color: #8b8f95 }
+}

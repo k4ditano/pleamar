@@ -19,20 +19,20 @@ pub const DE_BIBLIOTECA: &[&str] = &["let", "spring", "component", "permissions"
 pub const PROPIEDADES: &[(&str, &[&str])] = &[
     ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title"]),
     ("permissions", &["run", "services"]),
-    ("shape", &["rotate", "stroke", "color", "opacity", "blend", "active", "show", "cursor"]),
+    ("shape", &["rotate", "stroke", "color", "opacity", "blend", "active", "show", "cursor", "grow"]),
     ("ellipse", &["at", "radius", "scale"]),
     ("box", &["at", "from", "size", "corner"]),
     ("arc", &["at", "radius", "span", "width"]),
     ("line", &["from", "to", "width"]),
     ("path", &["at", "size"]),
     ("body", &["color", "gradient", "rim", "light", "shadow", "border", "opacity", "show"]),
-    ("text", &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show"]),
-    ("image", &["at", "size", "opacity", "tint", "show"]),
+    ("text", &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show", "grow"]),
+    ("image", &["at", "size", "opacity", "tint", "show", "grow"]),
     ("input", &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "show"]),
-    ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show"]),
+    ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show", "grow"]),
     ("popup", &["at", "size", "open"]),
     ("children", &["move"]),
-    ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "corner", "show", "opacity", "cursor", "view", "step", "content", "wrap"]),
+    ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "corner", "show", "opacity", "cursor", "view", "step", "content", "wrap", "size", "grow"]),
 ];
 
 pub const FUNCIONES: &[&str] = &["min", "max", "abs", "floor", "ceil", "sin", "cos", "clamp", "smooth", "mix", "if", "vel"];

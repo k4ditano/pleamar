@@ -2786,6 +2786,12 @@ impl<'a> Obra<'a> {
             Some(c) => Some(self.color(c)?),
             None => None,
         };
+        // `size: 164, 66`: lo que mide el reparto. Hace falta para que un hijo
+        // pueda pedir «lo que sobre»: sin decir de cuánto se reparte, no hay resto.
+        let tam_dicho = match p.get_mut("size") {
+            Some(c) => Some(self.punto(c)?),
+            None => None,
+        };
         // `view: 300, 200`: lo que se ve. Lo de dentro puede ser más largo, y se desplaza.
         let vista = match p.get_mut("view") {
             Some(c) => Some(self.punto(c)?),
@@ -2871,6 +2877,10 @@ impl<'a> Obra<'a> {
             visible: Expr,
             /// Es lo que va entre dos hijos, no un hijo.
             separa: bool,
+            /// `grow: 2`: cuánto pide de lo que sobre. 0 es lo normal: su tamaño.
+            crece: f32,
+            /// Sus instrucciones, para poder decirle su ancho cuando se sepa.
+            suyas: std::ops::Range<usize>,
         }
         // Lo que se ve es una ventana a lo que hay: se recorta, y lo de dentro va corrido.
         let desplaza = vista.as_ref().map(|(vw, vh)| {
@@ -2938,12 +2948,25 @@ impl<'a> Obra<'a> {
                 }
             };
             // `show:` decide si el hijo está: ocupa y se ve, o ni lo uno ni lo otro.
+            // Y `grow:`, cuánto pide de lo que sobre a lo largo.
             let mut visible = Expr::K(1.0);
+            let mut crece = 0.0f32;
             for e in hijo.cuerpo.as_deref().unwrap_or(&[]) {
                 if let Entrada::Prop { nombre, valor, linea, col } = e {
-                    if nombre == "show" {
-                        let mut c = Cur::de(valor, *linea, *col);
-                        visible = self.expr(&mut c)?;
+                    let mut c = Cur::de(valor, *linea, *col);
+                    match nombre.as_str() {
+                        "show" => visible = self.expr(&mut c)?,
+                        "grow" => {
+                            crece = c.num()?;
+                            c.nada_mas()?;
+                            if crece < 0.0 {
+                                return Err(Fallo::en(*linea, *col, "`grow` is how much of what is left it asks for: 0 or more"));
+                            }
+                            if tam_dicho.is_none() {
+                                return Err(Fallo::en(*linea, *col, "`grow:` needs the layout to say how big it is, or there is no `left over` to share: `row x { size: 164, 66; … }`"));
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -3004,7 +3027,15 @@ impl<'a> Obra<'a> {
                     c.visible = Some(match c.visible.take() { Some(v) => v * esta.clone(), None => esta.clone() });
                 }
             }
-            let puesto = Puesto { instr, candidatas: desde..self.candidatas.len(), tam, visible, separa: forzada.is_some() };
+            let puesto = Puesto {
+                instr,
+                candidatas: desde..self.candidatas.len(),
+                tam,
+                visible,
+                separa: forzada.is_some(),
+                crece,
+                suyas: instr + 1..self.e.instrs.len(),
+            };
             match forzada {
                 // Un separador se pinta después de su hijo, pero su sitio es justo antes.
                 Some(_) => puestos.insert(puestos.len() - 1, puesto),
@@ -3030,6 +3061,34 @@ impl<'a> Obra<'a> {
         // Lo que ocupa cada uno a lo largo, y lo más que ocupa cualquiera a lo ancho.
         let largo = |p: &Puesto| if fila { p.tam.0.clone() } else { p.tam.1.clone() };
         let ancho = |p: &Puesto| if fila { p.tam.1.clone() } else { p.tam.0.clone() };
+        // `grow:`: lo que sobra a lo largo, repartido entre quienes lo piden. Se
+        // sabe aquí, cuando ya están medidos todos, así que al hijo se le dice
+        // después: a los textos suyos que no dijeron ancho se les pone este. Eso
+        // es lo que hace que lo que no quepa se corte en vez de meterse debajo
+        // del vecino, que es el fallo que esto viene a quitar.
+        let pesos: f32 = puestos.iter().map(|p| p.crece).sum();
+        if pesos > 0.0 {
+            let (tw, th) = tam_dicho.clone().expect("`grow` already demanded `size`");
+            let a_lo_largo = if fila { tw } else { th };
+            let fijos = puestos.iter().filter(|p| p.crece == 0.0).fold(Expr::K(0.0), |a, p| a + largo(p) * p.visible.clone());
+            let huecos = hueco.clone() * (cuantos.clone() - Expr::K(1.0)).max(Expr::K(0.0));
+            let sobra = (a_lo_largo - relleno.clone() * 2.0 - huecos - fijos).max(Expr::K(0.0));
+            for p in puestos.iter_mut().filter(|p| p.crece > 0.0) {
+                let parte = sobra.clone() * (p.crece / pesos);
+                for k in p.suyas.clone() {
+                    if let Instr::Texto { ancho, .. } = &mut self.e.instrs[k] {
+                        if ancho.is_none() {
+                            *ancho = Some(parte.clone());
+                        }
+                    }
+                }
+                if fila {
+                    p.tam.0 = parte;
+                } else {
+                    p.tam.1 = parte;
+                }
+            }
+        }
         let maximo = puestos.iter().fold(Expr::K(0.0), |m, p| m.max(ancho(p) * p.visible.clone()));
         // Con `wrap`, la celda mide lo que el hijo más grande, y cada uno va a la suya.
         let celda_largo = puestos.iter().fold(Expr::K(0.0), |m, p| m.max(largo(p))) + hueco.clone();
@@ -3093,7 +3152,10 @@ impl<'a> Obra<'a> {
             if fila { contenido.0 = e.clone() } else { contenido.1 = e.clone() }
         }
         // Con `view:`, hacia fuera ocupa lo que se ve, no lo que lleva dentro.
-        let tam = vista.clone().unwrap_or_else(|| contenido.clone());
+        // Lo que mide: lo dicho si se dijo, lo que se ve si hay ventana, y si no,
+        // lo que ocupan sus hijos. Dicho, el fondo y la zona son de ese tamaño
+        // aunque los hijos no lleguen: es lo que se ha pedido, no lo que salió.
+        let tam = tam_dicho.clone().or_else(|| vista.clone()).unwrap_or_else(|| contenido.clone());
 
         if let (Some(k), Some(color)) = (sitio_del_fondo, fondo) {
             self.e.instrs[k] = Instr::Plano {

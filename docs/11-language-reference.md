@@ -358,7 +358,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `show` |
 | `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` |
 | `popup` | `at` (inside the surface) · `size` · `open:` a fact |
-| `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `view: w, h` · `step` · `content` · `wrap: n` |
+| `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `size: w, h` · `view: w, h` · `step` · `content` · `wrap: n` |
 
 `anchor` of a text: `left` `center` `right` and `top` `center` `bottom`, one or both (`anchor: left center`). Of a layout: `left` `center` `right` and `top` `middle` `bottom` —with no anchor, `at` is its top left corner—. `cursor:` `default` `pointer` `text` `grab` `grabbing`.
 
@@ -384,6 +384,23 @@ A path carries **a single stroke** (one `move`, the first) and up to 64 already 
 | `on change floor(list.scroll / 34) { emit slid(list.scroll) }` | that is how the logic learns it has to be sent another slice, wherever the movement comes from |
 
 A layout with `view:` **is dragged** without declaring anything: on being pressed it notes where it was and follows the mouse, with its spring. And it is grabbed **from inside**: dragging is not the business of the topmost zone, but of any zone that was underneath at the press, like the wheel. That is how a list is moved by grabbing it by one of its rows.
+
+**`size: w, h`** says how big the layout is, instead of it being however much its children came to. Its background and its zone are that size even if the children do not reach it, and —this is what it is for— it is what **`grow:`** shares out.
+
+**`grow: 1`** on a child asks for the room that is left along the layout's axis, divided among those who ask in proportion to what they asked (`grow: 2` takes twice as much). What is left is the layout's size minus its padding, its gaps and whatever the children that do not grow take. Without `size:` on the layout it is an error: there is no *left over* if nobody said of how much.
+
+A child that grows gets **the slot**; what it then draws is still its own business, so a `box` inside a `group` does not stretch. What does follow is **a text**: a growing text, or the texts inside a growing `group` or `column` that did not say their own `width`, take it from there. That is the case that bites — a name running under the switch beside it instead of ending in an ellipsis:
+
+```
+row card { size: 164, 66; gap: 10; padding: 12; fill: #1b1b1c; corner: 14
+    group { size: 22, 22;  …the icon… }
+    column { grow: 1; gap: 2
+        text title { size: 13; color: ink }
+        text subtitle { size: 11.5; lines: 1; color: #8b8f95 }   // it ends in "…" on its own
+    }
+    group { size: 40, 23;  …the switch… }
+}
+```
 
 **`wrap: 5`** turns a layout into a **grid**: five per line and on to the next. The cell is as big as the largest child, and **what is not seen leaves no gap**, so the rest move up, with the layout's spring if it has one. It is what a `Flow` is in Quickshell.
 
@@ -673,20 +690,20 @@ statements: surface permissions model service spring prop pose fact event text i
 library: let spring component permissions fact text model service event image prop pose gesture posture layer
 properties.surface: size anchor margin level reserve screens keyboard open kind title
 properties.permissions: run services
-properties.shape: rotate stroke color opacity blend active show cursor
+properties.shape: rotate stroke color opacity blend active show cursor grow
 properties.ellipse: at radius scale
 properties.box: at from size corner
 properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
 properties.body: color gradient rim light shadow border opacity show
-properties.text: at anchor width size weight color opacity lines align line_height family measure show
-properties.image: at size opacity tint show
+properties.text: at anchor width size weight color opacity lines align line_height family measure show grow
+properties.image: at size opacity tint show grow
 properties.input: at width size weight color opacity family placeholder selection show
-properties.group: pivot rotate scale move opacity size show
+properties.group: pivot rotate scale move opacity size show grow
 properties.popup: at size open
 properties.children: move
-properties.layout: at anchor gap padding align fill corner show opacity cursor view step content wrap
+properties.layout: at anchor gap padding align fill corner show opacity cursor view step content wrap size grow
 functions: min max abs floor ceil sin cos clamp smooth mix if vel
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change still
