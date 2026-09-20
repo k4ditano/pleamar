@@ -260,6 +260,7 @@ What each service brings is in the vocabulary (§17), and **asking it for what i
 | --- | --- |
 | `audio.volume` | 0 to 1 |
 | `battery.percent` | 0 to 100 |
+| `brightness.present` · `brightness.level` | the screen's backlight, 0 to 1. A machine with none says `present = false` |
 | `network.strength` | 0 to 100 |
 | `clock.hour` · `minute` · `second` · `day` · `month` · `year` | as they are read |
 | `clock.weekday` | 0 is Sunday |
@@ -698,11 +699,12 @@ fact_types: number bool
 model: list
 path: move line curve close
 documented: surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture import scene library language
-services: clock clock.seconds audio battery network media window
+services: clock clock.seconds audio battery brightness network media window
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
 services.audio: volume muted input input_muted
 services.battery: present percent charging
+services.brightness: present level
 services.network: online kind name strength
 services.media: playing title artist album player
 services.window: title class

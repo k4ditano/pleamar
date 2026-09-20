@@ -57,6 +57,8 @@ A misspelled name is an error there and then, with a suggestion: `the scene has 
 | `audio` | `{ volume = 0.54, muted = false }` | Linux: PipeWire (`wpctl`, and `pactl subscribe` to find out) |
 | `sys.call("audio.volume", 0.5)` · `("audio.step", -0.05)` · `("audio.mute")` | set it, move it one step, silence it (or `("audio.mute", true)`) | |
 | `battery` | `{ present, percent, charging }`; a desktop answers `{ present = false }` | Linux: `/sys/class/power_supply` |
+| `brightness` | `{ present, level }`; with no backlight, `{ present = false }` | Linux: `/sys/class/backlight` |
+| `sys.call("brightness.level", 0.6)` | set it | Linux: `brightnessctl`, which is who has the permission |
 | `network` | `{ online, kind = "wired" \| "wifi" \| "none", name, strength }` | Linux: the default route, `/proc/net/wireless` and `iw` |
 | `media` | `{ playing, title, artist, album, player }`; with no players, `player = ""` | Linux: MPRIS over D-Bus (`zbus`), without asking every so often |
 | `sys.call("media.toggle")` · `("media.next")` · `("media.previous")` | to the player being reported | |

@@ -110,6 +110,7 @@ pub const SERVICIOS: &[(&str, &[&str])] = &[
     ("clock.seconds", &["hour", "minute", "second", "day", "month", "year", "weekday", "time", "date"]),
     ("audio", &["volume", "muted", "input", "input_muted"]),
     ("battery", &["present", "percent", "charging"]),
+    ("brightness", &["present", "level"]),
     ("network", &["online", "kind", "name", "strength"]),
     ("media", &["playing", "title", "artist", "album", "player"]),
     ("window", &["title", "class"]),

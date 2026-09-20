@@ -123,6 +123,51 @@ pub fn bateria(avisar: Box<dyn Fn(Valor) + Send>) -> bool {
     })
 }
 
+// ── brillo ────────────────────────────────────────────────────────
+
+/// La primera retroiluminación que haya, la que manda `brightnessctl` por
+/// defecto. Un sobremesa contesta `{ present = false }`: el servicio existe, lo
+/// que no hay es pantalla que se pueda atenuar.
+fn pantalla() -> Option<std::path::PathBuf> {
+    let mut v: Vec<_> = std::fs::read_dir("/sys/class/backlight").ok()?.filter_map(Result::ok).map(|f| f.path()).filter(|p| p.join("max_brightness").exists()).collect();
+    v.sort();
+    v.into_iter().next()
+}
+
+fn brillo_ahora() -> Valor {
+    let leer = |r: std::path::PathBuf| std::fs::read_to_string(r).ok().and_then(|s| s.trim().parse::<f64>().ok());
+    let Some(p) = pantalla() else { return Valor::Mapa(vec![("present".into(), Valor::Si(false)), ("level".into(), Valor::Num(0.0))]) };
+    let (ahora, tope) = (leer(p.join("brightness")), leer(p.join("max_brightness")));
+    match (ahora, tope) {
+        (Some(a), Some(t)) if t > 0.0 => Valor::Mapa(vec![("present".into(), Valor::Si(true)), ("level".into(), Valor::Num(a / t))]),
+        _ => Valor::Mapa(vec![("present".into(), Valor::Si(false)), ("level".into(), Valor::Num(0.0))]),
+    }
+}
+
+pub fn brillo(avisar: Box<dyn Fn(Valor) + Send>) -> bool {
+    hilo("brillo", move || {
+        let mut ultimo = String::new();
+        loop {
+            si_cambia(&*avisar, &mut ultimo, brillo_ahora());
+            // Se mira a menudo porque lo puede cambiar una tecla del teclado.
+            std::thread::sleep(Duration::from_millis(700));
+        }
+    })
+}
+
+pub fn brillo_orden(que: &str, args: &[Valor]) -> Result<(), String> {
+    let ("brightness.level", [Valor::Num(v)]) = (que, args) else {
+        return Err(format!("'{que}' is not asked like that: brightness.level(0..1)"));
+    };
+    if pantalla().is_none() {
+        return Err("there is no backlight on this machine".into());
+    }
+    // Por `brightnessctl`, que es quien tiene el permiso: escribir en `sysfs`
+    // pide ser root, y pleamar no lo es ni debe serlo.
+    let tanto = format!("{}%", (v.clamp(0.0, 1.0) * 100.0).round() as i32);
+    salida_de("brightnessctl", &["-q", "set", &tanto]).map(|_| ()).ok_or_else(|| "brightnessctl refused".to_string())
+}
+
 // ── red ───────────────────────────────────────────────────────────
 
 /// `{ online, kind = "wired" | "wifi" | "none", name, strength }`. Sale del

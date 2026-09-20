@@ -1,0 +1,24 @@
+// espera: bien
+language 0.1
+// El brillo de la pantalla, como la batería: un sobremesa contesta que no la
+// hay, y entonces la pista se enseña apagada en vez de mentir.
+scene Brillo {
+    surface { size: 120, 220; anchor: top }
+    permissions { services: "brightness", "brightness.*" }
+    service brightness as pantalla { present: bool; level: number }
+    event mover ->
+
+    prop nivel = 0 ~quick
+    follow nivel = pantalla.level
+
+    box { from: 0, 0; size: 120, 220; color: #151616 }
+    group {
+        opacity: 25% + if(pantalla.present, 75%, 0%)
+        box { at: 60, 100; size: 14, 150; corner: 7; color: #2a2b2c }
+        box { from: 53, 25 + 150 * (1 - nivel); size: 14, 150 * nivel; corner: 7; color: #9ed6bd }
+        ellipse { at: 60, 25 + 150 * (1 - nivel); radius: 9; color: #f0ece4 }
+    }
+    text "{nivel * 100, 0}%" { at: 60, 196; anchor: center; size: 11.5; color: #9ed6bd }
+    zone box pista { at: 60, 100; size: 34, 168; cursor: pointer }
+    on drag pista { emit mover(1 - clamp((pointer.y - 25) / 150, 0, 1)) }
+}

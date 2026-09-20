@@ -67,6 +67,7 @@ pub fn servicio(de: &str, nombre: &str, avisar: Box<dyn Fn(Valor) + Send>) -> bo
     match nombre {
         "audio" => return sistema::audio(avisar),
         "battery" => return sistema::bateria(avisar),
+        "brightness" => return sistema::brillo(avisar),
         "network" => return sistema::red(avisar),
         "media" => return mpris::servicio(avisar),
         "notifications" => return avisos::servicio(avisar),
@@ -100,6 +101,10 @@ pub fn orden(de: &str, nombre: &str, args: &[Valor]) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     if let ("apps.launch", [Valor::Texto(o)]) = (nombre, args) {
         return escritorio::lanzar(o);
+    }
+    #[cfg(target_os = "linux")]
+    if nombre.starts_with("brightness.") {
+        return sistema::brillo_orden(nombre, args);
     }
     #[cfg(target_os = "linux")]
     if nombre.starts_with("audio.") {
