@@ -56,7 +56,8 @@ superficie   = "surface" "{" { propiedad_de } "}" ;
 permisos     = "permissions" "{" { ( "run" | "services" ) ":" texto { "," texto } fin } "}" ;
 modelo       = "model" nombre [ "max" numero ] "{" { campo | lista } "}" ;
 campo        = nombre ":" tipo [ "=" literal ] fin ;
-lista        = "list" nombre [ "max" numero ] "{" { campo | lista } "}" ;        (* fichas dentro de la ficha *)
+lista        = "list" nombre [ "max" numero ] ( "{" { campo | lista } "}"        (* fichas dentro de la ficha *)
+                                              | "depth" numero ) ;              (* …o como la de fuera, hasta esa hondura: un árbol *)
 tipo         = "text" | "number" | "bool" | "image" numero "," numero | enumerado ;
 enumerado    = nombre "|" nombre { "|" nombre } ;
 muelle       = "spring" nombre "=" numero "," numero ;
@@ -201,7 +202,7 @@ Una biblioteca puede traer también **lo que mueve por dentro** —`prop`, `pose
 | `spring bouncy = 170, 12` | Un muelle propio: rigidez, freno. De casa: `lively`, `calm`, `quick`, `slow`, `eyes`, `pose`. En línea: `~spring(170, 12)` |
 | `zone box whole { at: …; size: …; active: expr }` | Una zona que no se pinta |
 
-**Tipos.** Para el render todo son números; los tipos son para quien escribe y para quien habla con la escena desde fuera. Un hecho es un número, un sí o no (`bool`; sin tipo, lo es el que nace `true` o `false`) o un **enumerado**: `fact mode: low | normal | critical = normal`. Los nombres de sus valores valen en cualquier expresión (`mode == critical`, `mode = low` en una regla) y son su posición: `low` es 0. El mismo nombre puede estar en dos enumerados mientras signifique el mismo número; si no, es un fallo al declararlo. En un hueco de un texto, un enumerado se enseña por su nombre: `"modo: {mode}"` → `modo: critical`. La lógica los lee y los escribe como lo que son —`fact.open` es `true`, `fact.mode` es `"critical"`—, y `--decir` también.
+**Tipos.** Para el render todo son números; los tipos son para quien escribe y para quien habla con la escena desde fuera. Un hecho es un número, un sí o no (`bool`; sin tipo, lo es el que nace `true` o `false`) o un **enumerado**: `fact mode: low | normal | critical = normal`. Los nombres de sus valores valen en cualquier expresión (`mode == critical`, `mode = low` en una regla) y son su posición: `low` es 0. **Un enumerado se compara con sus valores, y el compilador lo comprueba**: `mode == fast`, si `fast` es de otro, es un fallo que dice cuáles valen; y con un enumerado no se hacen cuentas (`mode + 1` no significa nada; con un sí o no, sí: `r.separator * 21`). El mismo nombre puede estar en dos enumerados: comparado con su hecho, cada uno es el suyo; suelto, si significa números distintos, es un fallo que pide la forma larga, `mode.normal`, que vale siempre. En un hueco de un texto, un enumerado se enseña por su nombre: `"modo: {mode}"` → `modo: critical`. La lógica los lee y los escribe como lo que son —`fact.open` es `true`, `fact.mode` es `"critical"`—, y `--decir` también.
 
 Los campos de un modelo tienen esos tipos y dos más: **`image w, h`** —el nombre de un icono o una ruta, y la imagen que eso diga: `image r.icon { … }` sin declarar nada más— y **`list`**, fichas dentro de la ficha:
 
@@ -215,7 +216,7 @@ model menu max 8 {
 for m in menu { …  for it in m.items { text it.label { … } } }
 ```
 
-Una lista de dentro se recorre con `for it in m.items`, y tiene su `m.items.count` y su `m.items.total`. Todo se despliega al cargar: 8 × 6 son 48 fichas, y el tope entre todas las listas de un modelo es 4096.
+Una lista de dentro se recorre con `for it in m.items`, y tiene su `m.items.count` y su `m.items.total`. **`list children max 6 depth 2`**, sin bloque, son fichas como la de fuera, unas dentro de otras hasta esa hondura (de 1 a 6): un árbol, como el menú de una aplicación. Se recorre con tantos `for` como niveles se quieran enseñar. Todo se despliega al cargar: 8 × 6 son 48 fichas, y el tope entre todas las listas de un modelo es 4096.
 
 **`surface`**: `size: ancho, alto` (`full` como ancho es todo el monitor) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` · `margin: n` o `arriba, derecha, abajo, izquierda` · `level:` `background` `bottom` `top` `overlay` · `reserve: n` (el sitio que las ventanas le dejan) · `screens: all` o `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, y con `while expr` solo lo pide mientras sea verdad.
 

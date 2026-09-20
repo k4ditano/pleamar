@@ -1,0 +1,7 @@
+// espera: fallo ««fast» no es un valor de «mode»: vale low, normal o critical»
+scene X {
+    surface { size: 10, 10 }
+    fact mode: low | normal | critical = low
+    fact speed: slow | fast = slow
+    box { at: 5, 5; size: 4, 4; color: #fff; opacity: mode == fast }
+}

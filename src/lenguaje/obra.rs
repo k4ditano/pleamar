@@ -215,6 +215,8 @@ struct Obra<'a> {
     permisos_de: HashMap<usize, Permisos>,
     /// Los nombres de los valores de los enumerados, como números: `critical` es 2.
     valores: HashMap<String, f32>,
+    /// Los que están en dos enumerados con números distintos: sueltos no dicen nada.
+    ambiguos: std::collections::HashSet<String>,
     /// Lo que cada copia en curso trae para el `children` de su componente: los
     /// nodos, el ámbito de quien los escribió, y si ya se han puesto.
     hijos_de_copia: Vec<HijosDeCopia<'a>>,
@@ -276,7 +278,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
             otro => unreachable!("«{otro}» está en el vocabulario, pero no tiene rigidez ni freno"),
         })).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
-        ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), valores: HashMap::new(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
+        ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), valores: HashMap::new(), ambiguos: Default::default(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
@@ -592,10 +594,25 @@ impl<'a> Obra<'a> {
         if c.palabra("not") {
             return Ok(self.expr_no(c)?.no());
         }
+        let desde = c.i;
         let a = self.expr_suma(c)?;
+        let enumerado = self.enumerado_suelto(c, desde);
         for (s, f) in [(">=", 0), ("<=", 1), ("==", 4), ("!=", 5), (">", 2), ("<", 3)] {
             if c.sim(s) {
-                let b = self.expr_suma(c)?;
+                // Un enumerado se compara con SUS valores: el nombre se busca en su lista, no en
+                // la de todos (así dos enumerados pueden tener cada uno su `normal`).
+                let b = match (&enumerado, c.mira(), c.f.get(c.i + 1).map(|x| &x.f)) {
+                    (Some((hecho, nombres)), Some(F::Id(v)), sigue) if !matches!(sigue, Some(F::Sim("("))) && self.es_valor(v) => {
+                        match nombres.iter().position(|n| n == v) {
+                            Some(k) => {
+                                c.i += 1;
+                                Expr::K(k as f32)
+                            }
+                            None => return c.fallo(format!("«{v}» no es un valor de «{hecho}»: vale {}", enumerar(&nombres.iter().map(String::as_str).collect::<Vec<_>>()))),
+                        }
+                    }
+                    _ => self.expr_suma(c)?,
+                };
                 // Iguales es «a menos de una milésima»: son números con coma, y un muelle nunca llega del todo.
                 let distintos = |a: Expr, b: Expr| (a - b).abs().mayor(Expr::K(0.001));
                 return Ok(match f {
@@ -611,28 +628,69 @@ impl<'a> Obra<'a> {
         Ok(a)
     }
     fn expr_suma(&self, c: &mut Cur) -> R<Expr> {
+        let desde = c.i;
         let mut a = self.expr_prod(c)?;
         loop {
-            if c.sim("+") {
-                a = a + self.expr_prod(c)?;
-            } else if c.sim("-") {
-                a = a - self.expr_prod(c)?;
-            } else {
-                return Ok(a);
-            }
+            let hasta = c.i;
+            let op = if c.sim("+") { '+' } else if c.sim("-") { '-' } else { return Ok(a) };
+            self.sin_cuentas(c, desde, hasta)?;
+            let otro = c.i;
+            let b = self.expr_prod(c)?;
+            self.sin_cuentas(c, otro, c.i)?;
+            a = if op == '+' { a + b } else { a - b };
         }
     }
     fn expr_prod(&self, c: &mut Cur) -> R<Expr> {
+        let desde = c.i;
         let mut a = self.expr_uno(c)?;
         loop {
-            if c.sim("*") {
-                a = a * self.expr_uno(c)?;
-            } else if c.sim("/") {
-                a = a / self.expr_uno(c)?;
-            } else {
-                return Ok(a);
-            }
+            let hasta = c.i;
+            let op = if c.sim("*") { '*' } else if c.sim("/") { '/' } else { return Ok(a) };
+            self.sin_cuentas(c, desde, hasta)?;
+            let otro = c.i;
+            let b = self.expr_uno(c)?;
+            self.sin_cuentas(c, otro, c.i)?;
+            a = if op == '*' { a * b } else { a / b };
         }
+    }
+
+    /// Si lo leído desde `desde` es un hecho enumerado a secas —`mode`, `n.urgency`—: cuál, y sus valores.
+    fn enumerado_suelto(&self, c: &Cur, desde: usize) -> Option<(String, Vec<String>)> {
+        self.enumerado_entre(c, desde, c.i)
+    }
+
+    fn enumerado_entre(&self, c: &Cur, desde: usize, hasta: usize) -> Option<(String, Vec<String>)> {
+        let [Ficha { f: F::Id(n), .. }] = c.f.get(desde..hasta)? else { return None };
+        let g = self.global_callado(n);
+        match self.e.tipos.iter().find(|(x, _)| *x == g) {
+            Some((_, TipoDeHecho::Enum(nombres))) => Some((n.clone(), nombres.clone())),
+            _ => None,
+        }
+    }
+
+    /// Con un enumerado no se hacen cuentas: `mode + 1` no significa nada. (Con un sí o no, sí:
+    /// `r.separator * 21` es como se escribe «21 si es un separador».)
+    fn sin_cuentas(&self, c: &Cur, desde: usize, hasta: usize) -> R<()> {
+        match self.enumerado_entre(c, desde, hasta) {
+            Some((hecho, nombres)) => {
+                let f = &c.f[desde];
+                Err(Fallo::en(f.linea, f.col, format!("«{hecho}» es un enumerado ({}): con él no se hacen cuentas. Se compara: `{hecho} == {}`", nombres.join(", "), nombres.last().cloned().unwrap_or_default())))
+            }
+            None => Ok(()),
+        }
+    }
+
+    /// Si ese nombre es el valor de algún enumerado (y no otra cosa de la escena).
+    fn es_valor(&self, n: &str) -> bool {
+        self.valores.contains_key(n) || self.ambiguos.contains(n)
+    }
+
+    /// `global`, sin que cuente como haber leído nada (para mirar qué es un nombre).
+    fn global_callado(&self, n: &str) -> String {
+        let antes = self.sin_vigilar.replace(true);
+        let g = self.global(n);
+        self.sin_vigilar.set(antes);
+        g
     }
     fn expr_uno(&self, c: &mut Cur) -> R<Expr> {
         if c.sim("-") {
@@ -676,6 +734,14 @@ impl<'a> Obra<'a> {
                 } else if let Some(v) = self.valores.get(n) {
                     // El valor de un enumerado: `mode == critical`.
                     Ok(Expr::K(*v))
+                } else if let Some(k) = n.rsplit_once('.').and_then(|(hecho, valor)| match self.e.tipos.iter().find(|(x, _)| x == hecho) {
+                    Some((_, TipoDeHecho::Enum(nombres))) => nombres.iter().position(|x| x == valor),
+                    _ => None,
+                }) {
+                    // La forma larga, que no se confunde con nada: `mode.critical`.
+                    Ok(Expr::K(k as f32))
+                } else if self.ambiguos.contains(n.as_str()) {
+                    c.fallo(format!("«{n}» es un valor de varios enumerados, con números distintos: aquí no se sabe de cuál. Compáralo con su hecho (`mode == {n}`) o escríbelo entero (`mode.{n}`)"))
                 } else {
                     let conocidos: Vec<&String> = self.lets.keys().chain(self.props.keys()).chain(self.hechos.keys()).chain(self.valores.keys()).collect();
                     self.desconocido(c, "nada", n, conocidos)
@@ -2561,7 +2627,11 @@ impl<'a> Obra<'a> {
                 r?;
             } else if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "for") {
                 let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
-                let (var, modelo, caben) = self.cabeza_de_for(&mut c)?;
+                // Con las vueltas de fuera a la vista: `for c in m.children` necesita saber quién es `m`.
+                self.entornos.extend(ambito.iter().cloned());
+                let cabeza = self.cabeza_de_for(&mut c);
+                self.entornos.truncate(self.entornos.len() - ambito.len());
+                let (var, modelo, caben) = cabeza?;
                 for k in 0..caben {
                     ambito.push(self.vuelta_de_for(&var, &modelo, k));
                     self.desplegar(n.cuerpo.as_deref().unwrap_or(&[]).iter().collect(), ambito, hijos)?;
@@ -2608,10 +2678,14 @@ impl<'a> Obra<'a> {
         }
         for (k, n) in nombres.iter().enumerate() {
             // El mismo nombre en dos enumerados vale mientras signifique el mismo número.
+            // El mismo nombre en dos enumerados vale. Si además es otro número, suelto ya no dice
+            // nada: habrá que compararlo con su hecho (`speed == normal`) o escribirlo entero.
             match self.valores.get(n) {
                 Some(v) if *v != k as f32 => {
-                    return c.fallo(format!("«{n}» ya es el valor número {} de otro enumerado, y aquí sería el {k}: en una expresión no se sabría cuál es. Ponlos en el mismo orden, o llámalo de otra manera", *v as usize));
+                    self.valores.remove(n);
+                    self.ambiguos.insert(n.clone());
                 }
+                _ if self.ambiguos.contains(n) => {}
                 _ => { self.valores.insert(n.clone(), k as f32); }
             }
             if self.hechos.contains_key(n) || self.props.contains_key(n) || self.lets.contains_key(n) {
@@ -2640,6 +2714,7 @@ impl<'a> Obra<'a> {
             return Err(Fallo::en(n.linea, n.col, "en una lista caben entre 1 y 256 fichas: cada una se despliega al cargar"));
         }
         let mut campos: Vec<Campo> = Vec::new();
+        let mut recursiva: Option<(String, usize, usize)> = None;
         for e in n.cuerpo.as_deref().unwrap_or(&[]) {
             let campo = match e {
                 // `list items max 8 { label: text }`: fichas dentro de la ficha.
@@ -2648,6 +2723,23 @@ impl<'a> Obra<'a> {
                     c.una_de(voz::DE_MODELO, "lo que lleva un modelo además de campos")?;
                     let nombre = c.id("un nombre para la lista")?;
                     let caben = if c.palabra("max") { c.num()? as usize } else { 8 };
+                    // `list children max 6 depth 3`, sin bloque: fichas como la de fuera, unas dentro de
+                    // otras hasta esa hondura. Un árbol: el menú de una aplicación, con sus submenús.
+                    if c.palabra("depth") {
+                        let hondura = c.num()? as usize;
+                        c.nada_mas()?;
+                        if x.cuerpo.is_some() {
+                            return Err(Fallo::en(x.linea, x.col, "una lista con `depth` no lleva bloque: sus fichas son como la de fuera"));
+                        }
+                        if !(1..=6).contains(&hondura) || !(1..=256).contains(&caben) {
+                            return Err(Fallo::en(x.linea, x.col, "`depth` va de 1 a 6, y `max` de 1 a 256: cada nivel multiplica las fichas que se despliegan"));
+                        }
+                        if recursiva.is_some() {
+                            return Err(Fallo::en(x.linea, x.col, "una ficha tiene una sola lista con `depth`"));
+                        }
+                        recursiva = Some((nombre, caben, hondura));
+                        continue;
+                    }
                     c.nada_mas()?;
                     let dentro = self.campos_de(x, caben)?;
                     Campo { nombre: nombre.clone(), tipo: TipoDeCampo::Lista(Box::new(Modelo { nombre, caben, campos: dentro })), por_defecto: ValorDeCampo::Numero(0.0) }
@@ -2690,6 +2782,20 @@ impl<'a> Obra<'a> {
         }
         if campos.is_empty() {
             return Err(Fallo::en(n.linea, n.col, "a esta lista le faltan sus campos: `label: text`"));
+        }
+        // La lista que se contiene a sí misma se desenrolla de dentro afuera: el último nivel
+        // ya no tiene hijos; cada uno de los de encima, una lista de los de debajo.
+        if let Some((nombre, caben, hondura)) = recursiva {
+            if campos.iter().any(|k| k.nombre == nombre) {
+                return Err(Fallo::en(n.linea, n.col, format!("el campo «{nombre}» está dos veces")));
+            }
+            let mut nivel = campos.clone();
+            for _ in 0..hondura {
+                let mut encima = campos.clone();
+                encima.push(Campo { nombre: nombre.clone(), tipo: TipoDeCampo::Lista(Box::new(Modelo { nombre: nombre.clone(), caben, campos: nivel })), por_defecto: ValorDeCampo::Numero(0.0) });
+                nivel = encima;
+            }
+            campos = nivel;
         }
         Ok(campos)
     }
@@ -2941,10 +3047,23 @@ impl<'a> Obra<'a> {
                         _ => {
                             // `open = true`
                             c.i -= 1;
+                            let desde = c.i;
                             let h = self.hecho(&mut c)?;
+                            let enumerado = self.enumerado_suelto(&c, desde);
                             c.exige_sim("=")?;
-                            // Una expresión, que se evalúa al dispararse: `level = clamp(local.x / 64, 0, 1)`.
-                            Efecto::Hecho(h, self.expr(&mut c)?)
+                            // `mode = critical`: el valor, de la lista de ese hecho.
+                            let valor = match (&enumerado, c.mira()) {
+                                (Some((hecho, nombres)), Some(F::Id(v))) if c.f.len() == c.i + 1 && self.es_valor(v) => match nombres.iter().position(|n| n == v) {
+                                    Some(k) => {
+                                        c.i += 1;
+                                        Expr::K(k as f32)
+                                    }
+                                    None => return c.fallo(format!("«{v}» no es un valor de «{hecho}»: vale {}", enumerar(&nombres.iter().map(String::as_str).collect::<Vec<_>>()))),
+                                },
+                                // Una expresión, que se evalúa al dispararse: `level = clamp(local.x / 64, 0, 1)`.
+                                _ => self.expr(&mut c)?,
+                            };
+                            Efecto::Hecho(h, valor)
                         }
                     });
                     c.nada_mas()?;

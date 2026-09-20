@@ -1,0 +1,32 @@
+// espera: bien
+language 0.1
+// Dos enumerados con el mismo nombre en otro sitio; cada uno se compara con los suyos.
+// La forma larga. Un efecto que pone un enumerado. Y un árbol: fichas como la de fuera,
+// unas dentro de otras.
+scene CheckedTypes {
+    surface { size: 300, 200 }
+    let ink = #f5f7f5
+    fact mode:  low | normal | critical = normal
+    fact speed: normal | fast = fast               // `normal` es 1 en `mode` y 0 aquí: los dos valen
+    model menu max 4 {
+        label: text
+        kind: plain | danger = plain
+        list children max 4 depth 2
+    }
+
+    box alarm { at: 20, 20; size: 20, 20; corner: 10; color: mix(#9ed6bd, #e8776a, mode == critical) }
+    box calm  { at: 50, 20; size: 20, 20; corner: 10; color: ink; opacity: if(speed == normal and mode != low, 1, 0.3) }
+    box exact { at: 80, 20; size: 20, 20; corner: 10; color: ink; opacity: if(mode == mode.normal or speed == speed.fast, 1, 0.3) }
+    on press alarm { mode = critical; speed = normal }
+    on press calm  { mode = low }
+
+    column tree { at: 10, 50; gap: 2
+        for m in menu {
+            text m.label { size: 13; color: mix(ink, #e8776a, m.kind == danger) }
+            for c in m.children {
+                text "  › {c.label}" { size: 12; color: ink }
+                for g in c.children { text "      · {g.label} ({g.kind})" { size: 11; color: ink; opacity: 60% } }
+            }
+        }
+    }
+}

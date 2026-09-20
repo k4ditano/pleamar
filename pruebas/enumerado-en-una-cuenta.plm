@@ -1,0 +1,6 @@
+// espera: fallo «es un enumerado (low, normal, critical): con él no se hacen cuentas»
+scene X {
+    surface { size: 10, 10 }
+    fact mode: low | normal | critical = low
+    box { at: 5, 5; size: 4 + mode * 2, 4; color: #fff }
+}

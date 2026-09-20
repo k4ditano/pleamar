@@ -1,4 +1,5 @@
-// espera: fallo ««normal» ya es el valor número 1 de otro enumerado, y aquí sería el 0»
+// espera: bien
+// Antes era un fallo: el mismo nombre en dos enumerados con otro número. Ahora cada uno se compara con los suyos.
 scene X {
     surface { size: 10, 10 }
     fact mode: low | normal | critical = normal
