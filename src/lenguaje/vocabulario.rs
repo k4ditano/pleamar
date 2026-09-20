@@ -6,7 +6,7 @@
 
 /// Con qué puede empezar una sentencia (además del nombre de un componente).
 pub const SENTENCIAS: &[&str] = &[
-    "surface", "permissions", "model", "service", "spring", "prop", "pose", "fact", "event", "text", "image", "measure", "let", "zone",
+    "surface", "permissions", "model", "service", "spring", "prop", "pose", "fact", "event", "text", "image", "figure", "measure", "let", "zone",
     "body", "ellipse", "box", "arc", "line", "path", "input", "clip", "group", "popup",
     "component", "children", "repeat", "for", "row", "column", "space", "between",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
@@ -28,6 +28,7 @@ pub const PROPIEDADES: &[(&str, &[&str])] = &[
     ("body", &["color", "gradient", "rim", "light", "shadow", "border", "opacity", "show"]),
     ("text", &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show", "grow"]),
     ("image", &["at", "size", "opacity", "tint", "show", "grow"]),
+    ("figure", &["at", "size", "scale", "rotate", "pivot", "color", "opacity", "blend", "stroke", "show", "grow"]),
     ("input", &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "show"]),
     ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show", "grow"]),
     ("popup", &["at", "size", "open"]),
@@ -64,6 +65,7 @@ pub const AYUDA: &[(&str, &str)] = &[
     ("event", "`event confirmed` · `event view ->` — something that happens. With `->`, the logic hears it too."),
     ("text", "Declares a live text (`text title = \"…\"`) or paints one (`text title { size: 14 }`). In a painted one, `\"{a} · {b}\"` has holes."),
     ("image", "`image fox = icon \"firefox\", 48, 48` — an image by icon name, by file, or from a text that says which."),
+    ("figure", "`figure hat = file \"hat.svg\"` — an svg as geometry: its layers are paths, by the `id` of each one."),
     ("measure", "`measure label` — creates `label.width` and `label.height`, filled by the text that carries `measure: label`."),
     ("let", "`let panel.x = orb.x + 62` — a name for an expression, or for a colour. It has to come before whoever uses it."),
     ("zone", "`zone box whole { at: …; size: … }` — a shape that is not painted: it only catches the mouse."),

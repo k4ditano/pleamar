@@ -33,7 +33,7 @@
       "name": "entity.other.attribute-name.plm"
     },
     {
-      "match": "\\b(surface|permissions|model|service|spring|prop|pose|fact|event|text|image|measure|let|zone|body|ellipse|box|arc|line|path|input|clip|group|popup|component|children|repeat|for|row|column|space|between|layer|on|every|blink|wave|spin|follow|look|gesture|posture|scene|library|import|language)\\b",
+      "match": "\\b(surface|permissions|model|service|spring|prop|pose|fact|event|text|image|figure|measure|let|zone|body|ellipse|box|arc|line|path|input|clip|group|popup|component|children|repeat|for|row|column|space|between|layer|on|every|blink|wave|spin|follow|look|gesture|posture|scene|library|import|language)\\b",
       "name": "keyword.control.plm"
     },
     {

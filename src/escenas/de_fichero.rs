@@ -155,7 +155,15 @@ pub fn vigilar(ruta: String, al_render: Sender<ARender>, a_logica: Sender<Evento
         .name("recarga".into())
         .spawn(move || {
             // La escena y lo que importe: tocar una biblioteca también la recarga.
-            let mut vigilados: Vec<std::path::PathBuf> = crate::lenguaje::leer_fichero(&ruta).map_or_else(|_| vec![ruta.clone().into()], |(_, f)| f);
+            // La escena, sus bibliotecas y lo que traigan pegado —los SVG de sus
+            // figuras—: dibujas el gorro, guardas, y está puesto.
+            let mut vigilados: Vec<std::path::PathBuf> = crate::lenguaje::leer_fichero(&ruta).map_or_else(
+                |_| vec![ruta.clone().into()],
+                |(e, mut f)| {
+                    f.extend(e.adjuntos.iter().cloned());
+                    f
+                },
+            );
             let fecha = |v: &[std::path::PathBuf]| v.iter().map(|r| std::fs::metadata(r).and_then(|m| m.modified()).ok()).collect::<Vec<_>>();
             let mut ultima = fecha(&vigilados);
             loop {
@@ -181,6 +189,7 @@ pub fn vigilar(ruta: String, al_render: Sender<ARender>, a_logica: Sender<Evento
                         println!("reload · {ruta} read in {:.1} ms{}", t0.elapsed().as_secs_f32() * 1000.0, if ficheros.len() > 1 { format!(" · with {} libraries", ficheros.len() - 1) } else { String::new() });
                         // Puede que ahora importe otras cosas.
                         vigilados = ficheros;
+                        vigilados.extend(e.adjuntos.iter().cloned());
                         let _ = al_render.send(ARender::FalloDeRecarga(None));
                         let _ = a_la_logica.send(Evento::EscenaNueva(e.hechos.clone(), e.textos.clone(), e.permisos.clone(), e.modelos.clone(), e.tipos.clone(), e.plugins.clone(), e.sucesos.iter().map(|s| s.0).collect(), e.servicios.clone()));
                         if al_render.send(ARender::Escena(e)).is_err() {

@@ -252,6 +252,8 @@ struct Obra<'a> {
     sucesos: HashMap<String, SucesoId>,
     textos: HashMap<String, TextoId>,
     imagenes: HashMap<String, ImagenId>,
+    /// Las figuras: un SVG leído como geometría, por capas.
+    figuras: HashMap<String, super::figura::Figura>,
     modelos: HashMap<String, usize>,
     medidas: HashMap<String, (PropId, PropId)>,
     gestos: HashMap<String, GestoId>,
@@ -308,7 +310,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
     };
     let mut o = Obra {
         e: Escena::default(),
-        props: HashMap::new(), hechos: HashMap::new(), sucesos: HashMap::new(), textos: HashMap::new(), imagenes: HashMap::new(), modelos: HashMap::new(),
+        props: HashMap::new(), hechos: HashMap::new(), sucesos: HashMap::new(), textos: HashMap::new(), imagenes: HashMap::new(), figuras: HashMap::new(), modelos: HashMap::new(),
         medidas: HashMap::new(), gestos: HashMap::new(), zonas: HashMap::new(), lets: HashMap::new(), colores: HashMap::new(),
         muelles: voz::MUELLES.iter().map(|n| ((*n).to_owned(), match *n {
             "lively" => Muelle::VIVO,
@@ -1316,6 +1318,29 @@ impl<'a> Obra<'a> {
                     let i = self.e.imagen(fuente, w as u32, c.num()? as u32);
                     self.imagenes.insert(nombre, i);
                 }
+                // `figure hat = file "wardrobe/hat.svg"`: sus capas, como caminos.
+                "figure" if matches!(c.f.get(2).map(|x| &x.f), Some(F::Sim("="))) => {
+                    let nombre = self.declarar(&c.id("a name for the figure")?);
+                    c.exige_sim("=")?;
+                    if !c.palabra("file") {
+                        return c.fallo("a figure comes from a file: `figure hat = file \"hat.svg\"`");
+                    }
+                    // Relativa al fichero que la escribe, como las imágenes: así
+                    // una biblioteca se lleva sus piezas consigo.
+                    let escrita = std::path::PathBuf::from(c.cadena()?);
+                    let carpeta = self.carpetas.get(n.linea / super::POR_FICHERO);
+                    let ruta = match carpeta {
+                        Some(k) if escrita.is_relative() => k.join(escrita),
+                        _ => escrita,
+                    };
+                    let datos = std::fs::read(&ruta).map_err(|e| Fallo::en(n.linea, n.col, format!("that svg cannot be read: {e}")))?;
+                    let (fig, avisos) = super::figura::leer(&datos).map_err(|m| Fallo::en(n.linea, n.col, m))?;
+                    for a in avisos {
+                        eprintln!("figure · {}: {a}", ruta.display());
+                    }
+                    self.e.adjuntos.push(ruta);
+                    self.figuras.insert(nombre, fig);
+                }
                 "measure" => {
                     let local = c.id("a name for the measure")?;
                     let nombre = self.declarar(&local);
@@ -1384,6 +1409,7 @@ impl<'a> Obra<'a> {
                 }
                 "text" => self.texto(n)?,
                 "image" => self.imagen(n)?,
+                "figure" => self.figura(n)?,
                 "input" => self.campo(n)?,
                 "clip" => {
                     let margen = if c.palabra("inset") { c.num()? } else { 0.0 };
@@ -1616,6 +1642,12 @@ impl<'a> Obra<'a> {
         for e in n.cuerpo.as_deref().unwrap_or(&[]) {
             if let Entrada::Nodo(h) = e {
                 self.en_hueco = en_hueco && formas == 0;
+                // Una figura trae sus capas, que pueden ser varias formas: se
+                // funden con el resto como cualquier otra.
+                if matches!(h.cabeza.first().map(|f| &f.f), Some(F::Id(x)) if x == "figure") {
+                    formas += self.figura_en_cuerpo(h)?;
+                    continue;
+                }
                 let f = self.forma(h, 0)?;
                 if formas == 0 {
                     tam = f.tam;
@@ -2036,6 +2068,148 @@ impl<'a> Obra<'a> {
         self.ultimo_tam = Some((ancho.clone(), alto.into()));
         self.e.pintar(Instr::Campo { texto, zona: fijo(&zona), en, ancho, estilo, alfa, marcador, seleccion });
         Ok(())
+    }
+
+    /// Una figura puesta donde toca: su transformación y sus trazos.
+    ///
+    /// `figure hat { at: x, y; size: 44, 34 }` es la pieza entera y
+    /// `figure hat.brim { … }` una de sus capas, **en su sitio dentro de la
+    /// pieza**: dos capas dibujadas por separado siguen encajando, que es lo
+    /// que deja que una gire y la otra no. Y `pivot:` es el punto de la pieza
+    /// que se posa en `at` y alrededor del cual gira: el ala de un gorro gira
+    /// por donde se apoya, no por su centro.
+    fn figura_puesta(&mut self, n: &Nodo) -> R<(Transformacion, Vec<(Forma, Color, Expr)>, Expr)> {
+        let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
+        let escrito = c.id("the name of a figure")?;
+        let nombre = self.global(&escrito);
+        let (pieza, capa) = if self.figuras.contains_key(&nombre) {
+            (nombre.clone(), None)
+        } else if let Some((f, hoja)) = nombre.rsplit_once('.') {
+            (f.to_owned(), Some(hoja.to_owned()))
+        } else {
+            return self.desconocido(&c, "ninguna figura", &nombre, self.figuras.keys().collect());
+        };
+        let Some(fig) = self.figuras.get(&pieza) else {
+            return self.desconocido(&c, "ninguna figura", &pieza, self.figuras.keys().collect());
+        };
+        let tam = fig.tam;
+        let suyos = |t: &super::figura::Trazo| (t.forma.clone(), t.color, t.alfa, t.grosor);
+        let trazos: Vec<(Forma, [f32; 3], f32, f32)> = match &capa {
+            None => fig.capas.iter().flat_map(|c| c.trazos.iter()).map(suyos).collect(),
+            Some(cual) => match fig.capa(cual) {
+                Some(c) => c.trazos.iter().map(suyos).collect(),
+                None => {
+                    let hay = fig.nombres().join(", ");
+                    return Err(Fallo::en(n.linea, n.col, format!("'{pieza}' has no layer called '{cual}': it has {hay}")));
+                }
+            },
+        };
+        let mut p = self.propiedades(n, voz::propiedades("figure"))?;
+        let en_hueco = std::mem::take(&mut self.en_hueco);
+        let at = match p.get_mut("at") {
+            Some(c) => self.punto(c)?,
+            None if en_hueco => (0.0.into(), 0.0.into()),
+            None => (0.0.into(), 0.0.into()),
+        };
+        // `size:` la pinta de ese tamaño; `scale:`, por ese factor; sin ninguno,
+        // una unidad del SVG es un píxel.
+        let hay_escala = p.contains_key("scale");
+        let escala = match (p.get_mut("size"), hay_escala) {
+            (Some(c), _) => {
+                let (w, h) = self.punto(c)?;
+                self.ultimo_tam = Some((w.clone(), h.clone()));
+                (w / Expr::K(tam.0), h / Expr::K(tam.1))
+            }
+            (None, true) => {
+                let c = p.get_mut("scale").unwrap();
+                let sx = self.expr(c)?;
+                let sy = if c.sim(",") { self.expr(c)? } else { sx.clone() };
+                self.ultimo_tam = Some((Expr::K(tam.0) * sx.clone(), Expr::K(tam.1) * sy.clone()));
+                (sx, sy)
+            }
+            _ => {
+                self.ultimo_tam = Some((Expr::K(tam.0), Expr::K(tam.1)));
+                (Expr::K(1.0), Expr::K(1.0))
+            }
+        };
+        // El pivote se dice en unidades del SVG y desde su centro. Y es solo el
+        // punto por el que **gira**: `at` sigue poniendo el centro de la pieza
+        // donde se le dice, así que dos capas con pivotes distintos siguen
+        // encajando. Con el pivote también de traslación, el ala se iba sola a
+        // otro sitio y la pieza se descosía.
+        let pivote = match p.get_mut("pivot") {
+            Some(c) => self.punto(c)?,
+            None => (Expr::K(0.0), Expr::K(0.0)),
+        };
+        let giro = match p.get_mut("rotate") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(0.0),
+        };
+        let alfa = match p.get_mut("opacity") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(1.0),
+        };
+        let alfa = match p.get_mut("show") {
+            Some(c) => alfa * self.expr(c)?.acotar(0.0, 1.0),
+            None => alfa,
+        };
+        // `color:` manda sobre el del SVG: la misma pieza en otro tono.
+        let tinte = match p.get_mut("color") {
+            Some(c) => Some(self.color(c)?),
+            None => None,
+        };
+        let grueso = match p.get_mut("stroke") {
+            Some(c) => Some(self.expr(c)?),
+            None => None,
+        };
+        let fusion = match p.get_mut("blend") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(0.0),
+        };
+        let puestos = trazos
+            .into_iter()
+            .map(|(forma, col, a, grosor)| {
+                let forma = match (&grueso, grosor) {
+                    (Some(g), _) => forma.trazo(g.clone()),
+                    (None, g) if g > 0.0 => forma.trazo(Expr::K(g)),
+                    _ => forma,
+                };
+                let color = tinte.clone().unwrap_or_else(|| crate::escena::color(col[0], col[1], col[2]));
+                (forma, color, alfa.clone() * Expr::K(a))
+            })
+            .collect();
+        // Y la cuenta que hace que girar por un lado no mueva la pieza: el
+        // escalado se aplica alrededor del centro, y el giro alrededor del
+        // pivote. Sale de despejar la afín, y con pivote 0 o escala 1 es `at`.
+        let mueve = (
+            at.0 + pivote.0.clone() * (escala.0.clone() - Expr::K(1.0)),
+            at.1 + pivote.1.clone() * (escala.1.clone() - Expr::K(1.0)),
+        );
+        Ok((Transformacion { pivote, giro, escala, mueve }, puestos, fusion))
+    }
+
+    /// Suelta: cada trazo, una forma plana.
+    fn figura(&mut self, n: &Nodo) -> R<()> {
+        let (afin, trazos, _) = self.figura_puesta(n)?;
+        self.e.pintar(Instr::Transformar(Some(afin)));
+        for (forma, color, alfa) in trazos {
+            self.e.pintar(Instr::Plano { forma, color, alfa });
+        }
+        self.e.pintar(Instr::Transformar(None));
+        Ok(())
+    }
+
+    /// Dentro de un cuerpo: sus trazos se funden con lo demás, que es lo que
+    /// hace que un accesorio sea de ella y no algo pegado encima.
+    fn figura_en_cuerpo(&mut self, n: &Nodo) -> R<usize> {
+        let (afin, trazos, fusion) = self.figura_puesta(n)?;
+        let cuantos = trazos.len();
+        self.e.pintar(Instr::Transformar(Some(afin)));
+        for (forma, _, _) in trazos {
+            self.e.pintar(Instr::Forma { forma, fusion: fusion.clone() });
+        }
+        self.e.pintar(Instr::Transformar(None));
+        Ok(cuantos)
     }
 
     fn imagen(&mut self, n: &Nodo) -> R<()> {

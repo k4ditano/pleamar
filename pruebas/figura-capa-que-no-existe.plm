@@ -1,0 +1,6 @@
+// espera: fallo «has no layer called 'fond': it has fondo, punto»
+scene Figura {
+    surface { size: 200, 120; anchor: center }
+    figure pieza = file "comun/pieza.svg"
+    figure pieza.fond { at: 40, 60; size: 40, 40 }
+}

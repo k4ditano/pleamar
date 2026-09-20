@@ -7,6 +7,7 @@
 
 mod arbol;
 mod fichas;
+mod figura;
 mod obra;
 pub mod vocabulario;
 

@@ -51,7 +51,7 @@ inner        = property | gesture | layer ;                                     
 statement    = declaration | drawing | structure | layer | rule | behaviour | gesture ;
 
 declaration  = surface | permissions | model | spring | property | fact | event
-             | live_text | image_decl | measure | let | zone ;
+             | live_text | image_decl | figure_decl | measure | let | zone ;
 surface      = "surface" [ name ] "{" { element_prop | statement } "}" ;   (* named: one of several, with its own things inside *)
 permissions  = "permissions" "{" { ( "run" | "services" ) ":" text { "," text } end } "}" ;
 model        = "model" name [ "max" number ] "{" { field | list } "}" ;
@@ -67,18 +67,20 @@ fact         = "fact" name [ ":" ( "number" | "bool" | enum ) ] "=" ( number | "
 event        = "event" name [ "->" ] ;
 live_text    = "text" name "=" text ;
 image_decl   = "image" name "=" ( "icon" text | "file" text | "from" name ) "," number "," number ;
+figure_decl  = "figure" name "=" "file" text ;                                  (* un svg, por sus capas *)
 measure      = "measure" name ;
 let          = "let" name "=" ( expr | color ) ;
 zone         = "zone" shape ;
 spring_ref   = name | "spring" "(" number "," number ")" | duration ;   (* ~620ms: gets there in that long *)
 
-drawing      = body | shape | text | image | field | clip | group | popup ;
+drawing      = body | shape | text | image | figure | field | clip | group | popup ;
 body         = "body" "{" { element_prop | shape } "}" ;
 shape        = ( "ellipse" | "box" | "arc" | "line" ) [ name ] "{" { element_prop } "}"
              | "path" [ name ] "{" { element_prop | step } "}" ;
 step         = "move" point | "line" point | "curve" point "via" point | "close" ;
 text         = "text" ( text | name | "number" "(" expr [ "," number [ "," text ] ] ")" ) "{" { element_prop } "}" ;
 image        = "image" name "{" { element_prop } "}" ;
+figure       = "figure" name [ "." name ] "{" { element_prop } "}" ;            (* entera, o una capa *)
 field        = "input" name "{" { element_prop } "}" ;
 clip         = "clip" [ "inset" number ] shape ;
 group        = "group" "{" { element_prop | statement } "}" ;
@@ -201,6 +203,7 @@ A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `po
 | `event confirmed` · `event view_event ->` | Something that happens. With `->`, it also reaches the logic |
 | `text notice.title = "Meeting"` | A live text: the logic changes it, or an `input` |
 | `image fox = icon "firefox", 48, 48` | An image, and the largest logical size it is painted at. `icon "name"`, `file "path"`, or `from some_text`: whichever that text says (an icon name, or a path if it starts with `/`) |
+| `figure hat = file "hat.svg"` | An svg **as geometry**: its layers become paths, each one named by the `id` of its group in the file. The path is relative to the file that writes it, so a library takes its pieces with it |
 | `measure label` | Creates `label.width` and `label.height`, filled by the text that carries `measure: label` |
 | `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | A name for an expression, or for a color |
 | `spring bouncy = 170, 12` | A spring of one's own: stiffness, damping. From the house: `lively`, `calm`, `quick`, `slow`, `gentle`, `pose`. Inline: `~spring(170, 12)`, or **`~620ms`**: the spring that gets there in that long without overshooting |
@@ -355,6 +358,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` |
 | `image` | `at` · `size` · `opacity` · `tint` · `show` |
+| `figure` | `at` (where the piece's centre goes) · `size: w, h` or `scale:` (without either, one unit of the svg is one pixel) · `pivot: x, y` (in the svg's units, from its centre: the point it **turns** around, which does not move it) · `rotate` · `color` (instead of the one in the file) · `opacity` · `blend` · `stroke` · `show` |
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `show` |
 | `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` |
 | `popup` | `at` (inside the surface) · `size` · `open:` a fact |
@@ -373,6 +377,19 @@ too, a shadow can show up only when there is something to cast one: `shadow: 0,
 2 * open, 12 * open, 32% * open` gives a card the shadow of a card and leaves
 the thing it grew out of with none. With the count at zero there is no shadow
 to work out, and the renderer does not look at it.
+
+**A figure is an svg read as geometry, not as a stamp.** An image is rasterised
+into an atlas: it shows, but it is a sticker —it melts into nothing, it cannot
+be tinted by parts nor animated by layers, and scaling it is pixels—. `figure
+hat = file "hat.svg"` reads the same file as **paths**, so each layer is a shape
+like any other: inside a `body` it is one silhouette with it, it takes rim,
+light and shadow, and it turns around its own pivot.
+
+`figure hat { … }` draws the whole piece and `figure hat.brim { … }` one of its
+layers, **in its place inside the piece**: two layers drawn separately still fit
+together, which is what lets one of them turn while the others stay. What comes
+across is filled and stroked paths with their colour; gradients, masks, filters
+and text do not, and it says so when it reads the file instead of pretending.
 
 A **path** is a broken or curved line. `close` closes it, and then it is filled —concave too, and crossing itself too—; unclosed, or with `stroke`, it is a line of that width with round caps. `curve` is a quadratic Bézier, and it is split into as many segments as the detour is long. Inside it is the same signed distance as the other shapes: it melts with `blend`, and it has shadow, rim, light and border like any other.
 
@@ -704,7 +721,7 @@ This is the output of `pleamar --gramatica`, copied. It is not a second list: th
 
 ```vocabulario
 language: 0.1
-statements: surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
+statements: surface permissions model service spring prop pose fact event text image figure measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
 library: let spring component permissions fact text model service event image prop pose gesture posture layer
 properties.surface: size anchor margin level reserve screens keyboard open kind title
 properties.permissions: run services
@@ -717,6 +734,7 @@ properties.path: at size
 properties.body: color gradient rim light shadow border opacity show
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow
 properties.image: at size opacity tint show grow
+properties.figure: at size scale rotate pivot color opacity blend stroke show grow
 properties.input: at width size weight color opacity family placeholder selection show
 properties.group: pivot rotate scale move opacity size show grow
 properties.popup: at size open
@@ -733,7 +751,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture import scene library language
+documented: surface permissions model service spring prop pose fact event text image figure measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture import scene library language
 services: clock clock.seconds audio battery brightness network media window
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date

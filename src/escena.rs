@@ -937,6 +937,9 @@ pub struct Escena {
     pub reglas: Vec<Regla>,
     /// Las ventanas que pide. La primera es la principal: la que manda si algo es de una sola.
     pub superficies: Vec<Superficie>,
+    /// Ficheros que no son `.plm` y de los que también está hecha —los SVG de
+    /// sus figuras—: tocarlos también la recarga.
+    pub adjuntos: Vec<std::path::PathBuf>,
     /// `keyboard: exclusive while open`: cuándo quiere el teclado.
     pub teclado_mientras: Option<Expr>,
     pub permisos: Permisos,

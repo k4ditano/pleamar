@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="60" height="46" viewBox="0 0 60 46">
+  <g id="ala"><path d="M3 32 h54 a5 5 0 0 1 0 10 h-54 a5 5 0 0 1 0 -10 z" fill="#2f5d50"/></g>
+  <g id="corona"><path d="M11 33 C11 11 49 11 49 33 z" fill="#3f7d6a"/></g>
+  <g id="pompon"><circle cx="30" cy="11" r="7" fill="#e8c07a"/></g>
+</svg>
