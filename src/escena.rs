@@ -397,6 +397,9 @@ pub enum Trozo {
     Vivo(TextoId, Letras),
     /// Una expresión, con tantos decimales.
     Numero(Expr, u8),
+    /// Unos segundos, escritos como los escribe un reloj: `1:07`, y `1:02:07`
+    /// cuando pasan de la hora.
+    Duracion(Expr),
     /// El nombre de lo que valga un hecho enumerado: `{mode}` → `critical`.
     Nombre(Expr, Vec<String>),
     /// `{? · {r.body}}`: un tramo que solo está si ninguno de sus textos está vacío.
@@ -433,6 +436,14 @@ impl Trozo {
                 }
                 Trozo::Numero(e, decimales) => {
                     let _ = write!(en, "{:.*}", *decimales as usize, e.evaluar(c));
+                }
+                Trozo::Duracion(e) => {
+                    let t = e.evaluar(c).max(0.0) as u64;
+                    let _ = if t >= 3600 {
+                        write!(en, "{}:{:02}:{:02}", t / 3600, t / 60 % 60, t % 60)
+                    } else {
+                        write!(en, "{}:{:02}", t / 60, t % 60)
+                    };
                 }
                 Trozo::Nombre(e, nombres) => {
                     if let Some(n) = nombres.get(e.evaluar(c).round().max(0.0) as usize) {

@@ -480,6 +480,7 @@ Inside a text in quotes that is the content of a `text` or the argument of a com
 | --- | --- |
 | `{name}` | a live text, or the `text` field of a record |
 | `{expr}` · `{expr, n}` | an expression, with n decimals (0 if unsaid) |
+| `{expr, time}` | that many seconds, the way a clock writes them: `1:07`, and `1:02:07` past the hour |
 | `{upper(name)}` · `{lower(name)}` | that text, in upper or lower case |
 | `{? … }` | a stretch that is only there if none of the texts inside it is empty |
 | `{{` · `}}` | a real brace |

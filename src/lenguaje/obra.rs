@@ -1774,9 +1774,18 @@ impl<'a> Obra<'a> {
             }
         }
         let e = self.expr(&mut c)?;
-        let decimales = if c.sim(",") { c.num()? as u8 } else { 0 };
+        // `{secs, time}`: unos segundos, como los escribe un reloj.
+        if c.sim(",") {
+            if c.palabra("time") {
+                c.nada_mas()?;
+                return Ok(Trozo::Duracion(e));
+            }
+            let decimales = c.num()? as u8;
+            c.nada_mas()?;
+            return Ok(Trozo::Numero(e, decimales));
+        }
         c.nada_mas()?;
-        Ok(Trozo::Numero(e, decimales))
+        Ok(Trozo::Numero(e, 0))
     }
 
     /// `text notice.title { at: …; size: 20 }` o `text "Descartar" { … }`
