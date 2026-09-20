@@ -13,6 +13,7 @@ aviso que le nace del costado.
 ```sh
 cargo build --release
 ./target/release/pleamar --escena escenas/barra.plm   # una barra de verdad: escritorios, ventana, hora y volumen
+./target/release/pleamar --escena escenas/con-plugin.plm # una escena sin lógica propia con un plugin: un reloj que se pone la hora solo
 ./target/release/pleamar --escena escenas/iconos.plm  # la bandeja del sistema; botón derecho sobre un icono abre su menú
 ./target/release/pleamar --escena escenas/lanzador.plm # un lanzador; se abre con: pleamar --decir lanzador "emit toggle"
 ./target/release/pleamar --escena escenas/marea.plm   # una escena escrita en el lenguaje; se recarga al guardarla

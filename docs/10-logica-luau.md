@@ -72,6 +72,16 @@ Lo que aún no es un servicio se puede sacar con `spawn` y `run`, pero eso ata e
 
 Al salir, el programa para todo lo que la lógica dejó corriendo; al recargar la lógica, también. Y si lo matan a la fuerza, se va con él igualmente (en Linux se lo pedimos al núcleo).
 
+## Plugins: una lógica por biblioteca
+
+Una biblioteca con un `.luau` al lado es un plugin (ver [[pleamar · 11 Referencia del lenguaje 0.1]], §5). Su lógica es un script como cualquier otro, con tres diferencias:
+
+- **Solo ve lo suyo.** `text.now` es el `Clock.now` de la escena; `fact.secret`, si `secret` es de la escena, no existe: `el plugin «Nosy» no tiene ningún hecho «secret». Un plugin solo ve lo que declara su biblioteca`. Lo mismo con `model`, `emit` y lo que escucha: `on("tapped", …)` es `Clock.tapped`, y `on("key", …)` no oye nada.
+- **Sus permisos son los de su `.plm`**, no los de la escena que lo usa: `el plugin «Nosy» no tiene permiso para lanzar «sh». Si debe poder, decláralo en su .plm (los de la escena no le valen)`.
+- **No pide gestos ni mueve el cursor de escribir**: eso es de la escena. Si quiere que pase algo, emite un suceso suyo, y la escena decide (`on Clock.tapped { play nod }`).
+
+Cada plugin tiene su propio estado de Luau —su memoria, sus temporizadores, sus procesos—, y la escena puede no tener lógica ninguna.
+
 ## Permisos
 
 La caja de arena cierra `io` y `os`; lo que queda abierto al sistema son `run`, `spawn` y los servicios, y **cada escena declara cuáles usa**, en su `.plm`:

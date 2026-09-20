@@ -41,6 +41,19 @@ Los `import` van antes de `scene` (o de `library`), y la ruta es relativa **al f
 
 Dos componentes con el mismo nombre no conviven (`ya hay un componente «Dot», en paleta.plm:4`); un círculo de imports se dice con su camino; y **un fallo dice en qué fichero está**, también si está dentro de una biblioteca. Guardar una biblioteca recarga en caliente las escenas que la usan.
 
+**Un plugin es una biblioteca con su lógica al lado** (`reloj.plm` + `reloj.luau`): declara su frontera y sus permisos, que viven aparte de los de la escena.
+
+```
+library Clock strict {
+    permissions { run: "date" }
+    text now = "--:--"
+    event tapped ->
+    component Clock(tone: color = ink) { row face { …; text now { … } };  on press face { emit tapped } }
+}
+```
+
+Desde la escena su frontera se llama `Clock.now`, `Clock.tapped`; su lógica solo ve lo suyo y solo tiene sus permisos. `escenas/con-plugin.plm` es una escena sin lógica propia que pone un reloj así.
+
 ## Forma general
 
 ```
