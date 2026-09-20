@@ -659,16 +659,25 @@ pub fn hilo(
                         ya
                     }
                     Disparador::Cada { entre, mientras } => {
-                        let toca = e.proxima.is_some_and(|p| ahora >= p);
-                        if toca {
+                        // Mientras la condición no se cumple, la espera NO cuenta: el
+                        // reloj se pone entero cada frame, así que empieza a contar
+                        // cuando empieza a ser verdad. Antes corría por su cuenta y
+                        // `every 1s while cuenta` daba su primer paso a los 300 ms —lo
+                        // que quedara del reloj de antes—, que en una cuenta atrás es
+                        // un segundo que no existe.
+                        if !mientras.es_verdad(c) {
                             e.proxima = Some(ahora + Duration::from_secs_f32(azar.entre(entre.0, entre.1)));
-                        }
-                        if let Some(p) = e.proxima {
-                            if mientras.es_verdad(c) {
+                            false
+                        } else {
+                            let toca = e.proxima.is_some_and(|p| ahora >= p);
+                            if toca {
+                                e.proxima = Some(ahora + Duration::from_secs_f32(azar.entre(entre.0, entre.1)));
+                            }
+                            if let Some(p) = e.proxima {
                                 citas.push(p);
                             }
+                            toca
                         }
-                        toca && mientras.es_verdad(c)
                     }
                     Disparador::Al(_) => false, // se atienden con los sucesos, abajo
                 };
@@ -680,6 +689,14 @@ pub fn hilo(
 
         // Efectos y sucesos, hasta que no quede ninguno (con tope: una regla
         // que se dispara a sí misma no cuelga al render).
+        //
+        // Y si ha pasado algo, no se duerme todavía: las reglas se miran todas
+        // antes de aplicar nada, así que un `on change` no puede ver en el mismo
+        // frame lo que otra regla acaba de cambiar. Lo ve al siguiente, y sin
+        // esto «el siguiente» podía ser un segundo más tarde —el render dormido
+        // hasta la próxima cita—, que es como una cuenta atrás se saltaba su
+        // final.
+        let paso_algo = !efectos.is_empty() || !sucesos.is_empty() || !gestos_pedidos.is_empty();
         let mut tope = 8;
         while (!efectos.is_empty() || !sucesos.is_empty() || !gestos_pedidos.is_empty()) && tope > 0 {
             tope -= 1;
@@ -702,7 +719,10 @@ pub fn hilo(
                         let v = carga.as_ref().map(|e| e.evaluar(Ctx { props: &props, hechos: &hechos }));
                         sucesos.push((s.0 as usize, false, v));
                     }
-                    Efecto::Impulso(p, v) => props[p.0 as usize].v += v,
+                    Efecto::Impulso(p, v) => {
+                        let v = v.evaluar(Ctx { props: &props, hechos: &hechos });
+                        props[p.0 as usize].v += v;
+                    }
                     Efecto::Gesto(g) => gestos_pedidos.push(g.0 as usize),
                     Efecto::Enfocar(t) => {
                         edicion = t.map(|t| t.0 as usize).map(|k| Edicion { campo: k, cursor: textos[k].len(), ancla: textos[k].len() });
@@ -1133,7 +1153,7 @@ pub fn hilo(
         if op.sin_vsync && ciclo.dts.len() >= 600 {
             ciclo.cerrar();
         }
-        if !op.sin_vsync && !vivo && !bloqueada && !cambia_la_region && !cambio_de_medida && !cambio_de_teclado && props.iter().all(Animada::quieta) {
+        if !op.sin_vsync && !vivo && !paso_algo && !bloqueada && !cambia_la_region && !cambio_de_medida && !cambio_de_teclado && props.iter().all(Animada::quieta) {
             for a in &mut props {
                 a.posar();
             }

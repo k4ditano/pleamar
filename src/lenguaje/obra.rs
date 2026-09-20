@@ -3578,7 +3578,7 @@ impl<'a> Obra<'a> {
                             };
                             Efecto::Suceso(s, carga)
                         }
-                        "impulse" => Efecto::Impulso(self.prop(&mut c)?, c.num()?),
+                        "impulse" => Efecto::Impulso(self.prop(&mut c)?, self.expr(&mut c)?),
                         "play" => {
                             let g = self.global(&c.id("the name of a gesture")?);
                             match self.gestos.get(&g) {

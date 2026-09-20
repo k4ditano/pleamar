@@ -117,7 +117,7 @@ trigger      = "press" [ "right" | "middle" ] zone_ref | "release" zone_ref | "s
              | name ;                                (* an event *)
 key          = name { "+" name } ;                   (* Escape · Ctrl+k · Super+Alt+s *)
 effect       = transition | name "=" expr | "toggle" name
-             | "emit" name [ "(" expr ")" ] | "impulse" name number
+             | "emit" name [ "(" expr ")" ] | "impulse" name expr
              | "play" name | "focus" name | "blur" ;
 
 behaviour    = "blink" name "every" duration [ ".." duration ] "for" duration
@@ -520,7 +520,7 @@ The names of a slot are resolved where the string is written, not where it is us
 | `fact = expr` | evaluated on firing |
 | `toggle fact` | |
 | `emit event` · `emit event(expr)` | with a payload, which reaches the logic |
-| `impulse prop -620` | a shove: it adds to the velocity of the spring |
+| `impulse prop -620` · `impulse pop left * 5` | a shove: it adds to the velocity of the spring. The amount is evaluated on firing, so it can depend on what is going on: a countdown's bounce shrinks with the number left |
 | `play gesture` | it asks for it; it will be granted or not, depending on its class |
 | `focus field` · `blur` | gives the writing cursor to an `input`, or takes it away |
 

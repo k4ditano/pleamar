@@ -193,7 +193,7 @@ impl Guion for Marea {
         e.regla(Entra(z_ver), vec![Efecto::Animar(ir(boton, 1.0, Muelle::RAPIDO, 0))]);
         e.regla(Sale(z_ver), vec![Efecto::Animar(ir(boton, 0.0, Muelle::RAPIDO, 0))]);
         e.regla(Pulsa(z_descartar), vec![Efecto::Hecho(abierta, 0.0.into())]);
-        e.regla(Pulsa(z_ver), vec![Efecto::Hecho(abierta, 0.0.into()), Efecto::Impulso(orbe_y, -620.0), Efecto::Suceso(ver_evento, None)]);
+        e.regla(Pulsa(z_ver), vec![Efecto::Hecho(abierta, 0.0.into()), Efecto::Impulso(orbe_y, (-620.0).into()), Efecto::Suceso(ver_evento, None)]);
         e.regla(Quieto { durante: ms(14_000), mientras: abierta.e().no() }, vec![Efecto::Hecho(dormida, 1.0.into())]);
 
         e

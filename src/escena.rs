@@ -839,7 +839,10 @@ pub enum Efecto {
     Alternar(HechoId),
     /// Un suceso, con una carga si se quiere: `emit opened(i)`. Se evalúa al dispararse.
     Suceso(SucesoId, Option<Expr>),
-    Impulso(PropId, f32),
+    /// Un empujón a la velocidad del muelle. La cantidad se evalúa al
+    /// dispararse, así que puede depender de lo que esté pasando: el rebote de
+    /// una cuenta atrás decrece con el número que queda.
+    Impulso(PropId, Expr),
     Gesto(GestoId),
     /// Poner el cursor de texto en un campo, o quitarlo.
     Enfocar(Option<TextoId>),
