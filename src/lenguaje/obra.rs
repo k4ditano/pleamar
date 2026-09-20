@@ -206,6 +206,8 @@ struct Obra<'a> {
     /// Qué ficheros, por su número, son bibliotecas `strict`.
     estrictos: &'a [usize],
     bibliotecas: &'a [Biblioteca],
+    /// La carpeta de cada fichero: una ruta relativa lo es al fichero que la escribe.
+    carpetas: &'a [std::path::PathBuf],
     /// La frontera que declara cada biblioteca, por el número de su fichero: cómo se
     /// llama dentro (`now`) y cómo se llama de verdad (`Clock.now`).
     frontera_de: HashMap<usize, HashMap<String, String>>,
@@ -252,7 +254,7 @@ struct Obra<'a> {
     bajo: Vec<Transformacion>,
 }
 
-pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], estrictos: &'a [usize], bibliotecas: &'a [Biblioteca]) -> Result<Escena, Vec<Fallo>> {
+pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a [std::path::PathBuf], estrictos: &'a [usize], bibliotecas: &'a [Biblioteca]) -> Result<Escena, Vec<Fallo>> {
     let escena = match arbol {
         [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "scene") => n,
         [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "library") => {
@@ -274,7 +276,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], estrictos: &'a
             otro => unreachable!("«{otro}» está en el vocabulario, pero no tiene rigidez ni freno"),
         })).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
-        ficheros, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), valores: HashMap::new(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
+        ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), valores: HashMap::new(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
@@ -391,7 +393,12 @@ impl<'a> Obra<'a> {
             }
         }
         // Dentro de un componente de una biblioteca, `now` es el `Clock.now` de su frontera.
-        if let Some(mia) = self.entornos.iter().rev().find_map(|e| e.biblioteca).and_then(|k| self.frontera_de.get(&k)) {
+        // (O en el propio nivel de la biblioteca: un gesto suyo que mueve una pose suya.)
+        let de_biblioteca = self.entornos.iter().rev().find_map(|e| e.biblioteca).or_else(|| {
+            let k = MIRANDO.with(|m| m.get().0) / super::POR_FICHERO;
+            (self.entornos.is_empty() && k > 0).then_some(k)
+        });
+        if let Some(mia) = de_biblioteca.and_then(|k| self.frontera_de.get(&k)) {
             let mut hasta = n.len();
             loop {
                 if let Some(g) = mia.get(&n[..hasta]) {
@@ -984,7 +991,11 @@ impl<'a> Obra<'a> {
                     let fuente = if c.palabra("icon") {
                         Fuente::Icono(c.cadena()?)
                     } else if c.palabra("file") {
-                        Fuente::Ruta(c.cadena()?.into())
+                        // Relativa al fichero que la escribe, no a desde dónde se lance: así una
+                        // biblioteca lleva sus imágenes consigo.
+                        let escrita = std::path::PathBuf::from(c.cadena()?);
+                        let carpeta = self.carpetas.get(n.linea / super::POR_FICHERO);
+                        Fuente::Ruta(match carpeta { Some(k) if escrita.is_relative() => k.join(escrita), _ => escrita })
                     } else if c.palabra("from") {
                         // La que diga un texto vivo: así elige la lógica una imagen.
                         let t = self.global(&c.id("el nombre de un texto")?);
@@ -1746,7 +1757,7 @@ impl<'a> Obra<'a> {
 
     /// `layer card ~calm { open while open { orb.x: 140 ~lively after 70ms } rest { … } }`
     fn capa(&mut self, n: &Nodo, c: &mut Cur) -> R<()> {
-        let nombre = c.id("un nombre para la capa")?;
+        let nombre = self.declarar(&c.id("un nombre para la capa")?);
         let muelle = if c.sim("~") { self.muelle(c)? } else { Muelle::RAPIDO };
         c.nada_mas()?;
         let mut reclamaciones = Vec::new();
@@ -3007,7 +3018,7 @@ impl<'a> Obra<'a> {
 
     /// `gesture nod reflex { 130ms out_quad { look.y: 4; eyes: 10 } … }`
     fn gesto(&mut self, n: &Nodo, palabra: &str, c: &mut Cur) -> R<()> {
-        let nombre = c.id("un nombre para el gesto")?;
+        let nombre = self.declarar(&c.id("un nombre para el gesto")?);
         let (clase, mientras) = if palabra == "posture" {
             c.exige_palabra("while")?;
             (Clase::Postura, Some(self.expr(c)?))

@@ -1,0 +1,13 @@
+// espera: bien
+language 0.1
+// Una biblioteca con pose, gesto, capa e imagen propios; y la escena le habla al plugin
+// emitiendo un suceso de su frontera.
+import "plugins/cara.plm"
+scene UsesFace {
+    surface { size: 160, 70; anchor: top; margin: 60; screens: "HDMI-A-1" }
+    box { from: 0, 0; size: 160, 70; corner: 12; color: #151616 }
+    row { at: 12, 12; gap: 12; Face; Face(tone: #e86a9a) }
+    box button { at: 136, 35; size: 28, 28; corner: 14; color: #3a3b3b; cursor: pointer }
+    on press button { emit Face.cheer }
+    on Face.poked   { Face.happy = false }
+}

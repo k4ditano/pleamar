@@ -44,8 +44,9 @@ En EBNF: `[ x ]` es opcional, `{ x }` cero o más veces, `|` alternativas, `"x"`
 ```
 fichero      = [ "language" numero fin ] { "import" texto fin } ( escena | biblioteca ) ;
 escena       = "scene" nombre "{" { sentencia } "}" ;
-biblioteca   = "library" nombre [ "strict" ] "{" { let | muelle | componente | frontera } "}" ;
-frontera     = permisos | hecho | suceso | texto_vivo | modelo ;          (* lo de un plugin: vive bajo el nombre de la biblioteca *)
+biblioteca   = "library" nombre [ "strict" ] "{" { let | muelle | componente | frontera | por_dentro } "}" ;
+frontera     = permisos | hecho | suceso | texto_vivo | modelo | imagen_decl ;   (* vive bajo el nombre de la biblioteca: `Clock.now` *)
+por_dentro   = propiedad | gesto | capa ;                                        (* lo que mueve por dentro; también bajo su nombre *)
 
 sentencia    = declaracion | dibujo | estructura | capa | regla | comportamiento | gesto ;
 
@@ -170,6 +171,12 @@ library Clock strict {
 
 Pedir permisos sin tener un `.luau` al lado es un fallo: no hay quien los use.
 
+**Los permisos de un plugin los aprueba quien lo usa.** Declararlos no es tenerlos: `pleamar --aprobar escena.plm` enseña lo que pide cada plugin de esa escena y pregunta. Lo aprobado se guarda fuera del plugin, con la huella de su lógica y de lo que pedía: si cambia cualquiera de las dos, vuelve a estar sin aprobar. **Sin aprobar, un plugin corre sin ningún permiso**, y sus errores dicen por qué y cómo aprobarlo. Un intérprete (`sh`, `python`…) sale marcado: es pedirlo todo. La escena que uno abre no pasa por esto: abrirla ya es decidir.
+
+Una biblioteca puede traer también **lo que mueve por dentro** —`prop`, `pose`, `gesture`, `posture`, `layer`— e **imágenes** (`image logo = file "logo.png", 16, 16`: la ruta es relativa al fichero que la escribe, así que la imagen va con ella). Todo bajo su nombre, como su frontera. Lo que no puede es pintar fuera de un componente, ni tener reglas sueltas: eso es de la escena.
+
+**La escena le habla a un plugin emitiendo un suceso suyo** (`on press button { emit Face.cheer }`), que oyen los componentes del plugin (`on cheer { … }`) y su lógica (`on("cheer", …)`); y puede leer y poner los hechos de su frontera (`Face.happy = false`): la escena es la dueña. Un plugin no tiene superficie propia: si algo necesita la suya, es una escena.
+
 **El fichero se lee en cuatro vueltas** —declaraciones; `let` y capas; dibujo; reglas—, así que el orden de lo escrito es el que le convenga a quien lee: una regla puede ir antes que la forma que nombra, y un `prop` al final. Dos excepciones: un `let` tiene que ir antes de quien lo usa, y **se pinta en el orden en que se escribe** (y de las zonas, la que se declara después queda encima).
 
 **Todos los nombres son globales**, salvo dentro de un componente o de una vuelta de `repeat` o `for`: ahí lo que se declara es propio de esa copia (dos copias de `Note` tienen cada una su `lit` y su zona `hit`), y primero se busca lo de dentro —parámetros, `let` del componente— y luego lo de fuera. Un `let` de la escena con el nombre de uno importado lo pisa: así se cambia un tono. Dos componentes con el mismo nombre no conviven.
@@ -181,7 +188,7 @@ Pedir permisos sin tener un `.luau` al lado es un fallo: no hay quien los use.
 | Sentencia | Qué declara |
 | --- | --- |
 | `surface { … }` | La ventana que pide la escena. Ver abajo |
-| `permissions { run: "date"; services: "audio", "apps" }` | Lo que la lógica puede tocar del sistema. Sin declarar, nada |
+| `permissions { run: "date"; services: "audio", "audio.*" }` | Lo que la lógica puede tocar del sistema. Sin declarar, nada. **Escuchar no es mandar**: `"audio"` deja saber el volumen (`sys.watch`, `sys.ask`); para cambiarlo hace falta `"audio.volume"`, o `"audio.*"` |
 | `model rows max 14 { label: text; enabled: bool = true; depth: number }` | Una lista de fichas que pone la lógica. `max`: cuántas caben (1 a 256; 16 si no se dice). Crea `rows.count`, `rows.total` y, por ficha, `rows.K.campo` |
 | `prop orb.x = 360 ~lively` | Una propiedad animada: un muelle. Sin `~`, `lively` |
 | `pose eyes = 14` | Una propiedad de la pose: la que un gesto lleva de la mano |
@@ -495,7 +502,7 @@ Esto es la salida de `pleamar --gramatica`, copiada. No es una segunda lista: so
 ```vocabulario
 language: 0.1
 statements: surface permissions model spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
-library: let spring component permissions fact text model event
+library: let spring component permissions fact text model event image prop pose gesture posture layer
 properties.surface: size anchor margin level reserve screens keyboard
 properties.permissions: run services
 properties.shape: rotate stroke color opacity blend active show cursor

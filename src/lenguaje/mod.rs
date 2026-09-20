@@ -129,10 +129,12 @@ impl Lectura {
             }
             for d in b.cuerpo.unwrap_or_default() {
                 // Una biblioteca declara; no pinta, ni reacciona, ni tiene frontera con la lógica.
-                let vale = matches!(&d, arbol::Entrada::Nodo(x) if matches!(x.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if vocabulario::DE_BIBLIOTECA.contains(&p.as_str())));
+                // `text now = "…"` declara; `text "hola" { … }` pinta, y eso no es cosa de una biblioteca.
+                let vale = matches!(&d, arbol::Entrada::Nodo(x) if matches!(x.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if vocabulario::DE_BIBLIOTECA.contains(&p.as_str())
+                    && (!["text", "image"].contains(&p.as_str()) || matches!(x.cabeza.get(2).map(|f| &f.f), Some(F::Sim("="))))));
                 if !vale {
                     let (l, c) = match &d { arbol::Entrada::Nodo(x) => (x.linea, x.col), arbol::Entrada::Prop { linea, col, .. } => (*linea, *col) };
-                    return Err(Fallo::en(l, c, "una biblioteca solo declara: `let`, `spring`, `component`, y su propia frontera (`fact`, `text`, `model`, `event`, `permissions`). Lo que se pinta y lo que se mueve es cosa de la escena"));
+                    return Err(Fallo::en(l, c, "una biblioteca solo declara: `let`, `spring`, `component`, su frontera (`fact`, `text`, `model`, `event`, `image x = …`, `permissions`) y lo que mueve por dentro (`prop`, `pose`, `gesture`, `posture`, `layer`). Lo que se pinta y las reglas sueltas son cosa de la escena"));
                 }
                 traido.push(d);
             }
@@ -180,7 +182,8 @@ pub fn leer_fichero(ruta: &str) -> Result<(Escena, Vec<PathBuf>), String> {
             }
         }
         let nombres: Vec<String> = l.ficheros.iter().map(|(r, _)| r.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect();
-        obra::levantar(&resto, &nombres, &l.estrictos, &l.bibliotecas)
+        let carpetas: Vec<PathBuf> = l.ficheros.iter().map(|(r, _)| r.parent().map_or_else(PathBuf::new, Path::to_owned)).collect();
+        obra::levantar(&resto, &nombres, &carpetas, &l.estrictos, &l.bibliotecas)
     })();
     // Al enseñar un fallo, el fichero principal con la ruta que dio quien lo abrió.
     if let Some(f) = l.ficheros.first_mut() {

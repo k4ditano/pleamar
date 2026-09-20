@@ -1,0 +1,29 @@
+// Una biblioteca que trae lo que se mueve por dentro: una pose, un gesto que la lleva,
+// una capa que decide, y una imagen que va con ella (la ruta es relativa a este fichero).
+library Face strict {
+    pose tilt = 0
+    prop glow = 0 ~quick
+    fact happy = false
+    event poked ->                        // sale hacia la lógica del plugin
+    event cheer ->                        // y este lo emite la escena: así se le habla
+    image logo = file "logo.png", 16, 16
+
+    gesture nod reflex {
+        120ms out_quad { tilt: 0.25 }
+        160ms out_back
+    }
+    layer mood ~quick {
+        glad while happy { glow: 1 ~lively }
+        calm             { glow: 0 ~slow }
+    }
+
+    component Face(tone: color = #9ed6bd) {
+        size: 44, 44
+        group { pivot: 22, 22; rotate: tilt
+            box hit { from: 0, 0; size: 44, 44; corner: 12; color: mix(#2e2f2f, tone, max(glow, mood.glad * 0.5)); cursor: pointer }
+            image logo { at: 14, 14; size: 16, 16 }
+        }
+        on press hit { play nod; emit poked }
+        on cheer     { happy = true; play nod }
+    }
+}
