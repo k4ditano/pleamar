@@ -215,13 +215,13 @@ on press knob { toggle open }
 
 surface panel {
     size: 300, 160;  anchor: top_right;  margin: 48, 12, 0, 0;  level: overlay
-    open: open                                   // it is there while that fact is true
+    open: open                                   // it is there while that is true: a fact, or any expression
     body { … };  box close { … }
     on press close { open = false }
 }
 ```
 
-They all **share properties, facts, models and rules**: a bar and its panel talk through a fact, without a round trip through the system and without knowing about each other. Inside, each one looks at a different slice of the same plane, just like a popup. A closed surface is not seen and cannot be pressed.
+They all **share properties, facts, models and rules**: a bar and its panel talk through a fact, without a round trip through the system and without knowing about each other. Inside, each one looks at a different slice of the same plane, just like a popup. A closed surface is not seen and cannot be pressed. `open:` takes any expression, so a surface can stay while what it holds finishes leaving: `open: tuck > 0.01`, with `tuck` a spring, closes the window once the thing has slid out of it and not before. **A named surface starts clean**: a loose `clip` of the scene ends where a named surface begins, instead of reaching into another window.
 
 **A surface does not grow with what it draws**, and a shadow counts: `shadow: 0, 18, 44` reaches 62 px below its shape, so a card that ends 20 px from the bottom edge has its shadow cut there, and the cut is a straight line where a fade should be. Declare the surface with that room; the input region lets the click through the empty part, so nothing is lost by declaring it large. When a shape that is well clear of an edge has its shadow cut against it, the renderer says so, once, as soon as nothing is moving:
 
@@ -386,7 +386,7 @@ A layout with `view:` **is dragged** without declaring anything: on being presse
 
 `escenas/lista-larga` is five thousand rows in sixteen copies: 0.49 ms per frame, and the same sixteen groups and nineteen zones however many there are.
 
-`clip [inset n] shape` clips everything that comes after, to the end of its `group`. Up to four nested ones clip by their shape; the outer ones, by their box.
+`clip [inset n] shape` clips everything that comes after, to the end of its `group` —or, loose in the scene, up to the next named `surface`—. Up to four nested ones clip by their shape; the outer ones, by their box.
 
 **Gradients.** In a `body`, `gradient:` takes where it goes from and to and then its colors, separated by commas. Each color can say **where it falls** (`sand 40%`); the ones that do not say it are spread evenly. From two to eight.
 
@@ -536,7 +536,7 @@ The names of a slot are resolved where the string is written, not where it is us
 
 ## 15. Gestures
 
-A gesture is a timeline over the properties of the pose (`pose`). `gesture name class { frames }`; classes, from weakest to strongest: `ambient` < postures < `reflex` < `asked` < `state`. **A gesture only cuts off another of its own class or lower.** A frame is a duration, and if it likes a curve, `hold 60ms` (holds there) and `emit event`; its block says where each property goes, and whatever it does not name returns to its base. With no block, it is the return to the base. `posture name while expr { … }` repeats on its own while that is true.
+A gesture is a timeline over the properties of the pose (`pose`). `gesture name class { frames }`; classes, from weakest to strongest: `ambient` < postures < `reflex` < `asked` < `state`. **A gesture only cuts off another of its own class or lower.** A frame is a duration, and if it likes a curve, `hold 60ms` (holds there) and `emit event` —which fires when the frame **begins**: to say "done", give it a short frame of its own at the end—; its block says where each property goes, and whatever it does not name returns to its base. With no block, it is the return to the base. `posture name while expr { … }` repeats on its own while that is true.
 
 **A spring can be said in time.** `~620ms` is the spring that arrives in 620 ms
 and does not bounce: critically damped, worked out from the time asked for.

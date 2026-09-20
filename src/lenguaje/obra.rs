@@ -216,7 +216,7 @@ struct Obra<'a> {
     /// De los repartos que se desplazan, cuáles son filas: se arrastran de lado.
     fila_de_scroll: std::collections::HashSet<String>,
     /// Superficies cuyo `open:` se resuelve al final: (cuál, el hecho, dónde está escrito).
-    superficies_pendientes: Vec<(usize, String, (usize, usize))>,
+    superficies_pendientes: Vec<(usize, &'a [Ficha], (usize, usize))>,
     /// Los nombres de los ficheros de los que está hecha, para decir dónde está algo.
     ficheros: &'a [String],
     /// Qué ficheros, por su número, son bibliotecas `strict`.
@@ -393,15 +393,12 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
     let (w, h) = (o.e.superficie().ancho as f32, o.e.superficie().alto as f32);
     o.e.hechos[0].1 = if w > 0.0 { w } else { 1920.0 };
     o.e.hechos[1].1 = h;
-    for (cual, hecho, (l, col)) in std::mem::take(&mut o.superficies_pendientes) {
+    for (cual, fichas, (l, col)) in std::mem::take(&mut o.superficies_pendientes) {
         o.entornos.clear();
-        match o.hechos.get(&o.global(&hecho)).copied() {
-            Some(h) => o.e.superficies[cual].abierta = Some(h),
-            None => {
-                let conocidos: Vec<&String> = o.hechos.keys().collect();
-                let pista = parecido(&hecho, conocidos.into_iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
-                o.anotar(Fallo::en(l, col, format!("there is no fact called '{hecho}'.{pista}")));
-            }
+        let mut c = Cur::de(fichas, l, col);
+        match o.expr(&mut c) {
+            Ok(e) => o.e.superficies[cual].abierta = Some(e),
+            Err(f) => o.fallos.push(f),
         }
     }
     if o.e.superficies.is_empty() {
@@ -1138,7 +1135,19 @@ impl<'a> Obra<'a> {
             }
             self.clase_actual = palabra.clone();
             match palabra.as_str() {
-                "surface" => self.superficie(n)?,
+                "surface" => {
+                    // Una superficie con nombre es otra ventana: empieza limpia. Un
+                    // `clip` suelto de la escena llegaba hasta el final de su grupo
+                    // —o sea, hasta el final del fichero— y recortaba también lo que
+                    // dibujaba la otra ventana, que vive lejos en el mismo plano: no
+                    // se veía nada, y nada lo decía. Los recortes abiertos acaban aquí.
+                    if n.cuerpo.as_deref().unwrap_or(&[]).iter().any(|e| matches!(e, Entrada::Nodo(_))) {
+                        for _ in 0..std::mem::take(recortes) {
+                            self.e.pintar(Instr::Recorte(None));
+                        }
+                    }
+                    self.superficie(n)?
+                }
                 "model" => self.modelo(n, &mut c)?,
                 "service" => self.servicio(n, &mut c)?,
                 "permissions" => {
@@ -2037,7 +2046,10 @@ impl<'a> Obra<'a> {
         let cual = self.e.superficies.iter().position(|s| s.nombre == nombre).unwrap();
         let mut abierta_pendiente = None;
         if let Some(c) = p.get_mut("open") {
-            abierta_pendiente = Some((c.id("the fact that opens it")?, c.pos()));
+            // Una cuenta entera, no solo un hecho: `open: tuck > 0.01` deja que una
+            // superficie siga ahí mientras lo que lleva dentro termina de irse.
+            abierta_pendiente = Some((&c.f[c.i..], c.pos()));
+            c.i = c.f.len();
         }
         if let Some((hecho, donde)) = abierta_pendiente {
             // Como el `while` del teclado: puede nombrar un hecho declarado más abajo.

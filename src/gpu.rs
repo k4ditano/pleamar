@@ -47,6 +47,10 @@ pub struct Dibujo {
     /// cuenta deja de crecer o la escena se queda quieta.
     sombra: Option<(f32, String)>,
     sombra_sin_crecer: u8,
+    /// Si en este frame alguna sombra seguía cortada. Algo que cruza un borde
+    /// de camino —una bolita que sale por arriba— la tiene cortada tres frames
+    /// y ya no: eso no es un error de maqueta, y no se dice.
+    sombra_este_frame: bool,
     sombra_dicha: bool,
     /// Lo que mide la superficie de la escena, sin la franja de instrumentos.
     suya: (f32, f32),
@@ -145,7 +149,11 @@ impl Dibujo {
             .map(|k| format!("{:.0} px {}", falta[k].ceil(), lados[k]))
             .collect();
         let peor = falta.iter().zip(flota).filter(|(_, f)| *f).map(|(v, _)| *v).fold(0.0f32, f32::max);
-        if dichos.is_empty() || peor <= self.sombra.as_ref().map_or(0.0, |(p, _)| *p) {
+        if dichos.is_empty() {
+            return;
+        }
+        self.sombra_este_frame = true;
+        if peor <= self.sombra.as_ref().map_or(0.0, |(p, _)| *p) {
             return;
         }
         self.sombra_sin_crecer = 0;
@@ -460,6 +468,10 @@ impl Dibujo {
                     giros.pop();
                 }
             }
+        }
+        if self.sombra.is_some() && !std::mem::take(&mut self.sombra_este_frame) {
+            // Ya no está cortada: pasaba por ahí.
+            self.sombra = None;
         }
         if self.sombra.is_some() {
             self.sombra_sin_crecer += 1;

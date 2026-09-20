@@ -78,7 +78,7 @@ pub struct Superficie {
     /// propiedades, hechos y reglas sin saber unas de otras.
     pub origen: (f32, f32),
     /// Está mientras este hecho sea verdad. Sin él, siempre.
-    pub abierta: Option<HechoId>,
+    pub abierta: Option<Expr>,
     /// 0 es «todo el ancho del monitor».
     pub ancho: u32,
     pub alto: u32,

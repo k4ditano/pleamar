@@ -981,7 +981,7 @@ pub fn hilo(
         // Lo que se dibuja existe si cae en alguna superficie viva, o en alguna emergente
         // abierta. Una superficie cerrada no aporta la suya: así todo lo suyo se descarta al
         // componer y su siguiente frame sale vacío, que es lo que la hace desaparecer.
-        let abierta = |k: usize| escena.superficies.get(k).and_then(|s| s.abierta).is_none_or(|h| hechos[h.0 as usize] > 0.5);
+        let abierta = |k: usize| escena.superficies.get(k).and_then(|s| s.abierta.as_ref()).is_none_or(|e| e.es_verdad(Ctx { props: &props, hechos: &hechos }));
         dibujo.vistas.clear();
         dibujo.vistas.extend(laminas.iter().filter(|l| abierta(l.vista.superficie)).map(|l| l.vista.caja()));
         for (k, em) in escena.emergentes.iter().enumerate() {
@@ -1044,7 +1044,7 @@ pub fn hilo(
         let cerradas: Vec<[f32; 4]> = escena
             .superficies
             .iter()
-            .filter(|s| s.abierta.is_some_and(|h| hechos[h.0 as usize] <= 0.5))
+            .filter(|s| s.abierta.as_ref().is_some_and(|e| !e.es_verdad(c)))
             .map(|s| [s.origen.0, s.origen.1, s.origen.0 + s.ancho.max(1) as f32, s.origen.1 + s.alto as f32])
             .collect();
         let cajas: Vec<[i32; 4]> = escena
