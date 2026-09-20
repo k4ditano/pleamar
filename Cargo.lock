@@ -1410,6 +1410,8 @@ dependencies = [
  "serde_json",
  "smithay-client-toolkit",
  "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
  "wgpu",
  "zbus",
 ]

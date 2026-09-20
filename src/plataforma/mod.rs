@@ -59,9 +59,16 @@ pub fn servicio(nombre: &str, avisar: Box<dyn Fn(Valor) + Send>) -> bool {
         "tray" => return bandeja::servicio(avisar),
         _ => {}
     }
+    // `PLEAMAR_GENERICO=1` salta el camino de Hyprland: es como se prueba aquí lo que
+    // verán los demás compositores.
     #[cfg(target_os = "linux")]
-    if hyprland::esta() {
+    if hyprland::esta() && std::env::var_os("PLEAMAR_GENERICO").is_none() {
         return hyprland::servicio(nombre, avisar);
+    }
+    // Cualquier otro Wayland: los protocolos que entienden todos.
+    #[cfg(target_os = "linux")]
+    if matches!(nombre, "window" | "workspaces") {
+        return compositor::servicio(nombre, avisar);
     }
     let _ = (nombre, avisar);
     false
@@ -90,8 +97,12 @@ pub fn orden(nombre: &str, args: &[Valor]) -> Result<(), String> {
         return mpris::orden(nombre, args);
     }
     #[cfg(target_os = "linux")]
-    if hyprland::esta() {
+    if hyprland::esta() && std::env::var_os("PLEAMAR_GENERICO").is_none() {
         return hyprland::orden(nombre, args);
+    }
+    #[cfg(target_os = "linux")]
+    if nombre.starts_with("workspaces.") {
+        return compositor::orden(nombre, args);
     }
     let _ = args;
     Err(format!("este sistema no sabe hacer «{nombre}» todavía"))
@@ -261,6 +272,8 @@ pub trait Ventana: Send {
 mod avisos;
 #[cfg(target_os = "linux")]
 mod bandeja;
+#[cfg(target_os = "linux")]
+mod compositor;
 #[cfg(target_os = "linux")]
 mod escritorio;
 #[cfg(target_os = "linux")]
