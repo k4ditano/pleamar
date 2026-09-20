@@ -202,8 +202,28 @@ pub fn hilo(
                             _ => {}
                         }
                     }
+                    // Con `screens: each`, cada copia sabe de qué monitor es: su nombre y
+                    // lo que mide. Es lo que le deja enseñar lo suyo y no lo de la otra.
+                    if let Some(suya) = escena.superficies.get(n.vista.superficie) {
+                        let k = suya.instancia;
+                        if let Some(i) = escena.textos.iter().position(|t| t.0 == format!("screen.{k}.name")) {
+                            textos.resize(escena.textos.len().max(textos.len()), String::new());
+                            textos[i] = n.nombre.clone();
+                            let _ = a_logica.send(Evento::Texto(escena.textos[i].0, n.nombre.clone()));
+                        }
+                        for (parte, v) in [("width", n.tam.0 as f32), ("height", n.tam.1 as f32)] {
+                            if let Some(i) = escena.hechos.iter().position(|h| h.0 == format!("screen.{k}.{parte}")) {
+                                hechos[i] = v;
+                            }
+                        }
+                    }
                     println!("render · surface {} on {} · {}×{} · scale {} · {:.0} Hz", n.id, n.nombre, n.tam.0, n.tam.1, n.escala, n.mhz as f32 / 1000.0);
                     laminas.push(g.lamina(*n, tam));
+                    // Cuántos monitores están enseñando algo ahora mismo.
+                    if let Some(i) = escena.hechos.iter().position(|h| h.0 == "screens.count") {
+                        let cuantos = laminas.iter().filter(|l| l.vista.emergente.is_none()).map(|l| l.vista.superficie).collect::<std::collections::HashSet<_>>().len();
+                        hechos[i] = cuantos as f32;
+                    }
                     repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
                     region = vec![[i32::MIN; 4]];
                 }

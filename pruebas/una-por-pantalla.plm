@@ -1,0 +1,26 @@
+// espera: bien
+language 0.1
+// Una barra por monitor, cada una con su estado: `screens: each`. Dentro, `$screen` es
+// su número, `screen.name` el de su monitor, y lo que se declara es suyo y de nadie más.
+scene PerScreen {
+    let ink = #f5f7f5
+    model bars max 4 { active: number; title: text }
+
+    surface bar {
+        size: full, 36
+        anchor: top
+        screens: each max 2
+
+        prop lift = 0 ~quick               // una por copia: cada barra se realza sola
+        box strip { at: screen.width / 2, 18; size: screen.width, 36; color: mix(#151616, #23312c, lift) }
+        text "{screen.name} · {bars.$screen.title}" { at: 12, 18; anchor: left center; size: 12.5; color: ink }
+        row desks { at: screen.width - 12, 18; anchor: right middle; gap: 5
+            repeat i in 0..4 {
+                box dot { size: 16, 16; corner: 8; color: ink
+                          opacity: if(bars.$screen.active == i, 90%, 25%) }
+            }
+        }
+        on enter strip { lift: 1 ~quick }
+        on leave strip { lift: 0 ~quick }
+    }
+}

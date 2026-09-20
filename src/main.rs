@@ -149,7 +149,24 @@ fn main() {
     // la contraria.
     let mut escena = guion.escena();
     if let Some(p) = &a.pantalla {
-        escena.superficie_mut().pantallas = if p == "todas" { Pantallas::Todas } else { Pantallas::Estas(p.split(',').map(str::to_owned).collect()) };
+        let cuales: Vec<String> = p.split(',').map(str::to_owned).collect();
+        let por_monitor = matches!(escena.superficie().pantallas, Pantallas::Numero(_));
+        // A una superficie por monitor (`screens: each`) se le reparte la lista: la
+        // primera copia al primer nombre, y así. Es como se ensayan dos monitores.
+        for s in &mut escena.superficies {
+            if let Pantallas::Numero(k) = s.pantallas {
+                s.pantallas = match cuales.get(k) {
+                    _ if p == "todas" => Pantallas::Numero(k),
+                    Some(nombre) => Pantallas::Estas(vec![nombre.clone()]),
+                    // Más copias que monitores pedidos: esa no sale.
+                    None => Pantallas::Estas(Vec::new()),
+                };
+            }
+        }
+        // La principal, salvo que sea ya una de las copias por monitor: esa ya se ha repartido.
+        if !por_monitor || p == "todas" {
+            escena.superficie_mut().pantallas = if p == "todas" { Pantallas::Todas } else { Pantallas::Estas(cuales) };
+        }
     }
     if let Some(m) = a.margen {
         escena.superficie_mut().margen[0] = m;

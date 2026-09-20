@@ -59,6 +59,9 @@ pub enum Pantallas {
     Todas,
     /// Solo en estos. Un nombre repetido da dos superficies en el mismo.
     Estas(Vec<String>),
+    /// El monitor número k de los que haya, por orden. Es lo que hace `screens: each`:
+    /// una superficie por monitor, cada una con su propio estado.
+    Numero(usize),
 }
 
 /// La superficie que pide una escena. El tamaño es en píxeles lógicos: en un
@@ -67,6 +70,9 @@ pub enum Pantallas {
 pub struct Superficie {
     /// Cómo se llama. La principal, «».
     pub nombre: String,
+    /// Si sale de un `screens: each`: cuál de las copias es. La lógica y el dibujo la
+    /// distinguen por ahí (`screen.name`, `$screen`).
+    pub instancia: usize,
     /// Dónde se dibuja lo suyo, dentro del espacio de la escena: cada superficie mira a
     /// un trozo distinto del mismo plano, como las emergentes. Así todas comparten
     /// propiedades, hechos y reglas sin saber unas de otras.
@@ -103,7 +109,7 @@ pub enum Teclado {
 impl Default for Superficie {
     fn default() -> Self {
         // Neutra: todo el ancho, arriba, en todos los monitores. Lo que pida la escena manda.
-        Superficie { nombre: String::new(), origen: (0.0, 0.0), abierta: None, ancho: 0, alto: 40, ancla: Ancla::Arriba, margen: [0; 4], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Todas, teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
+        Superficie { nombre: String::new(), instancia: 0, origen: (0.0, 0.0), abierta: None, ancho: 0, alto: 40, ancla: Ancla::Arriba, margen: [0; 4], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Todas, teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
     }
 }
 

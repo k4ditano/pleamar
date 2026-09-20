@@ -166,10 +166,13 @@ impl Dispatch2<WpFractionalScaleV1, Estado> for EscalaDe {
 }
 
 impl Estado {
-    fn quiere_en(s: &Superficie, nombre: &str) -> usize {
+    /// Cuántas superficies de esta clase van en este monitor. `k` es el número del
+    /// monitor, por orden de aparición: es lo que reparte `screens: each`.
+    fn quiere_en(s: &Superficie, nombre: &str, k: usize) -> usize {
         match &s.pantallas {
             Pantallas::Todas => 1,
             Pantallas::Estas(n) => n.iter().filter(|x| x.as_str() == nombre).count(),
+            Pantallas::Numero(x) => (*x == k) as usize,
         }
     }
 
@@ -177,10 +180,12 @@ impl Estado {
     fn poner_en(&mut self, salida: &wl_output::WlOutput, qh: &QueueHandle<Estado>) {
         let Some(info) = self.salidas.info(salida) else { return };
         let nombre = info.name.clone().unwrap_or_default();
+        // Qué número de monitor es: el orden en que el compositor los cuenta.
+        let numero = self.salidas.outputs().position(|o| &o == salida).unwrap_or(0);
         let mhz = info.modes.iter().find(|m| m.current).map_or(0, |m| m.refresh_rate);
         for cual in 0..self.pide.len() {
             let ya = self.puestas.iter().filter(|p| &p.salida == salida && p.cual == cual).count();
-            let quiere = Self::quiere_en(&self.pide[cual], &nombre);
+            let quiere = Self::quiere_en(&self.pide[cual], &nombre, numero);
             for k in ya..quiere {
             let p = &self.pide[cual];
             // El HUD solo va debajo de la principal.

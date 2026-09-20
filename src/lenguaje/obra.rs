@@ -1794,17 +1794,27 @@ impl<'a> Obra<'a> {
         }
         // Vuelta 2: lo que dibuja, en su trozo del plano.
         if self.vuelta == 2 {
-            let Some(k) = self.e.superficies.iter().position(|s| s.nombre == nombre) else { return Ok(()) };
             if !dibuja {
                 return Ok(());
             }
-            let origen = self.e.superficies[k].origen;
-            let t = Transformacion { mueve: (origen.0.into(), origen.1.into()), ..Transformacion::en((0.0.into(), 0.0.into())) };
-            self.e.pintar(Instr::Transformar(Some(t.clone())));
-            self.bajo.push(t);
-            self.grupo(n.cuerpo.as_deref().unwrap_or(&[]).iter());
-            self.bajo.pop();
-            self.e.pintar(Instr::Transformar(None));
+            let copias: Vec<(f32, f32, usize, bool)> = self.e.superficies.iter().filter(|s| s.nombre == nombre).map(|s| (s.origen.0, s.origen.1, s.instancia, matches!(s.pantallas, Pantallas::Numero(_)))).collect();
+            for (ox, oy, instancia, por_pantalla) in copias {
+                let marca = self.reglas.len();
+                // Con `screens: each`, cada copia tiene lo suyo: sus propiedades, sus zonas
+                // y sus reglas. `$screen` es su número, y `screen.name` el de su monitor.
+                if por_pantalla {
+                    self.entornos.push(self.ambito_de_pantalla(instancia));
+                }
+                let t = Transformacion { mueve: (ox.into(), oy.into()), ..Transformacion::en((0.0.into(), 0.0.into())) };
+                self.e.pintar(Instr::Transformar(Some(t.clone())));
+                self.bajo.push(t);
+                self.grupo(n.cuerpo.as_deref().unwrap_or(&[]).iter());
+                self.bajo.pop();
+                self.e.pintar(Instr::Transformar(None));
+                if por_pantalla {
+                    self.cerrar_ambito(marca);
+                }
+            }
             return Ok(());
         }
         if self.e.superficies.iter().any(|s| s.nombre == nombre) {
@@ -1812,6 +1822,20 @@ impl<'a> Obra<'a> {
                 "" => "the scene already has its surface: the others carry a name (`surface panel { … }`)".to_owned(),
                 _ => format!("there is already a surface called '{nombre}'"),
             }));
+        }
+        let mut p = self.propiedades(n, voz::propiedades("surface"))?;
+        // `screens: each [max 4]`: una superficie por monitor, cada una con su estado.
+        let mut cuantas = None;
+        if let Some(c) = p.get_mut("screens") {
+            if c.palabra("each") {
+                let tope = if c.palabra("max") { c.num()? as usize } else { 4 };
+                if !(1..=8).contains(&tope) {
+                    return Err(Fallo::en(n.linea, n.col, "`each` takes between 1 and 8 monitors: each one unfolds when loading"));
+                }
+                cuantas = Some(tope);
+            }
+            // Se vuelve a leer más abajo, ya sobre la superficie.
+            c.i = 0;
         }
         // La principal es la primera, tenga nombre o no.
         let nueva = Superficie { nombre: nombre.clone(), ..Default::default() };
@@ -1822,7 +1846,6 @@ impl<'a> Obra<'a> {
             self.e.superficies.push(Superficie { origen: (0.0, self.siguiente_origen), ..nueva });
         }
         let cual = self.e.superficies.iter().position(|s| s.nombre == nombre).unwrap();
-        let mut p = self.propiedades(n, voz::propiedades("surface"))?;
         let mut abierta_pendiente = None;
         if let Some(c) = p.get_mut("open") {
             abierta_pendiente = Some((c.id("the fact that opens it")?, c.pos()));
@@ -1889,6 +1912,11 @@ impl<'a> Obra<'a> {
         if let Some(c) = p.get_mut("screens") {
             s.pantallas = if c.palabra("all") {
                 Pantallas::Todas
+            } else if c.palabra("each") {
+                if c.palabra("max") {
+                    let _ = c.num()?;
+                }
+                Pantallas::Numero(0)
             } else {
                 let mut v = vec![c.cadena()?];
                 while c.sim(",") {
@@ -1897,7 +1925,43 @@ impl<'a> Obra<'a> {
                 Pantallas::Estas(v)
             };
         }
+        // Una copia por monitor: la misma superficie, cada una en su trozo del plano.
+        if let Some(tope) = cuantas {
+            let base = self.e.superficies[cual].clone();
+            for k in 1..tope {
+                self.siguiente_origen += 10000.0;
+                self.e.superficies.push(Superficie { instancia: k, origen: (0.0, self.siguiente_origen), pantallas: Pantallas::Numero(k), ..base.clone() });
+            }
+            // Lo que el render cuenta de cada monitor, y cuántos hay.
+            for k in 0..tope {
+                let t = self.e.texto_vivo(fijo(&format!("screen.{k}.name")), "");
+                self.textos.insert(format!("screen.{k}.name"), t);
+                for parte in ["width", "height"] {
+                    let entero = format!("screen.{k}.{parte}");
+                    let h = self.e.hecho(fijo(&entero), 0.0);
+                    self.hechos.insert(entero, h);
+                }
+            }
+            if !self.hechos.contains_key("screens.count") {
+                let h = self.e.hecho("screens.count", 0.0);
+                self.hechos.insert("screens.count".into(), h);
+            }
+        }
         Ok(())
+    }
+
+    /// Dentro de una superficie de `screens: each`: lo que vale para esa copia.
+    fn ambito_de_pantalla(&self, k: usize) -> Entorno {
+        let mut env = Entorno { sufijo: format!("#screen{k}"), ..Default::default() };
+        // `$screen` en un nombre es su número, como `$i` en un `repeat`.
+        env.exprs.insert("screen".to_owned(), Expr::K(k as f32));
+        env.exprs.insert("screen.index".to_owned(), Expr::K(k as f32));
+        // Y `screen.name`, `screen.width`, `screen.height` son los de SU monitor.
+        for parte in ["name", "width", "height"] {
+            env.alias.insert(format!("screen.{parte}"), format!("screen.{k}.{parte}"));
+        }
+        env.con_partes.insert("screen".to_owned());
+        env
     }
 
     // ── capas ───────────────────────────────────────────────────
