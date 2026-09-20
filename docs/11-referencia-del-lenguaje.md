@@ -321,7 +321,7 @@ Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sug
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `show` |
 | `group` | `pivot` · `rotate` · `scale: s` o `sx, sy` · `move: dx, dy` · `opacity` (se funden como una sola cosa) · `size` (para quien lo reparta) · `show` |
 | `popup` | `at` (dentro de la superficie) · `size` · `open:` un hecho |
-| `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `view: w, h` · `step` · `content` |
+| `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `view: w, h` · `step` · `content` · `wrap: n` |
 
 `anchor` de un texto: `left` `center` `right` y `top` `center` `bottom`, uno o los dos (`anchor: left center`). De un reparto: `left` `center` `right` y `top` `middle` `bottom` —sin ancla, `at` es su esquina de arriba a la izquierda—. `cursor:` `default` `pointer` `text` `grab` `grabbing`.
 
@@ -344,7 +344,11 @@ Un camino lleva **un solo trazo** (un `move`, el primero) y hasta 64 puntos ya a
 | `for r in rows from first` | la copia 0 es la ficha `first` de la lista de verdad, así que `r.index` es el número que le toca |
 | `move: 0, first * 34` | pone las copias en su sitio de la lista entera |
 | `list.scroll` | además de leerse, **se escribe** como cualquier propiedad: `on press top { list.scroll: 0 ~calm }` |
-| `on scroll list { emit slid(list.scroll) }` | así se entera la lógica de que hay que mandarle otro trozo |
+| `on change floor(list.scroll / 34) { emit slid(list.scroll) }` | así se entera la lógica de que hay que mandarle otro trozo, venga el movimiento de donde venga |
+
+Un reparto con `view:` **se arrastra** sin declarar nada: al pulsarlo se apunta por dónde iba y sigue al ratón, con su muelle. Y se agarra **por dentro**: arrastrar no es cosa de la zona de más arriba, sino de cualquiera que estuviera debajo al pulsar, como la rueda. Así una lista se mueve agarrándola por una de sus filas.
+
+**`wrap: 5`** convierte un reparto en una **rejilla**: cinco por línea y a la siguiente. La celda mide lo que el hijo más grande, y **lo que no se ve no deja hueco**, así que los demás se recolocan, con el muelle del reparto si lo lleva. Es lo que en Quickshell es un `Flow`.
 
 `escenas/lista-larga` son cinco mil filas en dieciséis copias: 0,49 ms por frame, y los mismos dieciséis grupos y diecinueve zonas las haya que haya.
 
@@ -622,7 +626,7 @@ properties.input: at width size weight color opacity family placeholder selectio
 properties.group: pivot rotate scale move opacity size show
 properties.popup: at size open
 properties.children: move
-properties.layout: at anchor gap padding align fill corner show opacity cursor view step content
+properties.layout: at anchor gap padding align fill corner show opacity cursor view step content wrap
 functions: min max abs floor ceil clamp smooth mix if vel
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change

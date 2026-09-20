@@ -32,7 +32,7 @@ pub const PROPIEDADES: &[(&str, &[&str])] = &[
     ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show"]),
     ("popup", &["at", "size", "open"]),
     ("children", &["move"]),
-    ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "corner", "show", "opacity", "cursor", "view", "step", "content"]),
+    ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "corner", "show", "opacity", "cursor", "view", "step", "content", "wrap"]),
 ];
 
 pub const FUNCIONES: &[&str] = &["min", "max", "abs", "floor", "ceil", "clamp", "smooth", "mix", "if", "vel"];

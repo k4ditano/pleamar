@@ -2608,6 +2608,19 @@ impl<'a> Obra<'a> {
             Some(c) => self.expr(c)?,
             None => Expr::K(60.0),
         };
+        // `wrap: 5`: cinco por línea y a la siguiente. Una rejilla, con la celda del
+        // tamaño del hijo más grande; lo que no está no deja hueco.
+        let envuelve = match p.get_mut("wrap") {
+            Some(c) => {
+                let cuantos = c.num()? as usize;
+                c.nada_mas()?;
+                if !(1..=64).contains(&cuantos) {
+                    return Err(Fallo::en(n.linea, n.col, "`wrap` goes from 1 to 64: how many fit in a line before jumping to the next"));
+                }
+                Some(cuantos)
+            }
+            None => None,
+        };
         // `content: rows.total * 30`: lo que habría si estuviera todo. Para una lista
         // que no despliega más que su ventana, es el largo de verdad.
         let contenido_dicho = match p.get_mut("content") {
@@ -2823,18 +2836,38 @@ impl<'a> Obra<'a> {
         let largo = |p: &Puesto| if fila { p.tam.0.clone() } else { p.tam.1.clone() };
         let ancho = |p: &Puesto| if fila { p.tam.1.clone() } else { p.tam.0.clone() };
         let maximo = puestos.iter().fold(Expr::K(0.0), |m, p| m.max(ancho(p) * p.visible.clone()));
+        // Con `wrap`, la celda mide lo que el hijo más grande, y cada uno va a la suya.
+        let celda_largo = puestos.iter().fold(Expr::K(0.0), |m, p| m.max(largo(p))) + hueco.clone();
+        let celda_ancho = maximo.clone() + hueco.clone();
         let mut corrido = relleno.clone();
+        // Cuántos de los anteriores están: lo que no se ve no ocupa celda.
+        let mut van = Expr::K(0.0);
         for (k, p) in puestos.iter().enumerate() {
             // Un separador no abre otro hueco: se pone en medio del que ya hay entre sus vecinos.
             let mut a_lo_largo = if p.separa { corrido.clone() - hueco.clone() * 0.5 } else { corrido.clone() };
+            let mut de_rejilla = None;
+            if let Some(cuantos) = envuelve {
+                let por_linea = Expr::K(cuantos as f32);
+                let fila_k = (van.clone() / por_linea.clone()).suelo();
+                let columna = van.clone() - fila_k.clone() * por_linea;
+                a_lo_largo = relleno.clone() + columna * celda_largo.clone();
+                de_rejilla = Some(relleno.clone() + fila_k * celda_ancho.clone());
+                van = van + p.visible.clone();
+            }
             if let Some(m) = muelle {
                 // El hueco es un destino: el hijo va hacia él con el muelle del reparto.
                 self.copias += 1;
                 let prop = self.e.prop_con(fijo(&format!("·hueco{}", self.copias)), 0.0, m);
                 self.e.comportamientos.push(Comportamiento::Sigue { prop, a: a_lo_largo });
                 a_lo_largo = prop.e();
+                if let Some(a) = de_rejilla.take() {
+                    self.copias += 1;
+                    let otra = self.e.prop_con(fijo(&format!("·salto{}", self.copias)), 0.0, m);
+                    self.e.comportamientos.push(Comportamiento::Sigue { prop: otra, a });
+                    de_rejilla = Some(otra.e());
+                }
             }
-            let a_lo_ancho = relleno.clone() + (maximo.clone() - ancho(p)) * alinea;
+            let a_lo_ancho = de_rejilla.unwrap_or_else(|| relleno.clone() + (maximo.clone() - ancho(p)) * alinea);
             let mueve = if fila { (a_lo_largo, a_lo_ancho) } else { (a_lo_ancho, a_lo_largo) };
             if let Instr::Transformar(Some(t)) = &mut self.e.instrs[p.instr] {
                 t.mueve = mueve.clone();
@@ -2845,8 +2878,19 @@ impl<'a> Obra<'a> {
             let ultimo = k + 1 == puestos.len();
             corrido = corrido + (largo(p) + if ultimo || p.separa { Expr::K(0.0) } else { hueco.clone() }) * p.visible.clone();
         }
-        let total_largo = corrido + relleno.clone();
-        let total_ancho = maximo + relleno * 2.0;
+        let (total_largo, total_ancho) = match envuelve {
+            // Una rejilla mide lo que sus líneas: la última no lleva hueco detrás.
+            Some(cabidos) => {
+                let por_linea = Expr::K(cabidos as f32);
+                let en_linea = cuantos.clone().min(por_linea.clone());
+                let lineas = (cuantos.clone() / por_linea).techo();
+                (
+                    (en_linea * celda_largo - hueco.clone()).max(Expr::K(0.0)) + relleno.clone() * 2.0,
+                    (lineas * celda_ancho - hueco.clone()).max(Expr::K(0.0)) + relleno.clone() * 2.0,
+                )
+            }
+            None => (corrido + relleno.clone(), maximo + relleno.clone() * 2.0),
+        };
         let mut contenido = if fila { (total_largo, total_ancho) } else { (total_ancho, total_largo) };
         // Lo que dice la escena manda: el reparto solo lleva la ventana, pero el
         // desplazamiento va sobre la lista entera.
