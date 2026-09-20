@@ -3089,7 +3089,15 @@ impl<'a> Obra<'a> {
                 }
             }
         }
-        let maximo = puestos.iter().fold(Expr::K(0.0), |m, p| m.max(ancho(p) * p.visible.clone()));
+        let mut maximo = puestos.iter().fold(Expr::K(0.0), |m, p| m.max(ancho(p) * p.visible.clone()));
+        // Con `size:` dicho, lo ancho del reparto es lo que se dijo y no lo que
+        // ocupa el hijo más gordo: así `align: center` centra dentro de la caja
+        // pedida. Sin esto, una tarjeta de 66 de alto con 32 de contenido lo
+        // dejaba todo arriba y el hueco abajo.
+        if let Some((tw, th)) = &tam_dicho {
+            let dicho = if fila { th.clone() } else { tw.clone() };
+            maximo = maximo.max((dicho - relleno.clone() * 2.0).max(Expr::K(0.0)));
+        }
         // Con `wrap`, la celda mide lo que el hijo más grande, y cada uno va a la suya.
         let celda_largo = puestos.iter().fold(Expr::K(0.0), |m, p| m.max(largo(p))) + hueco.clone();
         let celda_ancho = maximo.clone() + hueco.clone();

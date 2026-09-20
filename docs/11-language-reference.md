@@ -385,7 +385,7 @@ A path carries **a single stroke** (one `move`, the first) and up to 64 already 
 
 A layout with `view:` **is dragged** without declaring anything: on being pressed it notes where it was and follows the mouse, with its spring. And it is grabbed **from inside**: dragging is not the business of the topmost zone, but of any zone that was underneath at the press, like the wheel. That is how a list is moved by grabbing it by one of its rows.
 
-**`size: w, h`** says how big the layout is, instead of it being however much its children came to. Its background and its zone are that size even if the children do not reach it, and —this is what it is for— it is what **`grow:`** shares out.
+**`size: w, h`** says how big the layout is, instead of it being however much its children came to. Its background and its zone are that size even if the children do not reach it, and —this is what it is for— it is what **`grow:`** shares out. Across the axis it is also the box that `align:` aligns in, so `align: center` in a card with `size: 173, 66` centres its contents in those 66 and not around the tallest child.
 
 **`grow: 1`** on a child asks for the room that is left along the layout's axis, divided among those who ask in proportion to what they asked (`grow: 2` takes twice as much). What is left is the layout's size minus its padding, its gaps and whatever the children that do not grow take. Without `size:` on the layout it is an error: there is no *left over* if nobody said of how much.
 

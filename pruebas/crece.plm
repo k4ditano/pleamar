@@ -17,6 +17,9 @@ scene Crece {
         size: 288, 66
         fill: #1b1b1c
         corner: 14
+        //  Y centrado a lo alto DENTRO de esos 66: sin `size` se centraría
+        //  respecto al hijo más alto y el bloque quedaría arriba.
+        align: center
         group { size: 22, 22; ellipse { at: 11, 11; radius: 11; color: #6fb1e6 } }
         column { grow: 1; gap: 2
             text "Wi-Fi" { size: 13; color: ink }
