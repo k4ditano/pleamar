@@ -33,13 +33,13 @@ Tipos instanciados, con las veces que aparecen entre las dos configuraciones:
 | `Process` | 83 | ✅ `run`, `spawn`, `kill`, con permisos |
 | `Singleton` | 47 | ✅ un plugin (biblioteca con lógica) es esto, y además con frontera y permisos |
 | `Region` | 27 | ✅ la región de entrada se calcula sola, de las zonas |
-| `FileView` | 16 | ⬜ **no hay**: ni leer ni escribir ficheros · §2 |
+| `FileView` | 16 | ✅ servicio `files`, con carpeta propia por escena y por plugin |
 | `PanelWindow` | 10 | ✅ varias por escena (`surface panel { … }`), con su `open:` |
 | `Variants` | 7 | ✅ `screens: each`: una superficie por monitor, cada una con su estado |
 | `ShellRoot` · `Scope` | 7 · 4 | ✅ `scene` |
 | `IpcHandler` | 4 | ✅ `pleamar --decir`, con `emit`, `fact`, `text`, `get` |
 | `IconImage` | 3 | ✅ `image x = icon "…"` |
-| `SystemClock` | 2 | ⬜ la hora la pone la lógica llamando a `date` cada segundo |
+| `SystemClock` | 2 | ✅ servicio `clock`, y `service clock as now { … }` sin lógica ninguna |
 | `ScreencopyView` | 2 | ⬜ ver lo que hay en una pantalla o en una ventana |
 | `NotificationServer` | 2 | ✅ servicio `notifications` |
 | `FloatingWindow` | 2 | ⬜ ventanas normales |
@@ -61,10 +61,6 @@ Y lo que usan del objeto `Quickshell`: `env` (82), `shellPath` (32), `screens` (
 
 174 usos entre los tres. Un anillo de progreso, una curva, un gráfico, una flecha. pleamar dibuja con SDF —que es mejor para lo suyo: se funden, tienen sombra y filo de balde— pero **no tiene caminos**. Hace falta algo: `path { move; line; curve; close }`, rellenado y con trazo.
 
-### 🟡 Ficheros: `FileView`
-
-16 usos. Leer un `.json` de configuración, guardar lo que el usuario elige, ver si algo cambió. Hoy la lógica solo puede lanzar `cat`, y eso pide permiso de `run`. Debería ser un servicio con sus permisos: `files.read`, `files.write` sobre una carpeta declarada.
-
 ### 🟡 Carga diferida: `Loader`, `LazyLoader`, `Component`
 
 128 usos. En pleamar todo se despliega al cargar. Para un menú que casi nunca se abre, o una lista de 200, eso es trabajo y memoria por nada.
@@ -75,7 +71,7 @@ El teclado exclusivo, el clic fuera de una emergente, el arrastre real, la rueda
 
 ### ⚪ Lo demás
 
-Ventanas normales y bloqueo de sesión (S7); `ScreencopyView`; un reloj como servicio; degradados con paradas y radial; `Flow`; IME (E7).
+Ventanas normales y bloqueo de sesión (S7); `ScreencopyView`; degradados con paradas y radial; `Flow`; IME (E7). De los ficheros queda el formato: se guarda texto, y el JSON se lo parsea quien escribe (F1).
 
 ## 3. Lo que pleamar tiene y Quickshell no
 
@@ -88,8 +84,12 @@ Para no perderlo de vista, porque es la razón de que esto exista:
 - **Formas que se funden**, con sombra, filo y luz, sin capas ni trucos: es SDF.
 - **Multiplataforma por diseño:** todo lo del sistema detrás de `src/plataforma/`, y `./portable.sh` comprueba que compila para Windows y macOS. Los escritorios y la ventana activa van por protocolos estándar, no por un compositor.
 
+## 3.1. Lo que además salió de aquí
+
+**Un servicio se pide desde la escena**, no desde la lógica: `service clock as now { time: text }` y los campos llegan solos a hechos y textos, con el compilador comprobando que ese servicio trae eso. En Quickshell lo equivalente es un `Singleton` con sus `property` y su JavaScript.
+
 ## 4. En qué orden
 
-1. **Ficheros** como servicio, y un **reloj** como servicio.
-2. **Caminos** (`path`), y copias que nazcan en marcha (G12).
+1. **Caminos** (`path`), y copias que nazcan en marcha (G12).
+2. Resaltado y LSP para escribir esto en un editor.
 3. Ventanas normales, bloqueo de sesión, IME.

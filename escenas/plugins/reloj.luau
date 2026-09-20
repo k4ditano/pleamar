@@ -1,13 +1,21 @@
 -- La lógica del plugin del reloj. Corre en su propio estado de Luau: aquí `text.now`
 -- es el `Clock.now` de la escena, y no existe nada que no sea del plugin.
+--
+-- No lanza nada: `clock.seconds` es un servicio, y llega solo. Con el segundero
+-- apagado, la cara solo cambia cuando cambia el minuto.
 
-local function tick()
-    run("date", { fact.seconds and "+%H:%M:%S|%a %d %b" or "+%H:%M|%a %d %b" }, function(out)
-        local now, day = out:match("^(.-)|(.-)%s*$")
-        if now then text.now = now; text.day = day end
-    end)
-end
+local ultimo = ""
 
-tick()
-every(1000, tick)
-on("tapped", function() fact.seconds = not fact.seconds; tick() end)
+sys.watch("clock.seconds", function(t)
+    local cara = fact.seconds and string.format("%02d:%02d:%02d", t.hour, t.minute, t.second) or t.time
+    if cara ~= ultimo then
+        ultimo = cara
+        text.now = cara
+        text.day = t.date
+    end
+end)
+
+on("tapped", function()
+    fact.seconds = not fact.seconds
+    ultimo = ""
+end)

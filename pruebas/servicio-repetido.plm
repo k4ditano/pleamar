@@ -1,0 +1,8 @@
+// espera: fallo «is already the name of another service»
+language 0.1
+scene Twice {
+    surface { size: 100, 40 }
+    service clock as now { hour: number }
+    service clock.seconds as now { second: number }
+    box { at: 4, 4; size: 10, 10; color: #f5f7f5 }
+}

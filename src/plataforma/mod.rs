@@ -43,7 +43,18 @@ pub enum Valor {
 ///  · `battery`    → `{ present, percent, charging }`
 ///  · `network`    → `{ online, kind = "wired" | "wifi" | "none", name, strength }`
 ///  · `media`      → `{ playing, title, artist, album, player }`, o `{ player = "" }` si no suena nada
-pub fn servicio(nombre: &str, avisar: Box<dyn Fn(Valor) + Send>) -> bool {
+///  · `clock`      → `{ hour, minute, second, day, month, year, weekday, time, date }`, al cambiar el minuto
+///  · `clock.seconds` → lo mismo, cada segundo
+///  · `files:x.json` → `{ name, exists, text }` cuando ese fichero cambie
+pub fn servicio(de: &str, nombre: &str, avisar: Box<dyn Fn(Valor) + Send>) -> bool {
+    // La hora, sin llamar a nadie.
+    if nombre == "clock" || nombre == "clock.seconds" {
+        return reloj::servicio(nombre, avisar);
+    }
+    // `files:ajustes.json`: avisa cuando ese fichero cambie, también si lo toca otro.
+    if let Some(cual) = nombre.strip_prefix("files:") {
+        return ficheros::vigilar(de, cual, avisar);
+    }
     #[cfg(target_os = "linux")]
     if nombre == "apps" {
         // Leer cientos de ficheros no es cosa de un instante: en su hilo.
@@ -75,7 +86,10 @@ pub fn servicio(nombre: &str, avisar: Box<dyn Fn(Valor) + Send>) -> bool {
 }
 
 /// Pedirle algo a un servicio: `workspaces.focus`, 3.
-pub fn orden(nombre: &str, args: &[Valor]) -> Result<(), String> {
+pub fn orden(de: &str, nombre: &str, args: &[Valor]) -> Result<(), String> {
+    if nombre.starts_with("files.") {
+        return ficheros::orden(de, nombre, args);
+    }
     #[cfg(target_os = "linux")]
     if let ("apps.launch", [Valor::Texto(o)]) = (nombre, args) {
         return escritorio::lanzar(o);
@@ -125,7 +139,10 @@ pub fn carpeta_de_ajustes() -> std::path::PathBuf {
 /// Preguntarle algo a un servicio y esperar la respuesta: `tray.menu`, de quién.
 /// Puede tardar —hay otra aplicación al otro lado—, y por eso es cosa de la
 /// lógica, que puede esperar sin que se note.
-pub fn consulta(nombre: &str, args: &[Valor]) -> Result<Valor, String> {
+pub fn consulta(de: &str, nombre: &str, args: &[Valor]) -> Result<Valor, String> {
+    if nombre.starts_with("files.") {
+        return ficheros::consulta(de, nombre, args);
+    }
     #[cfg(target_os = "linux")]
     if nombre.starts_with("tray.") {
         return bandeja::consulta(nombre, args);
@@ -274,6 +291,8 @@ mod avisos;
 mod bandeja;
 #[cfg(target_os = "linux")]
 mod compositor;
+mod ficheros;
+mod reloj;
 #[cfg(target_os = "linux")]
 mod escritorio;
 #[cfg(target_os = "linux")]

@@ -18,7 +18,7 @@ scene Bar {
 
     //  Lo que `barra.luau` puede tocar del sistema. Sin declarar, nada; y escuchar no es
     //  mandar: `"audio"` deja saber el volumen, `"audio.*"` deja cambiarlo.
-    permissions { services: "workspaces", "workspaces.focus", "window", "audio", "audio.*" }
+    permissions { services: "workspaces", "workspaces.focus", "window", "audio", "audio.*", "clock" }
 
 
     // ── lo que cuenta la lógica ──────────────────────────────────
@@ -28,8 +28,8 @@ scene Bar {
         fact ws.$i.there = false          // ¿existe ese escritorio?
         fact ws.$i.busy  = false          // ¿tiene ventanas?
     }
-    text clock = "--:--"
-    text day   = ""
+    //  La hora no la pone nadie: se pide por su nombre y el sistema la cuenta.
+    service clock { time: text = "--:--"; date: text }
     fact volume = 0
     fact muted  = false
     event go ->                           // `emit go(3)`: llévame al escritorio 3
@@ -72,8 +72,8 @@ scene Bar {
         anchor: center
         padding: 9; gap: 8; align: center
         fill: coal; corner: 14
-        text clock { size: 14; weight: 600; color: ink }
-        text day   { size: 12.5; color: ink; opacity: 55% }
+        text clock.time { size: 14; weight: 600; color: ink }
+        text clock.date { size: 12.5; color: ink; opacity: 55% }
     }
 
     // ── a la derecha: el volumen ─────────────────────────────────

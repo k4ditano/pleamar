@@ -1,0 +1,7 @@
+// espera: fallo «'sound' is not valid here: a service is»
+language 0.1
+scene NoSuch {
+    surface { size: 100, 40 }
+    service sound as s { volume: number }
+    box { at: 4, 4; size: 10, 10; color: #f5f7f5 }
+}

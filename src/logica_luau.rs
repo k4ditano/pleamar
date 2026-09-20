@@ -68,6 +68,10 @@ struct Compartido {
     /// De los hechos que no son números a secas, qué son: la lógica los ve como `true` o como `"critical"`.
     tipos: HashMap<String, crate::escena::TipoDeHecho>,
     sucesos: std::collections::HashSet<String>,
+    /// Los servicios que la escena pidió por su nombre, y qué campos quiere de cada uno.
+    servicios: Vec<crate::escena::Servicio>,
+    /// A cuáles ya se les puso un hilo: recargar la escena no los arranca dos veces.
+    suscritos: std::collections::HashSet<String>,
     /// Si es la lógica de un plugin, cómo se llama: para que los errores hablen de él y no de la escena.
     plugin: Option<String>,
     /// Pide permisos que nadie le ha aprobado: corre sin ninguno, y los errores dicen por qué.
@@ -220,7 +224,7 @@ fn permiso_de_orden(c: &Mutex<Compartido>, orden: &str) -> mlua::Result<()> {
 /// Lo mismo para un servicio. **Escuchar no es mandar**: `services: "audio"` deja saber el
 /// volumen (`sys.watch`, `sys.ask`); para cambiarlo hace falta `"audio.volume"`, o `"audio.*"`.
 fn permiso_de_servicio(c: &Mutex<Compartido>, nombre: &str, manda: bool) -> mlua::Result<()> {
-    let servicio = nombre.split('.').next().unwrap_or(nombre);
+    let servicio = nombre.split(['.', ':']).next().unwrap_or(nombre);
     let tiene = |que: &str| c.lock().unwrap().permisos.servicios.iter().any(|s| s == que);
     if manda {
         if tiene(nombre) || tiene(&format!("{servicio}.*")) {
@@ -368,6 +372,16 @@ impl GuionLuau {
 
     /// Lo que la escena tiene, visto desde esta lógica. Un plugin lo ve todo por dentro
     /// —se comprueba contra ello—, pero solo puede nombrar lo que empieza por su nombre.
+    /// De quién son los ficheros: de la escena, por el nombre de su `.plm`; o del plugin, por el suyo.
+    fn quien_soy(&self) -> String {
+        match &self.prefijo {
+            Some(p) => p.clone(),
+            None => std::path::Path::new(&self.escena)
+                .file_stem()
+                .map_or_else(|| "scene".to_owned(), |n| n.to_string_lossy().into_owned()),
+        }
+    }
+
     fn conocer(&self, e: &Escena, permisos: crate::escena::Permisos) {
         let mut c = self.c.lock().unwrap();
         c.hechos = e.hechos.iter().map(|(n, v)| (n.to_string(), *v as f64)).collect();
@@ -376,6 +390,96 @@ impl GuionLuau {
         c.modelos = e.modelos.clone();
         c.tipos = e.tipos.iter().cloned().collect();
         c.sucesos = e.sucesos.iter().map(|s| s.0.to_owned()).collect();
+        c.servicios = e.servicios.clone();
+    }
+
+    /// Los servicios que la escena pidió con `service`: uno por hilo, y lo que cuenten
+    /// se reparte solo por los hechos y los textos que llevan su nombre delante.
+    /// Los permisos son los de la escena: `services: "clock"` para `service clock`.
+    fn suscribir_servicios(&mut self) {
+        // Un plugin no monta servicios de la escena: lo que él declare va con lo demás,
+        // y de pedirlos se encarga quien es dueño de la frontera.
+        if self.prefijo.is_some() {
+            return;
+        }
+        let quien = self.quien_soy();
+        let pendientes: Vec<crate::escena::Servicio> = {
+            let c = self.c.lock().unwrap();
+            c.servicios.iter().filter(|s| !c.suscritos.contains(&s.alias)).cloned().collect()
+        };
+        for s in pendientes {
+            let raiz = s.nombre.split(['.', ':']).next().unwrap_or(&s.nombre).to_owned();
+            let tiene = {
+                let c = self.c.lock().unwrap();
+                c.permisos.servicios.iter().any(|x| *x == raiz || *x == format!("{raiz}.*"))
+            };
+            if !tiene {
+                eprintln!("logic  · `service {}` needs permission: add `services: \"{raiz}\"` to this scene's `permissions`", s.nombre);
+                continue;
+            }
+            self.c.lock().unwrap().suscritos.insert(s.alias.clone());
+            let (a_logica, alias) = (Mutex::new(self.a_logica.clone()), s.alias.clone());
+            if !crate::plataforma::servicio(&quien, &s.nombre, Box::new(move |v| {
+                let _ = a_logica.lock().unwrap().send(Evento::Dato(format!("service:{alias}"), v));
+            })) {
+                eprintln!("logic  · the '{}' service is not available here: '{}' stays as the scene left it", s.nombre, s.alias);
+            }
+        }
+    }
+
+    /// Lo que un servicio cuenta, repartido por los campos que la escena pidió. Lo que
+    /// no venga se queda como estaba: un servicio puede contar solo lo que cambió.
+    fn repartir_servicio(&self, alias: &str, valor: &Valor) {
+        let Valor::Mapa(campos) = valor else { return };
+        let suyos = {
+            let c = self.c.lock().unwrap();
+            let Some(s) = c.servicios.iter().find(|s| s.alias == alias) else { return };
+            s.campos.clone()
+        };
+        for campo in &suyos {
+            let Some((_, v)) = campos.iter().find(|(k, _)| *k == campo.nombre) else { continue };
+            let entero = format!("{alias}.{}", campo.nombre);
+            match &campo.tipo {
+                crate::escena::TipoDeCampo::Texto | crate::escena::TipoDeCampo::Imagen(..) => {
+                    let t = match v {
+                        Valor::Texto(t) => t.clone(),
+                        Valor::Num(n) => if n.fract() == 0.0 { format!("{n:.0}") } else { format!("{n}") },
+                        Valor::Si(b) => b.to_string(),
+                        _ => continue,
+                    };
+                    let mut c = self.c.lock().unwrap();
+                    if c.textos.get(&entero).is_some_and(|ya| *ya == t) {
+                        continue;
+                    }
+                    c.textos.insert(entero.clone(), t.clone());
+                    drop(c);
+                    let _ = self.tx.send(ARender::Texto(internar(&entero), t));
+                }
+                tipo => {
+                    let n = match (v, tipo) {
+                        (Valor::Num(n), _) => *n,
+                        (Valor::Si(b), _) => *b as u8 as f64,
+                        // Un enumerado llega por su nombre: `kind = "wifi"`.
+                        (Valor::Texto(t), crate::escena::TipoDeCampo::Enum(nombres)) => match nombres.iter().position(|x| x == t) {
+                            Some(k) => k as f64,
+                            None => continue,
+                        },
+                        (Valor::Texto(t), _) => match t.parse() {
+                            Ok(n) => n,
+                            Err(_) => continue,
+                        },
+                        _ => continue,
+                    };
+                    let mut c = self.c.lock().unwrap();
+                    if c.hechos.get(&entero).is_some_and(|ya| *ya == n) {
+                        continue;
+                    }
+                    c.hechos.insert(entero.clone(), n);
+                    drop(c);
+                    let _ = self.tx.send(ARender::Hecho(internar(&entero), n as f32));
+                }
+            }
+        }
     }
 
     /// Un estado de Luau nuevo, con la frontera puesta, y el fichero ejecutado.
@@ -639,7 +743,8 @@ impl GuionLuau {
 
         // Lo que pasa en el sistema, por un nombre que es el mismo en todas partes.
         let sys = lua.create_table()?;
-        let (c, a_logica) = (self.c.clone(), self.a_logica.clone());
+        let quien = self.quien_soy();
+        let (c, a_logica, mio) = (self.c.clone(), self.a_logica.clone(), quien.clone());
         sys.set("watch", lua.create_function(move |_, (nombre, f): (String, Function)| {
             permiso_de_servicio(&c, &nombre, false)?;
             let primero = {
@@ -652,11 +757,11 @@ impl GuionLuau {
                 return Ok(true);
             }
             let (a_logica, n) = (Mutex::new(a_logica.clone()), nombre.clone());
-            Ok(crate::plataforma::servicio(&nombre, Box::new(move |v| {
+            Ok(crate::plataforma::servicio(&mio, &nombre, Box::new(move |v| {
                 let _ = a_logica.lock().unwrap().send(Evento::Dato(n.clone(), v));
             })))
         })?)?;
-        let c = self.c.clone();
+        let (c, mio) = (self.c.clone(), quien.clone());
         sys.set("call", lua.create_function(move |_, (nombre, args): (String, mlua::Variadic<Value>)| {
             permiso_de_servicio(&c, &nombre, true)?;
             let args: Vec<Valor> = args.iter().map(|v| match v {
@@ -666,10 +771,10 @@ impl GuionLuau {
                 Value::String(s) => Valor::Texto(s.to_string_lossy()),
                 _ => Valor::Nulo,
             }).collect();
-            crate::plataforma::orden(&nombre, &args).map_err(mlua::Error::runtime)
+            crate::plataforma::orden(&mio, &nombre, &args).map_err(mlua::Error::runtime)
         })?)?;
         // Lo mismo, pero contesta: `sys.ask("tray.menu", key)` devuelve el menú.
-        let c = self.c.clone();
+        let (c, mio) = (self.c.clone(), quien.clone());
         sys.set("ask", lua.create_function(move |lua, (nombre, args): (String, mlua::Variadic<Value>)| {
             permiso_de_servicio(&c, &nombre, false)?;
             let args: Vec<Valor> = args.iter().map(|v| match v {
@@ -679,7 +784,7 @@ impl GuionLuau {
                 Value::String(s) => Valor::Texto(s.to_string_lossy()),
                 _ => Valor::Nulo,
             }).collect();
-            a_lua(lua, &crate::plataforma::consulta(&nombre, &args).map_err(mlua::Error::runtime)?)
+            a_lua(lua, &crate::plataforma::consulta(&mio, &nombre, &args).map_err(mlua::Error::runtime)?)
         })?)?;
         g.set("sys", sys)?;
 
@@ -780,7 +885,10 @@ impl Guion for GuionLuau {
         let numero = |v: f32| Value::Number(v as f64);
         match e {
             // El fichero se ejecuta ya en el hilo de la lógica, con la escena entregada.
-            Evento::Alarma("inicio") | Evento::RecargarLogica => self.cargar(),
+            Evento::Alarma("inicio") | Evento::RecargarLogica => {
+                self.cargar();
+                self.suscribir_servicios();
+            }
             Evento::Suceso(n, carga) => self.avisar(n, carga.map_or(Value::Nil, numero)),
             Evento::Entra(z) => self.avisar(&format!("enter:{z}"), Value::Nil),
             Evento::Sale(z) => self.avisar(&format!("leave:{z}"), Value::Nil),
@@ -825,7 +933,7 @@ impl Guion for GuionLuau {
             }
             // La escena se recargó: lo que tenga de nuevo ya se puede nombrar; lo que
             // ya se sabía, se sigue sabiendo.
-            Evento::EscenaNueva(hechos, textos, permisos, modelos, tipos, plugins, sucesos) => {
+            Evento::EscenaNueva(hechos, textos, permisos, modelos, tipos, plugins, sucesos, servicios) => {
                 // Un plugin recibe la escena nueva con su propia definición: de ahí saca sus permisos.
                 if let (Some(_), Some(def)) = (&self.prefijo, plugins.first()) {
                     let mut c = self.c.lock().unwrap();
@@ -836,7 +944,7 @@ impl Guion for GuionLuau {
                 if self.prefijo.is_none() {
                     let mut siguen: Vec<PluginVivo> = Vec::new();
                     for (k, p) in plugins.iter().enumerate() {
-                        let nueva = Evento::EscenaNueva(hechos.clone(), textos.clone(), crate::permisos::los_que_valen(p), modelos.clone(), tipos.clone(), vec![p.clone()], sucesos.clone());
+                        let nueva = Evento::EscenaNueva(hechos.clone(), textos.clone(), crate::permisos::los_que_valen(p), modelos.clone(), tipos.clone(), vec![p.clone()], sucesos.clone(), servicios.clone());
                         let vivo = match self.plugins.iter().position(|x| x.definicion.nombre == p.nombre && x.definicion.logica == p.logica) {
                             Some(i) => {
                                 let mut v = self.plugins.remove(i);
@@ -860,6 +968,7 @@ impl Guion for GuionLuau {
                     }
                 }
                 let mut c = self.c.lock().unwrap();
+                c.servicios = servicios;
                 c.modelos = modelos;
                 c.tipos = tipos.into_iter().collect();
                 c.sucesos = sucesos.iter().map(|s| (*s).to_owned()).collect();
@@ -874,6 +983,9 @@ impl Guion for GuionLuau {
                 for (n, v) in textos {
                     c.textos.entry(n.to_owned()).or_insert(v);
                 }
+                // Si la escena pide ahora un servicio que antes no pedía, se monta aquí.
+                drop(c);
+                self.suscribir_servicios();
             }
             Evento::Linea(id, linea) => {
                 let f = self.c.lock().unwrap().en_marcha.get(&id).map(|x| x.0.clone());
@@ -882,6 +994,11 @@ impl Guion for GuionLuau {
                 }
             }
             Evento::Dato(nombre, valor) => {
+                // `service clock as now`: llega sin que nadie lo haya pedido desde Luau,
+                // y se reparte aunque la escena no tenga lógica ninguna.
+                if let Some(alias) = nombre.strip_prefix("service:") {
+                    return self.repartir_servicio(alias, &valor);
+                }
                 let Some(lua) = &self.lua else { return };
                 let quienes = self.c.lock().unwrap().vigias.get(&nombre).cloned().unwrap_or_default();
                 match a_lua(lua, &valor) {

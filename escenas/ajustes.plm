@@ -1,0 +1,59 @@
+// Lo que una escena necesita para acordarse de algo: su propia carpeta y la hora.
+//
+// La hora no la pone nadie: `service clock as now` la pide por su nombre y el sistema
+// la cuenta solo. Lo que se elige aquí lo guarda `ajustes.luau` en `settings.txt`,
+// dentro de la carpeta de esta escena —y de ninguna otra—, y al abrirla vuelve.
+
+import "comun/paleta.plm"
+
+scene Settings {
+    surface { size: 360, 210; anchor: center; keyboard: none }
+
+    //  Escuchar no es mandar: `"files"` deja leer; escribir pide `"files.write"`.
+    permissions { services: "clock", "files", "files.write" }
+
+    //  La hora, sin una línea de lógica.
+    service clock as now {
+        time: text = "--:--"
+        date: text
+    }
+
+    fact tone = 0                 // 0, 1, 2: el acento elegido
+    fact saves = 0                // cuántas veces se ha guardado
+    text folder = ""              // dónde vive todo esto
+    event pick ->                 // `emit pick(1)`: me quedo con este
+
+    let pane = #151616
+    box { from: 0, 0; size: 360, 210; corner: 16; color: pane }
+
+    column { at: 20, 18; gap: 14
+        text "{now.time}" { size: 34; color: ink }
+        text "{now.date}" { size: 12; color: ink; opacity: 55% }
+
+        row swatches { gap: 10
+            repeat k in 0..3 {
+                group {
+                    size: 34, 34
+                    prop on = 0 ~calm
+                    follow on = if(tone == k, 1, 0)
+
+                    zone box hit { from: 0, 0; size: 34, 34; corner: 17; cursor: pointer }
+                    //  El elegido crece y se enciende; los otros se apagan.
+                    ellipse {
+                        at: 17, 17
+                        radius: 11 + 4 * on
+                        //  `mix` con una comparación hace de `if` con colores.
+                        color: mix(mix(mint, sand, k >= 1), #e86a9a, k >= 2)
+                        opacity: 35% + on * 65%
+                    }
+                    ellipse { at: 17, 17; radius: 15 + 2 * on; color: ink; opacity: on * 20%; stroke: 1.5 }
+
+                    on press hit { emit pick(k) }
+                }
+            }
+        }
+
+        text "saved {saves} times" { size: 11; color: ink; opacity: 45% }
+        text "{folder}" { size: 10; color: ink; opacity: 30%; width: 320; lines: 1 }
+    }
+}

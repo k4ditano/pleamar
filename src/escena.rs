@@ -861,6 +861,8 @@ pub struct Escena {
     /// De los hechos que no son números a secas, qué son. Por nombre.
     pub tipos: Vec<(String, TipoDeHecho)>,
     pub plugins: Vec<Plugin>,
+    /// Los servicios que la escena pide por su nombre, y qué campos quiere de cada uno.
+    pub servicios: Vec<Servicio>,
 }
 
 /// Una biblioteca con lógica propia. Su frontera —hechos, textos, modelos, sucesos—
@@ -882,6 +884,17 @@ pub struct Modelo {
     pub nombre: String,
     /// Cuántas fichas caben. Lo que pase de ahí no se ve, pero se cuenta: `rows.total`.
     pub caben: usize,
+    pub campos: Vec<Campo>,
+}
+
+/// Un servicio del sistema pedido desde la escena: lo que llegue rellena
+/// `alias.campo` sin que nadie escriba lógica. `service clock as now { time: text }`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Servicio {
+    /// Como lo conoce la plataforma: `clock`, `audio`, `battery`, `network`, `media`.
+    pub nombre: String,
+    /// Delante de cada campo: `now.time`.
+    pub alias: String,
     pub campos: Vec<Campo>,
 }
 
@@ -1153,7 +1166,7 @@ pub enum Evento {
     /// El fichero de la lógica ha cambiado.
     RecargarLogica,
     /// La escena se ha recargado: estos son ahora sus hechos y sus textos.
-    EscenaNueva(Vec<(&'static str, f32)>, Vec<(&'static str, String)>, Permisos, Vec<Modelo>, Vec<(String, TipoDeHecho)>, Vec<Plugin>, Vec<&'static str>),
+    EscenaNueva(Vec<(&'static str, f32)>, Vec<(&'static str, String)>, Permisos, Vec<Modelo>, Vec<(String, TipoDeHecho)>, Vec<Plugin>, Vec<&'static str>, Vec<Servicio>),
     /// Una capa ha cambiado de manos: (capa, quién gana ahora).
     Capa(&'static str, &'static str),
     /// Se pidió un gesto y había uno de más clase puesto.

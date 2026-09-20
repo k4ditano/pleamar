@@ -114,7 +114,7 @@ impl<'a> Cur<'a> {
         self.fallo(format!("'{palabra}' is not valid here: {que} is {}.{pista}", enumerar(lista)))
     }
     fn nada_mas(&self) -> R<()> {
-        if self.acabo() { Ok(()) } else { self.fallo("esto sobra") }
+        if self.acabo() { Ok(()) } else { self.fallo("this is left over here") }
     }
 }
 
@@ -402,7 +402,7 @@ fn vuelta_de(e: &Entrada) -> u8 {
     let es_asignacion = matches!(n.cabeza.get(2).map(|x| &x.f), Some(F::Sim("=")));
     match n.cabeza.first().map(|f| &f.f) {
         Some(F::Id(p)) => match p.as_str() {
-            "surface" | "permissions" | "model" | "spring" | "prop" | "pose" | "fact" | "event" | "measure" | "component" => 0,
+            "surface" | "permissions" | "model" | "service" | "spring" | "prop" | "pose" | "fact" | "event" | "measure" | "component" => 0,
             "text" | "image" if es_asignacion => 0,
             "let" | "layer" => 1,
             _ => 2,
@@ -1038,6 +1038,7 @@ impl<'a> Obra<'a> {
             match palabra.as_str() {
                 "surface" => self.superficie(n)?,
                 "model" => self.modelo(n, &mut c)?,
+                "service" => self.servicio(n, &mut c)?,
                 "permissions" => {
                     // permissions { run: "date", "notify-send";  services: "audio", "apps" }
                     let mut p = self.propiedades(n, voz::propiedades("permissions"))?;
@@ -2942,6 +2943,56 @@ impl<'a> Obra<'a> {
     }
 
     /// `model rows max 14 { label: text;  enabled: bool = true;  list items max 8 { … } }`
+    /// `service clock as now { time: text; hour: number }`
+    ///
+    /// Lo que el sistema cuente rellena `now.time` y `now.hour` solo, sin una línea de
+    /// lógica. Qué trae cada servicio está en el vocabulario: pedirle lo que no tiene es
+    /// un fallo al cargar, como todo lo demás.
+    fn servicio(&mut self, n: &'a Nodo, c: &mut Cur) -> R<()> {
+        let cuales: Vec<&str> = voz::SERVICIOS.iter().map(|(x, _)| *x).collect();
+        let nombre = c.una_de(&cuales, "a service")?;
+        // Sin `as`, sus campos van detrás de su propio nombre: `audio.volume`.
+        let alias = if c.palabra("as") { c.id("a name to put before its fields")? } else { nombre.clone() };
+        c.nada_mas()?;
+        let suyos = voz::SERVICIOS.iter().find(|(x, _)| *x == nombre).map_or(&[][..], |(_, k)| *k);
+        let alias = self.declarar(&alias);
+        if self.e.servicios.iter().any(|s| s.alias == alias) {
+            return Err(Fallo::en(n.linea, n.col, format!("'{alias}' is already the name of another service: give this one another with `as`")));
+        }
+        let campos = self.campos_de(n, 1)?;
+        for k in &campos {
+            if !suyos.contains(&k.nombre.as_str()) {
+                let pista = parecido(&k.nombre, suyos.iter().map(|s| s.to_string()).collect::<Vec<_>>().iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+                return Err(Fallo::en(n.linea, n.col, format!("'{nombre}' does not report '{}': it reports {}.{pista}", k.nombre, enumerar(suyos))));
+            }
+        }
+        // `now.time`, no `now.0.time`: de un servicio hay uno, no una lista.
+        for campo in &campos {
+            let entero = format!("{alias}.{}", campo.nombre);
+            match &campo.por_defecto {
+                ValorDeCampo::Texto(t) => {
+                    let id = self.e.texto_vivo(fijo(&entero), t);
+                    if let TipoDeCampo::Imagen(w, h) = campo.tipo {
+                        let imagen = self.e.imagen(Fuente::Viva(id), w, h);
+                        self.imagenes.insert(entero.clone(), imagen);
+                    }
+                    self.textos.insert(entero, id);
+                }
+                ValorDeCampo::Numero(v) => {
+                    let id = self.e.hecho(fijo(&entero), *v);
+                    match &campo.tipo {
+                        TipoDeCampo::Bool => self.e.tipos.push((entero.clone(), TipoDeHecho::Bool)),
+                        TipoDeCampo::Enum(x) => self.e.tipos.push((entero.clone(), TipoDeHecho::Enum(x.clone()))),
+                        _ => {}
+                    }
+                    self.hechos.insert(entero, id);
+                }
+            }
+        }
+        self.e.servicios.push(crate::escena::Servicio { nombre, alias, campos });
+        Ok(())
+    }
+
     fn modelo(&mut self, n: &'a Nodo, c: &mut Cur) -> R<()> {
         let nombre = self.declarar(&c.id("a name for the model")?);
         let caben = if c.palabra("max") { c.num()? as usize } else { 16 };
@@ -3027,7 +3078,7 @@ impl<'a> Obra<'a> {
             campos.push(campo);
         }
         if campos.is_empty() {
-            return Err(Fallo::en(n.linea, n.col, "a esta lista le faltan sus campos: `label: text`"));
+            return Err(Fallo::en(n.linea, n.col, "this list is missing its fields: `label: text`"));
         }
         // La lista que se contiene a sí misma se desenrolla de dentro afuera: el último nivel
         // ya no tiene hijos; cada uno de los de encima, una lista de los de debajo.

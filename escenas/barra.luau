@@ -1,13 +1,7 @@
 -- La lógica de la barra: se entera de lo que pasa y se lo cuenta a la escena.
 -- Nada de aquí anima ni coloca nada.
 
--- ── la hora ──────────────────────────────────────────────────────
-local function tick()
-    text.clock = os.date("%H:%M")
-    text.day = os.date("%a %d %b")
-end
-tick()
-every(1000, tick)
+-- La hora no está aquí: la escena la pide con `service clock`, y llega sola.
 
 -- ── los escritorios y la ventana: un servicio de la plataforma ───
 --  `sys.watch` dice si este sistema lo tiene. Si no, la barra sale sin ellos.

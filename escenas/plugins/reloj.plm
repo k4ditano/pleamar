@@ -5,7 +5,8 @@
 import "../comun/paleta.plm"
 
 library Clock strict {
-    permissions { run: "date" }
+    //  Ni un proceso: la hora es un servicio. `clock.seconds` avisa cada segundo.
+    permissions { services: "clock" }
 
     text now = "--:--"
     text day = ""

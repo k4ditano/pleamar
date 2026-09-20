@@ -190,6 +190,7 @@ Una biblioteca puede traer también **lo que mueve por dentro** —`prop`, `pose
 | --- | --- |
 | `surface { … }` · `surface panel { …; …dibujo… }` | Las ventanas que pide. Ver abajo |
 | `permissions { run: "date"; services: "audio", "audio.*" }` | Lo que la lógica puede tocar del sistema. Sin declarar, nada. **Escuchar no es mandar**: `"audio"` deja saber el volumen (`sys.watch`, `sys.ask`); para cambiarlo hace falta `"audio.volume"`, o `"audio.*"` |
+| `service clock as now { time: text; hour: number }` | Un servicio del sistema, por su nombre. Lo que cuente rellena `now.time` y `now.hour` **sin una línea de lógica**. Ver abajo |
 | `model rows max 14 { label: text; enabled: bool = true; depth: number }` | Una lista de fichas que pone la lógica. `max`: cuántas caben (1 a 256; 16 si no se dice). Crea `rows.count`, `rows.total` y, por ficha, `rows.K.campo` |
 | `prop orb.x = 360 ~lively` | Una propiedad animada: un muelle. Sin `~`, `lively` |
 | `pose eyes = 14` | Una propiedad de la pose: la que un gesto lleva de la mano |
@@ -234,6 +235,30 @@ for m in menu { …  for it in m.items { text it.label { … } } }
 ```
 
 Una lista de dentro se recorre con `for it in m.items`, y tiene su `m.items.count` y su `m.items.total`. **`list children max 6 depth 2`**, sin bloque, son fichas como la de fuera, unas dentro de otras hasta esa hondura (de 1 a 6): un árbol, como el menú de una aplicación. Se recorre con tantos `for` como niveles se quieran enseñar. Todo se despliega al cargar: 8 × 6 son 48 fichas, y el tope entre todas las listas de un modelo es 4096.
+
+**Servicios, sin lógica.** `service` pide algo del sistema por su nombre y dice qué campos quiere de los que ese servicio trae. Cada campo es un hecho o un texto normal —del tipo que se le ponga— con el nombre delante, y se rellena solo cuando el sistema cuenta algo:
+
+```
+permissions { services: "clock" }                      // sin permiso no se monta
+service clock { time: text = "--:--"; date: text }     // sin `as`: clock.time, clock.date
+service clock.seconds as tick { second: number }       // con `as`: tick.second
+text clock.time { size: 14; color: ink }
+```
+
+Qué trae cada servicio está en el vocabulario (§17), y **pedirle lo que no tiene es un fallo al cargar**, con su «did you mean…?». Lo que no venga en un aviso se queda como estaba. Los que traen listas —`apps`, `tray`, `notifications`, `workspaces`— no se piden así: eso es un modelo, y lo reparte la lógica con `sys.watch`.
+
+Los permisos son los de la escena, y son los mismos de `sys.watch`: `services: "clock"`. Sin ellos la escena carga igual, dice por qué en la consola y ese campo se queda como nació. `clock` avisa al cambiar el minuto y `clock.seconds` cada segundo; ninguno de los dos pregunta la hora a nadie ni despierta a la máquina para mirar si ya toca.
+
+**Ficheros.** Una escena tiene **su propia carpeta**, y de ahí no sale: sin rutas, sin `..`, como `require`. Se usa desde la lógica, con permiso `services: "files"` para leer y `"files.write"` para escribir:
+
+| | |
+| --- | --- |
+| `sys.ask("files.read", "settings.txt")` | lo que diga, o `nil` si no está |
+| `sys.ask("files.exists", n)` · `sys.ask("files.list")` · `sys.ask("files.folder")` | si está · lo que hay · dónde |
+| `sys.call("files.write", n, texto)` · `sys.call("files.remove", n)` | escribir (entero o nada: primero al lado, luego en su sitio) · borrar |
+| `sys.watch("files:settings.txt", f)` | avisa cuando ese fichero cambie, también si lo toca otro |
+
+Un plugin tiene la suya, bajo su nombre: lo que guarde no lo ve la escena, ni al revés.
 
 **Una por monitor.** `screens: each [max N]` repite la superficie en cada monitor (4 como mucho, si no se dice otra cosa), y **cada copia tiene lo suyo**: sus propiedades, sus zonas y sus reglas. Dentro:
 
@@ -550,8 +575,8 @@ Esto es la salida de `pleamar --gramatica`, copiada. No es una segunda lista: so
 
 ```vocabulario
 language: 0.1
-statements: surface permissions model spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
-library: let spring component permissions fact text model event image prop pose gesture posture layer
+statements: surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
+library: let spring component permissions fact text model service event image prop pose gesture posture layer
 properties.surface: size anchor margin level reserve screens keyboard open
 properties.permissions: run services
 properties.shape: rotate stroke color opacity blend active show cursor
@@ -577,6 +602,14 @@ classes: ambient reflex asked state
 field_types: text number bool image
 fact_types: number bool
 model: list
+services: clock clock.seconds audio battery network media window
+services.clock: hour minute second day month year weekday time date
+services.clock.seconds: hour minute second day month year weekday time date
+services.audio: volume muted
+services.battery: present percent charging
+services.network: online kind name strength
+services.media: playing title artist album player
+services.window: title class
 parameter_types: number bool color text record event image gesture spring
 springs: lively calm quick slow gentle pose
 units: px % deg ms s

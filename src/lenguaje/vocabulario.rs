@@ -6,14 +6,14 @@
 
 /// Con qué puede empezar una sentencia (además del nombre de un componente).
 pub const SENTENCIAS: &[&str] = &[
-    "surface", "permissions", "model", "spring", "prop", "pose", "fact", "event", "text", "image", "measure", "let", "zone",
+    "surface", "permissions", "model", "service", "spring", "prop", "pose", "fact", "event", "text", "image", "measure", "let", "zone",
     "body", "ellipse", "box", "arc", "line", "input", "clip", "group", "popup",
     "component", "children", "repeat", "for", "row", "column", "space", "between",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
 ];
 
 /// Lo que una biblioteca puede declarar.
-pub const DE_BIBLIOTECA: &[&str] = &["let", "spring", "component", "permissions", "fact", "text", "model", "event", "image", "prop", "pose", "gesture", "posture", "layer"];
+pub const DE_BIBLIOTECA: &[&str] = &["let", "spring", "component", "permissions", "fact", "text", "model", "service", "event", "image", "prop", "pose", "gesture", "posture", "layer"];
 
 /// Qué propiedades acepta cada elemento. `shape` son las comunes a todas las formas.
 pub const PROPIEDADES: &[(&str, &[&str])] = &[
@@ -49,6 +49,20 @@ pub const CLASES: &[&str] = &["ambient", "reflex", "asked", "state"];
 pub const TIPOS: &[&str] = &["text", "number", "bool", "image"];
 /// De un hecho. Además: un enumerado.
 pub const TIPOS_DE_HECHO: &[&str] = &["number", "bool"];
+/// Los servicios que se pueden pedir con `service`, y qué cuenta cada uno. La escena
+/// elige qué campos quiere de los que hay; pedir uno que no está es un fallo al cargar.
+/// Los que traen listas —`apps`, `tray`, `notifications`, `workspaces`— no salen aquí:
+/// esos son un modelo, y los reparte la lógica.
+pub const SERVICIOS: &[(&str, &[&str])] = &[
+    ("clock", &["hour", "minute", "second", "day", "month", "year", "weekday", "time", "date"]),
+    ("clock.seconds", &["hour", "minute", "second", "day", "month", "year", "weekday", "time", "date"]),
+    ("audio", &["volume", "muted"]),
+    ("battery", &["present", "percent", "charging"]),
+    ("network", &["online", "kind", "name", "strength"]),
+    ("media", &["playing", "title", "artist", "album", "player"]),
+    ("window", &["title", "class"]),
+];
+
 /// Lo que un modelo puede llevar dentro además de campos: otra lista de fichas.
 pub const DE_MODELO: &[&str] = &["list"];
 /// Lo que un componente puede pedir: `component Row(r: record, chosen: event, tone: color = mint)`.
@@ -87,6 +101,10 @@ pub fn como_texto() -> String {
     linea("field_types", TIPOS);
     linea("fact_types", TIPOS_DE_HECHO);
     linea("model", DE_MODELO);
+    linea("services", &SERVICIOS.iter().map(|(n, _)| *n).collect::<Vec<_>>());
+    for (servicio, campos) in SERVICIOS {
+        linea(&format!("services.{servicio}"), campos);
+    }
     linea("parameter_types", TIPOS_DE_PARAMETRO);
     linea("springs", MUELLES);
     linea("units", UNIDADES);
