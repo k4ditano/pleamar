@@ -293,7 +293,7 @@ operador!(Div, div, Entre);
 
 pub type Punto = (Expr, Expr);
 
-pub use crate::formas::{Afin, Forma};
+pub use crate::formas::{Afin, Forma, Paso};
 
 #[derive(Clone, Debug)]
 pub struct Sombra {
@@ -604,7 +604,7 @@ pub struct Zona {
 impl Zona {
     /// La caja que la contiene, para decirle al compositor por dónde entra el ratón.
     pub fn caja(&self, c: Ctx) -> Option<[f32; 4]> {
-        let mut p = self.forma.aplanar(c);
+        let mut p = self.forma.aplanar_en(c, &mut Vec::new());
         p.afin = self.bajo.iter().fold(Afin::IDENTIDAD, |a, t| a.por(t.afin(c)));
         p.caja()
     }
@@ -615,10 +615,13 @@ impl Zona {
         self.bajo.iter().fold(Afin::IDENTIDAD, |a, t| a.por(t.afin(c))).inversa().aplicar(x, y)
     }
 
+    /// Un camino se mide contra sus puntos, como en la GPU: una zona con forma
+    /// de flecha se pulsa donde se ve la flecha, no en su caja.
     pub fn contiene(&self, c: Ctx, x: f32, y: f32) -> bool {
-        let mut p = self.forma.aplanar(c);
+        let mut pts = Vec::new();
+        let mut p = self.forma.aplanar_en(c, &mut pts);
         p.afin = self.bajo.iter().fold(Afin::IDENTIDAD, |a, t| a.por(t.afin(c)));
-        p.distancia(x, y) < 0.0
+        p.distancia_con(x, y, &pts) < 0.0
     }
 }
 

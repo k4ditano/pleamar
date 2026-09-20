@@ -7,7 +7,7 @@
 /// Con qué puede empezar una sentencia (además del nombre de un componente).
 pub const SENTENCIAS: &[&str] = &[
     "surface", "permissions", "model", "service", "spring", "prop", "pose", "fact", "event", "text", "image", "measure", "let", "zone",
-    "body", "ellipse", "box", "arc", "line", "input", "clip", "group", "popup",
+    "body", "ellipse", "box", "arc", "line", "path", "input", "clip", "group", "popup",
     "component", "children", "repeat", "for", "row", "column", "space", "between",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
 ];
@@ -24,6 +24,7 @@ pub const PROPIEDADES: &[(&str, &[&str])] = &[
     ("box", &["at", "from", "size", "corner"]),
     ("arc", &["at", "radius", "span", "width"]),
     ("line", &["from", "to", "width"]),
+    ("path", &["at", "size"]),
     ("body", &["color", "gradient", "rim", "light", "shadow", "border", "opacity", "show"]),
     ("text", &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show"]),
     ("image", &["at", "size", "opacity", "tint", "show"]),
@@ -63,6 +64,9 @@ pub const SERVICIOS: &[(&str, &[&str])] = &[
     ("window", &["title", "class"]),
 ];
 
+/// Los pasos de un camino: por dónde pasa. `curve … via …` es una Bézier cuadrática.
+pub const DE_CAMINO: &[&str] = &["move", "line", "curve", "close"];
+
 /// Lo que un modelo puede llevar dentro además de campos: otra lista de fichas.
 pub const DE_MODELO: &[&str] = &["list"];
 /// Lo que un componente puede pedir: `component Row(r: record, chosen: event, tone: color = mint)`.
@@ -101,6 +105,7 @@ pub fn como_texto() -> String {
     linea("field_types", TIPOS);
     linea("fact_types", TIPOS_DE_HECHO);
     linea("model", DE_MODELO);
+    linea("path", DE_CAMINO);
     linea("services", &SERVICIOS.iter().map(|(n, _)| *n).collect::<Vec<_>>());
     for (servicio, campos) in SERVICIOS {
         linea(&format!("services.{servicio}"), campos);

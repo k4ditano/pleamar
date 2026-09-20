@@ -15,7 +15,7 @@ struct U {
 struct Forma {
     a: vec4<f32>,      // tipo, fusión, trazo (0 = rellena), -
     b: vec4<f32>,      // centro x, y · media anchura, media altura (segmento: vector hasta el otro extremo)
-    c: vec4<f32>,      // radio, giro, escala x, escala y (arco: radio, giro, media apertura, -)
+    c: vec4<f32>,      // radio, giro, escala x, escala y (arco: radio, giro, media apertura, -; camino: primer punto, giro, cuántos, cerrado)
     t0: vec4<f32>,     // lo heredado, ya invertido: de pantalla a local (matriz 2×2)…
     t1: vec4<f32>,     // …su traslación, y cuánto estira las distancias
 };
@@ -40,6 +40,7 @@ const ELIPSE: u32 = 0u;
 const CAJA: u32 = 1u;
 const ARCO: u32 = 2u;
 const SEGMENTO: u32 = 3u;
+const CAMINO: u32 = 4u;
 
 const CUERPO: u32 = 0u;
 const TEXTURA: u32 = 1u;
@@ -53,6 +54,8 @@ const LEJOS: f32 = 1e6;
 @group(0) @binding(1) var<storage, read> elementos: array<Elemento>;
 @group(0) @binding(2) var atlas: texture_2d<f32>;
 @group(0) @binding(3) var muestreo: sampler;
+// Los puntos de los caminos, en pares x, y, relativos al centro de cada uno.
+@group(0) @binding(4) var<storage, read> puntos: array<f32>;
 // 2 · lo de cada superficie: su tamaño y su escala.
 @group(2) @binding(0) var<uniform> u: U;
 // Los grupos con opacidad se pintan aparte, aquí, y se funden de una vez.
@@ -95,6 +98,32 @@ fn caja(p: vec2<f32>, mitad: vec2<f32>, r: f32) -> f32 {
     return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
+// Un camino: la distancia al tramo más cercano, con signo si está cerrado (el
+// número de vueltas dice si el punto está dentro). Es el SDF de un polígono.
+fn camino(p: vec2<f32>, primero: u32, n: u32, cerrado: bool) -> f32 {
+    if (n < 2u) { return LEJOS; }
+    var mejor = LEJOS;
+    var dentro = 1.0;
+    let tramos = select(n - 1u, n, cerrado);
+    for (var i = 0u; i < tramos; i++) {
+        let j = (i + 1u) % n;
+        let a = vec2<f32>(puntos[(primero + i) * 2u], puntos[(primero + i) * 2u + 1u]);
+        let b = vec2<f32>(puntos[(primero + j) * 2u], puntos[(primero + j) * 2u + 1u]);
+        let e = b - a;
+        let w = p - a;
+        let h = clamp(dot(w, e) / max(dot(e, e), 1e-6), 0.0, 1.0);
+        mejor = min(mejor, length(w - e * h));
+        if (cerrado) {
+            // Cruces de la horizontal que pasa por el punto: par, fuera; impar, dentro.
+            let baja = p.y >= a.y;
+            let sube = p.y < b.y;
+            let lado = e.x * w.y > e.y * w.x;
+            if ((baja && sube && lado) || (!baja && !sube && !lado)) { dentro = -dentro; }
+        }
+    }
+    return mejor * dentro;
+}
+
 fn min_suave(a: f32, b: f32, k: f32) -> f32 {
     if (k < 0.5 || a > LEJOS * 0.5 || b > LEJOS * 0.5) { return min(a, b); }
     let h = max(k - abs(a - b), 0.0) / k;
@@ -124,11 +153,17 @@ fn distancia(k: u32, punto: vec2<f32>) -> f32 {
             let h = clamp(dot(p, f.b.zw) / max(dot(f.b.zw, f.b.zw), 0.0001), 0.0, 1.0);
             d = length(p - f.b.zw * h);
         }
+        case CAMINO: {
+            d = camino(p, u32(f.c.x), u32(f.c.z), f.c.w > 0.5);
+        }
         default: {}
     }
     // El trazo convierte cualquier forma en su contorno: un círculo en un aro.
     if (f.a.z > 0.0 && d < LEJOS * 0.5) {
-        if (u32(f.a.x) == ARCO || u32(f.a.x) == SEGMENTO) { d = d - f.a.z * 0.5; } else { d = abs(d) - f.a.z * 0.5; }
+        let tipo = u32(f.a.x);
+        // Lo que ya es una línea solo se engorda; lo que encierra algo se queda en su contorno.
+        let linea = tipo == ARCO || tipo == SEGMENTO || (tipo == CAMINO && f.c.w <= 0.5);
+        if (linea) { d = d - f.a.z * 0.5; } else { d = abs(d) - f.a.z * 0.5; }
     }
     if (d > LEJOS * 0.5) { return d; }
     return d * f.t1.z;

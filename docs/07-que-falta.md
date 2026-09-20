@@ -19,7 +19,7 @@ Tipos instanciados, con las veces que aparecen entre las dos configuraciones:
 | `Item` | 351 | ✅ `group` |
 | `Timer` | 195 | ✅ `every` en la escena, `after`/`every` en la lógica |
 | `Connections` | 145 | ✅ reglas `on suceso`, `on("fact:x")` |
-| `Shape` · `ShapePath` · `PathLine` | 40 · 78 · 56 | ⬜ **no hay** · §2 |
+| `Shape` · `ShapePath` · `PathLine` | 40 · 78 · 56 | ✅ `path` con `move`, `line`, `curve` y `close`: relleno o con trazo, y se funde con lo demás |
 | `Component` · `Loader` | 67 · 64 | 🟡 `component` sí; carga diferida no · §2 |
 | `GradientStop` | 66 | 🟡 degradado lineal de dos colores; sin paradas ni radial |
 | `Image` | 63 | ✅ `image`, por fichero, por icono o desde un dato |
@@ -57,10 +57,6 @@ Y lo que usan del objeto `Quickshell`: `env` (82), `shellPath` (32), `screens` (
 
 `view:` ya recorta y corre con la rueda. Falta **arrastrar** para moverlas (en un panel táctil es lo natural) y que **solo se instancie lo que se ve**: hoy las 200 fichas de una lista de 200 existen desde el principio, con sus zonas y sus reglas (G12).
 
-### 🟡 Dibujo vectorial: `Shape`, `ShapePath`, `PathLine`
-
-174 usos entre los tres. Un anillo de progreso, una curva, un gráfico, una flecha. pleamar dibuja con SDF —que es mejor para lo suyo: se funden, tienen sombra y filo de balde— pero **no tiene caminos**. Hace falta algo: `path { move; line; curve; close }`, rellenado y con trazo.
-
 ### 🟡 Carga diferida: `Loader`, `LazyLoader`, `Component`
 
 128 usos. En pleamar todo se despliega al cargar. Para un menú que casi nunca se abre, o una lista de 200, eso es trabajo y memoria por nada.
@@ -86,10 +82,12 @@ Para no perderlo de vista, porque es la razón de que esto exista:
 
 ## 3.1. Lo que además salió de aquí
 
+**Un camino es una forma más**, no una isla: `Shape` en QtQuick es un motor aparte (triangula y pinta con otro camino de render), así que no se funde con lo de alrededor ni tiene sombra de balde. Aquí es la misma distancia con signo que un círculo, y `blend` lo funde con lo que tenga al lado.
+
 **Un servicio se pide desde la escena**, no desde la lógica: `service clock as now { time: text }` y los campos llegan solos a hechos y textos, con el compilador comprobando que ese servicio trae eso. En Quickshell lo equivalente es un `Singleton` con sus `property` y su JavaScript.
 
 ## 4. En qué orden
 
-1. **Caminos** (`path`), y copias que nazcan en marcha (G12).
+1. Copias que nazcan en marcha (G12).
 2. Resaltado y LSP para escribir esto en un editor.
 3. Ventanas normales, bloqueo de sesión, IME.

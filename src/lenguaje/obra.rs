@@ -928,8 +928,8 @@ impl<'a> Obra<'a> {
         let comunes = voz::propiedades("shape");
         let en_hueco = std::mem::take(&mut self.en_hueco);
         let propias: &[&str] = match clase.as_str() {
-            "ellipse" | "box" | "arc" | "line" => voz::propiedades(&clase),
-            otra => return Err(Fallo::en(n.linea, n.col, format!("I don\'t know the shape '{otra}': there are ellipse, box, arc and line"))),
+            "ellipse" | "box" | "arc" | "line" | "path" => voz::propiedades(&clase),
+            otra => return Err(Fallo::en(n.linea, n.col, format!("I don\'t know the shape '{otra}': there are ellipse, box, arc, line and path"))),
         };
         let validas: Vec<&str> = propias.iter().chain(comunes.iter()).copied().collect();
         let mut p = self.propiedades(n, &validas)?;
@@ -989,6 +989,43 @@ impl<'a> Obra<'a> {
                     _ => return Err(Fallo::en(n.linea, n.col, "a box is placed with 'at' (its centre) or with 'from' (its corner), one of the two")),
                 };
                 Forma::Caja { centro, mitad: (w * 0.5, h * 0.5), radio: corner.unwrap_or(Expr::K(0.0)) }
+            }
+            // `path { move 0, 0; line 20, 10; curve 40, 0 via 32, 10; close }`
+            "path" => {
+                let base = at.unwrap_or((Expr::K(0.0), Expr::K(0.0)));
+                let mueve = |o: &Obra, c: &mut Cur| -> R<Punto> {
+                    let p = o.punto(c)?;
+                    Ok((base.0.clone() + p.0, base.1.clone() + p.1))
+                };
+                let (mut origen, mut pasos, mut cerrado) = (None, Vec::new(), false);
+                for e in n.cuerpo.as_deref().unwrap_or(&[]) {
+                    let Entrada::Nodo(x) = e else { continue };
+                    let mut c = Cur::de(&x.cabeza, x.linea, x.col);
+                    match c.una_de(voz::DE_CAMINO, "a step of a path")?.as_str() {
+                        "move" => {
+                            if origen.is_some() || !pasos.is_empty() {
+                                return Err(Fallo::en(x.linea, x.col, "a path starts at one place: `move` goes first, and only once. For several strokes, several `path`"));
+                            }
+                            origen = Some(mueve(self, &mut c)?);
+                        }
+                        "line" => pasos.push(Paso::Linea(mueve(self, &mut c)?)),
+                        "curve" => {
+                            let a = mueve(self, &mut c)?;
+                            c.exige_palabra("via")?;
+                            pasos.push(Paso::Curva { via: mueve(self, &mut c)?, a });
+                        }
+                        _ => cerrado = true,
+                    }
+                    c.nada_mas()?;
+                }
+                if pasos.is_empty() {
+                    return Err(Fallo::en(n.linea, n.col, "a path goes somewhere: it needs at least one `line` or one `curve`"));
+                }
+                if pasos.len() + 1 > crate::formas::MAX_PUNTOS {
+                    return Err(Fallo::en(n.linea, n.col, format!("a path has at most {} steps", crate::formas::MAX_PUNTOS - 1)));
+                }
+                tam = size;
+                Forma::Camino { origen: origen.unwrap_or(base), pasos, cerrado }
             }
             "arc" => Forma::Arco { centro: at.ok_or_else(|| falta("at"))?, radio: radius.ok_or_else(|| falta("radius"))?, apertura: span.ok_or_else(|| falta("span"))? * 0.5, grosor: width.ok_or_else(|| falta("width"))? },
             _ => Forma::Segmento { de: from.ok_or_else(|| falta("from"))?, a: to.ok_or_else(|| falta("to"))?, grosor: width.ok_or_else(|| falta("width"))? },
@@ -1211,7 +1248,7 @@ impl<'a> Obra<'a> {
                     }
                 }
                 "body" => self.cuerpo(n)?,
-                "ellipse" | "box" | "arc" | "line" => {
+                "ellipse" | "box" | "arc" | "line" | "path" => {
                     let f = self.forma(n, 0)?;
                     self.ultimo_tam = f.tam;
                     self.e.pintar(Instr::Plano { forma: f.forma, color: f.color.unwrap_or_else(|| color(1.0, 1.0, 1.0)), alfa: f.opacidad.unwrap_or(Expr::K(1.0)) });

@@ -94,7 +94,24 @@ pub enum Forma {
     Girada(Box<Forma>, Expr),
     /// Solo el contorno: un círculo se vuelve un aro.
     Trazo(Box<Forma>, Expr),
+    /// Una línea quebrada o curva. Cerrada es un polígono, y se rellena; abierta,
+    /// una línea con grosor. Los puntos se aplanan aquí y el shader mide contra
+    /// ellos, así que sale con la misma distancia con signo que las demás: se
+    /// funde, tiene sombra, filo y luz.
+    Camino { origen: Punto, pasos: Vec<Paso>, cerrado: bool },
 }
+
+/// Por dónde pasa un camino. El primero es su `move`; el resto, esto.
+#[derive(Clone, Debug)]
+pub enum Paso {
+    Linea(Punto),
+    /// Una Bézier cuadrática: el punto por el que tira y a dónde llega.
+    Curva { via: Punto, a: Punto },
+}
+
+/// Cuántos puntos puede tener un camino ya aplanado. Cada píxel de su caja los
+/// recorre todos: es el precio de que sea exacto.
+pub const MAX_PUNTOS: usize = 64;
 
 impl Forma {
     pub fn circulo(centro: Punto, radio: impl Into<Expr>) -> Forma {
@@ -108,6 +125,78 @@ impl Forma {
     }
     pub fn trazo(self, grosor: impl Into<Expr>) -> Forma {
         Forma::Trazo(Box::new(self), grosor.into())
+    }
+
+    /// Lo mismo que `aplanar`, pero dejando los puntos de los caminos en `pts`
+    /// (pares x, y, relativos al centro de su caja). Un camino sin sitio donde
+    /// dejarlos se queda en su caja, que es lo que basta para el ratón.
+    pub fn aplanar_en(&self, c: Ctx, pts: &mut Vec<f32>) -> Plana {
+        match self {
+            Forma::Camino { origen, pasos, cerrado } => {
+                let mut ps: Vec<(f32, f32)> = Vec::with_capacity(pasos.len() + 1);
+                let mut d = (origen.0.evaluar(c), origen.1.evaluar(c));
+                ps.push(d);
+                for paso in pasos {
+                    match paso {
+                        Paso::Linea(a) => {
+                            d = (a.0.evaluar(c), a.1.evaluar(c));
+                            ps.push(d);
+                        }
+                        Paso::Curva { via, a } => {
+                            let v = (via.0.evaluar(c), via.1.evaluar(c));
+                            let f = (a.0.evaluar(c), a.1.evaluar(c));
+                            // Tantos tramos como largo sea el desvío: una curva corta no gasta 16.
+                            let largo = (v.0 - d.0).hypot(v.1 - d.1) + (f.0 - v.0).hypot(f.1 - v.1);
+                            let n = ((largo / 4.0) as usize).clamp(3, 24);
+                            for k in 1..=n {
+                                let t = k as f32 / n as f32;
+                                let u = 1.0 - t;
+                                ps.push((
+                                    u * u * d.0 + 2.0 * u * t * v.0 + t * t * f.0,
+                                    u * u * d.1 + 2.0 * u * t * v.1 + t * t * f.1,
+                                ));
+                            }
+                            d = f;
+                        }
+                    }
+                }
+                ps.truncate(MAX_PUNTOS);
+                let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                for (x, y) in &ps {
+                    (x0, y0, x1, y1) = (x0.min(*x), y0.min(*y), x1.max(*x), y1.max(*y));
+                }
+                let (cx, cy) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
+                let primero = pts.len() / 2;
+                for (x, y) in &ps {
+                    pts.push(x - cx);
+                    pts.push(y - cy);
+                }
+                Plana {
+                    tipo: 4,
+                    cx,
+                    cy,
+                    mx: (x1 - x0) * 0.5,
+                    my: (y1 - y0) * 0.5,
+                    radio: primero as f32,
+                    giro: 0.0,
+                    ex: ps.len() as f32,
+                    ey: *cerrado as u8 as f32,
+                    trazo: 0.0,
+                    afin: Afin::IDENTIDAD,
+                }
+            }
+            Forma::Girada(f, angulo) => {
+                let mut p = f.aplanar_en(c, pts);
+                p.giro += angulo.evaluar(c);
+                p
+            }
+            Forma::Trazo(f, grosor) => {
+                let mut p = f.aplanar_en(c, pts);
+                p.trazo = grosor.evaluar(c).max(0.0);
+                p
+            }
+            otra => otra.aplanar(c),
+        }
     }
 
     pub fn aplanar(&self, c: Ctx) -> Plana {
@@ -144,6 +233,14 @@ impl Forma {
             Forma::Trazo(f, grosor) => {
                 p = f.aplanar(c);
                 p.trazo = grosor.evaluar(c).max(0.0);
+            }
+            // Sin sitio donde dejar los puntos, un camino es su caja: le vale al
+            // ratón, y a la GPU se le entrega siempre por `aplanar_en`.
+            Forma::Camino { .. } => {
+                let mut pts = Vec::new();
+                p = self.aplanar_en(c, &mut pts);
+                p.ex = 0.0;
+                p.tipo = 1;
             }
         }
         p
@@ -187,6 +284,12 @@ fn girar(x: f32, y: f32, pivote: (f32, f32), angulo: f32) -> (f32, f32) {
 
 impl Plana {
     pub fn distancia(&self, x: f32, y: f32) -> f32 {
+        self.distancia_con(x, y, &[])
+    }
+
+    /// La misma cuenta que hace el shader. `pts` son los puntos de los caminos,
+    /// los que dejó `aplanar_en`; sin ellos, un camino es su caja.
+    pub fn distancia_con(&self, x: f32, y: f32, pts: &[f32]) -> f32 {
         let (x, y) = self.afin.inversa().aplicar(x, y);
         let (x, y) = girar(x, y, (self.cx, self.cy), self.giro);
         let (px, py) = (x - self.cx, y - self.cy);
@@ -204,13 +307,42 @@ impl Plana {
                 let (qx, qy) = (px.abs(), -py);
                 if c * qx > s * qy { (qx - s * self.radio).hypot(qy - c * self.radio) } else { (qx.hypot(qy) - self.radio).abs() }
             }
-            _ => {
+            3 => {
                 let h = ((px * self.mx + py * self.my) / (self.mx * self.mx + self.my * self.my).max(0.0001)).clamp(0.0, 1.0);
                 (px - self.mx * h).hypot(py - self.my * h)
             }
+            // Un camino: al tramo más cercano, y con signo si está cerrado.
+            _ => {
+                let (primero, n) = (self.radio as usize * 2, self.ex as usize);
+                if n < 2 || primero + n * 2 > pts.len() {
+                    let (qx, qy) = (px.abs() - self.mx, py.abs() - self.my);
+                    qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0)
+                } else {
+                    let punto = |i: usize| (pts[primero + i * 2], pts[primero + i * 2 + 1]);
+                    let (mut mejor, mut dentro) = (f32::MAX, 1.0f32);
+                    let tramos = if self.ey > 0.5 { n } else { n - 1 };
+                    for i in 0..tramos {
+                        let (a, b) = (punto(i), punto((i + 1) % n));
+                        let (ex, ey) = (b.0 - a.0, b.1 - a.1);
+                        let (wx, wy) = (px - a.0, py - a.1);
+                        let h = ((wx * ex + wy * ey) / (ex * ex + ey * ey).max(1e-6)).clamp(0.0, 1.0);
+                        mejor = mejor.min((wx - ex * h).hypot(wy - ey * h));
+                        if self.ey > 0.5 {
+                            let c = [py >= a.1, py < b.1, ex * wy > ey * wx];
+                            if c.iter().all(|x| *x) || c.iter().all(|x| !*x) {
+                                dentro = -dentro;
+                            }
+                        }
+                    }
+                    mejor * dentro
+                }
+            }
         };
         if self.trazo > 0.0 {
-            d = if self.tipo >= 2 { d - self.trazo * 0.5 } else { d.abs() - self.trazo * 0.5 };
+            // Lo que ya es una línea (arco, segmento, camino abierto) solo se engorda;
+            // lo que encierra algo se queda en su contorno.
+            let linea = self.tipo == 2 || self.tipo == 3 || (self.tipo == 4 && self.ey <= 0.5);
+            d = if linea { d - self.trazo * 0.5 } else { d.abs() - self.trazo * 0.5 };
         }
         d * self.afin.factor()
     }
@@ -241,10 +373,11 @@ impl Plana {
                 (self.mx, self.my)
             }
             2 => (self.radio, self.radio),
-            _ => {
+            3 => {
                 let l = self.mx.hypot(self.my);
                 (l, l)
             }
+            _ => (self.mx, self.my),
         };
         if self.giro != 0.0 {
             let r = hx.hypot(hy);

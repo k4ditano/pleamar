@@ -1,0 +1,6 @@
+// espera: fallo «a path goes somewhere»
+language 0.1
+scene Empty {
+    surface { size: 100, 60 }
+    path { at: 10, 10; color: #f5f7f5 }
+}

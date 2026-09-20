@@ -35,7 +35,7 @@ Es un lenguaje **declarativo y que siempre termina**. No hay bucles libres, ni r
 | Texto | `"entre comillas"`. Con huecos, ver §11 |
 | Símbolos | `{ } ( ) , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
 
-Palabras del lenguaje (no se pueden usar como nombre de algo propio sin confundir a quien lee, aunque el compilador no lo prohíbe): `language import scene library surface permissions model spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, y dentro de sus sentencias `in max while for after from until at by reach within rest every inset right middle true false and or not`.
+Palabras del lenguaje (no se pueden usar como nombre de algo propio sin confundir a quien lee, aunque el compilador no lo prohíbe): `language import scene library surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, y dentro de sus sentencias `in max while for after from until at by reach within rest every inset right middle move curve close via as true false and or not`.
 
 ## 4. Gramática
 
@@ -73,7 +73,9 @@ ref_muelle   = nombre | "spring" "(" numero "," numero ")" ;
 
 dibujo       = cuerpo | forma | texto | imagen | campo | recorte | grupo | emergente ;
 cuerpo       = "body" "{" { propiedad_de | forma } "}" ;
-forma        = ( "ellipse" | "box" | "arc" | "line" ) [ nombre ] "{" { propiedad_de } "}" ;
+forma        = ( "ellipse" | "box" | "arc" | "line" ) [ nombre ] "{" { propiedad_de } "}"
+             | "path" [ nombre ] "{" { propiedad_de | paso } "}" ;
+paso         = "move" punto | "line" punto | "curve" punto "via" punto | "close" ;
 texto        = "text" ( texto | nombre | "number" "(" expr [ "," numero [ "," texto ] ] ")" ) "{" { propiedad_de } "}" ;
 imagen       = "image" nombre "{" { propiedad_de } "}" ;
 campo        = "input" nombre "{" { propiedad_de } "}" ;
@@ -308,6 +310,7 @@ Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sug
 | `box` | `at: cx, cy` o `from: x, y` · `size: w, h` · `corner` |
 | `arc` (como «∩») | `at` · `radius` · `span` · `width` |
 | `line` | `from` · `to` · `width` |
+| `path` | `at` (de dónde cuelgan sus puntos) · `size: w, h` (lo que ocupa en un reparto), y dentro sus pasos: `move x, y` (una vez, la primera) · `line x, y` · `curve x, y via cx, cy` · `close`. Cerrado se rellena; abierto o con `stroke`, es una línea |
 | …y todas las formas | `color` · `opacity` · `rotate` · `stroke` (solo el contorno) · `blend` (dentro de un `body`: cuánto se funde con lo anterior) · `active` · `cursor` · `show` |
 | `body` | `color` o `gradient: x0, y0, x1, y1, #c0, #c1` · `rim` · `light: cantidad, desde_y, alto` · `shadow: dx, dy, difusa, alfa` · `border: grosor, #color` · `opacity` · `show`, y dentro sus formas, fundidas en una silueta |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` |
@@ -318,6 +321,17 @@ Cada elemento acepta estas propiedades y ninguna más; otra es un fallo, con sug
 | `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `view: w, h` · `step` |
 
 `anchor` de un texto: `left` `center` `right` y `top` `center` `bottom`, uno o los dos (`anchor: left center`). De un reparto: `left` `center` `right` y `top` `middle` `bottom` —sin ancla, `at` es su esquina de arriba a la izquierda—. `cursor:` `default` `pointer` `text` `grab` `grabbing`.
+
+Un **camino** es una línea quebrada o curva. `close` la cierra, y entonces se rellena —también cóncava, y también consigo misma cruzada—; sin cerrar, o con `stroke`, es una línea de ese grosor con las puntas redondas. `curve` es una Bézier cuadrática, y se parte en tantos tramos como largo sea el desvío. Por dentro es la misma distancia con signo que las demás formas: se funde con `blend`, y tiene sombra, filo, luz y borde como cualquiera.
+
+```
+path {
+    at: 26, 40;  stroke: 2.5;  color: mint
+    move 0, 56;  line 26, 36 + breath * 5;  line 52, 44;  line 78, 12
+}
+```
+
+Un camino lleva **un solo trazo** (un `move`, el primero) y hasta 64 puntos ya aplanados; para varios, varios `path`. En un reparto hay que decirle lo que ocupa con `size:`, porque su caja no se sabe hasta evaluarlo.
 
 `clip [inset n] forma` recorta todo lo que venga después, hasta el final de su `group`. Hasta cuatro anidados recortan por su forma; los de más afuera, por su caja.
 
@@ -575,7 +589,7 @@ Esto es la salida de `pleamar --gramatica`, copiada. No es una segunda lista: so
 
 ```vocabulario
 language: 0.1
-statements: surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
+statements: surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
 library: let spring component permissions fact text model service event image prop pose gesture posture layer
 properties.surface: size anchor margin level reserve screens keyboard open
 properties.permissions: run services
@@ -584,6 +598,7 @@ properties.ellipse: at radius scale
 properties.box: at from size corner
 properties.arc: at radius span width
 properties.line: from to width
+properties.path: at size
 properties.body: color gradient rim light shadow border opacity show
 properties.text: at anchor width size weight color opacity lines align line_height family measure show
 properties.image: at size opacity tint show
@@ -602,6 +617,7 @@ classes: ambient reflex asked state
 field_types: text number bool image
 fact_types: number bool
 model: list
+path: move line curve close
 services: clock clock.seconds audio battery network media window
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
