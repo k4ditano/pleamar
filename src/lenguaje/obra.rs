@@ -1598,13 +1598,13 @@ impl<'a> Obra<'a> {
         let mut tam = None;
         let sombra = match p.get_mut("shadow") {
             Some(c) => {
-                let dx = c.num()?;
+                let dx = self.expr(c)?;
                 c.exige_sim(",")?;
-                let dy = c.num()?;
+                let dy = self.expr(c)?;
                 c.exige_sim(",")?;
-                let difusa = c.num()?;
+                let difusa = self.expr(c)?;
                 c.exige_sim(",")?;
-                let alfa = c.num()?;
+                let alfa = self.expr(c)?;
                 //  Y de qué color, si se dice: `shadow: 0, 0, 18, 55%, mint`.
                 let color = if c.sim(",") { Some(self.color(c)?) } else { None };
                 Some(Sombra { desplazada: (dx, dy), difusa, alfa, color })

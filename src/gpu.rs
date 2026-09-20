@@ -128,7 +128,7 @@ impl Dibujo {
     /// superficie y su sombra no, el borde queda recto y quien lo ve no tiene
     /// dónde mirar: la sombra no se declara con un tamaño, sale de dos números.
     /// La cuenta ya está hecha ahí arriba; decirla cuesta cuatro restas.
-    fn mirar_la_sombra(&mut self, forma: [f32; 4], s: &Sombra) {
+    fn mirar_la_sombra(&mut self, forma: [f32; 4], (dx, dy, d): (f32, f32, f32)) {
         if self.sombra_dicha {
             return;
         }
@@ -136,7 +136,6 @@ impl Dibujo {
         // Lo que pide la sombra son sus propios números: desplazamiento y
         // difusión. Los márgenes que el render se guarda no cuentan, o el aviso
         // diría dos píxeles que nadie escribió.
-        let (dx, dy, d) = (s.desplazada.0, s.desplazada.1, s.difusa);
         let falta = [d - dx - forma[0], d - dy - forma[1], forma[2] + dx + d - w, forma[3] + dy + d - alto];
         // Solo por los lados donde la forma flota dentro. Una barra pegada al
         // borde de arriba tiene la sombra cortada por arriba, claro: ahí no
@@ -285,13 +284,17 @@ impl Dibujo {
                     let forma_sola = caja;
                     let h = g.holgura + 2.0;
                     caja = [caja[0] - h, caja[1] - h, caja[2] + h, caja[3] + h];
-                    if let Some(s) = &g.sombra {
-                        let d = s.difusa + 2.0;
-                        caja = unir(Some(caja), [caja[0] + s.desplazada.0 - d, caja[1] + s.desplazada.1 - d, caja[2] + s.desplazada.0 + d, caja[3] + s.desplazada.1 + d]);
+                    //  Sus números se leen aquí, que es donde se sabe cómo está
+                    //  la escena ahora mismo: una sombra puede ir cambiando.
+                    let sombra = g.sombra.as_ref().map(|s| (s.desplazada.0.evaluar(c), s.desplazada.1.evaluar(c), s.difusa.evaluar(c).max(0.0), s.alfa.evaluar(c).clamp(0.0, 1.0)));
+                    if let Some((sx, sy, sd, _)) = sombra {
+                        let d = sd + 2.0;
+                        caja = unir(Some(caja), [caja[0] + sx - d, caja[1] + sy - d, caja[2] + sx + d, caja[3] + sy + d]);
                     }
                     let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
-                    if let Some(s) = g.sombra.as_ref().filter(|_| a > 0.01) {
-                        self.mirar_la_sombra(forma_sola, s);
+                    if let Some((sx, sy, sd, sa)) = sombra.filter(|s| a > 0.01 && s.3 > 0.01) {
+                        self.mirar_la_sombra(forma_sola, (sx, sy, sd));
+                        let _ = sa;
                     }
                     self.elemento(0.0, caja, &recortes, |e| {
                         afin.codificar(&mut e[44..52]);
@@ -320,11 +323,11 @@ impl Dibujo {
                             e[23] = grosor.evaluar(c).max(0.0);
                             e[24..27].copy_from_slice(&color(col));
                         }
-                        if let Some(s) = &g.sombra {
-                            e[28..32].copy_from_slice(&[s.desplazada.0, s.desplazada.1, s.difusa, s.alfa]);
+                        if let Some((sx, sy, sd, sa)) = sombra {
+                            e[28..32].copy_from_slice(&[sx, sy, sd, sa]);
                             //  Su color va en los tres huecos de `color1`, que
                             //  solo usaba el cuarto para decir si hay degradado.
-                            if let Some(col) = &s.color {
+                            if let Some(col) = g.sombra.as_ref().and_then(|s| s.color.as_ref()) {
                                 e[12..15].copy_from_slice(&color(col));
                             }
                         }

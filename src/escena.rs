@@ -345,9 +345,12 @@ pub use crate::formas::{Afin, Forma, Paso};
 
 #[derive(Clone, Debug)]
 pub struct Sombra {
-    pub desplazada: (f32, f32),
-    pub difusa: f32,
-    pub alfa: f32,
+    /// Todo lo suyo son expresiones, como en el resto de la escena: una sombra
+    /// que no puede cambiar obliga a elegir entre el halo que quiere una bolita
+    /// y la sombra que quiere un panel, cuando son el mismo cuerpo.
+    pub desplazada: (Expr, Expr),
+    pub difusa: Expr,
+    pub alfa: Expr,
     /// De qué color. Negra si no se dice, que es lo que una sombra es sobre
     /// papel; sobre un escritorio de ventanas oscuras, una sombra negra no
     /// tiene nada que oscurecer y lo que separa una cosa del fondo es un halo

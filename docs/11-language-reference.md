@@ -362,13 +362,14 @@ Each element accepts these properties and no others; another one is an error, wi
 
 `anchor` of a text: `left` `center` `right` and `top` `center` `bottom`, one or both (`anchor: left center`). Of a layout: `left` `center` `right` and `top` `middle` `bottom` —with no anchor, `at` is its top left corner—. `cursor:` `default` `pointer` `text` `grab` `grabbing`.
 
-**A shadow can be of any colour, and that colour is an expression.** Black if
-nothing is said, which is what a shadow is on paper. On a desktop of dark
-windows a black shadow has nothing to darken and reads as dirt, so what sets a
-shape apart from what is behind it is a light halo: `shadow: 0, 0, 18, 55%,
-#9ed6bd`, with no offset, hugs the outline instead of falling to one side.
-Being an expression, the same body can go from halo to shadow as a panel grows
-out of it: `shadow: 0, 0, 14, 45%, mix(ink, #05070a, open)`.
+**A shadow can be of any colour, and everything about it is an expression.**
+Black if no colour is said, which is what a shadow is on paper. On a desktop of
+dark windows a black shadow has nothing to darken and reads as dirt, so what
+sets a shape apart from what is behind it is a light halo: `shadow: 0, 0, 8,
+22%, #9ed6bd`, with no offset, hugs the outline instead of falling to one side.
+And since the offset, the blur and the alpha are expressions too, one body can
+go from halo to shadow as a panel grows out of it, instead of having to choose:
+`shadow: 0, 2 * open, 8 + 4 * open, 22% + 10% * open, mix(mint, #05070a, open)`.
 
 A **path** is a broken or curved line. `close` closes it, and then it is filled —concave too, and crossing itself too—; unclosed, or with `stroke`, it is a line of that width with round caps. `curve` is a quadratic Bézier, and it is split into as many segments as the detour is long. Inside it is the same signed distance as the other shapes: it melts with `blend`, and it has shadow, rim, light and border like any other.
 
