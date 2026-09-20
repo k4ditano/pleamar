@@ -364,12 +364,15 @@ Each element accepts these properties and no others; another one is an error, wi
 
 **A shadow can be of any colour, and everything about it is an expression.**
 Black if no colour is said, which is what a shadow is on paper. On a desktop of
-dark windows a black shadow has nothing to darken and reads as dirt, so what
-sets a shape apart from what is behind it is a light halo: `shadow: 0, 0, 8,
-22%, #9ed6bd`, with no offset, hugs the outline instead of falling to one side.
-And since the offset, the blur and the alpha are expressions too, one body can
-go from halo to shadow as a panel grows out of it, instead of having to choose:
-`shadow: 0, 2 * open, 8 + 4 * open, 22% + 10% * open, mix(mint, #05070a, open)`.
+dark windows a black shadow has nothing to darken and reads as dirt, and a
+light halo (`shadow: 0, 0, 8, 22%, #9ed6bd`, no offset, hugging the outline)
+paints outside the silhouette, where it shows. Often what a small shape needs
+there is its own `rim`, which is light **inside** the silhouette and touches
+nothing behind it. And since the offset, the blur and the alpha are expressions
+too, a shadow can show up only when there is something to cast one: `shadow: 0,
+2 * open, 12 * open, 32% * open` gives a card the shadow of a card and leaves
+the thing it grew out of with none. With the count at zero there is no shadow
+to work out, and the renderer does not look at it.
 
 A **path** is a broken or curved line. `close` closes it, and then it is filled —concave too, and crossing itself too—; unclosed, or with `stroke`, it is a line of that width with round caps. `curve` is a quadratic Bézier, and it is split into as many segments as the detour is long. Inside it is the same signed distance as the other shapes: it melts with `blend`, and it has shadow, rim, light and border like any other.
 
