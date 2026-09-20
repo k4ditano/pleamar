@@ -49,7 +49,7 @@ Tipos instanciados, con las veces que aparecen entre las dos configuraciones:
 | `PwObjectTracker` | 1 | ✅ servicio `audio` (aunque por `wpctl`, no nativo) |
 | `ClippingRectangle` | 1 | ✅ `clip` |
 
-Y lo que usan del objeto `Quickshell`: `env` (82), `shellPath` (32), `screens` (31), `execDetached` (24), `iconPath` (18), `clipboardText` (6).
+Y lo que usan del objeto `Quickshell`: `env` (82) ✅ `sys.ask("env", …)`, con permiso; `shellPath` (32) ✅ `sys.ask("files.folder")` y `require`, que ya son relativos a quien los escribe; `screens` (31) ✅ `screens: each` y `screen.name`; `execDetached` (24) ✅ `spawn`; `iconPath` (18) ✅ `image x = icon "…"`; `clipboardText` (6) ✅ `sys.ask("clipboard")`.
 
 ## 2. Lo que falta, por lo que duele
 

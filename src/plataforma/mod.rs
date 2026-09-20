@@ -45,7 +45,10 @@ pub enum Valor {
 ///  · `media`      → `{ playing, title, artist, album, player }`, o `{ player = "" }` si no suena nada
 ///  · `clock`      → `{ hour, minute, second, day, month, year, weekday, time, date }`, al cambiar el minuto
 ///  · `clock.seconds` → lo mismo, cada segundo
-///  · `files:x.json` → `{ name, exists, text }` cuando ese fichero cambie
+///  · `files:x.json` → el texto de ese fichero cuando cambie
+///
+/// Y dos que solo se preguntan, con `sys.ask`: `env` (una variable del entorno) y
+/// `clipboard` (lo que haya copiado); `clipboard.set` escribe en él.
 pub fn servicio(de: &str, nombre: &str, avisar: Box<dyn Fn(Valor) + Send>) -> bool {
     // La hora, sin llamar a nadie.
     if nombre == "clock" || nombre == "clock.seconds" {
@@ -89,6 +92,10 @@ pub fn servicio(de: &str, nombre: &str, avisar: Box<dyn Fn(Valor) + Send>) -> bo
 pub fn orden(de: &str, nombre: &str, args: &[Valor]) -> Result<(), String> {
     if nombre.starts_with("files.") {
         return ficheros::orden(de, nombre, args);
+    }
+    if let ("clipboard.set", [Valor::Texto(t)]) = (nombre, args) {
+        portapapeles_escribir(t);
+        return Ok(());
     }
     #[cfg(target_os = "linux")]
     if let ("apps.launch", [Valor::Texto(o)]) = (nombre, args) {
@@ -142,6 +149,15 @@ pub fn carpeta_de_ajustes() -> std::path::PathBuf {
 pub fn consulta(de: &str, nombre: &str, args: &[Valor]) -> Result<Valor, String> {
     if nombre.starts_with("files.") {
         return ficheros::consulta(de, nombre, args);
+    }
+    match (nombre, args) {
+        // El entorno: lo que la sesión le dijo a este programa al arrancar.
+        ("env", [Valor::Texto(cual)]) => {
+            return Ok(std::env::var_os(cual).map_or(Valor::Nulo, |v| Valor::Texto(v.to_string_lossy().into_owned())));
+        }
+        ("env", _) => return Err("`env` takes the name of one variable: sys.ask(\"env\", \"HOME\")".into()),
+        ("clipboard", []) => return Ok(portapapeles_leer().map_or(Valor::Nulo, Valor::Texto)),
+        _ => {}
     }
     #[cfg(target_os = "linux")]
     if nombre.starts_with("tray.") {

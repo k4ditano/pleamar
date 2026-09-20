@@ -262,6 +262,14 @@ Los permisos son los de la escena, y son los mismos de `sys.watch`: `services: "
 | `sys.call("files.write", n, { tone = 2 })` | una tabla se guarda como JSON, con sus saltos de línea: lo que se guarda también se lee a mano |
 | `sys.watch("files:settings.txt", f)` | avisa cuando ese fichero cambie, también si lo toca otro |
 
+**El entorno y el portapapeles**, con sus permisos (`services: "env"`, `"clipboard"`, `"clipboard.set"` para escribir):
+
+| | |
+| --- | --- |
+| `sys.ask("env", "HOME")` | una variable del entorno, o `nil` |
+| `sys.ask("clipboard")` | lo que haya copiado, como texto |
+| `sys.call("clipboard.set", t)` | copiar eso. En Wayland, quien copia tiene que seguir vivo: de eso se encarga la plataforma |
+
 Un plugin tiene la suya, bajo su nombre: lo que guarde no lo ve la escena, ni al revés.
 
 **Una por monitor.** `screens: each [max N]` repite la superficie en cada monitor (4 como mucho, si no se dice otra cosa), y **cada copia tiene lo suyo**: sus propiedades, sus zonas y sus reglas. Dentro:
