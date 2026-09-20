@@ -277,7 +277,7 @@ pub use wayland::atender;
 /// Sin plataforma todavía: el núcleo compila —es la guarda de que sigue siendo
 /// portable— pero no hay dónde pintar.
 #[cfg(not(target_os = "linux"))]
-pub fn atender(_: Superficie, _: u32, _: wgpu::Instance, _: Sender<ARender>) {
+pub fn atender(_: Vec<Superficie>, _: u32, _: wgpu::Instance, _: Sender<ARender>) {
     eprintln!("pleamar todavía no sabe poner ventanas en este sistema: falta src/plataforma/ para él");
     std::process::exit(1);
 }

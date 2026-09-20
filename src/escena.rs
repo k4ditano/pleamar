@@ -65,6 +65,14 @@ pub enum Pantallas {
 /// monitor a escala 2 se pinta con el doble de píxeles de verdad.
 #[derive(Clone, Debug)]
 pub struct Superficie {
+    /// Cómo se llama. La principal, «».
+    pub nombre: String,
+    /// Dónde se dibuja lo suyo, dentro del espacio de la escena: cada superficie mira a
+    /// un trozo distinto del mismo plano, como las emergentes. Así todas comparten
+    /// propiedades, hechos y reglas sin saber unas de otras.
+    pub origen: (f32, f32),
+    /// Está mientras este hecho sea verdad. Sin él, siempre.
+    pub abierta: Option<HechoId>,
     /// 0 es «todo el ancho del monitor».
     pub ancho: u32,
     pub alto: u32,
@@ -94,7 +102,7 @@ pub enum Teclado {
 
 impl Default for Superficie {
     fn default() -> Self {
-        Superficie { ancho: 720, alto: 224, ancla: Ancla::Arriba, margen: [40, 0, 0, 0], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Estas(vec!["HDMI-A-1".into()]), teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
+        Superficie { nombre: String::new(), origen: (0.0, 0.0), abierta: None, ancho: 720, alto: 224, ancla: Ancla::Arriba, margen: [40, 0, 0, 0], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Estas(vec!["HDMI-A-1".into()]), teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
     }
 }
 
@@ -836,7 +844,8 @@ pub struct Escena {
     /// Gestos que se repiten solos mientras algo sea verdad.
     pub posturas: Vec<(GestoId, Expr)>,
     pub reglas: Vec<Regla>,
-    pub superficie: Superficie,
+    /// Las ventanas que pide. La primera es la principal: la que manda si algo es de una sola.
+    pub superficies: Vec<Superficie>,
     /// `keyboard: exclusive while open`: cuándo quiere el teclado.
     pub teclado_mientras: Option<Expr>,
     pub permisos: Permisos,
@@ -950,6 +959,17 @@ pub struct Permisos {
 }
 
 impl Escena {
+    /// La principal: la que se declara sin nombre, o la primera.
+    pub fn superficie(&self) -> &Superficie {
+        self.superficies.first().expect("toda escena tiene al menos una superficie")
+    }
+    pub fn superficie_mut(&mut self) -> &mut Superficie {
+        if self.superficies.is_empty() {
+            self.superficies.push(Superficie::default());
+        }
+        &mut self.superficies[0]
+    }
+
     /// Las propiedades van por nombre: si la escena se sustituye por otra, las
     /// que se llamen igual conservan valor y velocidad.
     pub fn prop(&mut self, nombre: &'static str, inicial: f32) -> PropId {

@@ -201,6 +201,8 @@ struct Parametro {
 
 struct Obra<'a> {
     e: Escena,
+    /// Superficies cuyo `open:` se resuelve al final: (cuál, el hecho, dónde está escrito).
+    superficies_pendientes: Vec<(usize, String, (usize, usize))>,
     /// Los nombres de los ficheros de los que está hecha, para decir dónde está algo.
     ficheros: &'a [String],
     /// Qué ficheros, por su número, son bibliotecas `strict`.
@@ -213,6 +215,10 @@ struct Obra<'a> {
     frontera_de: HashMap<usize, HashMap<String, String>>,
     /// Y los permisos que pide para su lógica.
     permisos_de: HashMap<usize, Permisos>,
+    /// En qué vuelta va la lectura: `surface` lee sus propiedades en la 0 y su dibujo en la 2.
+    vuelta: u8,
+    /// Cada superficie y cada emergente miran a un trozo distinto del mismo plano.
+    siguiente_origen: f32,
     /// Los nombres de los valores de los enumerados, como números: `critical` es 2.
     valores: HashMap<String, f32>,
     /// Los que están en dos enumerados con números distintos: sueltos no dicen nada.
@@ -278,7 +284,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
             otro => unreachable!("«{otro}» está en el vocabulario, pero no tiene rigidez ni freno"),
         })).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
-        ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), valores: HashMap::new(), ambiguos: Default::default(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
+        superficies_pendientes: Vec::new(), ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), vuelta: 0, siguiente_origen: 0.0, valores: HashMap::new(), ambiguos: Default::default(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
@@ -296,7 +302,9 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
     o.adelantar_medidas(cuerpo);
     // Cuatro vueltas: declaraciones; nombres y capas; dibujo; reglas.
     for vuelta in 0..3 {
-        let de_esta: Vec<&Entrada> = cuerpo.iter().filter(|e| vuelta_de(e) == vuelta).collect();
+        o.vuelta = vuelta;
+        // Una `surface` se lee dos veces: en la 0 sus propiedades, y en la 2 lo que dibuja.
+        let de_esta: Vec<&Entrada> = cuerpo.iter().filter(|e| vuelta_de(e) == vuelta || (vuelta == 2 && es_superficie(e))).collect();
         o.grupo(de_esta.into_iter());
     }
     o.zonas_de_verdad();
@@ -317,9 +325,23 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
         }
     }
     // Hasta que llegue la de verdad, la que pide el fichero.
-    let (w, h) = (o.e.superficie.ancho as f32, o.e.superficie.alto as f32);
+    let (w, h) = (o.e.superficie().ancho as f32, o.e.superficie().alto as f32);
     o.e.hechos[0].1 = if w > 0.0 { w } else { 1920.0 };
     o.e.hechos[1].1 = h;
+    for (cual, hecho, (l, col)) in std::mem::take(&mut o.superficies_pendientes) {
+        o.entornos.clear();
+        match o.hechos.get(&o.global(&hecho)).copied() {
+            Some(h) => o.e.superficies[cual].abierta = Some(h),
+            None => {
+                let conocidos: Vec<&String> = o.hechos.keys().collect();
+                let pista = parecido(&hecho, conocidos.into_iter()).map_or(String::new(), |p| format!(" ¿Querías decir «{p}»?"));
+                o.anotar(Fallo::en(l, col, format!("no hay ningún hecho que se llame «{hecho}».{pista}")));
+            }
+        }
+    }
+    if o.e.superficies.is_empty() {
+        o.e.superficies.push(Superficie::default());
+    }
     // Una biblioteca con un `.luau` al lado es un plugin: su lógica, con sus permisos.
     for b in bibliotecas {
         if let Some(logica) = &b.logica {
@@ -334,6 +356,11 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
         o.anotar(Fallo::en(donde.0, donde.1, format!("«{componente}» es de una biblioteca `strict` y lee «{nombre}», que es de la escena, sin pedirlo. Que lo reciba como parámetro, o que lo declare su biblioteca")));
     }
     if o.fallos.is_empty() { Ok(o.e) } else { Err(o.fallos) }
+}
+
+/// `surface … { … }`, que se lee en dos vueltas.
+fn es_superficie(e: &Entrada) -> bool {
+    matches!(e, Entrada::Nodo(n) if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "surface"))
 }
 
 /// En qué vuelta se lee cada sentencia del nivel de la escena.
@@ -1317,7 +1344,8 @@ impl<'a> Obra<'a> {
             }
         };
         // Cada una en su sitio, lejos de la superficie y de las demás.
-        let origen = (0.0, 10000.0 * (self.e.emergentes.len() + 1) as f32);
+        self.siguiente_origen += 10000.0;
+        let origen = (0.0, self.siguiente_origen);
         let t = Transformacion::en((origen.0.into(), origen.1.into()));
         let t = Transformacion { mueve: (origen.0.into(), origen.1.into()), ..t };
         self.e.pintar(Instr::Transformar(Some(t.clone())));
@@ -1748,9 +1776,60 @@ impl<'a> Obra<'a> {
         Ok(())
     }
 
+    /// `surface { … }` es la ventana de la escena; `surface bar { …; …dibujo… }`, una de
+    /// varias, cada una con lo suyo dentro. Todas comparten propiedades, hechos y reglas:
+    /// por dentro son trozos distintos del mismo plano, como las emergentes.
     fn superficie(&mut self, n: &'a Nodo) -> R<()> {
+        let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
+        let nombre = match c.mira() {
+            Some(F::Id(_)) => self.declarar(&c.id("un nombre para la superficie")?),
+            _ => String::new(),
+        };
+        c.nada_mas()?;
+        let dibuja = n.cuerpo.as_deref().unwrap_or(&[]).iter().any(|e| matches!(e, Entrada::Nodo(_)));
+        if nombre.is_empty() && dibuja {
+            return Err(Fallo::en(n.linea, n.col, "una superficie que lleva dentro lo que dibuja necesita nombre: `surface bar { … }`. Sin nombre es la de la escena, y dibuja lo que hay suelto"));
+        }
+        // Vuelta 2: lo que dibuja, en su trozo del plano.
+        if self.vuelta == 2 {
+            let Some(k) = self.e.superficies.iter().position(|s| s.nombre == nombre) else { return Ok(()) };
+            if !dibuja {
+                return Ok(());
+            }
+            let origen = self.e.superficies[k].origen;
+            let t = Transformacion { mueve: (origen.0.into(), origen.1.into()), ..Transformacion::en((0.0.into(), 0.0.into())) };
+            self.e.pintar(Instr::Transformar(Some(t.clone())));
+            self.bajo.push(t);
+            self.grupo(n.cuerpo.as_deref().unwrap_or(&[]).iter());
+            self.bajo.pop();
+            self.e.pintar(Instr::Transformar(None));
+            return Ok(());
+        }
+        if self.e.superficies.iter().any(|s| s.nombre == nombre) {
+            return Err(Fallo::en(n.linea, n.col, match nombre.as_str() {
+                "" => "la escena ya tiene su superficie: las demás llevan nombre (`surface panel { … }`)".to_owned(),
+                _ => format!("ya hay una superficie «{nombre}»"),
+            }));
+        }
+        // La principal es la primera, tenga nombre o no.
+        let nueva = Superficie { nombre: nombre.clone(), ..Default::default() };
+        if nombre.is_empty() {
+            self.e.superficies.insert(0, nueva);
+        } else {
+            self.siguiente_origen += 10000.0;
+            self.e.superficies.push(Superficie { origen: (0.0, self.siguiente_origen), ..nueva });
+        }
+        let cual = self.e.superficies.iter().position(|s| s.nombre == nombre).unwrap();
         let mut p = self.propiedades(n, voz::propiedades("surface"))?;
-        let s = &mut self.e.superficie;
+        let mut abierta_pendiente = None;
+        if let Some(c) = p.get_mut("open") {
+            abierta_pendiente = Some((c.id("el hecho que la abre")?, c.pos()));
+        }
+        if let Some((hecho, donde)) = abierta_pendiente {
+            // Como el `while` del teclado: puede nombrar un hecho declarado más abajo.
+            self.superficies_pendientes.push((cual, hecho, donde));
+        }
+        let s = &mut self.e.superficies[cual];
         if let Some(c) = p.get_mut("size") {
             // `size: full, 36`: todo el ancho del monitor.
             s.ancho = if c.palabra("full") { 0 } else { c.num()? as u32 };
@@ -2948,7 +3027,7 @@ impl<'a> Obra<'a> {
                 // `on press orb`, o con otro botón: `on press right orb`.
                 "press" => {
                     if c.palabra("right") {
-                        self.e.superficie.derecho_cierra = false;
+                        self.e.superficie_mut().derecho_cierra = false;
                         Disparador::PulsaCon(self.zona(c)?, 1)
                     } else if c.palabra("middle") {
                         Disparador::PulsaCon(self.zona(c)?, 2)

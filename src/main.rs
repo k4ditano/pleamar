@@ -145,17 +145,17 @@ fn main() {
     // la contraria.
     let mut escena = guion.escena();
     if let Some(p) = &a.pantalla {
-        escena.superficie.pantallas = if p == "todas" { Pantallas::Todas } else { Pantallas::Estas(p.split(',').map(str::to_owned).collect()) };
+        escena.superficie_mut().pantallas = if p == "todas" { Pantallas::Todas } else { Pantallas::Estas(p.split(',').map(str::to_owned).collect()) };
     }
     if let Some(m) = a.margen {
-        escena.superficie.margen[0] = m;
+        escena.superficie_mut().margen[0] = m;
     }
 
     // El taller de texto e imágenes. Lo primero que hace es leer las fuentes del
     // sistema, que es lo más lento del arranque: que vaya yendo.
     let letras = texto::Textos::abrir(a_render.clone());
     let instancia = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, ..wgpu::InstanceDescriptor::new_without_display_handle() });
-    let pide = escena.superficie.clone();
+    let pide = escena.superficies.clone();
 
     println!(
         "pleamar · modo {} · la lógica se bloquea {} ms tras cada decisión",

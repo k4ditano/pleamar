@@ -139,7 +139,7 @@ impl Guion for Muestrario {
         e.pintar(Instr::Relleno { pintura: color(0.62, 0.84, 0.74).into(), alfa: 1.0.into(), filo: 0.0, luz: None, borde: None });
         e.pintar(Instr::Texto { contenido: Contenido::Vivo(etiqueta), en: (360.0.into(), 326.0.into()), ancla: (0.5, 0.5), ancho: None, estilo: Estilo::de(15.0, color(0.07, 0.12, 0.10)).peso(500), alfa: 1.0.into(), mide: Some((rot_w, rot_h)) });
 
-        e.superficie = Superficie { alto: 372, ..Default::default() };
+        e.superficies = vec![Superficie { alto: 372, ..Default::default() }];
         e
     }
     fn evento(&mut self, e: Evento, c: &mut Contexto) {

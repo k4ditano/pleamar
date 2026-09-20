@@ -178,7 +178,7 @@ pub fn hilo(
                         .collect();
                     gesto = None;
                     pendientes.clear();
-                    tam = (nueva.superficie.ancho as f32, nueva.superficie.alto as f32 + if op.hud { ALTO_INSTRUMENTOS } else { 0.0 });
+                    tam = (nueva.superficie().ancho as f32, nueva.superficie().alto as f32 + if op.hud { ALTO_INSTRUMENTOS } else { 0.0 });
                     textos = nueva.textos.iter().map(|(n, inicial)| escena.textos.iter().position(|t| t.0 == *n).map_or_else(|| inicial.clone(), |k| textos[k].clone())).collect();
                     atlas_por_rehacer = true;
                     println!(
@@ -192,13 +192,13 @@ pub fn hilo(
                     let g = gpu.get_or_insert_with(|| Gpu::nueva(&instancia, &n.superficie));
                     // Una escena que pide «todo el ancho» mide lo que mida su monitor, y lo
                     // puede saber: `screen.width`.
-                    if escena.superficie.ancho == 0 && n.vista.is_none() {
+                    if escena.superficie().ancho == 0 && n.vista.superficie == 0 && n.vista.emergente.is_none() {
                         tam.0 = n.tam.0 as f32;
                     }
                     for (k, (nombre, _)) in escena.hechos.iter().enumerate() {
                         match *nombre {
                             "screen.width" => hechos[k] = tam.0,
-                            "screen.height" => hechos[k] = escena.superficie.alto as f32,
+                            "screen.height" => hechos[k] = escena.superficie().alto as f32,
                             _ => {}
                         }
                     }
@@ -237,7 +237,7 @@ pub fn hilo(
                 },
                 ARender::EmergenteCerrada(k) => {
                     // Han pulsado fuera: primero se suelta lo que pintaba en ella, luego ella.
-                    laminas.retain(|l| l.vista.is_none_or(|v| v.0 != k));
+                    laminas.retain(|l| l.vista.emergente != Some(k));
                     crate::plataforma::emergente(k, None);
                     if let Some(g) = &gpu {
                         repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
@@ -497,7 +497,7 @@ pub fn hilo(
             if quiere != teclado_pedido {
                 teclado_pedido = quiere;
                 for l in &laminas {
-                    l.teclado(if quiere { escena.superficie.teclado } else { Teclado::Nunca });
+                    l.teclado(if quiere { escena.superficie().teclado } else { Teclado::Nunca });
                 }
                 cambio_de_teclado = true;
             }
@@ -837,7 +837,12 @@ pub fn hilo(
         // Las emergentes: abiertas mientras su hecho sea verdad, donde y como digan
         // sus expresiones. Si cambian de sitio o de tamaño estando abiertas, se rehacen.
         emergentes.resize(escena.emergentes.len(), None);
+        // Lo que se dibuja existe si cae en alguna superficie viva, o en alguna emergente
+        // abierta. Una superficie cerrada no aporta la suya: así todo lo suyo se descarta al
+        // componer y su siguiente frame sale vacío, que es lo que la hace desaparecer.
+        let abierta = |k: usize| escena.superficies.get(k).and_then(|s| s.abierta).is_none_or(|h| hechos[h.0 as usize] > 0.5);
         dibujo.vistas.clear();
+        dibujo.vistas.extend(laminas.iter().filter(|l| abierta(l.vista.superficie)).map(|l| l.vista.caja()));
         for (k, em) in escena.emergentes.iter().enumerate() {
             let c = Ctx { props: &props, hechos: &hechos };
             let quiere = (hechos[em.abierta.0 as usize] > 0.5 && !laminas.is_empty()).then(|| {
@@ -845,7 +850,7 @@ pub fn hilo(
             });
             if quiere != emergentes[k] {
                 if emergentes[k].is_some() {
-                    laminas.retain(|l| l.vista.is_none_or(|v| v.0 != k));
+                    laminas.retain(|l| l.vista.emergente != Some(k));
                     crate::plataforma::emergente(k, None);
                     if let Some(g) = &gpu {
                         repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
@@ -894,18 +899,34 @@ pub fn hilo(
 
         // Por dónde entra el ratón: las zonas activas, y nada más. Lo demás de
         // la superficie es transparente también para el clic.
+        // De una superficie cerrada no se puede pulsar nada.
+        let cerradas: Vec<[f32; 4]> = escena
+            .superficies
+            .iter()
+            .filter(|s| s.abierta.is_some_and(|h| hechos[h.0 as usize] <= 0.5))
+            .map(|s| [s.origen.0, s.origen.1, s.origen.0 + s.ancho.max(1) as f32, s.origen.1 + s.alto as f32])
+            .collect();
         let cajas: Vec<[i32; 4]> = escena
             .zonas
             .iter()
             .filter(|z| z.activa.es_verdad(c))
             .filter_map(|z| z.caja(c))
+            .filter(|b| !cerradas.iter().any(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]))
             .map(|b| [(b[0] - 3.0).floor() as i32, (b[1] - 3.0).floor() as i32, (b[2] + 3.0).ceil() as i32, (b[3] + 3.0).ceil() as i32])
             .collect();
         let cambia_la_region = cajas != region;
         if cambia_la_region {
-            // Una emergente es toda suya: la región solo es cosa de las principales.
-            for l in laminas.iter().filter(|l| l.vista.is_none()) {
-                l.region_de_entrada(&cajas);
+            // Cada superficie recibe las zonas que caen en SU trozo del plano, en sus
+            // coordenadas. Una emergente es toda suya, y no lleva región.
+            for l in laminas.iter().filter(|l| l.vista.emergente.is_none()) {
+                let v = l.vista.caja();
+                let (dx, dy) = (l.vista.origen.0 as i32, l.vista.origen.1 as i32);
+                let suyas: Vec<[i32; 4]> = cajas
+                    .iter()
+                    .filter(|b| (b[0] as f32) < v[2] && (b[2] as f32) > v[0] && (b[1] as f32) < v[3] && (b[3] as f32) > v[1])
+                    .map(|b| [b[0] - dx, b[1] - dy, b[2] - dx, b[3] - dy])
+                    .collect();
+                l.region_de_entrada(&suyas);
             }
             region = cajas;
         }
@@ -982,7 +1003,7 @@ pub fn hilo(
 /// otro a 165.
 fn repartir_el_ritmo(g: &Gpu, laminas: &mut [Lamina], tam: (f32, f32), sin_vsync: bool) {
     // Una emergente nunca marca el ritmo: viene y va, y puede estar tapada.
-    let rapida = laminas.iter().filter(|l| l.vista.is_none()).max_by_key(|l| l.mhz).map(|l| l.id);
+    let rapida = laminas.iter().filter(|l| l.vista.emergente.is_none()).max_by_key(|l| l.mhz).map(|l| l.id);
     for l in laminas.iter_mut() {
         let marca = !sin_vsync && Some(l.id) == rapida;
         if l.marca_el_ritmo != marca {

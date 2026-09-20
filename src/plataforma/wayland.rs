@@ -104,6 +104,8 @@ impl Ventana for VentanaWayland {
 /// Una superficie puesta en un monitor.
 struct Puesta {
     id: u32,
+    /// Qué superficie de la escena es.
+    cual: usize,
     capa: LayerSurface,
     salida: wl_output::WlOutput,
     /// Para pintar a una escala que no sea entera.
@@ -126,7 +128,7 @@ struct Estado {
     escalas: Option<WpFractionalScaleManagerV1>,
     conexion: Connection,
     instancia: wgpu::Instance,
-    pide: Superficie,
+    pide: Vec<Superficie>,
     alto_extra: u32,
     puestas: Vec<Puesta>,
     siguiente_id: u32,
@@ -164,8 +166,8 @@ impl Dispatch2<WpFractionalScaleV1, Estado> for EscalaDe {
 }
 
 impl Estado {
-    fn quiere(&self, nombre: &str) -> usize {
-        match &self.pide.pantallas {
+    fn quiere_en(s: &Superficie, nombre: &str) -> usize {
+        match &s.pantallas {
             Pantallas::Todas => 1,
             Pantallas::Estas(n) => n.iter().filter(|x| x.as_str() == nombre).count(),
         }
@@ -176,10 +178,13 @@ impl Estado {
         let Some(info) = self.salidas.info(salida) else { return };
         let nombre = info.name.clone().unwrap_or_default();
         let mhz = info.modes.iter().find(|m| m.current).map_or(0, |m| m.refresh_rate);
-        let ya = self.puestas.iter().filter(|p| &p.salida == salida).count();
-        for k in ya..self.quiere(&nombre) {
-            let p = &self.pide;
-            let alto = p.alto + self.alto_extra;
+        for cual in 0..self.pide.len() {
+            let ya = self.puestas.iter().filter(|p| &p.salida == salida && p.cual == cual).count();
+            let quiere = Self::quiere_en(&self.pide[cual], &nombre);
+            for k in ya..quiere {
+            let p = &self.pide[cual];
+            // El HUD solo va debajo de la principal.
+            let alto = p.alto + if cual == 0 { self.alto_extra } else { 0 };
             let wl = self.compositor.create_surface(qh);
             let nivel = match p.nivel {
                 Nivel::Fondo => Layer::Background,
@@ -226,7 +231,8 @@ impl Estado {
                     })
                     .expect("no se pudo crear la superficie gráfica")
             };
-            self.puestas.push(Puesta { id, capa, salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, pendiente: Some((superficie, nombre.clone(), mhz)) });
+            self.puestas.push(Puesta { id, cual, capa, salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, pendiente: Some((superficie, nombre.clone(), mhz)) });
+            }
         }
     }
 
@@ -358,7 +364,7 @@ impl PopupHandler for Estado {
                 tam: a.tam,
                 mhz: a.madre.mhz,
                 nombre: format!("{} (emergente)", a.madre.nombre),
-                vista: Some((a.k, a.origen, (a.tam.0 as f32, a.tam.1 as f32))),
+                vista: gpu::Vista { superficie: 0, emergente: Some(a.k), origen: a.origen, tam: (a.tam.0 as f32, a.tam.1 as f32) },
             })));
         }
     }
@@ -374,7 +380,7 @@ impl PopupHandler for Estado {
 
 /// Pone las superficies que pida la escena y atiende a Wayland hasta que
 /// alguien cierre. Se queda con el hilo que la llama.
-pub fn atender(pide: Superficie, alto_extra: u32, instancia: wgpu::Instance, a_render: Sender<ARender>) {
+pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance, a_render: Sender<ARender>) {
     let conexion = Connection::connect_to_env().expect("no hay sesión Wayland");
     let (globales, mut eventos) = registry_queue_init::<Estado>(&conexion).unwrap();
     let qh = eventos.handle();
@@ -436,7 +442,7 @@ pub fn atender(pide: Superficie, alto_extra: u32, instancia: wgpu::Instance, a_r
         estado.poner_en(&salida, &qh);
     }
     if estado.puestas.is_empty() {
-        eprintln!("aviso: ningún monitor de los pedidos ({:?}) está enchufado; espero a que aparezca", estado.pide.pantallas);
+        eprintln!("aviso: ningún monitor de los pedidos ({:?}) está enchufado; espero a que aparezca", estado.pide.iter().map(|s| &s.pantallas).collect::<Vec<_>>());
     }
     while !estado.salir {
         eventos.blocking_dispatch(&mut estado).unwrap();
@@ -454,8 +460,10 @@ impl LayerShellHandler for Estado {
     /// Hasta que el compositor no la configura no se le puede pegar nada:
     /// es ahora cuando pasa a manos del render.
     fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, capa: &LayerSurface, conf: LayerSurfaceConfigure, _: u32) {
-        let pedido = (self.pide.ancho, self.pide.alto + self.alto_extra);
         let Some(p) = self.puestas.iter_mut().find(|p| &p.capa == capa) else { return };
+        let suya = &self.pide[p.cual];
+        let pedido = (suya.ancho, suya.alto + if p.cual == 0 { self.alto_extra } else { 0 });
+        let origen = suya.origen;
         // Lo que el compositor haya dado; si dice 0, lo que se pidió.
         let tam = (if conf.new_size.0 > 0 { conf.new_size.0 } else { pedido.0 }, if conf.new_size.1 > 0 { conf.new_size.1 } else { pedido.1 });
         if let Some(v) = &p.ventanilla {
@@ -474,7 +482,7 @@ impl LayerShellHandler for Estado {
                 tam,
                 mhz,
                 nombre,
-                vista: None,
+                vista: gpu::Vista { superficie: p.cual, emergente: None, origen, tam: (tam.0 as f32, tam.1 as f32) },
             })));
         }
     }
@@ -490,6 +498,9 @@ impl PointerHandler for Estado {
                     (x, y) = (x + a.origen.0, y + a.origen.1);
                 } else if let Some(p) = self.puestas.iter().find(|p| p.capa.wl_surface() == &e.surface) {
                     let info = self.salidas.info(&p.salida);
+                    // El ratón sobre una superficie está en el trozo del plano que ella enseña.
+                    let origen = self.pide[p.cual].origen;
+                    (x, y) = (x + origen.0, y + origen.1);
                     *em.madre.lock().unwrap() = Some(Madre {
                         capa: p.capa.clone(),
                         escala: p.escala,
@@ -524,7 +535,7 @@ impl PointerHandler for Estado {
                     };
                     // Mientras una escena no le dé uso al botón derecho, cierra: es la
                     // salida de emergencia de un prototipo sin teclado.
-                    if boton == 1 && abajo && self.pide.derecho_cierra {
+                    if boton == 1 && abajo && self.pide.iter().all(|s| s.derecho_cierra) {
                         self.salir = true;
                         continue;
                     }
@@ -662,7 +673,7 @@ impl SeatHandler for Estado {
         if self.dispositivo_de_datos.is_none() {
             self.dispositivo_de_datos = self.arrastres.as_ref().map(|m| m.get_data_device(qh, &asiento));
         }
-        if c == Capability::Keyboard && self.teclado.is_none() && self.pide.teclado != Teclado::Nunca {
+        if c == Capability::Keyboard && self.teclado.is_none() && self.pide.iter().any(|s| s.teclado != Teclado::Nunca) {
             self.teclado = self.asientos.get_keyboard(qh, &asiento, None).ok();
         }
     }

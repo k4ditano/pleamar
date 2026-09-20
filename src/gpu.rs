@@ -410,8 +410,25 @@ pub struct NuevaLamina {
     /// Milihercios del monitor; 0 si no se sabe.
     pub mhz: i32,
     pub nombre: String,
-    /// Una emergente: cuál, qué trozo de la escena enseña (desde dónde) y cuánto mide.
-    pub vista: Option<(usize, (f32, f32), (f32, f32))>,
+    pub vista: Vista,
+}
+
+/// Qué trozo del plano de la escena enseña una lámina, y de quién es. Cada superficie
+/// —y cada emergente— mira a un sitio distinto del mismo plano.
+#[derive(Clone, Copy, Debug)]
+pub struct Vista {
+    /// Qué superficie de la escena es.
+    pub superficie: usize,
+    /// Y si es una emergente, cuál.
+    pub emergente: Option<usize>,
+    pub origen: (f32, f32),
+    pub tam: (f32, f32),
+}
+
+impl Vista {
+    pub fn caja(&self) -> [f32; 4] {
+        [self.origen.0, self.origen.1, self.origen.0 + self.tam.0, self.origen.1 + self.tam.1]
+    }
 }
 
 /// Una superficie de Wayland vista desde la GPU: su cadena de imágenes, a su
@@ -424,7 +441,7 @@ pub struct Lamina {
     pub escala: f32,
     /// La que espera a la pantalla y marca el ritmo; las demás no bloquean.
     pub marca_el_ritmo: bool,
-    pub vista: Option<(usize, (f32, f32), (f32, f32))>,
+    pub vista: Vista,
     superficie: wgpu::Surface<'static>,
     ventana: Box<dyn Ventana>,
     px: (u32, u32),
@@ -604,8 +621,8 @@ impl Gpu {
     }
 
     /// Al cambiar de escala, de tamaño o de papel en el ritmo.
-    pub fn configurar(&self, l: &mut Lamina, tam: (f32, f32)) {
-        let tam = l.vista.map_or(tam, |v| v.2);
+    pub fn configurar(&self, l: &mut Lamina, _tam: (f32, f32)) {
+        let tam = l.vista.tam;
         let px = ((tam.0 * l.escala).round().max(1.0) as u32, (tam.1 * l.escala).round().max(1.0) as u32);
         self.superficie_configurar(l, px);
         if px != l.px {
@@ -675,9 +692,8 @@ impl Gpu {
     pub fn pintar(&self, l: &mut Lamina, d: &Dibujo, uniformes: &[f32]) -> bool {
         let mut u = uniformes.to_vec();
         u[3] = l.escala;
-        if let Some((_, origen, tam)) = l.vista {
-            (u[0], u[1], u[4], u[7]) = (tam.0, tam.1, origen.0, origen.1);
-        }
+        let (v, o) = (l.vista.tam, l.vista.origen);
+        (u[0], u[1], u[4], u[7]) = (v.0, v.1, o.0, o.1);
         self.cola.write_buffer(&l.uniformes, 0, bytemuck::cast_slice(&u));
         let marco = match l.superficie.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,

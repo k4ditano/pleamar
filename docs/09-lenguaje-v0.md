@@ -54,6 +54,8 @@ library Clock strict {
 
 Desde la escena su frontera se llama `Clock.now`, `Clock.tapped`; su lógica solo ve lo suyo y solo tiene sus permisos. `escenas/con-plugin.plm` es una escena sin lógica propia que pone un reloj así.
 
+Una escena puede pedir **varias ventanas**: `surface { … }` es la suya, y `surface panel { …; …lo que dibuja… }` una de varias, con su `open:` para aparecer y desaparecer. Todas comparten propiedades, hechos y reglas.
+
 ## Forma general
 
 ```

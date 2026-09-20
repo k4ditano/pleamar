@@ -1,124 +1,106 @@
-# Qué falta para poder hacer «cualquier cosa», como con Quickshell
+# Paridad con Quickshell — qué falta de verdad
 
-**Fecha:** 2026-09-19 · **Respuesta corta:** no, ni de lejos. pleamar demuestra una idea; Quickshell hereda quince años de QtQuick. Esta nota es el inventario honesto, y separa **lo que es solo trabajo** de **lo que obliga a decidir arquitectura ahora**.
+**Para qué es esta nota.** pleamar es **una alternativa a Quickshell**, no el motor de Marea. Marea fue la prueba de esfuerzo del principio, y algún día se reescribirá con este lenguaje; pero lo que decide si esto sirve es si alguien que hoy escribe su escritorio en Quickshell puede escribirlo aquí. Esta nota es esa vara de medir, y manda sobre [[pleamar · 04 Prueba - cabe Marea]].
 
-## Inventario
+**De dónde salen los números.** No de la documentación de Quickshell: de **dos configuraciones de verdad** que hay en esta máquina —`~/.config/quickshell` (k4, 278 ficheros QML) y `proyecto-marea` (370)—, contando qué tipos instancian. Un tipo que nadie usa no es una carencia; uno que sale 800 veces, sí.
 
-Leyenda: ✅ hay · 🟡 hay un trozo · ⬜ no hay
+## 1. Lo que usan de verdad
 
-### Ventanas y superficies
+Tipos instanciados, con las veces que aparecen entre las dos configuraciones:
 
-| Quickshell | pleamar |
-| --- | --- |
-| `PanelWindow`: anclas, márgenes, zona exclusiva, capa, foco | ✅ la escena declara tamaño, ancla, margen, nivel y reserva; con teclado (`keyboard:`) |
-| Una ventana por monitor (`Variants`), monitores que van y vienen | 🟡 una por monitor y en caliente; todas pintan la misma escena, sin instancia por monitor |
-| Escala HiDPI y fraccional | ✅ probada a 2 y a 1,5 |
-| Redimensionar la superficie según el contenido | ⬜ |
-| Región de entrada dinámica (clic a través de lo transparente) | ✅ sigue a las zonas activas (por cajas) |
-| `FloatingWindow`, `PopupWindow` (menús anclados) | 🟡 `popup`: un `xdg_popup` hijo de la superficie, con sus zonas y sus muelles. Ventanas flotantes, no |
-| `WlSessionLock` (pantalla de bloqueo) + PAM | ⬜ |
-| Varias ventanas por configuración | ⬜ |
+| De QtQuick | | pleamar |
+| --- | --- | --- |
+| `Rectangle` | 819 | ✅ `box`, y además fundido de siluetas, sombra, filo y luz |
+| `Text` | 655 | ✅ `text`, con huecos (`"{a} · {b}"`), medida y recorte |
+| `NumberAnimation` · `SequentialAnimation` · `ParallelAnimation` · `PauseAnimation` · `ScriptAction` | 469 · 78 · 38 · 42 · 37 | ✅ muelles (`~calm`), capas con retraso, y `gesture` (que es una línea de tiempo: lo mismo que `SequentialAnimation`) |
+| `RowLayout` · `ColumnLayout` · `Row` · `Column` | 460 · 279 · 106 · 74 | ✅ `row` / `column` con hueco, relleno, alineado, ancla, `between` y muelle |
+| `Repeater` | 364 | ✅ `repeat` (fijo) y `for` (sobre un modelo) |
+| `MouseArea` · `HoverHandler` | 351 · 33 | ✅ zonas: `on press/enter/leave/hover/drag/scroll/hold` |
+| `Item` | 351 | ✅ `group` |
+| `Timer` | 195 | ✅ `every` en la escena, `after`/`every` en la lógica |
+| `Connections` | 145 | ✅ reglas `on suceso`, `on("fact:x")` |
+| `Shape` · `ShapePath` · `PathLine` | 40 · 78 · 56 | ⬜ **no hay** · §2 |
+| `Component` · `Loader` | 67 · 64 | 🟡 `component` sí; carga diferida no · §2 |
+| `GradientStop` | 66 | 🟡 degradado lineal de dos colores; sin paradas ni radial |
+| `Image` | 63 | ✅ `image`, por fichero, por icono o desde un dato |
+| `TextInput` | 34 | ✅ `input` (una línea; sin IME) |
+| `ListView` · `Flickable` | 31 · 22 | ⬜ **no hay** · §2 |
+| `Flow` | 28 | ⬜ sin salto de línea en los repartos |
+| `QtObject` | 38 | 🟡 propiedades sueltas, sin agrupar |
 
-### Dibujo
+| De Quickshell | | pleamar |
+| --- | --- | --- |
+| `Process` | 83 | ✅ `run`, `spawn`, `kill`, con permisos |
+| `Singleton` | 47 | ✅ un plugin (biblioteca con lógica) es esto, y además con frontera y permisos |
+| `Region` | 27 | ✅ la región de entrada se calcula sola, de las zonas |
+| `FileView` | 16 | ⬜ **no hay**: ni leer ni escribir ficheros · §2 |
+| `PanelWindow` | 10 | 🟡 una por escena · §2 |
+| `Variants` | 7 | ⬜ **no hay**: es lo que hace una barra por pantalla · §2 |
+| `ShellRoot` · `Scope` | 7 · 4 | ✅ `scene` |
+| `IpcHandler` | 4 | ✅ `pleamar --decir`, con `emit`, `fact`, `text`, `get` |
+| `IconImage` | 3 | ✅ `image x = icon "…"` |
+| `SystemClock` | 2 | ⬜ la hora la pone la lógica llamando a `date` cada segundo |
+| `ScreencopyView` | 2 | ⬜ ver lo que hay en una pantalla o en una ventana |
+| `NotificationServer` | 2 | ✅ servicio `notifications` |
+| `FloatingWindow` | 2 | ⬜ ventanas normales |
+| `WlSessionLock` | 1 | ⬜ bloqueo de sesión |
+| `LazyLoader` | 1 | ⬜ · §2 |
+| `GlobalShortcut` | 1 | 🟡 un bind del compositor que llama a `--decir` |
+| `PwObjectTracker` | 1 | ✅ servicio `audio` (aunque por `wpctl`, no nativo) |
+| `ClippingRectangle` | 1 | ✅ `clip` |
 
-| Quickshell / QtQuick | pleamar |
-| --- | --- |
-| Rectángulo redondeado, elipse | ✅ |
-| Fundir formas (cuello de agua) | ✅ **y QtQuick no lo tiene** |
-| Sombra, luz, filo | ✅ |
-| Borde / trazo, degradados | ✅ degradado lineal; falta radial |
-| Anillo, arco, segmento | ✅ |
-| Trazados libres (`Shape`, SVG) | ⬜ |
-| Giro, escala y traslación de un grupo | ✅ afines que se componen; el ratón acierta bajo ellas |
-| Opacidad de grupo, recortes anidados | ✅ capa intermedia (hasta 4 a la vez); recortes anidados (hasta 4) |
-| **Texto dinámico**: fuentes, ajuste de línea, elipsis, emoji, RTL | ✅ `cosmic-text`; falta texto rico y edición |
-| Imágenes (PNG/JPG/SVG), iconos del tema, GIF | 🟡 PNG, JPEG, SVG e iconos por nombre; sin GIF ni búsqueda de tema de verdad |
-| Desenfoque, máscaras, `MultiEffect` | ⬜ |
-| `ShaderEffect` (shader propio) | ⬜ |
-| `Canvas` imperativo | ⬜ |
-| Vídeo, `ScreencopyView` (ventanas vivas) | ⬜ |
+Y lo que usan del objeto `Quickshell`: `env` (82), `shellPath` (32), `screens` (31), `execDetached` (24), `iconPath` (18), `clipboardText` (6).
 
-### Composición
+## 2. Lo que falta, por lo que duele
 
-| Quickshell / QtQuick | pleamar |
-| --- | --- |
-| Anclas, `Row`/`Column`/`Grid`, `RowLayout` con reparto | 🟡 `row`/`column` con hueco, relleno y alineado, animados; sin «ocupa lo que quede» ni salto de línea |
-| `Repeater`, `ListView`/`GridView` con virtualización | 🟡 `repeat` de capacidad fija con `show:`; sin modelos ni virtualización |
-| Scroll, inercia, `Flickable` | ⬜ |
-| `Loader` (no instanciar lo que no se ve) | ⬜ |
-| Componentes reutilizables, importar ficheros, singletons | 🟡 `component` con parámetros; sin importar ficheros |
-| Recarga en caliente | ✅ y sin perder valores, velocidades, hechos ni textos |
+### 🔴 Muchas superficies, y una por pantalla
 
-### Entrada
+Una configuración de Quickshell **es un proceso con muchas ventanas**: la barra en cada monitor, el lanzador, el centro de notificaciones, el bloqueo. Comparten estado y se hablan entre ellas sin dar la vuelta por el sistema. Eso es `Variants` (7 usos) más `PanelWindow.screen` (9).
 
-| Quickshell / QtQuick | pleamar |
-| --- | --- |
-| Encima, fuera, pulsar | ✅ con hit-test exacto sobre la forma |
-| Realce sin pasar por la lógica | ✅ **y QtQuick no lo garantiza** |
-| Botones del ratón, rueda, arrastrar, mantener pulsado | ✅ |
-| Forma del cursor | ✅ `cursor:` |
-| Teclado, foco, atajos | ✅ `on key Ctrl+k`, `on focus` / `on blur`, `focus campo`, y teclado solo mientras haga falta (`keyboard: exclusive while open`) |
-| Entrada de texto, selección, portapapeles, IME | 🟡 `input` de una línea con selección y portapapeles, editado por el render; **sin IME** |
-| Arrastrar y soltar (Marea lo usa) | 🟡 recibir (`on drop zona`); arrastrar hacia fuera, no |
-| Atajos globales, captura de foco para cerrar al pulsar fuera | 🟡 el atajo es un bind del compositor que llama a `pleamar --decir`; cerrar al pulsar fuera, con `on blur` |
+En pleamar, una escena es **una** superficie, y cada cosa es un proceso aparte que no comparte nada. Es el hueco más grande que queda, y se nota en todo: no se puede escribir una barra de verdad para dos monitores.
 
-### Datos y sistema
+**Qué haría falta:** varias `surface` con nombre en una escena, cada una con su dibujo; y `per screen` para que una se repita por monitor, con sus propias propiedades y hechos. Anotado como S1, S2 y G22.
 
-🟡 Hyprland (escritorios y ventana activa, por sus sockets), **audio, batería, red, lo que suena (MPRIS) y la lista de aplicaciones** como servicios con el mismo nombre en todos los sistemas, `Process` (`run`, `spawn`) e IPC (`--decir`, con `get`). **servidor de notificaciones y bandeja, con sus menús**. ⬜ lo demás: Bluetooth, `FileView`, `Socket`, HTTP, ajustes persistentes.
+### 🔴 Listas con desplazamiento
 
-### Lenguaje y herramientas
+`ListView` (31) y `Flickable` (22). Cualquier configuración real tiene una lista más larga que su hueco: notificaciones, ventanas, resultados. Hoy un modelo tiene tope (`max 14`) y se despliega entero al cargar: ni scroll, ni «solo se instancia lo que se ve».
 
-| Quickshell | pleamar |
-| --- | --- |
-| Lenguaje de escenas | ✅ v0: todo el modelo, componentes, `repeat`, reparto, errores y recarga en caliente |
-| Lógica en un lenguaje de script | ✅ Luau en caja de arena, con recarga en caliente |
-| Muelles propiedad del render | ✅ **y QtQuick no** |
-| Animación por fotogramas, estados, transiciones | ⬜ diseñado, sin hacer |
-| Movimiento reducido, i18n, accesibilidad | ⬜ |
-| LSP, resaltado, depurador | ⬜ |
+### 🟡 Dibujo vectorial: `Shape`, `ShapePath`, `PathLine`
 
-## Las cuatro cosas que son arquitectura, no solo trabajo
+174 usos entre los tres. Un anillo de progreso, una curva, un gráfico, una flecha. pleamar dibuja con SDF —que es mejor para lo suyo: se funden, tienen sombra y filo de balde— pero **no tiene caminos**. Hace falta algo: `path { move; line; curve; close }`, rellenado y con trazo.
 
-### 1. El renderer actual no escala — ✅ hecho el 19 sep
+### 🟡 Ficheros: `FileView`
 
-El shader recorre **toda** la lista de dibujo en **cada** píxel. Con 12 instrucciones va sobrado; con una lista de veinte notificaciones, cincuenta iconos y texto, no. Hay que pasar a **un quad por elemento** (o por `Cuerpo`), con su caja envolvente: cada píxel ejecuta solo las formas que le tocan, y el fundido se queda dentro de cada `Cuerpo`, que es donde tiene sentido. Es técnica conocida. **Conviene hacerlo antes de amontonar primitivas sobre el intérprete de ahora.**
+16 usos. Leer un `.json` de configuración, guardar lo que el usuario elige, ver si algo cambió. Hoy la lógica solo puede lanzar `cat`, y eso pide permiso de `run`. Debería ser un servicio con sus permisos: `files.read`, `files.write` sobre una carpeta declarada.
 
-Buena noticia: capas, gestos y hechos **no dependen de esto**. Solo producen valores de propiedades; les da igual quién pinte.
+### 🟡 Carga diferida: `Loader`, `LazyLoader`, `Component`
 
-### 2. El texto es la pieza más grande — ✅ lo básico, hecho el 19 sep
+128 usos. En pleamar todo se despliega al cargar. Para un menú que casi nunca se abre, o una lista de 200, eso es trabajo y memoria por nada.
 
-Texto de verdad es: dar forma a los glifos (ligaduras, árabe, emoji en color), fuentes de reserva, ajuste de línea, elipsis, y un atlas de glifos en la GPU que se va llenando. En Rust existe (`cosmic-text` o `parley`, con un atlas para `wgpu`), así que no se parte de cero. **La entrada de texto con IME es otro proyecto encima.**
+### 🟡 Lo que no se ha probado con manos de verdad
 
-### 3. Listas, layout y contenido que crece
+El teclado exclusivo, el clic fuera de una emergente, el arrastre real, la rueda, y las notificaciones y la bandeja en la sesión de verdad (con k4 parado). Están en la nota 08 como E1, E8, S11, B12 y B14.
 
-Sin repetición ni layout no hay lista de notificaciones, ni lanzador, ni centro de control. Hace falta `repite`, componentes con parámetros y un motor de layout (`taffy` da flexbox y grid en Rust). Hay aquí una oportunidad: si **el layout produce destinos y los muelles van hacia ellos**, reordenar una lista se anima solo, como en iOS. En QML eso hay que montarlo a mano.
+### ⚪ Lo demás
 
-### 4. Las salidas de emergencia
+Ventanas normales y bloqueo de sesión (S7); `ScreencopyView`; un reloj como servicio; degradados con paradas y radial; `Flow`; otros compositores además de Hyprland (B8); IME (E7); mensajes de error en inglés (G5).
 
-Nunca vamos a tener todo lo que tiene Qt. Lo que hace que en QML «se pueda cualquier cosa» no es que lo traiga todo, sino que tiene escapatorias: `Canvas`, `ShaderEffect`, plugins en C++. pleamar necesita las suyas, y con tres se cubre casi todo lo raro:
+## 3. Lo que pleamar tiene y Quickshell no
 
-- **`Lienzo`**: un elemento cuya textura la pinta otro —un plugin en su hilo o su proceso— y el render solo coloca y recorta. Cubre de golpe **juegos** (Añicos), **vídeo**, **miniaturas de ventanas** (Atalaya), **una terminal** (k4term) y el editor de vídeo. Es la versión seria de lo que hoy hace el atlas de texto.
-- **`Sombreador`**: un fragmento de WGSL propio sobre un elemento. Todo es ya un shader; abrir la puerta es barato.
-- **`Proceso`** en la lógica: lanzar órdenes y leer su salida, que es como se hace media shell.
+Para no perderlo de vista, porque es la razón de que esto exista:
 
-## Por tramos
+- **El render anima solo.** Con la lógica bloqueada 600 ms, 38 frames a ~17 ms; QtQuick, en el mismo ensayo, un hueco de 600 ms. La lógica no puede hacer tartamudear la pantalla, por mal escrita que esté.
+- **Todo se comprueba al cargar.** Un nombre mal escrito es un fallo con fichero, línea, flecha y «¿querías decir…?», no un `undefined` en marcha.
+- **Un lenguaje que no puede colgarse:** sin bucles libres ni recursión. Lo declarado termina siempre.
+- **Plugins con contrato:** frontera propia bajo su nombre, hilo propio, y permisos que **aprueba quien los usa** (`pleamar --aprobar`). En Quickshell, un trozo de configuración de otro es JavaScript con todos tus permisos.
+- **Formas que se funden**, con sombra, filo y luz, sin capas ni trucos: es SDF.
+- **Multiplataforma por diseño:** todo lo del sistema detrás de `src/plataforma/`, y `./portable.sh` comprueba que compila para Windows y macOS.
 
-**Tramo 1 — «una isla o una Marea de verdad».** Lo que usa el 80 % de una shell:
-superficies (varios monitores, escala, tamaño según contenido) · renderer por elementos · giro, trazo, degradado, anillo y arco · texto dinámico · imágenes e iconos · repetición, componentes y layout básico · rueda y teclado básico · el lenguaje con recarga en caliente · Luau · servicios: Hyprland, audio, MPRIS, batería, notificaciones, bandeja, `Proceso`, ficheros, IPC.
+## 4. En qué orden
 
-**Tramo 2 — «todo lo que hacen k4 y Marea hoy».** `Lienzo` y `Sombreador` · listas virtualizadas con scroll · menús emergentes · entrada de texto con IME · arrastrar y soltar · bloqueo de sesión con PAM · desenfoque.
-
-**Tramo 3 — «para que lo use otra gente».** Accesibilidad · i18n y RTL · pintado por CPU como reserva · otras GPU y otros compositores · LSP, formateador y documentación.
-
-El tramo 1 son meses. Los tres, años. Eso no ha cambiado desde el primer día; lo que ha cambiado es que ahora está escrito qué hay en cada uno.
-
-## En qué orden
-
-1. **Capas, gestos y hechos** en el runtime. Pequeño, valida el lenguaje y no depende del renderer.
-2. **Renderer por elementos** + giro, trazo, degradado, anillo, arco + superficies de verdad (monitores, escala).
-3. **Texto dinámico**, imágenes e iconos.
-4. **El parser**, recarga en caliente, componentes, `repite` y layout.
-5. **Luau** y el grafo de datos del sistema, servicio a servicio.
-6. **`Lienzo`, `Sombreador`**, y el tramo 2.
-
-Al terminar el 4 se podría escribir una barra sencilla entera en el lenguaje. Al terminar el 5, una que sirva para el día a día.
+1. **Muchas superficies y una por pantalla.** Sin esto no hay barra de verdad.
+2. **Listas con desplazamiento**, y copias que nazcan en marcha (G12): las dos son la misma obra.
+3. **Ficheros** como servicio, y un **reloj** como servicio.
+4. **Caminos** (`path`).
+5. Sacar del núcleo lo que solo servía para Marea, y los mensajes en inglés.
+6. Ventanas normales, bloqueo de sesión, IME, otros compositores.

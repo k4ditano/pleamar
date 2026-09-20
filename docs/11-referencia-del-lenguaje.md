@@ -52,7 +52,7 @@ sentencia    = declaracion | dibujo | estructura | capa | regla | comportamiento
 
 declaracion  = superficie | permisos | modelo | muelle | propiedad | hecho | suceso
              | texto_vivo | imagen_decl | medida | let | zona ;
-superficie   = "surface" "{" { propiedad_de } "}" ;
+superficie   = "surface" [ nombre ] "{" { propiedad_de | sentencia } "}" ;   (* con nombre: una de varias, con lo suyo dentro *)
 permisos     = "permissions" "{" { ( "run" | "services" ) ":" texto { "," texto } fin } "}" ;
 modelo       = "model" nombre [ "max" numero ] "{" { campo | lista } "}" ;
 campo        = nombre ":" tipo [ "=" literal ] fin ;
@@ -188,7 +188,7 @@ Una biblioteca puede traer también **lo que mueve por dentro** —`prop`, `pose
 
 | Sentencia | Qué declara |
 | --- | --- |
-| `surface { … }` | La ventana que pide la escena. Ver abajo |
+| `surface { … }` · `surface panel { …; …dibujo… }` | Las ventanas que pide. Ver abajo |
 | `permissions { run: "date"; services: "audio", "audio.*" }` | Lo que la lógica puede tocar del sistema. Sin declarar, nada. **Escuchar no es mandar**: `"audio"` deja saber el volumen (`sys.watch`, `sys.ask`); para cambiarlo hace falta `"audio.volume"`, o `"audio.*"` |
 | `model rows max 14 { label: text; enabled: bool = true; depth: number }` | Una lista de fichas que pone la lógica. `max`: cuántas caben (1 a 256; 16 si no se dice). Crea `rows.count`, `rows.total` y, por ficha, `rows.K.campo` |
 | `prop orb.x = 360 ~lively` | Una propiedad animada: un muelle. Sin `~`, `lively` |
@@ -201,6 +201,23 @@ Una biblioteca puede traer también **lo que mueve por dentro** —`prop`, `pose
 | `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | Un nombre para una expresión, o para un color |
 | `spring bouncy = 170, 12` | Un muelle propio: rigidez, freno. De casa: `lively`, `calm`, `quick`, `slow`, `eyes`, `pose`. En línea: `~spring(170, 12)` |
 | `zone box whole { at: …; size: …; active: expr }` | Una zona que no se pinta |
+
+**Varias ventanas en un proceso.** `surface { … }` sin nombre es la de la escena, y dibuja lo que hay suelto. Con nombre, `surface panel { … }` es una de varias y **lleva dentro lo que dibuja**:
+
+```
+surface { size: full, 40; anchor: top; screens: all }
+box knob { … }
+on press knob { toggle open }
+
+surface panel {
+    size: 300, 160;  anchor: top_right;  margin: 48, 12, 0, 0;  level: overlay
+    open: open                                   // está mientras ese hecho sea verdad
+    body { … };  box close { … }
+    on press close { open = false }
+}
+```
+
+Todas **comparten propiedades, hechos, modelos y reglas**: una barra y su panel se hablan con un hecho, sin dar la vuelta por el sistema y sin saber una de otra. Por dentro cada una mira a un trozo distinto del mismo plano, igual que una emergente. Una superficie cerrada no se ve y no se puede pulsar.
 
 **Tipos.** Para el render todo son números; los tipos son para quien escribe y para quien habla con la escena desde fuera. Un hecho es un número, un sí o no (`bool`; sin tipo, lo es el que nace `true` o `false`) o un **enumerado**: `fact mode: low | normal | critical = normal`. Los nombres de sus valores valen en cualquier expresión (`mode == critical`, `mode = low` en una regla) y son su posición: `low` es 0. **Un enumerado se compara con sus valores, y el compilador lo comprueba**: `mode == fast`, si `fast` es de otro, es un fallo que dice cuáles valen; y con un enumerado no se hacen cuentas (`mode + 1` no significa nada; con un sí o no, sí: `r.separator * 21`). El mismo nombre puede estar en dos enumerados: comparado con su hecho, cada uno es el suyo; suelto, si significa números distintos, es un fallo que pide la forma larga, `mode.normal`, que vale siempre. En un hueco de un texto, un enumerado se enseña por su nombre: `"modo: {mode}"` → `modo: critical`. La lógica los lee y los escribe como lo que son —`fact.open` es `true`, `fact.mode` es `"critical"`—, y `--decir` también.
 
@@ -504,7 +521,7 @@ Esto es la salida de `pleamar --gramatica`, copiada. No es una segunda lista: so
 language: 0.1
 statements: surface permissions model spring prop pose fact event text image measure let zone body ellipse box arc line input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
 library: let spring component permissions fact text model event image prop pose gesture posture layer
-properties.surface: size anchor margin level reserve screens keyboard
+properties.surface: size anchor margin level reserve screens keyboard open
 properties.permissions: run services
 properties.shape: rotate stroke color opacity blend active show cursor
 properties.ellipse: at radius scale
