@@ -217,6 +217,8 @@ struct Obra<'a> {
     fila_de_scroll: std::collections::HashSet<String>,
     /// Superficies cuyo `open:` se resuelve al final: (cuál, el hecho, dónde está escrito).
     superficies_pendientes: Vec<(usize, &'a [Ficha], (usize, usize))>,
+    /// `anchor: corner`, con `corner` un hecho: qué superficie, qué nombre y dónde.
+    anclas_pendientes: Vec<(usize, String, (usize, usize))>,
     /// Los nombres de los ficheros de los que está hecha, para decir dónde está algo.
     ficheros: &'a [String],
     /// Qué ficheros, por su número, son bibliotecas `strict`.
@@ -318,7 +320,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
             otro => unreachable!("'{otro}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(), declarados: Vec::new(), usados: Default::default(), clase_actual: String::new(),
-        scrolls: Vec::new(), fila_de_scroll: Default::default(), superficies_pendientes: Vec::new(), ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), vuelta: 0, siguiente_origen: 0.0, valores: HashMap::new(), ambiguos: Default::default(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
+        scrolls: Vec::new(), fila_de_scroll: Default::default(), superficies_pendientes: Vec::new(), anclas_pendientes: Vec::new(), ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), vuelta: 0, siguiente_origen: 0.0, valores: HashMap::new(), ambiguos: Default::default(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
@@ -399,6 +401,33 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
         match o.expr(&mut c) {
             Ok(e) => o.e.superficies[cual].abierta = Some(e),
             Err(f) => o.fallos.push(f),
+        }
+    }
+    for (cual, nombre, (l, col)) in std::mem::take(&mut o.anclas_pendientes) {
+        let g = o.global(&nombre);
+        let Some(h) = o.hechos.get(&g).copied() else {
+            let conocidos: Vec<&String> = o.hechos.keys().collect();
+            let pista = parecido(&nombre, conocidos.into_iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+            o.anotar(Fallo::en(l, col, format!("'{nombre}' is not an anchor, and there is no fact called that either.{pista}")));
+            continue;
+        };
+        let Some((_, TipoDeHecho::Enum(valores))) = o.e.tipos.iter().find(|(x, _)| *x == g) else {
+            o.anotar(Fallo::en(l, col, format!("`anchor:` takes a word, or a fact whose values are anchors: `fact {nombre}: top_left | top_right = top_right`. '{nombre}' has no such type")));
+            continue;
+        };
+        let anclas: Option<Vec<Ancla>> = valores.iter().map(|v| Ancla::de_palabra(v)).collect();
+        let Some(anclas) = anclas else {
+            let malo = valores.iter().find(|v| Ancla::de_palabra(v).is_none()).unwrap();
+            o.anotar(Fallo::en(l, col, format!("'{nombre}' decides an anchor, so every one of its values has to be one: '{malo}' is not. They are {}", enumerar(voz::ANCLAS_DE_SUPERFICIE))));
+            continue;
+        };
+        // El valor con el que nace dice dónde empieza pegada.
+        let inicial = o.e.hechos[h.0 as usize].1.round().max(0.0) as usize;
+        let empieza = anclas.get(inicial).copied().unwrap_or(anclas[0]);
+        let suya = o.e.superficies[cual].nombre.clone();
+        for sup in o.e.superficies.iter_mut().filter(|s| s.nombre == suya) {
+            sup.ancla = empieza;
+            sup.ancla_de = Some((h, anclas.clone()));
         }
     }
     if o.e.superficies.is_empty() {
@@ -2056,6 +2085,7 @@ impl<'a> Obra<'a> {
         }
         let cual = self.e.superficies.iter().position(|s| s.nombre == nombre).unwrap();
         let mut abierta_pendiente = None;
+        let mut ancla_pendiente = None;
         if let Some(c) = p.get_mut("open") {
             // Una cuenta entera, no solo un hecho: `open: tuck > 0.01` deja que una
             // superficie siga ahí mientras lo que lleva dentro termina de irse.
@@ -2074,18 +2104,16 @@ impl<'a> Obra<'a> {
             s.alto = c.num()? as u32;
         }
         if let Some(c) = p.get_mut("anchor") {
-            s.ancla = match c.una_de(voz::ANCLAS_DE_SUPERFICIE, "the anchor of a surface")?.as_str() {
-                "top" => Ancla::Arriba,
-                "bottom" => Ancla::Abajo,
-                "left" => Ancla::Izquierda,
-                "right" => Ancla::Derecha,
-                "top_left" => Ancla::ArribaIzquierda,
-                "top_right" => Ancla::ArribaDerecha,
-                "bottom_left" => Ancla::AbajoIzquierda,
-                "bottom_right" => Ancla::AbajoDerecha,
-                "center" => Ancla::Centro,
-                _ => unreachable!(),
-            };
+            let donde = c.pos();
+            let palabra = c.id("the anchor of a surface")?;
+            match Ancla::de_palabra(&palabra) {
+                Some(a) => s.ancla = a,
+                // Si no es una de las nueve palabras, tiene que ser un hecho con
+                // tipo cuyos valores sean anclas. Se mira al final: puede estar
+                // declarado más abajo, como la condición del teclado.
+                None => ancla_pendiente = Some((palabra, donde)),
+            }
+            c.nada_mas()?;
         }
         if let Some(c) = p.get_mut("margin") {
             for k in 0..4 {
@@ -2154,6 +2182,9 @@ impl<'a> Obra<'a> {
                 }
                 Pantallas::Estas(v)
             };
+        }
+        if let Some((nombre, donde)) = ancla_pendiente {
+            self.anclas_pendientes.push((cual, nombre, donde));
         }
         // Una copia por monitor: la misma superficie, cada una en su trozo del plano.
         if let Some(tope) = cuantas {

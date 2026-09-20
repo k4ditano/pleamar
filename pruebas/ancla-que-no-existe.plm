@@ -1,0 +1,6 @@
+// espera: fallo «is not an anchor, and there is no fact»
+scene X {
+    surface { size: 100, 100 }
+    surface otra { size: 50, 50; anchor: arriba_del_todo
+        box { from: 0, 0; size: 50, 50; color: #151616 } }
+}

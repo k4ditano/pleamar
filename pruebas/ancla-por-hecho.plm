@@ -1,0 +1,22 @@
+// espera: bien
+language 0.1
+// `anchor:` con un hecho: la superficie se pega a un borde u otro EN MARCHA.
+// Layer-shell deja cambiarlo sobre una superficie viva, así que algo que tiene
+// que elegir esquina no necesita cuatro superficies, una por esquina.
+scene Esquinas {
+    surface { size: 200, 60; anchor: top }
+    fact corner: top_left | top_right | bottom_right | bottom_left = top_left
+    box { from: 0, 0; size: 200, 60; color: #151616 }
+    zone box gira { from: 0, 0; size: 200, 60; cursor: pointer }
+    //  Da la vuelta a las cuatro. Nada de `corner + 1`: con un enum no se hace
+    //  aritmética, y el compilador lo dice.
+    on press gira { corner = if(corner == top_left, top_right, if(corner == top_right, bottom_right, if(corner == bottom_right, bottom_left, top_left))) }
+
+    surface marca {
+        size: 90, 90
+        anchor: corner
+        level: overlay
+        ellipse { at: 45, 45; radius: 22; color: #e3a35c }
+        text "{corner}" { at: 45, 45; anchor: center; size: 8; weight: 700; color: #0a0c10 }
+    }
+}

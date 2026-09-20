@@ -180,6 +180,16 @@ pub fn emergente(k: usize, que: Option<([i32; 4], (f32, f32))>) {
     let _ = (k, que);
 }
 
+/// Pega la superficie `cual` a otro borde, ya en marcha. En Wayland es una
+/// petición de layer-shell —`set_anchor` y `set_margin` valen sobre una
+/// superficie viva, sin volver a crearla—; en Windows será mover la ventana y
+/// recolocar su AppBar, y en macOS cambiar de sitio el `NSPanel`.
+pub fn anclar(cual: usize, ancla: crate::escena::Ancla) {
+    #[cfg(target_os = "linux")]
+    wayland::anclar(cual, ancla);
+    let _ = (cual, ancla);
+}
+
 /// Que un proceso que lanzamos no nos sobreviva, ni aunque nos maten a la
 /// fuerza. En Linux se lo pedimos al núcleo; en Windows será un Job Object.
 pub fn morir_con_el_padre(orden: &mut std::process::Command) {

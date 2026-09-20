@@ -317,7 +317,7 @@ surface { size: 460, 320;  kind: window;  title: "pleamar · settings" }
 box { from: 0, 0;  size: screen.width, screen.height;  color: coal }
 ```
 
-**`surface`**: `size: width, height` (`full` as the width is the whole monitor) · `kind:` `panel` `window` · `title:` (a window only) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` · `margin: n` or `top, right, bottom, left` · `level:` `background` `bottom` `top` `overlay` · `reserve: n` (the room windows leave it) · `screens: all` or `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, and with `while expr` it only asks for it while that is true.
+**`surface`**: `size: width, height` (`full` as the width is the whole monitor) · `kind:` `panel` `window` · `title:` (a window only) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` — or **the name of a fact whose values are anchors** (`fact corner: top_left | top_right = top_right`, `anchor: corner`), and then it moves from edge to edge while it runs, without being recreated · `margin: n` or `top, right, bottom, left` · `level:` `background` `bottom` `top` `overlay` · `reserve: n` (the room windows leave it) · `screens: all` or `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, and with `while expr` it only asks for it while that is true.
 
 ## 7. Expressions
 

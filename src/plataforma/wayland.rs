@@ -258,20 +258,17 @@ impl Estado {
                 continue;
             }
             let capa = self.capas.create_layer_surface(qh, wl, nivel, Some("pleamar"), Some(salida));
-            capa.set_anchor(match p.ancla {
-                Ancla::Arriba => Anchor::TOP,
-                Ancla::Abajo => Anchor::BOTTOM,
-                Ancla::Izquierda => Anchor::LEFT,
-                Ancla::Derecha => Anchor::RIGHT,
-                Ancla::ArribaIzquierda => Anchor::TOP | Anchor::LEFT,
-                Ancla::ArribaDerecha => Anchor::TOP | Anchor::RIGHT,
-                Ancla::AbajoIzquierda => Anchor::BOTTOM | Anchor::LEFT,
-                Ancla::AbajoDerecha => Anchor::BOTTOM | Anchor::RIGHT,
-                Ancla::Centro => Anchor::empty(),
-            } | if p.ancho == 0 { Anchor::LEFT | Anchor::RIGHT } else { Anchor::empty() });
+            capa.set_anchor(bordes(p.ancla, p.ancho == 0));
             // La segunda en el mismo monitor, debajo de la primera: es para ensayar.
             let m = p.margen;
-            capa.set_margin(m[0] + k as i32 * (alto as i32 + 12), m[1], m[2], m[3]);
+            let margen = [m[0] + k as i32 * (alto as i32 + 12), m[1], m[2], m[3]];
+            capa.set_margin(margen[0], margen[1], margen[2], margen[3]);
+            // Apuntada, por si la escena decide moverla de borde en marcha.
+            if p.ancla_de.is_some() {
+                if let Some(c) = CAPAS.get() {
+                    c.puestas.lock().unwrap().push((cual, capa.clone(), margen, p.ancho == 0));
+                }
+            }
             capa.set_size(p.ancho, alto);
             capa.set_exclusive_zone(p.reserva);
             // Si el teclado depende de algo (`exclusive while open`), se nace sin él.
@@ -293,6 +290,9 @@ impl Estado {
     fn quitar_de(&mut self, salida: &wl_output::WlOutput) {
         for p in self.puestas.iter().filter(|p| &p.salida == salida) {
             let _ = self.a_render.send(ARender::LaminaFuera(p.id));
+            if let Some(c) = CAPAS.get() {
+                c.puestas.lock().unwrap().retain(|(_, capa, _, _)| capa.wl_surface() != p.concha.wl());
+            }
         }
         self.puestas.retain(|p| &p.salida != salida);
     }
@@ -341,6 +341,49 @@ struct Abierta {
     _escala: Option<WpFractionalScaleV1>,
     madre: Madre,
     popup: Popup,
+}
+
+/// Los bordes a los que se pega, como banderas del protocolo. Con ancho 0 se
+/// pega también a izquierda y derecha: es lo que lo estira de lado a lado.
+fn bordes(ancla: Ancla, todo_el_ancho: bool) -> Anchor {
+    (match ancla {
+        Ancla::Arriba => Anchor::TOP,
+        Ancla::Abajo => Anchor::BOTTOM,
+        Ancla::Izquierda => Anchor::LEFT,
+        Ancla::Derecha => Anchor::RIGHT,
+        Ancla::ArribaIzquierda => Anchor::TOP | Anchor::LEFT,
+        Ancla::ArribaDerecha => Anchor::TOP | Anchor::RIGHT,
+        Ancla::AbajoIzquierda => Anchor::BOTTOM | Anchor::LEFT,
+        Ancla::AbajoDerecha => Anchor::BOTTOM | Anchor::RIGHT,
+        Ancla::Centro => Anchor::empty(),
+    }) | if todo_el_ancho { Anchor::LEFT | Anchor::RIGHT } else { Anchor::empty() }
+}
+
+/// Las capas que pueden cambiar de borde, para llegar a ellas sin pasar por el
+/// hilo de Wayland. `set_anchor` y `set_margin` son peticiones y valen en
+/// marcha: no hace falta volver a crear la superficie, que es lo que dejaba a
+/// Marea sin poder elegir esquina mientras graba.
+struct Capas {
+    conexion: Connection,
+    puestas: Mutex<Vec<(usize, LayerSurface, [i32; 4], bool)>>,
+}
+static CAPAS: std::sync::OnceLock<Capas> = std::sync::OnceLock::new();
+
+pub fn anclar(cual: usize, ancla: Ancla) {
+    let Some(c) = CAPAS.get() else { return };
+    let mut alguna = false;
+    for (k, capa, margen, ancho_cero) in c.puestas.lock().unwrap().iter() {
+        if *k != cual {
+            continue;
+        }
+        capa.set_anchor(bordes(ancla, *ancho_cero));
+        capa.set_margin(margen[0], margen[1], margen[2], margen[3]);
+        capa.commit();
+        alguna = true;
+    }
+    if alguna {
+        let _ = c.conexion.flush();
+    }
 }
 
 static EMERGENTES: std::sync::OnceLock<Emergentes> = std::sync::OnceLock::new();
@@ -475,6 +518,7 @@ pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance
     };
     match XdgShell::bind(&globales, &qh) {
         Ok(xdg) => {
+            let _ = CAPAS.set(Capas { conexion: conexion.clone(), puestas: Mutex::default() });
             let _ = EMERGENTES.set(Emergentes {
                 qh: qh.clone(),
                 compositor: estado.compositor.clone(),
@@ -519,6 +563,9 @@ impl Estado {
             let _ = self.a_render.send(ARender::LaminaFuera(p.id));
         }
         self.puestas.retain(|p| p.concha.wl() != wl);
+        if let Some(c) = CAPAS.get() {
+            c.puestas.lock().unwrap().retain(|(_, capa, _, _)| capa.wl_surface() != wl);
+        }
     }
 
     /// Hasta que el compositor no la configura no se le puede pegar nada: es ahora

@@ -113,6 +113,8 @@ pub fn hilo(
     let mut proxima_cita: Option<Instant> = None;
     let mut periodo_ms = 16.7f32;
     let mut ultimo_presentado = Instant::now();
+    // A qué borde está pegada cada superficie ahora mismo, para no pedirlo dos veces.
+    let mut anclas_puestas: Vec<crate::escena::Ancla> = Vec::new();
     let mut proximo_frame = Instant::now();
     let mut frames_para_periodo = 0u32;
 
@@ -161,6 +163,7 @@ pub fn hilo(
                     let en_caliente = !escena.props.is_empty();
                     hechos = nueva.hechos.iter().map(|(n, inicial)| escena.hechos.iter().position(|h| h.0 == *n).map_or(*inicial, |k| hechos[k])).collect();
                     dentro = vec![false; nueva.zonas.len()];
+                    anclas_puestas = nueva.superficies.iter().map(|s| s.ancla).collect();
                     parpadeos = nueva
                         .comportamientos
                         .iter()
@@ -1079,6 +1082,21 @@ pub fn hilo(
         uniformes[8..].copy_from_slice(&historial);
         // La que marca el ritmo va la última: es la que espera a la pantalla.
         laminas.sort_by_key(|l| l.marca_el_ritmo);
+        // ¿Alguna superficie ha decidido pegarse a otro borde? La esquina que
+        // elige la cara de grabar de Marea es un hecho, y layer-shell deja
+        // cambiarla sin volver a crear nada.
+        if anclas_puestas.len() != escena.superficies.len() {
+            anclas_puestas = escena.superficies.iter().map(|s| s.ancla).collect();
+        }
+        for (k, sup) in escena.superficies.iter().enumerate() {
+            let Some((hecho, anclas)) = &sup.ancla_de else { continue };
+            let quiere = anclas.get(hechos[hecho.0 as usize].round().max(0.0) as usize).copied();
+            if let Some(a) = quiere.filter(|a| anclas_puestas[k] != *a) {
+                anclas_puestas[k] = a;
+                crate::plataforma::anclar(k, a);
+            }
+        }
+
         // Quién está abierta ahora. Si cambia, se reparte el ritmo otra vez: una
         // superficie cerrada que lo marcase esperaría con vsync un frame que el
         // compositor no le va a dar —a lo que no se ve no se le dan—, y con ella

@@ -44,6 +44,23 @@ pub enum Ancla {
     Centro,
 }
 
+impl Ancla {
+    pub fn de_palabra(p: &str) -> Option<Ancla> {
+        Some(match p {
+            "top" => Ancla::Arriba,
+            "bottom" => Ancla::Abajo,
+            "left" => Ancla::Izquierda,
+            "right" => Ancla::Derecha,
+            "top_left" => Ancla::ArribaIzquierda,
+            "top_right" => Ancla::ArribaDerecha,
+            "bottom_left" => Ancla::AbajoIzquierda,
+            "bottom_right" => Ancla::AbajoDerecha,
+            "center" => Ancla::Centro,
+            _ => return None,
+        })
+    }
+}
+
 /// En qué capa del escritorio: detrás de las ventanas o delante.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Nivel {
@@ -83,6 +100,12 @@ pub struct Superficie {
     pub ancho: u32,
     pub alto: u32,
     pub ancla: Ancla,
+    /// Si el borde al que se pega lo decide un hecho: cuál, y a qué ancla
+    /// corresponde cada uno de sus valores. Layer-shell deja cambiarla en
+    /// marcha, así que algo que tiene que elegir esquina —la cara de grabar de
+    /// Marea escoge la que caiga fuera de lo grabado— no necesita cuatro
+    /// superficies, una por esquina.
+    pub ancla_de: Option<(HechoId, Vec<Ancla>)>,
     /// Arriba, derecha, abajo, izquierda.
     pub margen: [i32; 4],
     pub nivel: Nivel,
@@ -112,7 +135,7 @@ pub enum Teclado {
 impl Default for Superficie {
     fn default() -> Self {
         // Neutra: todo el ancho, arriba, en todos los monitores. Lo que pida la escena manda.
-        Superficie { nombre: String::new(), instancia: 0, origen: (0.0, 0.0), abierta: None, ventana: None, ancho: 0, alto: 40, ancla: Ancla::Arriba, margen: [0; 4], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Todas, teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
+        Superficie { nombre: String::new(), instancia: 0, origen: (0.0, 0.0), abierta: None, ventana: None, ancho: 0, alto: 40, ancla: Ancla::Arriba, ancla_de: None, margen: [0; 4], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Todas, teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
     }
 }
 
