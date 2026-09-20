@@ -65,7 +65,7 @@ Números con unidad: `40`, `40px`, `34%` (= 0.34), `138deg` (a radianes), `320ms
 | `surface { size: 720, 224; anchor: top; margin: 40; level: top; reserve: 0; screens: "HDMI-A-1" }` | La ventana que pide. `size: full, 44` es todo el ancho del monitor; cuánto es se lee en `screen.width`. `anchor`: top, bottom, left, right, top_left…, center. `level`: background, bottom, top, overlay. `screens: all` o una lista. `keyboard: none | on_demand | exclusive` |
 | `prop orb.x = 360 ~lively` | Una propiedad animada: un muelle. Sin `~`, `lively` |
 | `pose eyes = 14` | Una propiedad de la pose: la que un gesto lleva de la mano |
-| `fact open = false` | Algo que es verdad un rato. Lo ponen la lógica y las reglas |
+| `fact open = false` · `fact mode: low \| normal \| critical = normal` | Algo que es verdad un rato. Lo ponen la lógica y las reglas. Un sí o no, un número, o un enumerado: `mode == critical`, `"{mode}"` |
 | `event confirmed` · `event view_event ->` | Algo que ocurre. Con `->`, además sale hacia la lógica |
 | `text notice.title = "Reunión"` | Un texto vivo: la lógica lo cambia |
 | `image fox = icon "firefox", 48, 48` · `… = file "ruta.png", 48, 48` | Una imagen, y a qué tamaño se pinta como mucho |
@@ -155,6 +155,8 @@ component Row(r) {                        // una ficha se pasa como cualquier pa
     on press hit { emit choose(r.index) } // `index`: su posición, desde 0
 }
 ```
+
+Un campo puede ser además un enumerado (`urgency: low | normal | critical = normal`), una imagen (`icon: image 24, 24`, y entonces `image r.icon { … }` sin declarar nada más) u **otra lista** (`list items max 6 { label: text }`, que se recorre con `for it in r.items`).
 
 La lógica la entrega entera, de una vez: `model.rows = lista` (ver [[pleamar · 10 La lógica en Luau]]). Un campo `text` se usa donde va un texto vivo (`text r.label { … }`, `image pic = from r.icon, 24, 24`); uno `number` o `bool`, en cualquier expresión. Cada vuelta del `for` **solo existe si la lista llega hasta ahí**: no se ve, no ocupa en su reparto y sus zonas no paran el clic. `rows.count` es cuántas se ven y `rows.total` cuántas hay de verdad (`show: rows.total > rows.count` para un «hay más»). `max` es cuántas caben (16 si no se dice); una ficha suelta se nombra `rows.0.label`.
 

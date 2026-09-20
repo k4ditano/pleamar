@@ -9,7 +9,7 @@ Ejemplos: `escenas/marea.luau` (avisos que llegan) y `escenas/bandeja.luau` (una
 La lógica **no anima, no pinta y no sabe de coordenadas**. Vive en su propio hilo; el render no la espera nunca. Solo cruza la frontera:
 
 ```lua
-fact.open = true                          -- decir qué es verdad  (se lee como número: 1 o 0)
+fact.open = true                          -- decir qué es verdad. Se lee como lo que es: `true`, un número, o `"critical"`
 text["notice.title"] = "Reunión en 5 min" -- decir qué pone un texto vivo
 emit("confirmed")                         -- que ha pasado algo
 play("joy")                               -- pedir un gesto (la escena lo concederá o no, según su clase)
@@ -40,6 +40,8 @@ local menu = sys.ask("tray.menu", key)        -- preguntarle algo y esperar la r
 log("lo que sea", 42)
 busy(600)                                 -- trabajo de mentira, para ver que al render le da igual
 ```
+
+**Los hechos tienen tipo**, el que les dio la escena: un sí o no se lee y se escribe con `true` y `false`; un enumerado (`fact mode: low | normal | critical`), con el nombre de su valor; lo demás, números. `on("fact:mode", function(m) … end)` recibe lo mismo. Un valor que no existe es un error que dice cuáles hay: `«mode» no puede valer «critcal». ¿Querías decir «critical»?`
 
 Un nombre mal escrito es un error al momento, con sugerencia: `la escena no tiene ningún hecho «opne». ¿Querías decir «open»?`
 
@@ -100,7 +102,7 @@ model.rows = { { label = "Abrir", enabled = true }, { label = "Salir" } }   -- l
 local r = model.rows[i + 1]                                                 -- y se lee de vuelta tal como se puso
 ```
 
-La escena declara la forma (`model rows max 14 { label: text; enabled: bool = true }`) y la recorre (`for r in rows`). De cada ficha se cogen los campos declarados y se ignora lo demás, así que **la lista de un servicio se entrega tal cual**: `sys.watch("tray", function(list) model.icons = list end)`. Lo que falte vale su valor por defecto; un `bool` se escribe con `true` y `false`; y donde se espera un número, una lista cuenta como cuántos tiene (`children: number` con un submenú dentro). Solo viaja al render lo que haya cambiado respecto a la vez anterior.
+La escena declara la forma (`model rows max 14 { label: text; enabled: bool = true }`) y la recorre (`for r in rows`). De cada ficha se cogen los campos declarados y se ignora lo demás, así que **la lista de un servicio se entrega tal cual**: `sys.watch("tray", function(list) model.icons = list end)`. Lo que falte vale su valor por defecto; un `bool` se escribe con `true` y `false`, un enumerado con el nombre de su valor (o su número), y una lista de dentro (`list items`) con otra tabla, que se reparte igual; y donde se espera un número, una lista cuenta como cuántos tiene (`children: number` con un submenú dentro). Solo viaja al render lo que haya cambiado respecto a la vez anterior. **La asignación es atómica**: si una ficha está mal, es un error y la lista que había se queda como estaba.
 
 Al leerla de vuelta sale la tabla original, con todo lo que traía (`model.icons[1].key`), no solo los campos de la escena: es donde la lógica guarda lo que la escena no necesita ver.
 
