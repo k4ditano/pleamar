@@ -11,6 +11,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 const SALIDA: &str = "@DEFAULT_AUDIO_SINK@";
+const ENTRADA: &str = "@DEFAULT_AUDIO_SOURCE@";
 
 fn hilo(nombre: &str, f: impl FnOnce() + Send + 'static) -> bool {
     std::thread::Builder::new().name(nombre.into()).spawn(f).is_ok()
@@ -32,13 +33,25 @@ fn si_cambia(avisar: &dyn Fn(Valor), ultimo: &mut String, v: Valor) {
 
 // ── audio ─────────────────────────────────────────────────────────
 
-/// `{ volume = 0.54, muted = false }`. PipeWire, por `wpctl`; y `pactl
-/// subscribe` para enterarse de los cambios sin preguntar a cada rato.
+/// `{ volume = 0.54, muted = false, input = 0.4, input_muted = true }`: la
+/// salida y la entrada, que en un panel de sonido van siempre juntas. PipeWire,
+/// por `wpctl`; y `pactl subscribe` para enterarse de los cambios sin preguntar
+/// a cada rato.
 fn audio_ahora() -> Option<Valor> {
     // «Volume: 0.54 [MUTED]»
-    let s = salida_de("wpctl", &["get-volume", SALIDA])?;
-    let volumen: f64 = s.split_whitespace().nth(1)?.parse().ok()?;
-    Some(Valor::Mapa(vec![("volume".into(), Valor::Num(volumen)), ("muted".into(), Valor::Si(s.contains("MUTED")))]))
+    let leer = |que: &str| -> Option<(f64, bool)> {
+        let s = salida_de("wpctl", &["get-volume", que])?;
+        Some((s.split_whitespace().nth(1)?.parse().ok()?, s.contains("MUTED")))
+    };
+    let (volumen, mudo) = leer(SALIDA)?;
+    // Sin micrófono el servicio existe igual: lo que no hay es entrada.
+    let (entrada, entrada_muda) = leer(ENTRADA).unwrap_or((0.0, true));
+    Some(Valor::Mapa(vec![
+        ("volume".into(), Valor::Num(volumen)),
+        ("muted".into(), Valor::Si(mudo)),
+        ("input".into(), Valor::Num(entrada)),
+        ("input_muted".into(), Valor::Si(entrada_muda)),
+    ]))
 }
 
 pub fn audio(avisar: Box<dyn Fn(Valor) + Send>) -> bool {
@@ -74,7 +87,10 @@ pub fn audio_orden(que: &str, args: &[Valor]) -> Result<(), String> {
         ("audio.step", [Valor::Num(d)]) => pedir(&["set-volume", "-l", "1.0", SALIDA, &format!("{:.3}{}", d.abs(), if *d < 0.0 { "-" } else { "+" })]),
         ("audio.mute", []) => pedir(&["set-mute", SALIDA, "toggle"]),
         ("audio.mute", [Valor::Si(si)]) => pedir(&["set-mute", SALIDA, if *si { "1" } else { "0" }]),
-        _ => Err(format!("'{que}' is not asked like that: audio.volume(0..1), audio.step(±0.05), audio.mute([true|false])")),
+        ("audio.input", [Valor::Num(v)]) => pedir(&["set-volume", ENTRADA, &format!("{:.3}", v.clamp(0.0, 1.0))]),
+        ("audio.input_mute", []) => pedir(&["set-mute", ENTRADA, "toggle"]),
+        ("audio.input_mute", [Valor::Si(si)]) => pedir(&["set-mute", ENTRADA, if *si { "1" } else { "0" }]),
+        _ => Err(format!("'{que}' is not asked like that: audio.volume(0..1), audio.step(±0.05), audio.mute([true|false]), audio.input(0..1), audio.input_mute([true|false])")),
     }
 }
 

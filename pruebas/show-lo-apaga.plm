@@ -1,0 +1,30 @@
+// espera: bien
+language 0.1
+// `show:` es «está o no está»: apaga la forma Y su zona, porque poder pulsar lo
+// que no se ve es peor que no poder pulsarlo. Vale en todo lo que se dibuja.
+scene Show {
+    surface { size: 300, 120; anchor: top }
+    fact suena = false
+    permissions { services: "media", "audio" }
+    service media as medios { playing: bool; title: text }
+    //  Y la entrada, que un panel de sonido enseña al lado de la salida.
+    service audio as son { input: number; input_muted: bool }
+
+    box { from: 0, 0; size: 300, 120; color: #151616 }
+    box { from: 8, 8; size: 60 * son.input, 4; corner: 2; color: #9ed6bd; show: not son.input_muted }
+    //  Dos textos en el mismo sitio, y solo uno está.
+    text medios.title { at: 150, 30; anchor: center; size: 12; color: #f5f7f5; show: medios.playing }
+    text "No suena nada" { at: 150, 30; anchor: center; size: 12; color: #8b8f95; show: not medios.playing }
+    //  Una fila de cosas donde cada una enseña lo suyo.
+    repeat k in 0..3 {
+        let bx = 60 + k * 90
+        box { at: bx, 80; size: 70, 30; corner: 8; color: #9ed6bd; show: k == 0 }
+        ellipse { at: bx, 80; radius: 15; color: #e8c07a; show: k == 1 }
+        arc { at: bx, 80; radius: 15; span: 200deg; width: 3; color: #6fb1e6; show: k == 2 }
+    }
+    //  Y una zona que no está cuando su forma no está.
+    zone box toca { at: 60, 80; size: 70, 30; corner: 8; cursor: pointer; show: suena }
+    on press toca { toggle suena }
+    group { show: suena; opacity: 60%
+        box { at: 150, 110; size: 280, 6; corner: 3; color: #9ed6bd } }
+}

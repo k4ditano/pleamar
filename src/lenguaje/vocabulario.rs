@@ -108,7 +108,7 @@ pub const AYUDA: &[(&str, &str)] = &[
 pub const SERVICIOS: &[(&str, &[&str])] = &[
     ("clock", &["hour", "minute", "second", "day", "month", "year", "weekday", "time", "date"]),
     ("clock.seconds", &["hour", "minute", "second", "day", "month", "year", "weekday", "time", "date"]),
-    ("audio", &["volume", "muted"]),
+    ("audio", &["volume", "muted", "input", "input_muted"]),
     ("battery", &["present", "percent", "charging"]),
     ("network", &["online", "kind", "name", "strength"]),
     ("media", &["playing", "title", "artist", "album", "player"]),

@@ -264,6 +264,7 @@ What each service brings is in the vocabulary (§17), and **asking it for what i
 | `clock.hour` · `minute` · `second` · `day` · `month` · `year` | as they are read |
 | `clock.weekday` | 0 is Sunday |
 | `clock.time` · `clock.date` | already written out: `10:41`, `Sun 20 Sep` |
+| `audio.input` · `audio.input_muted` | the microphone: the same two, for what comes in |
 | `network.kind` | `none`, `wired` or `wifi` |
 | the `bool` ones | `muted`, `charging`, `present`, `online`, `playing` |
  Whatever does not come in a report stays as it was. The ones that bring lists —`apps`, `tray`, `notifications`, `workspaces`— are not asked for this way: that is a model, and the logic hands it out with `sys.watch`.
@@ -700,7 +701,7 @@ documented: surface permissions model service spring prop pose fact event text i
 services: clock clock.seconds audio battery network media window
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
-services.audio: volume muted
+services.audio: volume muted input input_muted
 services.battery: present percent charging
 services.network: online kind name strength
 services.media: playing title artist album player

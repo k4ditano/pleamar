@@ -1037,6 +1037,19 @@ impl<'a> Obra<'a> {
             }
         };
         let (rotate, stroke, opacity, blend, active) = (una(self, "rotate")?, una(self, "stroke")?, una(self, "opacity")?, una(self, "blend")?, una(self, "active")?);
+        // `show:` es «está o no está»: se apaga entera, y con ella su zona. Pulsar
+        // lo que no se ve es peor que no poder pulsarlo.
+        let visible = una(self, "show")?;
+        let opacity = match (&visible, opacity) {
+            (Some(v), Some(o)) => Some(o * v.clone().acotar(0.0, 1.0)),
+            (Some(v), None) => Some(v.clone().acotar(0.0, 1.0)),
+            (None, o) => o,
+        };
+        let active = match (&visible, active) {
+            (Some(v), Some(a)) => Some(a * v.clone().acotar(0.0, 1.0)),
+            (Some(v), None) => Some(v.clone().acotar(0.0, 1.0)),
+            (None, a) => a,
+        };
         let (radius, corner, span, width) = (una(self, "radius")?, una(self, "corner")?, una(self, "span")?, una(self, "width")?);
         let mut dos = |o: &Obra, k: &str| -> R<Option<Punto>> {
             match p.get_mut(k) {
@@ -1426,6 +1439,14 @@ impl<'a> Obra<'a> {
             Some(c) => Some(self.expr(c)?),
             None => None,
         };
+        // `show:` se multiplica a la opacidad: lo que no está, no se ve.
+        let opacidad = match (p.get_mut("show"), opacidad) {
+            (Some(c), o) => {
+                let v = self.expr(c)?.acotar(0.0, 1.0);
+                Some(o.map_or(v.clone(), |o| o * v))
+            }
+            (None, o) => o,
+        };
         if transforma {
             self.e.pintar(Instr::Transformar(Some(t.clone())));
             self.bajo.push(t);
@@ -1659,6 +1680,11 @@ impl<'a> Obra<'a> {
         let alfa = match p.get_mut("opacity") {
             Some(c) => self.expr(c)?,
             None => Expr::K(1.0),
+        };
+        // `show:` se multiplica a la opacidad: lo que no está, no se ve.
+        let alfa = match p.get_mut("show") {
+            Some(c) => alfa * self.expr(c)?.acotar(0.0, 1.0),
+            None => alfa,
         };
         self.e.pintar(Instr::Relleno { pintura, alfa, filo, luz, borde });
         self.ultimo_tam = tam;
@@ -1911,6 +1937,11 @@ impl<'a> Obra<'a> {
             Some(c) => self.expr(c)?,
             None => Expr::K(1.0),
         };
+        // `show:` se multiplica a la opacidad: lo que no está, no se ve.
+        let alfa = match p.get_mut("show") {
+            Some(c) => alfa * self.expr(c)?.acotar(0.0, 1.0),
+            None => alfa,
+        };
         let mide = match p.get_mut("measure") {
             Some(c) => {
                 let nombre = self.global(&c.id("the name of a measure")?);
@@ -1974,6 +2005,11 @@ impl<'a> Obra<'a> {
             Some(c) => self.expr(c)?,
             None => Expr::K(1.0),
         };
+        // `show:` se multiplica a la opacidad: lo que no está, no se ve.
+        let alfa = match p.get_mut("show") {
+            Some(c) => alfa * self.expr(c)?.acotar(0.0, 1.0),
+            None => alfa,
+        };
         let alto = estilo.px * estilo.interlinea;
         // Su zona: pulsarlo lo enfoca, y encima el cursor es el de escribir.
         // Se llama como el texto: `on drop query`, `on enter query`.
@@ -2007,6 +2043,11 @@ impl<'a> Obra<'a> {
         let alfa = match p.get_mut("opacity") {
             Some(c) => self.expr(c)?,
             None => Expr::K(1.0),
+        };
+        // `show:` se multiplica a la opacidad: lo que no está, no se ve.
+        let alfa = match p.get_mut("show") {
+            Some(c) => alfa * self.expr(c)?.acotar(0.0, 1.0),
+            None => alfa,
         };
         let tinte = match p.get_mut("tint") {
             Some(c) => Some(self.color(c)?),
@@ -2765,6 +2806,14 @@ impl<'a> Obra<'a> {
         let opacidad = match p.get_mut("opacity") {
             Some(c) => Some(self.expr(c)?),
             None => None,
+        };
+        // `show:` se multiplica a la opacidad: lo que no está, no se ve.
+        let opacidad = match (p.get_mut("show"), opacidad) {
+            (Some(c), o) => {
+                let v = self.expr(c)?.acotar(0.0, 1.0);
+                Some(o.map_or(v.clone(), |o| o * v))
+            }
+            (None, o) => o,
         };
 
         // Qué parte del reparto cae sobre `at`: `anchor: right` lo pega por la derecha
