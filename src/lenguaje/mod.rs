@@ -188,15 +188,35 @@ pub struct Aviso {
     pub mensaje: String,
 }
 
-/// Compila sin pintar nada y devuelve lo que esté mal. `abiertos` son los ficheros
-/// que un editor tiene a medio escribir: lo que diga ahí gana a lo que haya en disco.
-pub fn revisar(ruta: &str, abiertos: Vec<(PathBuf, String)>) -> Vec<Aviso> {
-    match leer_con(ruta, abiertos) {
+pub use obra::Simbolo;
+
+/// Lo que está mal y lo que hay: los dos de una pasada, que es como los quiere el editor.
+/// La línea de cada nombre viene ya sin el número de fichero, y con él aparte.
+pub fn indice(ruta: &str, abiertos: Vec<(PathBuf, String)>) -> (Vec<Aviso>, Vec<(PathBuf, Simbolo)>) {
+    let (r, simbolos) = leer_y_nombrar(ruta, abiertos);
+    let ficheros: Vec<PathBuf> = match &r {
+        Ok((_, f)) => f.clone(),
+        Err((_, f)) => f.iter().map(|(p, _)| p.clone()).collect(),
+    };
+    let donde = |linea: usize| ficheros.get(linea / POR_FICHERO).cloned().unwrap_or_else(|| PathBuf::from(ruta));
+    let nombres = simbolos
+        .into_iter()
+        .map(|mut s| {
+            let f = donde(s.linea);
+            s.linea %= POR_FICHERO;
+            (f, s)
+        })
+        .collect();
+    (avisos_de(ruta, r), nombres)
+}
+
+fn avisos_de(ruta: &str, r: Result<(Escena, Vec<PathBuf>), (Vec<Fallo>, Vec<(PathBuf, String)>)>) -> Vec<Aviso> {
+    match r {
         Ok(_) => Vec::new(),
         Err((fallos, ficheros)) => fallos
             .into_iter()
             .map(|f| Aviso {
-                fichero: ficheros.get(f.linea / POR_FICHERO).map_or_else(|| PathBuf::from(ruta), |(r, _)| r.clone()),
+                fichero: ficheros.get(f.linea / POR_FICHERO).map_or_else(|| PathBuf::from(ruta), |(r, _): &(PathBuf, String)| r.clone()),
                 linea: f.linea % POR_FICHERO,
                 col: f.col,
                 mensaje: f.mensaje,
@@ -206,8 +226,16 @@ pub fn revisar(ruta: &str, abiertos: Vec<(PathBuf, String)>) -> Vec<Aviso> {
 }
 
 fn leer_con(ruta: &str, abiertos: Vec<(PathBuf, String)>) -> Result<(Escena, Vec<PathBuf>), (Vec<Fallo>, Vec<(PathBuf, String)>)> {
+    let (r, _) = leer_y_nombrar(ruta, abiertos);
+    r
+}
+
+/// Lo mismo, y además los nombres que la escena declara con su sitio: el editor los
+/// necesita aunque el fichero esté a medio escribir y no compile.
+fn leer_y_nombrar(ruta: &str, abiertos: Vec<(PathBuf, String)>) -> (Result<(Escena, Vec<PathBuf>), (Vec<Fallo>, Vec<(PathBuf, String)>)>, Vec<obra::Simbolo>) {
     let mut l = Lectura { abiertos_de_fuera: abiertos, ..Default::default() };
     let principal = Path::new(ruta).canonicalize().unwrap_or_else(|_| PathBuf::from(ruta));
+    let mut simbolos = Vec::new();
     let levantada = (|| {
         l.abiertos.push(principal.clone());
         let entradas = l.abrir(Path::new(ruta)).map_err(|f| vec![f])?;
@@ -223,16 +251,19 @@ fn leer_con(ruta: &str, abiertos: Vec<(PathBuf, String)>) -> Result<(Escena, Vec
         }
         let nombres: Vec<String> = l.ficheros.iter().map(|(r, _)| r.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect();
         let carpetas: Vec<PathBuf> = l.ficheros.iter().map(|(r, _)| r.parent().map_or_else(PathBuf::new, Path::to_owned)).collect();
-        obra::levantar(&resto, &nombres, &carpetas, &l.estrictos, &l.bibliotecas)
+        let (r, s) = obra::levantar(&resto, &nombres, &carpetas, &l.estrictos, &l.bibliotecas);
+        simbolos = s;
+        r
     })();
     // Al enseñar un fallo, el fichero principal con la ruta que dio quien lo abrió.
     if let Some(f) = l.ficheros.first_mut() {
         f.0 = PathBuf::from(ruta);
     }
-    match levantada {
+    let r = match levantada {
         Ok(e) => Ok((e, l.ficheros.into_iter().map(|(r, _)| r).collect())),
         Err(fallos) => Err((fallos, l.ficheros)),
-    }
+    };
+    (r, simbolos)
 }
 
 /// «¿Querías decir…?»: el nombre conocido que más se parece, si se parece bastante.

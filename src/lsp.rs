@@ -7,6 +7,7 @@
 //! vocabulario, así que no se puede desfasar del lenguaje de verdad.
 
 use crate::lenguaje::vocabulario as voz;
+use crate::lenguaje::Simbolo;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -17,6 +18,8 @@ pub fn servir() {
     let mut entrada = entrada.lock();
     // Lo que el editor tiene abierto, por su ruta: puede no estar guardado.
     let mut abiertos: HashMap<PathBuf, String> = HashMap::new();
+    // Y lo que la escena declara, de la última vez que se leyó entera.
+    let mut nombres: Vec<(PathBuf, Simbolo)> = Vec::new();
     eprintln!("lsp    · pleamar {}.{} listening on stdio", crate::lenguaje::VERSION.0, crate::lenguaje::VERSION.1);
     while let Some(m) = leer(&mut entrada) {
         let metodo = m["method"].as_str().unwrap_or("").to_owned();
@@ -29,6 +32,8 @@ pub fn servir() {
                     "textDocumentSync": { "openClose": true, "change": 1, "save": true },
                     "completionProvider": { "triggerCharacters": [" ", ":", "{"] },
                     "hoverProvider": true,
+                    "definitionProvider": true,
+                    "documentSymbolProvider": true,
                 },
                 "serverInfo": { "name": "pleamar", "version": format!("{}.{}", crate::lenguaje::VERSION.0, crate::lenguaje::VERSION.1) },
             })),
@@ -46,7 +51,7 @@ pub fn servir() {
                     // Al guardar, el editor puede no mandar nada: lo que hay en disco vale.
                     None => { abiertos.remove(&ruta); }
                 }
-                revisar_y_contar(&ruta, &abiertos);
+                nombres = revisar_y_contar(&ruta, &abiertos);
             }
             "textDocument/didClose" => {
                 if let Some(ruta) = ruta_de(m["params"]["textDocument"]["uri"].as_str().unwrap_or("")) {
@@ -57,13 +62,48 @@ pub fn servir() {
             }
             "textDocument/completion" => {
                 let (texto, donde) = donde_esta(&m, &abiertos);
-                contestar(id, json!({ "isIncomplete": false, "items": completado(&texto, donde) }));
+                contestar(id, json!({ "isIncomplete": false, "items": completado(&texto, donde, &nombres) }));
+            }
+            // Ir a donde nació ese nombre. Puede estar en otro fichero: una biblioteca.
+            "textDocument/definition" => {
+                let (texto, donde) = donde_esta(&m, &abiertos);
+                let palabra = palabra_en(&texto, donde);
+                // `rows.3.label` y `mon.$screen.title` llevan a `rows` y a `mon`.
+                let raiz = palabra.split('.').next().unwrap_or(&palabra);
+                match nombres.iter().find(|(_, s)| s.local == palabra || s.local == raiz) {
+                    Some((fichero, s)) => {
+                        let suyo = abiertos.get(fichero).cloned().unwrap_or_else(|| std::fs::read_to_string(fichero).unwrap_or_default());
+                        let (l, c) = (s.linea.saturating_sub(1), en_utf16(&suyo, s.linea, s.col));
+                        contestar(id, json!({ "uri": uri_de(fichero), "range": { "start": { "line": l, "character": c }, "end": { "line": l, "character": c + s.local.chars().count() } } }));
+                    }
+                    None => contestar(id, Value::Null),
+                }
+            }
+            // El esquema del fichero: lo que declara, para el índice del editor.
+            "textDocument/documentSymbol" => {
+                let Some(ruta) = ruta_de(m["params"]["textDocument"]["uri"].as_str().unwrap_or("")) else { continue };
+                let texto = abiertos.get(&ruta).cloned().unwrap_or_default();
+                let suyos: Vec<Value> = nombres
+                    .iter()
+                    .filter(|(f, _)| f.canonicalize().ok() == ruta.canonicalize().ok())
+                    .map(|(_, s)| {
+                        let (l, c) = (s.linea.saturating_sub(1), en_utf16(&texto, s.linea, s.col));
+                        let sitio = json!({ "start": { "line": l, "character": c }, "end": { "line": l, "character": c + s.local.chars().count() } });
+                        json!({ "name": s.local, "detail": s.clase, "kind": clase_lsp(&s.clase), "range": sitio, "selectionRange": sitio })
+                    })
+                    .collect();
+                contestar(id, Value::Array(suyos));
             }
             "textDocument/hover" => {
                 let (texto, donde) = donde_esta(&m, &abiertos);
-                match ayuda_de(&palabra_en(&texto, donde)) {
-                    Some(t) => contestar(id, json!({ "contents": { "kind": "markdown", "value": t } })),
-                    None => contestar(id, Value::Null),
+                let palabra = palabra_en(&texto, donde);
+                // Si es un nombre de la escena, lo primero es de qué es nombre.
+                let suyo = nombres.iter().find(|(_, s)| s.local == palabra).map(|(f, s)| {
+                    format!("`{}` — {} declared in `{}`, line {}.", s.local, s.clase, f.file_name().unwrap_or_default().to_string_lossy(), s.linea)
+                });
+                match suyo.into_iter().chain(ayuda_de(&palabra)).collect::<Vec<_>>() {
+                    v if v.is_empty() => contestar(id, Value::Null),
+                    v => contestar(id, json!({ "contents": { "kind": "markdown", "value": v.join("\n\n") } })),
                 }
             }
             _ if id.is_some() => contestar(id, Value::Null),
@@ -133,9 +173,9 @@ fn uri_de(ruta: &Path) -> String {
 /// Compila lo que se está escribiendo y reparte los fallos por fichero. Un fallo
 /// puede caer en una biblioteca importada, así que se publican todos y se limpian
 /// los ficheros que ya no tienen ninguno.
-fn revisar_y_contar(ruta: &Path, abiertos: &HashMap<PathBuf, String>) {
+fn revisar_y_contar(ruta: &Path, abiertos: &HashMap<PathBuf, String>) -> Vec<(PathBuf, Simbolo)> {
     let copia: Vec<(PathBuf, String)> = abiertos.iter().map(|(r, t)| (r.canonicalize().unwrap_or_else(|_| r.clone()), t.clone())).collect();
-    let avisos = crate::lenguaje::revisar(&ruta.display().to_string(), copia);
+    let (avisos, nombres) = crate::lenguaje::indice(&ruta.display().to_string(), copia);
     let mut por_fichero: HashMap<PathBuf, Vec<Value>> = abiertos.keys().map(|r| (r.clone(), Vec::new())).collect();
     por_fichero.entry(ruta.to_owned()).or_default();
     for a in avisos {
@@ -151,6 +191,21 @@ fn revisar_y_contar(ruta: &Path, abiertos: &HashMap<PathBuf, String>) {
     }
     for (fichero, avisos) in por_fichero {
         publicar(&fichero, avisos);
+    }
+    nombres
+}
+
+/// La clase de símbolo que el editor entiende, para su icono.
+fn clase_lsp(clase: &str) -> u8 {
+    match clase {
+        "component" => 5,   // class
+        "model" => 23,      // struct
+        "fact" | "let" => 14, // constant
+        "prop" | "pose" => 7, // property
+        "text" => 15,       // string
+        "event" => 24,      // event
+        "surface" | "popup" => 2, // module
+        _ => 13,            // variable
     }
 }
 
@@ -239,15 +294,40 @@ fn item(palabra: &str, clase: u8, detalle: &str) -> Value {
     json!({ "label": palabra, "kind": clase, "detail": detalle, "documentation": { "kind": "markdown", "value": ayuda_de(palabra).unwrap_or_default() } })
 }
 
-fn completado(texto: &str, donde: usize) -> Vec<Value> {
-    // Tras `propiedad:` van sus valores, que casi siempre son de una lista cerrada.
+fn completado(texto: &str, donde: usize, nombres: &[(PathBuf, Simbolo)]) -> Vec<Value> {
+    // Lo que la escena declara, cada cosa con su clase: es lo que más se escribe.
+    let suyos = |clases: &[&str]| -> Vec<Value> {
+        let mut vistos = std::collections::HashSet::new();
+        nombres
+            .iter()
+            .filter(|(_, s)| clases.is_empty() || clases.contains(&s.clase.as_str()))
+            .filter(|(_, s)| vistos.insert(s.local.clone()))
+            .map(|(_, s)| json!({ "label": s.local, "kind": clase_lsp(&s.clase), "detail": s.clase }))
+            .collect()
+    };
     let antes = &texto[..donde.min(texto.len())];
     let linea = antes.rsplit('\n').next().unwrap_or("");
+    let ultima = linea.split([';', '{', '(', ',']).next_back().unwrap_or("").trim_start();
+    // `emit ` solo admite sucesos; `on ` espera lo que pasa, y luego una zona.
+    if let Some(resto) = ultima.strip_prefix("emit ") {
+        if !resto.contains(' ') {
+            return suyos(&["event"]);
+        }
+    }
+    if let Some(resto) = ultima.strip_prefix("on ") {
+        return match resto.split_whitespace().count() {
+            0 | 1 if !resto.ends_with(' ') => voz::DISPARADORES.iter().map(|x| item(x, 14, "what a rule waits for")).chain(suyos(&["event"])).collect(),
+            _ => suyos(&["zone", "box", "ellipse", "arc", "line", "path", "row", "column", "input"]),
+        };
+    }
+    // Tras `propiedad:` van sus valores, que casi siempre son de una lista cerrada;
+    // si no, una expresión, y ahí entran los nombres de la escena.
     if let Some((izquierda, _)) = linea.rsplit_once(':') {
         let prop = izquierda.split([';', '{']).next_back().unwrap_or("").trim();
         if let Some(valores) = valores_de(prop) {
             return valores.iter().map(|v| item(v, 12, prop)).collect();
         }
+        return suyos(&[]).into_iter().chain(voz::FUNCIONES.iter().map(|x| item(x, 3, "function"))).collect();
     }
     let dentro = bloque_de(texto, donde);
     match dentro.as_deref() {
@@ -267,8 +347,9 @@ fn completado(texto: &str, donde: usize) -> Vec<Value> {
             .map(|x| item(x, 10, "property of a layout"))
             .chain(voz::SENTENCIAS.iter().map(|x| item(x, 14, "statement")))
             .collect(),
-        // En la escena, o dentro de un grupo: cualquier sentencia.
-        _ => voz::SENTENCIAS.iter().map(|x| item(x, 14, "statement")).chain(voz::FUNCIONES.iter().map(|x| item(x, 3, "function"))).collect(),
+        // En la escena, o dentro de un grupo: cualquier sentencia, y los componentes
+        // que haya declarados, que se copian escribiendo su nombre.
+        _ => voz::SENTENCIAS.iter().map(|x| item(x, 14, "statement")).chain(suyos(&["component"])).collect(),
     }
 }
 

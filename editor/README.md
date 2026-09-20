@@ -10,8 +10,11 @@ escrita aparte: si el lenguaje cambia y esto no, `./probar.sh` lo dice.
 - **los fallos con su sitio**, los mismos que al lanzar la escena, con su «did you
   mean…?». Al guardar y al teclear, y también en las bibliotecas que importa;
 - **qué palabras valen aquí**: dentro de un `box`, sus propiedades; dentro de un
-  `path`, sus pasos; tras `anchor:`, las anclas que existen;
-- **qué significa** la palabra bajo el cursor.
+  `path`, sus pasos; tras `anchor:`, las anclas que existen; en una expresión, los
+  hechos y las propiedades **de esta escena**; tras `emit`, sus sucesos;
+- **qué significa** la palabra bajo el cursor, y de qué es nombre;
+- **ir a donde se declaró** un nombre, aunque esté en una biblioteca importada;
+- **el esquema del fichero**: todo lo que declara, con su clase.
 
 ### Neovim
 

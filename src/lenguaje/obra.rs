@@ -250,6 +250,11 @@ struct Obra<'a> {
     /// pintan más abajo.
     reglas: Vec<(&'a Nodo, Vec<Entorno>)>,
     fallos: Vec<Fallo>,
+    /// Cada nombre que se declara, con su sitio: para el editor.
+    declarados: Vec<Simbolo>,
+    /// La sentencia que se está leyendo (`fact`, `prop`…), para saber de qué clase
+    /// es lo que se declare dentro de ella.
+    clase_actual: String,
     entornos: Vec<Entorno>,
     componentes: HashMap<String, Componente<'a>>,
     copias: usize,
@@ -264,13 +269,25 @@ struct Obra<'a> {
     bajo: Vec<Transformacion>,
 }
 
-pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a [std::path::PathBuf], estrictos: &'a [usize], bibliotecas: &'a [Biblioteca]) -> Result<Escena, Vec<Fallo>> {
+/// Un nombre que la escena declara, con su sitio: lo que el editor necesita para
+/// completar, para ir a donde nació y para enseñar el esquema del fichero.
+#[derive(Clone, Debug)]
+pub struct Simbolo {
+    /// Como se escribió: `hit`, sin el sufijo del ámbito.
+    pub local: String,
+    /// Con qué sentencia se declaró: `fact`, `prop`, `component`…
+    pub clase: String,
+    pub linea: usize,
+    pub col: usize,
+}
+
+pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a [std::path::PathBuf], estrictos: &'a [usize], bibliotecas: &'a [Biblioteca]) -> (Result<Escena, Vec<Fallo>>, Vec<Simbolo>) {
     let escena = match arbol {
         [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "scene") => n,
         [Entrada::Nodo(n)] if matches!(n.cabeza.first().map(|f| &f.f), Some(F::Id(p)) if p == "library") => {
-            return Err(vec![Fallo::en(n.linea, n.col, "this is a library: it is not opened, it is imported from a scene (`import \"…\"`)")]);
+            return (Err(vec![Fallo::en(n.linea, n.col, "this is a library: it is not opened, it is imported from a scene (`import \"…\"`)")]), Vec::new());
         }
-        _ => return Err(vec![Fallo::en(1, 1, "a file is a scene: as many `import`s as you want, then `scene Name { … }`")]),
+        _ => return (Err(vec![Fallo::en(1, 1, "a file is a scene: as many `import`s as you want, then `scene Name { … }`")]), Vec::new()),
     };
     let mut o = Obra {
         e: Escena::default(),
@@ -285,7 +302,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
             "pose" => Muelle::POSE,
             otro => unreachable!("'{otro}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
-        bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(),
+        bajo: Vec::new(), candidatas: Vec::new(), reglas: Vec::new(), fallos: Vec::new(), declarados: Vec::new(), clase_actual: String::new(),
         scrolls: Vec::new(), superficies_pendientes: Vec::new(), ficheros, carpetas, estrictos, bibliotecas, frontera_de: HashMap::new(), permisos_de: HashMap::new(), vuelta: 0, siguiente_origen: 0.0, valores: HashMap::new(), ambiguos: Default::default(), hijos_de_copia: Vec::new(), de_biblioteca: Default::default(), sin_pedir: Default::default(), sin_vigilar: Default::default(), entornos: Vec::new(), componentes: HashMap::new(), copias: 0, en_hueco: false, ultimo_tam: None, medida_impuesta: None, teclado_pendiente: None,
     };
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
@@ -299,7 +316,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
     let demo = o.e.suceso("demo");
     o.sucesos.insert("demo".into(), demo);
     let Some(cuerpo) = escena.cuerpo.as_ref() else {
-        return Err(vec![Fallo::en(escena.linea, escena.col, "this scene is missing its `{ … }` block")]);
+        return (Err(vec![Fallo::en(escena.linea, escena.col, "this scene is missing its `{ … }` block")]), Vec::new());
     };
     o.adelantar_medidas(cuerpo);
     // Cuatro vueltas: declaraciones; nombres y capas; dibujo; reglas.
@@ -388,7 +405,11 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
         o.entornos.clear();
         o.anotar(Fallo::en(donde.0, donde.1, format!("'{componente}' belongs to a `strict` library and reads '{nombre}', which is the scene\'s, without asking for it. Take it as a parameter, or declare it in the library")));
     }
-    if o.fallos.is_empty() { Ok(o.e) } else { Err(o.fallos) }
+    // Los nombres que se declararon, uno por nombre: las cuatro vueltas y las copias
+    // de un `repeat` declaran el mismo muchas veces, y al editor le vale el primer sitio.
+    let mut vistos = std::collections::HashSet::new();
+    let simbolos: Vec<Simbolo> = std::mem::take(&mut o.declarados).into_iter().filter(|s| vistos.insert(s.local.clone())).collect();
+    (if o.fallos.is_empty() { Ok(o.e) } else { Err(o.fallos) }, simbolos)
 }
 
 /// `surface … { … }`, que se lee en dos vueltas.
@@ -506,6 +527,11 @@ impl<'a> Obra<'a> {
     /// El nombre con el que se declara algo desde aquí dentro.
     fn declarar(&mut self, local: &str) -> String {
         let interpolado = self.interpolar(local);
+        let (linea, col) = MIRANDO.with(|m| m.get());
+        if linea > 0 {
+            let clase = if self.clase_actual.is_empty() { "name".to_owned() } else { self.clase_actual.clone() };
+            self.declarados.push(Simbolo { local: interpolado.clone(), clase, linea, col });
+        }
         match self.entornos.last_mut() {
             Some(e) if !e.sufijo.is_empty() && !local.contains('$') => {
                 let g = format!("{interpolado}{}", e.sufijo);
@@ -1074,6 +1100,7 @@ impl<'a> Obra<'a> {
                 let pista = parecido(&palabra, validas.iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
                 return Err(Fallo::en(n.linea, n.col, format!("I don\'t know what '{palabra}' is.{pista}")));
             }
+            self.clase_actual = palabra.clone();
             match palabra.as_str() {
                 "surface" => self.superficie(n)?,
                 "model" => self.modelo(n, &mut c)?,
@@ -1355,6 +1382,10 @@ impl<'a> Obra<'a> {
             match palabra(0) {
                 Some("component" | "repeat" | "for") => continue,
                 Some("row" | "column") => if let Some(local) = palabra(1) {
+                    // Se adelanta para poder leerlo antes de llegar a él, pero el sitio
+                    // que se apunta es el suyo: es donde el editor tiene que llevar.
+                    MIRANDO.with(|m| m.set((n.linea, n.col)));
+                    self.clase_actual = palabra(0).unwrap_or("row").to_owned();
                     let nombre = self.declarar(local);
                     if let Some(e) = self.entornos.last_mut() {
                         e.con_partes.insert(local.to_owned());
@@ -2853,6 +2884,10 @@ impl<'a> Obra<'a> {
         // entera es una zona si alguna regla la nombra. Va debajo de las de sus
         // hijos: la rueda sobre el reparto no le quita el clic a lo de dentro.
         if let Some(local) = nombre {
+            // El nombre de un reparto se declara cuando ya se han leído sus hijos, así
+            // que hay que volver a decir dónde estaba: si no, el editor lleva al último.
+            MIRANDO.with(|m| m.set((n.linea, n.col)));
+            self.clase_actual = if fila { "row".to_owned() } else { "column".to_owned() };
             let nombre = self.declarar(&local);
             if let Some(e) = self.entornos.last_mut() {
                 e.con_partes.insert(local.clone());
