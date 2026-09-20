@@ -48,9 +48,11 @@ impl Guion for DeFichero {
 /// nombre, esa es su lógica; si no, una que solo escucha.
 pub fn guion_para(ruta: &str, tx: Sender<ARender>, a_logica: Sender<Evento>, bloqueada: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Box<dyn Guion> {
     let logica = logica_de(ruta);
-    // Hay lógica si la escena tiene su `.luau`, o si alguno de sus plugins tiene el suyo.
+    // Hay lógica si la escena tiene su `.luau`, si alguno de sus plugins tiene el suyo,
+    // o si la escena pide algún servicio: eso también lo monta y lo reparte el guion,
+    // aunque no haya una sola línea de Luau.
     #[cfg(feature = "luau")]
-    if std::path::Path::new(&logica).is_file() || leer(ruta).is_ok_and(|e| !e.plugins.is_empty()) {
+    if std::path::Path::new(&logica).is_file() || leer(ruta).is_ok_and(|e| !e.plugins.is_empty() || !e.servicios.is_empty()) {
         return Box::new(crate::logica_luau::GuionLuau::nuevo(ruta, &logica, tx, a_logica, bloqueada));
     }
     let _ = (tx, a_logica, bloqueada, logica);
