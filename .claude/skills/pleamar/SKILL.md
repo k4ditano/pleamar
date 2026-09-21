@@ -110,7 +110,10 @@ scene Name {
   click inside it. This is the mistake that repeats: in marea-plm it happened
   five times, always the same way, and every time it looked like "the button
   does nothing". What is **hidden** does not catch it, though: a `show:` that is
-  false —on a group, on a layout child— turns off the zones inside it.
+  false, or an `opacity:` that has reached zero —on a group, on a layout—
+  turns off the zones inside it. No need to repeat `active: open > 0.9` on
+  every zone of a panel that fades in; keep `active:` for what is visible and
+  still must not be pressed (a button mid-transition, a confirm that arms late).
 - **Two rules in the same frame: the one declared LAST sets the value, and a
   `while` reads the frame BEFORE them.** A pointer that jumps from one row to
   another gives `leave` on the old one and `enter` on the new one in the same

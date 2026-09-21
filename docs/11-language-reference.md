@@ -491,7 +491,7 @@ gradient: 0, 0 to 0, 44, mint, sand 30%, #e86a9a, coal   // the same, with stops
 gradient: radial 100, 160 radius 60, ink, mint 40%, coal // from a center outwards
 ```
 
-**A named shape is a zone** if some rule names it, if it carries `active`, or if it was declared with `zone`. A name put there only to read better does not stop a click. A zone inherits the transforms of the groups it is in, and **what is not there —a false `show:`, a record that does not exist— is not a zone**. A `row` or `column` with a name is one too: its whole box, underneath those of its children.
+**A named shape is a zone** if some rule names it, if it carries `active`, or if it was declared with `zone`. A name put there only to read better does not stop a click. A zone inherits the transforms of the groups it is in, and **what is not there —a false `show:`, an `opacity:` that has reached zero, a record that does not exist— is not a zone**: what cannot be seen cannot be pressed. A `row` or `column` with a name is one too: its whole box, underneath those of its children.
 
 ## 9. Layouts
 

@@ -1521,11 +1521,18 @@ impl<'a> Obra<'a> {
         }
         let desde = self.candidatas.len();
         self.grupo(cuerpo.iter());
-        // Lo escondido tampoco para el clic de nadie. Dentro de un reparto esto
-        // ya pasaba —un hijo con `show:` apaga sus zonas—, y que un `group` no
-        // lo hiciera era una trampa de las caras: la lista de otra página seguía
-        // cazando el ratón encima de lo que sí se veía, invisible y por delante.
-        if let Some(esta) = &esconde {
+        // Lo que no se ve no para el clic de nadie, se haya ido con `show:` o
+        // con una opacidad que llega a cero. Dentro de un reparto ya pasaba con
+        // `show:`; que un `group` no lo hiciera era una trampa de las caras: la
+        // lista de otra página seguía cazando el ratón encima de lo que sí se
+        // veía, invisible y por delante. Y con la opacidad era peor, porque es
+        // como se esconde casi todo lo que sale y entra con un muelle: un
+        // buscador cerrado, con sus filas a cero, LANZABA aplicaciones al pulsar
+        // en el panel que tenía encima. La guarda `active: x > 0.9` escrita a
+        // mano en cada zona se olvida; la regla no.
+        let _ = &esconde;
+        if let Some(se_ve) = &opacidad {
+            let esta = se_ve.clone().mayor(0.01);
             for c in &mut self.candidatas[desde..] {
                 c.visible = Some(match c.visible.take() { Some(v) => v * esta.clone(), None => esta.clone() });
             }
@@ -3468,7 +3475,9 @@ impl<'a> Obra<'a> {
             // tamaño de su ventana. Escondida y por delante, esa zona se
             // quedaba con los clics de todo lo que tuviera debajo: en marea-plm,
             // cuatro de las cinco tarjetas del centro de control.
-            if let Some(esta) = &esconde {
+            let _ = &esconde;
+            if let Some(se_ve) = &opacidad {
+                let esta = se_ve.clone().mayor(0.01);
                 for c in &mut self.candidatas[candidatas_base..] {
                     c.visible = Some(match c.visible.take() { Some(v) => v * esta.clone(), None => esta.clone() });
                 }
