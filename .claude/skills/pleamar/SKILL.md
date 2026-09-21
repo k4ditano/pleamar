@@ -100,7 +100,8 @@ scene Name {
   pointer crosses a gap— goes **before** what it wraps, or it swallows every
   click inside it. This is the mistake that repeats: in marea-plm it happened
   five times, always the same way, and every time it looked like "the button
-  does nothing".
+  does nothing". What is **hidden** does not catch it, though: a `show:` that is
+  false —on a group, on a layout child— turns off the zones inside it.
 - **Two rules in the same frame: the one declared LAST sets the value, and a
   `while` reads the frame BEFORE them.** A pointer that jumps from one row to
   another gives `leave` on the old one and `enter` on the new one in the same
