@@ -1,0 +1,19 @@
+// espera: bien
+language 0.1
+// Una cadena de `let`, cada uno nombrando al anterior dos veces. Sustituidos,
+// el árbol dobla por eslabón; calculados una vez por frame, crece sumando.
+scene Cadena {
+    surface { size: 200, 80 }
+    prop t = 0 ~300ms
+    fact va = false
+    follow t = if(va, 1, 0)
+    let a = 10 + (40 - 10) * t
+    let b = a + (60 - a) * t
+    let c = b + (80 - b) * t
+    let d = c + (100 - c) * t
+    let e = d + (120 - d) * t
+    let f = e + (140 - e) * t
+    box { at: 100, 40; size: f, 20; corner: 6; color: #9ed6bd }
+    zone box hit { at: 100, 40; size: 160, 40 }
+    on press hit { toggle va }
+}

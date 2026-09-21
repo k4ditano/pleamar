@@ -1395,6 +1395,23 @@ impl<'a> Obra<'a> {
                     }
                     let e = self.expr(&mut c)?;
                     c.nada_mas()?;
+                    // Un `let` se **sustituye** donde se nombra, así que uno
+                    // grande usado tres veces es su árbol tres veces. Escrito en
+                    // cadena —cada eslabón nombrando al anterior dos veces, que
+                    // es lo que sale de escribir `x + (k - x) * t`— el árbol
+                    // DOBLA por eslabón: la cara de marea-plm llegó a 2¹⁵ nodos
+                    // por propiedad, a 41 ms de frame y a 1 GB de memoria, sin
+                    // que nada lo dijera. De un puñado de nodos en adelante se
+                    // calcula **una vez por frame** en una propiedad, y lo que
+                    // se sustituye es ella: un nodo.
+                    let e = if e.nodos() > 8 {
+                        self.copias += 1;
+                        let p = self.e.prop_con(fijo(&format!("·{nombre}{}", self.copias)), 0.0, Muelle::VIVO);
+                        self.e.comportamientos.push(Comportamiento::Es { prop: p, a: e });
+                        p.e()
+                    } else {
+                        e
+                    };
                     match self.entornos.last_mut() {
                         Some(env) => env.exprs.insert(nombre, e),
                         None => self.lets.insert(nombre, e),

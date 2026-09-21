@@ -247,6 +247,17 @@ impl Expr {
     pub fn es_verdad(&self, c: Ctx) -> bool {
         self.evaluar(c) > 0.5
     }
+    /// Cuántos nodos tiene. Un `let` se sustituye donde se usa, así que esto es
+    /// lo que cuesta cada vez que se nombra, y lo que decide si vale la pena
+    /// calcularlo una sola vez.
+    pub fn nodos(&self) -> usize {
+        use Expr::*;
+        match self {
+            K(_) | P(_) | H(_) | Vel(_) => 1,
+            Abs(a) | Suelo(a) | Seno(a) | Coseno(a) | Techo(a) | No(a) | Suave(_, _, a) => 1 + a.nodos(),
+            Suma(a, b) | Resta(a, b) | Por(a, b) | Entre(a, b) | Min(a, b) | Max(a, b) | Mayor(a, b) | Y(a, b) | O(a, b) => 1 + a.nodos() + b.nodos(),
+        }
+    }
     pub fn mayor(self, o: impl Into<Expr>) -> Expr {
         Expr::Mayor(Box::new(self), Box::new(o.into()))
     }
