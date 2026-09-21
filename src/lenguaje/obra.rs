@@ -3071,11 +3071,12 @@ impl<'a> Obra<'a> {
             None => None,
         };
         // `show:` se multiplica a la opacidad: lo que no está, no se ve.
-        let opacidad = match (p.get_mut("show"), opacidad) {
-            (Some(c), o) => {
-                let v = self.expr(c)?.acotar(0.0, 1.0);
-                Some(o.map_or(v.clone(), |o| o * v))
-            }
+        let esconde = match p.get_mut("show") {
+            Some(c) => Some(self.expr(c)?.acotar(0.0, 1.0)),
+            None => None,
+        };
+        let opacidad = match (&esconde, opacidad) {
+            (Some(v), o) => Some(o.map_or(v.clone(), |o| o * v.clone())),
             (None, o) => o,
         };
 
@@ -3462,6 +3463,16 @@ impl<'a> Obra<'a> {
             }
             let caja = Forma::Caja { centro: (tam.0.clone() * 0.5, tam.1.clone() * 0.5), mitad: (tam.0.clone() * 0.5, tam.1.clone() * 0.5), radio: esquina_de_zona };
             self.candidatas.insert(candidatas_base, Candidata { nombre: nombre.clone(), forma: caja, activa: None, visible: None, bajo, forzada: desplaza.is_some(), cursor: cursor_del_reparto });
+            // Un reparto escondido no caza el ratón: ni sus hijos ni ÉL, que con
+            // `view:` tiene zona propia —la de la rueda y el arrastre— del
+            // tamaño de su ventana. Escondida y por delante, esa zona se
+            // quedaba con los clics de todo lo que tuviera debajo: en marea-plm,
+            // cuatro de las cinco tarjetas del centro de control.
+            if let Some(esta) = &esconde {
+                for c in &mut self.candidatas[candidatas_base..] {
+                    c.visible = Some(match c.visible.take() { Some(v) => v * esta.clone(), None => esta.clone() });
+                }
+            }
             if let Some(prop) = &desplaza {
                 // La rueda sobre él lo corre, sin pasarse de lo que hay. La regla se crea al
                 // final, cuando ya se sabe qué formas con nombre son zonas de verdad.

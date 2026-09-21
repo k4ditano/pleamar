@@ -254,8 +254,19 @@ pub fn morir_con_el_padre(orden: &mut std::process::Command) {
 #[cfg(unix)]
 pub fn escuchar_ordenes(escena: &str, recibir: Box<dyn Fn(String) -> Option<String> + Send>) {
     use std::io::{BufRead, BufReader, Write};
-    let Some(ruta) = ruta_de_ordenes(escena) else { return };
+    let Some(mut ruta) = ruta_de_ordenes(escena) else { return };
     let _ = std::fs::create_dir_all(ruta.parent().unwrap());
+    // Si ya hay OTRA escena con este nombre escuchando, el enchufe es suyo. Antes
+    // se borraba sin mirar: la que llegaba se lo quedaba, y al irse dejaba a la
+    // primera sorda para siempre —un ensayo de diez segundos le quitaba los
+    // atajos de teclado a la barra de todos los días—. Solo se borra el de
+    // alguien que ya no está; si está, esta contesta por su nombre y su pid.
+    if std::os::unix::net::UnixStream::connect(&ruta).is_ok() {
+        let propio = format!("{escena}-{}", std::process::id());
+        eprintln!("orders · another '{escena}' is already listening: this one answers to '{propio}' (pleamar --decir {propio} …)");
+        let Some(otra) = ruta_de_ordenes(&propio) else { return };
+        ruta = otra;
+    }
     let _ = std::fs::remove_file(&ruta);
     let Ok(escucha) = std::os::unix::net::UnixListener::bind(&ruta) else { return };
     std::thread::Builder::new()
