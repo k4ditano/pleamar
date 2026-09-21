@@ -230,7 +230,15 @@ They all **share properties, facts, models and rules**: a bar and its panel talk
 
 ```
 render · a shadow is cut: it needs 30 px below more than this 760 x 520 surface has. The shape fits; its shadow does not
+render · a drawing is cut: it needs 36 px below more than this 820 x 580 surface has. Almost all of it is inside, so it looks like the surface is the one that fell short
 ```
+
+The second one is for the shape itself, which is what happens when a panel grows
+past what its surface has. It is only said of what **almost** fitted —three
+quarters of it inside, so a shape that hangs off an edge on purpose is left
+alone— and never of an edge the surface is anchored to, where there is no room
+to ask for. It waits until it has been cut for three seconds, or until nothing
+is moving: crossing an edge on the way somewhere is not a layout mistake.
 
 **Types.** For the renderer everything is numbers; types are for whoever writes and for whoever talks to the scene from outside. A fact is a number, a yes or no (`bool`; with no type, that is what one born `true` or `false` is) or an **enum**: `fact mode: low | normal | critical = normal`. The names of its values are valid in any expression (`mode == critical`, `mode = low` in a rule) and they are their position: `low` is 0. **An enum is compared against its own values, and the compiler checks it**: `mode == fast`, if `fast` belongs to another one, is an error that says which ones are valid; and arithmetic is not done with an enum (`mode + 1` means nothing; with a yes or no it does: `r.separator * 21`). The same name can be in two enums: compared against its fact, each one is its own; on its own, if it means different numbers, it is an error that asks for the long form, `mode.normal`, which is always valid. In a slot of a text, an enum is shown by its name: `"mode: {mode}"` → `mode: critical`. The logic reads and writes them as what they are —`fact.open` is `true`, `fact.mode` is `"critical"`—, and so does `--decir`.
 
