@@ -37,9 +37,34 @@ struct Ciclo {
     dts: Vec<f32>,
     max_bloqueada: f32,
     frames_bloqueada: u32,
+    /// Lo que se va en LEER la escena —evaluar sus expresiones y apuntar lo que
+    /// hay que pintar—, frente a lo que se va en dibujarla. Se mide siempre:
+    /// son dos relojes por frame, y es la única manera de que quien escribe una
+    /// escena se entere de que la ha hecho demasiado cara.
+    componer: f32,
+    lento_dicho: bool,
 }
 
 impl Ciclo {
+    /// Una escena que no da los frames que la pantalla pide no se nota en el
+    /// log —son frames lentos sueltos, uno detrás de otro— y desde fuera parece
+    /// que el runtime se ha vuelto lento. Se dice UNA vez, con el reparto, en
+    /// cuanto hay con qué decirlo: cuatro segundos de ir por detrás.
+    fn vigilar(&mut self, periodo_ms: f32) {
+        if self.lento_dicho || self.dts.len() < 240 {
+            return;
+        }
+        let media = self.dts.iter().sum::<f32>() / self.dts.len() as f32;
+        if media <= periodo_ms * 1.35 {
+            return;
+        }
+        self.lento_dicho = true;
+        let leer = self.componer / self.dts.len() as f32;
+        eprintln!(
+            "render · this scene does not keep up: {media:.1} ms a frame against the {periodo_ms:.1} the screen gives, and {leer:.1} of those go in reading the scene, not in drawing it. Something in it is too dear to work out sixty times a second"
+        );
+    }
+
     fn cerrar(&mut self) {
         if self.dts.len() < 8 {
             self.dts.clear();
@@ -47,13 +72,16 @@ impl Ciclo {
         }
         let mut o = self.dts.clone();
         o.sort_by(|a, b| a.total_cmp(b));
+        let leer = self.componer / o.len() as f32;
         let media = o.iter().sum::<f32>() / o.len() as f32;
         let p99 = o[((o.len() as f32 * 0.99) as usize).min(o.len() - 1)];
         println!(
-            "cycle  · {:>4} frames · mean {:>5.2} ms · p99 {:>6.2} ms · max {:>6.2} ms · with the logic blocked: {} frames, max {:.2} ms",
-            o.len(), media, p99, o[o.len() - 1], self.frames_bloqueada, self.max_bloqueada
+            "cycle  · {:>4} frames · mean {:>5.2} ms · p99 {:>6.2} ms · max {:>6.2} ms · reading the scene {:.2} ms · with the logic blocked: {} frames, max {:.2} ms",
+            o.len(), media, p99, o[o.len() - 1], leer, self.frames_bloqueada, self.max_bloqueada
         );
+        let dicho = self.lento_dicho;
         *self = Ciclo::default();
+        self.lento_dicho = dicho;
     }
 }
 
@@ -1089,7 +1117,9 @@ pub fn hilo(
         }
         let a_pintar: &[Instr] = if aviso.is_some() { &con_aviso } else { &escena.instrs };
         dibujo.pegada_a(escena.superficie().ancla.pegada());
+        let leyendo = Instant::now();
         dibujo.componer(a_pintar, c, &textos, &mut letras, vista, tam, op.hud);
+        ciclo.componer += leyendo.elapsed().as_secs_f32() * 1000.0;
         let Some(g) = &mut gpu else {
             // Aún no hay dónde: el tiempo corre igual, pero sin prisa.
             std::thread::sleep(Duration::from_millis(8));
@@ -1280,6 +1310,13 @@ pub fn hilo(
         historial.copy_within(1.., 0);
         historial[119] = if bloqueada { -ms } else { ms };
         ciclo.dts.push(ms);
+        if !op.sin_vsync && !op.ingenuo && !bloqueada {
+            // El periodo APRENDIDO no vale aquí: una escena que siempre va
+            // tarde le enseña que la pantalla da 28 ms y entonces nunca llega
+            // tarde. Se compara con el refresco de verdad del monitor.
+            let de_verdad = laminas.iter().find(|l| l.marca_el_ritmo).map_or(16.7, |l| 1_000_000.0 / l.mhz.max(1) as f32);
+            ciclo.vigilar(de_verdad);
+        }
         if bloqueada {
             ciclo.frames_bloqueada += 1;
             ciclo.max_bloqueada = ciclo.max_bloqueada.max(ms);

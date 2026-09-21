@@ -230,6 +230,7 @@ They all **share properties, facts, models and rules**: a bar and its panel talk
 
 ```
 render · a shadow is cut: it needs 30 px below more than this 760 x 520 surface has. The shape fits; its shadow does not
+render · this scene does not keep up: 32.3 ms a frame against the 16.7 the screen gives, and 31.0 of those go in reading the scene, not in drawing it
 render · a drawing is cut: it needs 36 px below more than this 820 x 580 surface has. Almost all of it is inside, so it looks like the surface is the one that fell short
 ```
 
