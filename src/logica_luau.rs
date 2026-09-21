@@ -697,8 +697,16 @@ impl GuionLuau {
 
         // Una orden del sistema: corre en otro hilo y contesta cuando acaba.
         let (c, a_logica) = (self.c.clone(), self.a_logica.clone());
-        g.set("run", lua.create_function(move |_, (orden, args, f): (String, Option<Vec<String>>, Option<Function>)| {
+        // Con un cuarto argumento, cómo: `{ stdin = "/ruta" }` le da ese fichero por
+        // la entrada —lo que en una terminal es `orden < fichero`, que es como se
+        // copia una imagen al portapapeles— y `{ output = false }` no recoge lo que
+        // escriba. Esto último no es un capricho: un programa que se queda de fondo
+        // (`wl-copy` lo hace, para seguir sirviendo lo copiado) hereda la tubería de
+        // salida, y esperar a que la cierre es esperar para siempre.
+        g.set("run", lua.create_function(move |_, (orden, args, f, como): (String, Option<Vec<String>>, Option<Function>, Option<mlua::Table>)| {
             permiso_de_orden(&c, &orden)?;
+            let entrada: Option<String> = como.as_ref().and_then(|t| t.get("stdin").ok());
+            let recoge: bool = como.as_ref().and_then(|t| t.get::<Option<bool>>("output").ok().flatten()).unwrap_or(true);
             let id = {
                 let mut c = c.lock().unwrap();
                 c.siguiente += 1;
@@ -710,9 +718,29 @@ impl GuionLuau {
             };
             let a_logica = a_logica.clone();
             std::thread::spawn(move || {
-                let (salida, codigo) = match std::process::Command::new(&orden).args(args.unwrap_or_default()).output() {
-                    Ok(o) => (String::from_utf8_lossy(&o.stdout).trim_end().to_owned(), o.status.code().unwrap_or(-1)),
-                    Err(e) => (e.to_string(), -1),
+                let mut lanzar = std::process::Command::new(&orden);
+                lanzar.args(args.unwrap_or_default());
+                if let Some(ruta) = &entrada {
+                    match std::fs::File::open(ruta) {
+                        Ok(f) => {
+                            lanzar.stdin(f);
+                        }
+                        Err(e) => {
+                            let _ = a_logica.send(Evento::Proceso(id, format!("{ruta}: {e}"), -1));
+                            return;
+                        }
+                    }
+                }
+                let (salida, codigo) = if recoge {
+                    match lanzar.output() {
+                        Ok(o) => (String::from_utf8_lossy(&o.stdout).trim_end().to_owned(), o.status.code().unwrap_or(-1)),
+                        Err(e) => (e.to_string(), -1),
+                    }
+                } else {
+                    match lanzar.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status() {
+                        Ok(s) => (String::new(), s.code().unwrap_or(-1)),
+                        Err(e) => (e.to_string(), -1),
+                    }
                 };
                 let _ = a_logica.send(Evento::Proceso(id, salida, codigo));
             });
