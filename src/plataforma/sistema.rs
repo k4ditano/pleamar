@@ -33,8 +33,53 @@ fn si_cambia(avisar: &dyn Fn(Valor), ultimo: &mut String, v: Valor) {
 
 // ── audio ─────────────────────────────────────────────────────────
 
-/// `{ volume = 0.54, muted = false, input = 0.4, input_muted = true }`: la
-/// salida y la entrada, que en un panel de sonido van siempre juntas. PipeWire,
+/// Los aparatos de sonido que hay, con el que está puesto marcado. Salen de
+/// `wpctl status`, que los lista por secciones:
+///
+/// ```text
+///  ├─ Sinks:
+///  │      52. TU106 HDMI                    [vol: 0.46]
+///  │  *  105. CMF Buds Pro 2                [vol: 0.54]
+///  ├─ Sources:
+/// ```
+///
+/// Un panel de sonido de escritorio necesita poder elegir por dónde suena y por
+/// dónde escucha; sin esto solo se puede mover el volumen de lo que ya había.
+fn aparatos(seccion: &str) -> Valor {
+    let Some(texto) = salida_de("wpctl", &["status"]) else { return Valor::Lista(Vec::new()) };
+    let mut fuera = Vec::new();
+    let mut dentro = false;
+    for linea in texto.lines() {
+        let limpia = linea.trim_start_matches(|c: char| c == '│' || c == '├' || c == '└' || c == '─' || c.is_whitespace());
+        if linea.contains("Sinks:") || linea.contains("Sources:") || linea.contains("Filters:") || linea.contains("Streams:") {
+            // Las secciones se repiten (Audio y Video): vale la primera.
+            dentro = linea.contains(seccion) && fuera.is_empty();
+            continue;
+        }
+        if !dentro {
+            continue;
+        }
+        let puesto = limpia.starts_with('*');
+        let resto = limpia.trim_start_matches('*').trim_start();
+        let Some((numero, nombre)) = resto.split_once('.') else { continue };
+        let Ok(id) = numero.trim().parse::<u32>() else { continue };
+        // «CMF Buds Pro 2      [vol: 0.54]»: el volumen ya lo dice el servicio.
+        let nombre = nombre.split('[').next().unwrap_or(nombre).trim();
+        if nombre.is_empty() {
+            continue;
+        }
+        fuera.push(Valor::Mapa(vec![
+            ("id".into(), Valor::Num(id as f64)),
+            ("name".into(), Valor::Texto(nombre.to_owned())),
+            ("default".into(), Valor::Si(puesto)),
+        ]));
+    }
+    Valor::Lista(fuera)
+}
+
+/// `{ volume = 0.54, muted = false, input = 0.4, input_muted = true,
+/// outputs = [...], inputs = [...] }`: la salida y la entrada, que en un panel
+/// de sonido van siempre juntas, y los aparatos que hay de cada una. PipeWire,
 /// por `wpctl`; y `pactl subscribe` para enterarse de los cambios sin preguntar
 /// a cada rato.
 fn audio_ahora() -> Option<Valor> {
@@ -51,6 +96,8 @@ fn audio_ahora() -> Option<Valor> {
         ("muted".into(), Valor::Si(mudo)),
         ("input".into(), Valor::Num(entrada)),
         ("input_muted".into(), Valor::Si(entrada_muda)),
+        ("outputs".into(), aparatos("Sinks:")),
+        ("inputs".into(), aparatos("Sources:")),
     ]))
 }
 
@@ -90,7 +137,46 @@ pub fn audio_orden(que: &str, args: &[Valor]) -> Result<(), String> {
         ("audio.input", [Valor::Num(v)]) => pedir(&["set-volume", ENTRADA, &format!("{:.3}", v.clamp(0.0, 1.0))]),
         ("audio.input_mute", []) => pedir(&["set-mute", ENTRADA, "toggle"]),
         ("audio.input_mute", [Valor::Si(si)]) => pedir(&["set-mute", ENTRADA, if *si { "1" } else { "0" }]),
-        _ => Err(format!("'{que}' is not asked like that: audio.volume(0..1), audio.step(±0.05), audio.mute([true|false]), audio.input(0..1), audio.input_mute([true|false])")),
+        // Por dónde suena y por dónde escucha: el número que trae la lista.
+        ("audio.default", [Valor::Num(id)]) => pedir(&["set-default", &format!("{}", *id as u32)]),
+        _ => Err(format!("'{que}' is not asked like that: audio.volume(0..1), audio.step(±0.05), audio.mute([true|false]), audio.input(0..1), audio.input_mute([true|false]), audio.default(id)")),
+    }
+}
+
+// ── la sesión ─────────────────────────────────────────────────────
+
+/// Bloquear, suspender, cerrar sesión, reiniciar y apagar. Un escritorio tiene
+/// que poder despedirse, y eso no lo sabe hacer una barra sola: lo hace
+/// `systemd`, por `loginctl` y `systemctl`.
+///
+/// Van detrás de su permiso —`services: "session.*"`— y por una razón distinta
+/// que las demás: **no se deshacen**. Lo peor que puede hacer un `audio.volume`
+/// es dejarte sordo un segundo; lo peor que puede hacer esto es cerrarte la
+/// sesión con cosas sin guardar. Quien escribe la escena decide si su lógica
+/// puede pedirlo, y se ve escrito en la escena.
+pub fn sesion_orden(que: &str, _args: &[Valor]) -> Result<(), String> {
+    let hacer = |programa: &str, args: &[&str]| -> Result<(), String> {
+        Command::new(programa)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("{programa}: {e}"))
+    };
+    match que {
+        "session.lock" => hacer("loginctl", &["lock-session"]),
+        "session.suspend" => hacer("systemctl", &["suspend"]),
+        "session.reboot" => hacer("systemctl", &["reboot"]),
+        "session.poweroff" => hacer("systemctl", &["poweroff"]),
+        // Cerrar sesión es terminar **la sesión**, no matar el compositor: así
+        // se va también lo que hubieras arrancado aparte.
+        "session.logout" => match std::env::var("XDG_SESSION_ID") {
+            Ok(id) => hacer("loginctl", &["terminate-session", &id]),
+            Err(_) => hacer("loginctl", &["terminate-user", &std::env::var("USER").unwrap_or_default()]),
+        },
+        _ => Err(format!("'{que}' is not one of: session.lock, session.suspend, session.logout, session.reboot, session.poweroff")),
     }
 }
 

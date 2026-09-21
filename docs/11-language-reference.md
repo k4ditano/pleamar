@@ -273,6 +273,21 @@ What each service brings is in the vocabulary (§17), and **asking it for what i
 | the `bool` ones | `muted`, `charging`, `present`, `online`, `playing` |
  Whatever does not come in a report stays as it was. The ones that bring lists —`apps`, `tray`, `notifications`, `workspaces`— are not asked for this way: that is a model, and the logic hands it out with `sys.watch`.
 
+**Which speaker and which microphone.** `audio` also reports, to `sys.watch`
+and `sys.ask` only, **the devices there are**: `outputs` and `inputs`, each one
+`{ id, name, default }`. They are lists, so they are not declared in `service`;
+the logic spreads them into a model. `sys.call("audio.default", id)` switches to
+one, and the report comes back with the new `default` set. A desktop sound panel
+needs this: without it only the volume of whatever was already there can be
+moved.
+
+**Saying goodbye.** `session` is commands only —it reports nothing— and it is
+what a desktop needs to close itself: `sys.call("session.lock")`, `"suspend"`,
+`"logout"`, `"reboot"`, `"poweroff"`, behind `services: "session.*"`. The
+permission matters more here than anywhere else, and for a different reason:
+**these do not undo**. The worst an `audio.volume` can do is deafen you for a
+second. Underneath they are `loginctl` and `systemctl`.
+
 The permissions are the scene's, and they are the same as `sys.watch`'s: `services: "clock"`. Without them the scene loads all the same, says why on the console and that field stays as it was born. `clock` reports when the minute changes and `clock.seconds` every second; neither of the two asks anybody for the time nor wakes the machine up to see whether it is time yet.
 
 **Files.** A scene has **its own folder**, and does not leave it: no paths, no `..`, like `require`. It is used from the logic, with permission `services: "files"` to read and `"files.write"` to write:

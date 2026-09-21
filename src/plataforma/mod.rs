@@ -111,6 +111,10 @@ pub fn orden(de: &str, nombre: &str, args: &[Valor]) -> Result<(), String> {
         return sistema::audio_orden(nombre, args);
     }
     #[cfg(target_os = "linux")]
+    if nombre.starts_with("session.") {
+        return sistema::sesion_orden(nombre, args);
+    }
+    #[cfg(target_os = "linux")]
     if nombre.starts_with("tray.") {
         return bandeja::orden(nombre, args);
     }
