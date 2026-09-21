@@ -1,0 +1,22 @@
+// espera: bien
+language 0.1
+// La pantalla de bloqueo: no existe hasta que `open:` se hace verdad, y al
+// existir la sesión está bloqueada de verdad. Su `size:` es la caja que se
+// centra en cada monitor; el fondo se pinta grande, porque el monitor lo es más.
+scene Candado {
+    surface { size: 220, 60; anchor: top }
+    fact echado = false
+    surface cerrojo {
+        kind: lock
+        size: 600, 300
+        open: echado
+        box { from: -4000, -4000; size: 8600, 8300; color: #101214 }
+        text "locked" { at: 300, 130; anchor: center; size: 28; color: #ffffff }
+        text "held by the compositor" { at: 300, 170; anchor: center; size: 12; color: #9ed6bd; opacity: lock.held }
+    }
+    box boton { at: 110, 30; size: 200, 40; corner: 12; color: #9ed6bd; cursor: pointer }
+    text "lock" { at: 110, 30; anchor: center; size: 13; color: #101214 }
+    on press boton { echado = true }
+    //  Se quita sola: una prueba de bloqueo que no se sabe abrir no es una prueba.
+    on still echado for 4s while echado { echado = false }
+}

@@ -189,6 +189,20 @@ pub fn emergente(k: usize, que: Option<([i32; 4], (f32, f32))>) {
     let _ = (k, que);
 }
 
+/// Echa o quita el cerrojo de la sesión para la superficie `cual`, que es de
+/// `kind: lock`: `Some((caja, origen))` lo echa —una superficie por monitor, con
+/// esa caja centrada en cada uno— y `None` lo quita. Que esté echado DE VERDAD
+/// lo dice el sistema, con `ARender::Cerrojo(true)`.
+///
+/// En Wayland es `ext-session-lock`: lo garantiza el compositor, no el dibujo.
+/// En Windows será `LockWorkStation`, que trae su propia pantalla; en macOS, el
+/// protector de pantalla con contraseña.
+pub fn cerrojo(cual: usize, que: Option<((u32, u32), (f32, f32))>) {
+    #[cfg(target_os = "linux")]
+    wayland::cerrojo(cual, que);
+    let _ = (cual, que);
+}
+
 /// Pega la superficie `cual` a otro borde, ya en marcha. En Wayland es una
 /// petición de layer-shell —`set_anchor` y `set_margin` valen sobre una
 /// superficie viva, sin volver a crearla—; en Windows será mover la ventana y

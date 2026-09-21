@@ -223,7 +223,17 @@ impl Estado {
         // Qué número de monitor es: el orden en que el compositor los cuenta.
         let numero = self.salidas.outputs().position(|o| &o == salida).unwrap_or(0);
         let mhz = info.modes.iter().find(|m| m.current).map_or(0, |m| m.refresh_rate);
+        if let Some(c) = CERROJOS.get() {
+            let mut m = c.monitores.lock().unwrap();
+            if !m.iter().any(|(s, _, _)| s == salida) {
+                m.push((salida.clone(), nombre.clone(), mhz));
+            }
+        }
         for cual in 0..self.pide.len() {
+            // La de bloqueo no se pone: se echa, cuando la escena lo diga.
+            if self.pide[cual].cerrojo {
+                continue;
+            }
             let ya = self.puestas.iter().filter(|p| &p.salida == salida && p.cual == cual).count();
             let quiere = Self::quiere_en(&self.pide[cual], &nombre, numero);
             for k in ya..quiere {
@@ -288,6 +298,9 @@ impl Estado {
     }
 
     fn quitar_de(&mut self, salida: &wl_output::WlOutput) {
+        if let Some(c) = CERROJOS.get() {
+            c.monitores.lock().unwrap().retain(|(s, _, _)| s != salida);
+        }
         for p in self.puestas.iter().filter(|p| &p.salida == salida) {
             let _ = self.a_render.send(ARender::LaminaFuera(p.id));
             if let Some(c) = CAPAS.get() {
@@ -341,6 +354,113 @@ struct Abierta {
     _escala: Option<WpFractionalScaleV1>,
     madre: Madre,
     popup: Popup,
+}
+
+// ── el cerrojo ────────────────────────────────────────────────────
+
+/// La pantalla de bloqueo (`kind: lock`). No es una superficie que se pinta
+/// encima de todo: es el protocolo `ext-session-lock`, con el que el COMPOSITOR
+/// garantiza que mientras dure no se ve ni se toca nada más, en ningún
+/// monitor. Por eso no existe hasta que se echa, y por eso la abre el render
+/// —que es quien sabe cuándo el `open:` de la escena se hace verdad— igual que
+/// una emergente. Lo que pase después llega al hilo de siempre.
+///
+/// Y una cosa que hay que saber antes de usarlo: si quien bloquea se muere con
+/// el cerrojo echado, la sesión SIGUE bloqueada. Es a propósito —lo contrario
+/// sería que matar al bloqueador desbloquease— y es lo que obliga a que esto
+/// no pueda fallar a medias.
+struct Cerrojos {
+    qh: QueueHandle<Estado>,
+    compositor: CompositorState,
+    gestor: smithay_client_toolkit::session_lock::SessionLockState,
+    conexion: Connection,
+    instancia: wgpu::Instance,
+    ventanillas: Option<WpViewporter>,
+    escalas: Option<WpFractionalScaleManagerV1>,
+    /// Los monitores que hay ahora, con su nombre y su refresco: los mantiene
+    /// al día el hilo de Wayland, y hace falta uno por cara.
+    monitores: Mutex<Vec<(wl_output::WlOutput, String, i32)>>,
+    echado: Mutex<Option<Echado>>,
+    siguiente_id: AtomicU32,
+}
+
+struct Echado {
+    cual: usize,
+    /// La caja que la escena declara (`size:`), que se centra en cada monitor,
+    /// y dónde cae su trozo del plano.
+    caja: (u32, u32),
+    origen: (f32, f32),
+    cerrojo: smithay_client_toolkit::session_lock::SessionLock,
+    caras: Vec<Cara>,
+}
+
+/// La superficie de bloqueo de UN monitor.
+struct Cara {
+    id: u32,
+    // Por orden: primero se suelta lo que pinta, luego la superficie.
+    pendiente: Option<wgpu::Surface<'static>>,
+    ventanilla: Option<WpViewport>,
+    _escala: Option<WpFractionalScaleV1>,
+    nombre: String,
+    mhz: i32,
+    /// Dónde mira en el plano: el origen de la escena menos lo que haga falta
+    /// para que su caja quede centrada. Se sabe al configurarla.
+    mira: (f32, f32),
+    superficie: smithay_client_toolkit::session_lock::SessionLockSurface,
+}
+
+static CERROJOS: std::sync::OnceLock<Cerrojos> = std::sync::OnceLock::new();
+
+/// `Some((caja, origen))` echa el cerrojo de la superficie `cual`; `None` lo
+/// quita. Lo llama el render, que antes de quitarlo ya ha soltado lo que pintaba.
+pub fn cerrojo(cual: usize, que: Option<((u32, u32), (f32, f32))>) {
+    let Some(c) = CERROJOS.get() else { return };
+    let mut echado = c.echado.lock().unwrap();
+    let Some((caja, origen)) = que else {
+        if let Some(e) = echado.take() {
+            e.cerrojo.unlock();
+            drop(e);
+            let _ = c.conexion.flush();
+            println!("lock   · unlocked");
+        }
+        return;
+    };
+    if echado.is_some() {
+        return;
+    }
+    let cerrojo = match c.gestor.lock(&c.qh) {
+        Ok(l) => l,
+        Err(_) => {
+            eprintln!("lock   · this compositor has no ext-session-lock: the session cannot be locked from here");
+            return;
+        }
+    };
+    // Una cara por monitor, y todas a la vez: hasta que no están todas, el
+    // compositor no da la sesión por bloqueada.
+    let caras = c
+        .monitores
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(salida, nombre, mhz)| {
+            let wl = c.compositor.create_surface(&c.qh);
+            let id = 2000 + c.siguiente_id.fetch_add(1, Ordering::Relaxed);
+            let superficie = cerrojo.create_lock_surface(wl, salida, &c.qh);
+            let ventanilla = c.ventanillas.as_ref().map(|v| v.get_viewport(superficie.wl_surface(), &c.qh, Mudo));
+            let escala = c.escalas.as_ref().map(|m| m.get_fractional_scale(superficie.wl_surface(), &c.qh, EscalaDe(id)));
+            let pinta = unsafe {
+                c.instancia
+                    .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                        raw_display_handle: Some(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(NonNull::new(c.conexion.backend().display_ptr() as *mut _).unwrap()))),
+                        raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(NonNull::new(superficie.wl_surface().id().as_ptr() as *mut _).unwrap())),
+                    })
+                    .ok()
+            };
+            Cara { id, pendiente: pinta, ventanilla, _escala: escala, nombre: nombre.clone(), mhz: *mhz, mira: origen, superficie }
+        })
+        .collect();
+    *echado = Some(Echado { cual, caja, origen, cerrojo, caras });
+    let _ = c.conexion.flush();
 }
 
 /// Los bordes a los que se pega, como banderas del protocolo. Con ancho 0 se
@@ -538,6 +658,18 @@ pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance
         }
         Err(_) => eprintln!("warning: the compositor has no xdg-shell; there will be no popup surfaces"),
     }
+    let _ = CERROJOS.set(Cerrojos {
+        qh: qh.clone(),
+        compositor: estado.compositor.clone(),
+        gestor: smithay_client_toolkit::session_lock::SessionLockState::new(&globales, &qh),
+        conexion: conexion.clone(),
+        instancia: estado.instancia.clone(),
+        ventanillas: estado.ventanillas.clone(),
+        escalas: estado.escalas.clone(),
+        monitores: Mutex::default(),
+        echado: Mutex::default(),
+        siguiente_id: AtomicU32::new(0),
+    });
     if estado.ventanillas.is_none() || estado.escalas.is_none() {
         eprintln!("warning: the compositor gives no fractional scale; it will paint at whatever whole scale it says");
     }
@@ -619,13 +751,62 @@ impl LayerShellHandler for Estado {
     }
 }
 
+impl smithay_client_toolkit::session_lock::SessionLockHandler for Estado {
+    /// El compositor lo confirma: ahora sí, y no antes, la sesión está bloqueada.
+    fn locked(&mut self, _: &Connection, _: &QueueHandle<Self>, _: smithay_client_toolkit::session_lock::SessionLock) {
+        println!("lock   · the session is locked");
+        let _ = self.a_render.send(ARender::Cerrojo(true));
+    }
+    /// No lo ha dado —ya hay otro bloqueador—, o lo ha dado por terminado.
+    fn finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: smithay_client_toolkit::session_lock::SessionLock) {
+        eprintln!("lock   · the compositor did not grant the lock, or ended it: is another locker running?");
+        let _ = self.a_render.send(ARender::Cerrojo(false));
+    }
+    fn configure(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        superficie: smithay_client_toolkit::session_lock::SessionLockSurface,
+        conf: smithay_client_toolkit::session_lock::SessionLockSurfaceConfigure,
+        _: u32,
+    ) {
+        let Some(c) = CERROJOS.get() else { return };
+        let mut echado = c.echado.lock().unwrap();
+        let Some(e) = echado.as_mut() else { return };
+        let (cual, caja, origen) = (e.cual, e.caja, e.origen);
+        let Some(cara) = e.caras.iter_mut().find(|k| k.superficie.wl_surface() == superficie.wl_surface()) else { return };
+        let tam = conf.new_size;
+        if let Some(v) = &cara.ventanilla {
+            v.set_destination(tam.0 as i32, tam.1 as i32);
+        }
+        // Su caja, centrada en ESTE monitor: lo que sobra alrededor también se
+        // ve, así que el fondo se pinta grande y cada monitor enseña lo suyo.
+        cara.mira = (origen.0 - (tam.0 as f32 - caja.0 as f32) / 2.0, origen.1 - (tam.1 as f32 - caja.1 as f32) / 2.0);
+        if let Some(pinta) = cara.pendiente.take() {
+            let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
+                id: cara.id,
+                superficie: pinta,
+                ventana: Box::new(VentanaWayland { wl: cara.superficie.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: None }),
+                escala: 1.0,
+                tam,
+                mhz: cara.mhz,
+                nombre: format!("{} (lock)", cara.nombre),
+                vista: gpu::Vista { superficie: cual, emergente: None, origen: cara.mira, tam: (tam.0 as f32, tam.1 as f32) },
+            })));
+        }
+    }
+}
+
 impl PointerHandler for Estado {
     fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, eventos: &[PointerEvent]) {
         for e in eventos {
             let (mut x, mut y) = (e.position.0 as f32, e.position.1 as f32);
             if let Some(em) = EMERGENTES.get() {
                 // Dentro de una emergente, el ratón está en el trozo de escena que ella enseña.
-                if let Some(a) = em.abiertas.lock().unwrap().iter().find(|a| a.popup.wl_surface() == &e.surface) {
+                let en_cerrojo = CERROJOS.get().and_then(|c| c.echado.lock().unwrap().as_ref().and_then(|ec| ec.caras.iter().find(|k| k.superficie.wl_surface() == &e.surface).map(|k| k.mira)));
+                if let Some(mira) = en_cerrojo {
+                    (x, y) = (x + mira.0, y + mira.1);
+                } else if let Some(a) = em.abiertas.lock().unwrap().iter().find(|a| a.popup.wl_surface() == &e.surface) {
                     (x, y) = (x + a.origen.0, y + a.origen.1);
                 } else if let Some(p) = self.puestas.iter().find(|p| p.concha.wl() == &e.surface) {
                     let info = self.salidas.info(&p.salida);

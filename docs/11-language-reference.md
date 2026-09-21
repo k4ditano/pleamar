@@ -791,7 +791,7 @@ units: px % deg ms s
 cursors: default pointer text grab grabbing
 surface.anchor: top bottom left right top_left top_right bottom_left bottom_right center
 surface.level: background bottom top overlay
-surface.kind: panel window
+surface.kind: panel window lock
 surface.keyboard: none on_demand exclusive
 text.align: left center right
 layout.align: start center end

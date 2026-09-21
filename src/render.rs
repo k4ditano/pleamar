@@ -102,6 +102,8 @@ pub fn hilo(
     let mut repeticion: Option<(u32, u32)> = Some((400, 33));
     // Cada emergente de la escena: si está abierta, dónde y con qué tamaño.
     let mut emergentes: Vec<Option<[i32; 4]>> = Vec::new();
+    // Las superficies de bloqueo que están echadas (o pedidas).
+    let mut cerrojos: Vec<usize> = Vec::new();
     let mut uniformes = [0f32; N_UNIFORMES];
     let mut tam = (720.0f32, 224.0f32);
     // Si se pidió `--registrar`, la cabecera se escribe una vez.
@@ -355,6 +357,23 @@ pub fn hilo(
                     Some(i) => hechos[i] = v,
                     None => eprintln!("render · I don't know the fact '{nombre}'"),
                 },
+                ARender::Cerrojo(echado) => {
+                    if !echado {
+                        // No lo ha dado, o lo ha terminado: se suelta lo que se pintaba
+                        // y luego las superficies. Queda apuntado como pedido, para
+                        // no volver a intentarlo hasta que la escena lo suelte ella.
+                        for &k in &cerrojos {
+                            laminas.retain(|l| !(l.vista.superficie == k && l.vista.emergente.is_none()));
+                            crate::plataforma::cerrojo(k, None);
+                        }
+                        if let Some(g) = &gpu {
+                            repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
+                        }
+                    }
+                    if let Some(k) = escena.hechos.iter().position(|(n, _)| *n == "lock.held") {
+                        hechos[k] = if echado { 1.0 } else { 0.0 };
+                    }
+                }
                 ARender::EmergenteCerrada(k) => {
                     // Han pulsado fuera: primero se suelta lo que pintaba en ella, luego ella.
                     laminas.retain(|l| l.vista.emergente != Some(k));
@@ -1067,6 +1086,29 @@ pub fn hilo(
         // Lo que se dibuja existe si cae en alguna superficie viva, o en alguna emergente
         // abierta. Una superficie cerrada no aporta la suya: así todo lo suyo se descarta al
         // componer y su siguiente frame sale vacío, que es lo que la hace desaparecer.
+        let abierta = |k: usize| escena.superficies.get(k).and_then(|s| s.abierta.as_ref()).is_none_or(|e| e.es_verdad(Ctx { props: &props, hechos: &hechos }));
+        // Las de bloqueo no están puestas: se echan cuando su `open:` se hace
+        // verdad y se quitan cuando deja de serlo. Al quitarlas, primero se
+        // suelta lo que se pintaba en ellas y luego ellas, como una emergente.
+        let quieren: Vec<(usize, bool)> = escena.superficies.iter().enumerate().filter(|(_, s)| s.cerrojo).map(|(k, _)| (k, abierta(k))).collect();
+        for (k, quiere) in quieren {
+            let estaba = cerrojos.contains(&k);
+            if quiere && !estaba {
+                cerrojos.push(k);
+                let s = &escena.superficies[k];
+                crate::plataforma::cerrojo(k, Some(((s.ancho, s.alto), s.origen)));
+            } else if !quiere && estaba {
+                cerrojos.retain(|x| *x != k);
+                laminas.retain(|l| !(l.vista.superficie == k && l.vista.emergente.is_none()));
+                crate::plataforma::cerrojo(k, None);
+                if let Some(g) = &gpu {
+                    repartir_el_ritmo(g, &mut laminas, tam, op.sin_vsync);
+                }
+                if let Some(h) = escena.hechos.iter().position(|(n, _)| *n == "lock.held") {
+                    hechos[h] = 0.0;
+                }
+            }
+        }
         let abierta = |k: usize| escena.superficies.get(k).and_then(|s| s.abierta.as_ref()).is_none_or(|e| e.es_verdad(Ctx { props: &props, hechos: &hechos }));
         dibujo.vistas.clear();
         dibujo.vistas.extend(laminas.iter().filter(|l| abierta(l.vista.superficie)).map(|l| l.vista.caja()));

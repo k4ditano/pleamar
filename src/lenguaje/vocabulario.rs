@@ -131,7 +131,7 @@ pub const CURSORES: &[&str] = &["default", "pointer", "text", "grab", "grabbing"
 pub const ANCLAS_DE_SUPERFICIE: &[&str] = &["top", "bottom", "left", "right", "top_left", "top_right", "bottom_left", "bottom_right", "center"];
 pub const NIVELES: &[&str] = &["background", "bottom", "top", "overlay"];
 /// Qué clase de ventana pide una superficie: pegada a un borde, o de las normales.
-pub const CLASES_DE_SUPERFICIE: &[&str] = &["panel", "window"];
+pub const CLASES_DE_SUPERFICIE: &[&str] = &["panel", "window", "lock"];
 pub const TECLADOS: &[&str] = &["none", "on_demand", "exclusive"];
 pub const ALINEADOS_DE_TEXTO: &[&str] = &["left", "center", "right"];
 pub const ALINEADOS_DE_REPARTO: &[&str] = &["start", "center", "end"];

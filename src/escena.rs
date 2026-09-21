@@ -130,6 +130,11 @@ pub struct Superficie {
     /// Si es una ventana normal —de las que el compositor decora y coloca— en vez de
     /// un panel pegado al borde: cómo se titula. Sin esto, es un panel.
     pub ventana: Option<String>,
+    /// Si es la pantalla de bloqueo: una superficie que NO existe hasta que su
+    /// `open:` se hace verdad, y que al existir tiene la sesión bloqueada de
+    /// verdad —lo garantiza el compositor, no el dibujo—, en todos los
+    /// monitores a la vez. Cuando `open:` deja de ser verdad, se desbloquea.
+    pub cerrojo: bool,
     /// Cuánto sitio le reserva el compositor: las ventanas no lo pisan.
     pub reserva: i32,
     pub pantallas: Pantallas,
@@ -153,7 +158,7 @@ pub enum Teclado {
 impl Default for Superficie {
     fn default() -> Self {
         // Neutra: todo el ancho, arriba, en todos los monitores. Lo que pida la escena manda.
-        Superficie { nombre: String::new(), instancia: 0, origen: (0.0, 0.0), abierta: None, ventana: None, ancho: 0, alto: 40, ancla: Ancla::Arriba, ancla_de: None, margen: [0; 4], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Todas, teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
+        Superficie { nombre: String::new(), instancia: 0, origen: (0.0, 0.0), abierta: None, ventana: None, cerrojo: false, ancho: 0, alto: 40, ancla: Ancla::Arriba, ancla_de: None, margen: [0; 4], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Todas, teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
     }
 }
 
@@ -1267,6 +1272,9 @@ pub enum ARender {
     HechoDeFuera(&'static str, String),
     /// El sistema ha cerrado una emergente: han pulsado fuera de ella.
     EmergenteCerrada(usize),
+    /// Lo que dice el compositor del bloqueo: `true`, la sesión ESTÁ bloqueada
+    /// (y no antes); `false`, no lo ha concedido o lo ha dado por terminado.
+    Cerrojo(bool),
     /// Desde fuera preguntan cuánto vale un hecho, un texto o una propiedad.
     Pregunta(&'static str, std::sync::mpsc::Sender<String>),
     /// Han soltado algo encima, arrastrado desde otra aplicación: (tipo, contenido).

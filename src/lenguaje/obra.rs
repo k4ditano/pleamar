@@ -327,7 +327,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
     // …y lo que una regla puede leer del ratón mientras se dispara.
-    for n in ["screen.width", "screen.height", "pointer.x", "pointer.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel"] {
+    for n in ["screen.width", "screen.height", "pointer.x", "pointer.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "lock.held"] {
         let h = o.e.hecho(n, 0.0);
         o.hechos.insert(n.into(), h);
     }
@@ -404,6 +404,10 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
             Ok(e) => o.e.superficies[cual].abierta = Some(e),
             Err(f) => o.fallos.push(f),
         }
+    }
+    // Una de bloqueo sin `open:` estaría echada desde que arranca: se exige.
+    if let Some(s) = o.e.superficies.iter().find(|s| s.cerrojo && s.abierta.is_none()) {
+        o.fallos.push(Fallo::en(1, 1, format!("the lock surface '{}' has to say when it locks: `open: locked`, with a fact. Without it, the session would be locked from the start", s.nombre)));
     }
     for (cual, nombre, (l, col)) in std::mem::take(&mut o.anclas_pendientes) {
         let g = o.global(&nombre);
@@ -2398,8 +2402,16 @@ impl<'a> Obra<'a> {
         // `kind: window`: una ventana normal, que el compositor decora y coloca. Lo
         // que es de un panel —ancla, nivel, reserva, monitor— no le vale.
         if let Some(c) = p.get_mut("kind") {
-            if c.una_de(voz::CLASES_DE_SUPERFICIE, "what kind of surface this is")? == "window" {
-                s.ventana = Some(String::new());
+            match c.una_de(voz::CLASES_DE_SUPERFICIE, "what kind of surface this is")?.as_str() {
+                "window" => s.ventana = Some(String::new()),
+                // `kind: lock`: la pantalla de bloqueo. Ocupa el monitor entero
+                // —lo que mida lo dice el compositor— y va en todos.
+                "lock" => {
+                    s.cerrojo = true;
+                    s.pantallas = Pantallas::Todas;
+                    s.teclado = Teclado::Siempre;
+                }
+                _ => {}
             }
         }
         if let Some(c) = p.get_mut("title") {
