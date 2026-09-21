@@ -41,19 +41,13 @@ pub struct Dibujo {
     /// Los trozos de la escena que alguna emergente abierta está enseñando.
     pub vistas: Vec<[f32; 4]>,
     avisado_de_recortes: bool,
-    /// Una sombra cortada, esperando a decirse: lo peor visto y cómo contarlo.
-    /// No se dice en cuanto se ve —una tarjeta que se abre se sale más a cada
-    /// frame, y el primer píxel no es el que hay que arreglar—, sino cuando la
-    /// cuenta deja de crecer o la escena se queda quieta.
-    sombra: Option<(f32, String)>,
-    sombra_sin_crecer: u8,
-    /// Si en este frame alguna sombra seguía cortada. Algo que cruza un borde
-    /// de camino —una bolita que sale por arriba— la tiene cortada tres frames
-    /// y ya no: eso no es un error de maqueta, y no se dice.
-    sombra_este_frame: bool,
-    sombra_dicha: bool,
+    /// Una sombra cortada y una forma cortada, esperando a decirse.
+    sombra: Pendiente,
+    corte: Pendiente,
     /// Lo que mide la superficie de la escena, sin la franja de instrumentos.
     suya: (f32, f32),
+    /// Y a qué bordes está pegada: contra esos no se avisa de nada.
+    pegada: [bool; 4],
 }
 
 /// El campo donde se está escribiendo, visto desde quien pinta.
@@ -96,6 +90,75 @@ fn unir(a: Option<[f32; 4]>, b: [f32; 4]) -> [f32; 4] {
     a.map_or(b, |a| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
 }
 
+/// Algo que se ve cortado y aún no se ha dicho: lo peor visto y cómo contarlo.
+/// No se dice en cuanto se ve —una tarjeta que se abre se sale más a cada
+/// frame, y el primer píxel no es el que hay que arreglar—, sino cuando la
+/// cuenta deja de crecer o la escena se queda quieta. Y si deja de estar
+/// cortado, es que pasaba por ahí: entonces no se dice nunca.
+#[derive(Default)]
+struct Pendiente {
+    /// Lo peor de este episodio, que es lo que dice si la cosa sigue creciendo,
+    /// y lo peor de ESTE frame, que es quien pone el texto cuando hay varias
+    /// cosas cortadas a la vez.
+    peor: f32,
+    peor_ahora: f32,
+    dicho: Option<String>,
+    sin_crecer: u8,
+    /// Cuántos frames seguidos lleva cortado. Una escena viva —una que respira—
+    /// no se queda quieta nunca, así que esperar al reposo sería no decirlo
+    /// jamás: a los tres segundos cortado, ya no pasaba por ahí.
+    visto: u16,
+    este_frame: bool,
+    dicha: bool,
+}
+
+impl Pendiente {
+    fn apunta(&mut self, peor: f32, dicho: impl FnOnce() -> String) {
+        self.este_frame = true;
+        if peor > self.peor {
+            self.peor = peor;
+            self.sin_crecer = 0;
+        }
+        // El texto es el de AHORA, no el del pico: una tarjeta que se abre pasa
+        // por encima del borde de arriba y acaba sobrando por abajo, y lo que
+        // hay que arreglar es lo segundo. Se rehace cuatro veces por segundo, y
+        // lo dice la peor de las que estén cortadas en ese frame.
+        if peor >= self.peor_ahora {
+            self.peor_ahora = peor;
+            if self.dicho.is_none() || self.visto % 15 == 14 {
+                self.dicho = Some(dicho());
+            }
+        }
+    }
+    /// Al cerrar el frame: lo que ya no está cortado se olvida. Y lo que lleva
+    /// un cuarto de segundo sin crecer se cuenta ya, si es de los que pueden
+    /// adelantarse. **Una forma no lo es**: cruzar un borde de camino es lo
+    /// normal —una tarjeta que se abre sube por encima del borde y vuelve—, así
+    /// que de esas solo se habla cuando la escena se queda quieta y lo cortado
+    /// es lo que se queda mirando.
+    fn cierra_el_frame(&mut self, puede_adelantarse: bool) -> Option<String> {
+        self.peor_ahora = 0.0;
+        if !std::mem::take(&mut self.este_frame) {
+            self.dicho = None;
+            self.peor = 0.0;
+            self.sin_crecer = 0;
+            self.visto = 0;
+            return None;
+        }
+        self.visto = self.visto.saturating_add(1);
+        self.sin_crecer = self.sin_crecer.saturating_add(1);
+        if (puede_adelantarse && self.sin_crecer >= 15) || self.visto >= 180 {
+            return self.ya();
+        }
+        None
+    }
+    fn ya(&mut self) -> Option<String> {
+        let dicho = self.dicho.take()?;
+        self.dicha = true;
+        Some(dicho)
+    }
+}
+
 impl Dibujo {
     pub fn n_elementos(&self) -> usize {
         self.elementos.len() / POR_ELEMENTO
@@ -129,7 +192,7 @@ impl Dibujo {
     /// dónde mirar: la sombra no se declara con un tamaño, sale de dos números.
     /// La cuenta ya está hecha ahí arriba; decirla cuesta cuatro restas.
     fn mirar_la_sombra(&mut self, forma: [f32; 4], (dx, dy, d): (f32, f32, f32)) {
-        if self.sombra_dicha {
+        if self.sombra.dicha {
             return;
         }
         let (w, alto) = self.suya;
@@ -151,27 +214,58 @@ impl Dibujo {
         if dichos.is_empty() {
             return;
         }
-        self.sombra_este_frame = true;
-        if peor <= self.sombra.as_ref().map_or(0.0, |(p, _)| *p) {
-            return;
-        }
-        self.sombra_sin_crecer = 0;
-        self.sombra = Some((
-            peor,
+        self.sombra.apunta(peor, || {
             format!(
                 "render · a shadow is cut: it needs {} more than this {:.0} x {:.0} surface has. The shape fits; its shadow does not",
                 dichos.join(" and "),
                 w,
                 alto
-            ),
-        ));
+            )
+        });
+    }
+
+    /// Y lo mismo de la forma, que es lo que de verdad se ve cortado cuando un
+    /// panel crece más de lo que su superficie tiene. Salirse por un borde a
+    /// propósito es legítimo —el cuello de una bolita cuelga del borde de
+    /// arriba, y ahí no sobra sitio ni se quiere—, así que solo se dice de lo
+    /// que **casi entero** cabía: si tres cuartas partes de lo que se dibuja
+    /// están dentro y el resto choca contra el borde, la que se ha quedado
+    /// corta es la superficie, y nadie lo va a ver en `--comprobar` porque
+    /// dónde acaba una tarjeta es una cuenta que solo existe mientras corre.
+    fn mirar_el_corte(&mut self, forma: [f32; 4]) {
+        if self.corte.dicha {
+            return;
+        }
+        let (w, alto) = self.suya;
+        let (mide_x, mide_y) = (forma[2] - forma[0], forma[3] - forma[1]);
+        if mide_x <= 0.5 || mide_y <= 0.5 {
+            return;
+        }
+        let falta = [-forma[0], -forma[1], forma[2] - w, forma[3] - alto];
+        let dentro_x = (forma[2].min(w) - forma[0].max(0.0)).max(0.0) / mide_x;
+        let dentro_y = (forma[3].min(alto) - forma[1].max(0.0)).max(0.0) / mide_y;
+        let casi = [dentro_x, dentro_y, dentro_x, dentro_y];
+        let lados = ["on the left", "above", "on the right", "below"];
+        let vale = |k: usize| !self.pegada[k] && falta[k] > 0.5 && casi[k] >= 0.75;
+        let dichos: Vec<String> = (0..4).filter(|&k| vale(k)).map(|k| format!("{:.0} px {}", falta[k].ceil(), lados[k])).collect();
+        if dichos.is_empty() {
+            return;
+        }
+        let peor = (0..4).filter(|&k| vale(k)).map(|k| falta[k]).fold(0.0f32, f32::max);
+        self.corte.apunta(peor, || {
+            format!(
+                "render · a drawing is cut: it needs {} more than this {:.0} x {:.0} surface has. Almost all of it is inside, so it looks like the surface is the one that fell short",
+                dichos.join(" and "),
+                w,
+                alto
+            )
+        });
     }
 
     /// Lo de la sombra, cuando ya se sabe del todo: la escena se ha quedado
     /// quieta, o la cuenta lleva un cuarto de segundo sin crecer.
     pub fn decir_lo_pendiente(&mut self) {
-        if let Some((_, dicho)) = self.sombra.take() {
-            self.sombra_dicha = true;
+        for dicho in [self.sombra.ya(), self.corte.ya()].into_iter().flatten() {
             eprintln!("{dicho}");
         }
     }
@@ -199,6 +293,11 @@ impl Dibujo {
             e[32 + j] = recortes[recortes.len().saturating_sub(4)..].get(j).map_or(-1.0, |r| r.0 as f32);
         }
         rellenar(e);
+    }
+
+    /// A qué bordes está pegada la superficie, que lo sabe quien la pide.
+    pub fn pegada_a(&mut self, lados: [bool; 4]) {
+        self.pegada = lados;
     }
 
     pub fn componer(&mut self, instrs: &[Instr], c: Ctx, textos: &[String], tip: &mut Textos, campo: Option<VistaDeCampo>, tam: (f32, f32), hud: bool) {
@@ -295,6 +394,9 @@ impl Dibujo {
                     if let Some((sx, sy, sd, sa)) = sombra.filter(|s| a > 0.01 && s.3 > 0.01) {
                         self.mirar_la_sombra(forma_sola, (sx, sy, sd));
                         let _ = sa;
+                    }
+                    if a > 0.01 {
+                        self.mirar_el_corte(forma_sola);
                     }
                     self.elemento(0.0, caja, &recortes, |e| {
                         afin.codificar(&mut e[44..52]);
@@ -477,15 +579,8 @@ impl Dibujo {
                 }
             }
         }
-        if self.sombra.is_some() && !std::mem::take(&mut self.sombra_este_frame) {
-            // Ya no está cortada: pasaba por ahí.
-            self.sombra = None;
-        }
-        if self.sombra.is_some() {
-            self.sombra_sin_crecer += 1;
-            if self.sombra_sin_crecer >= 15 {
-                self.decir_lo_pendiente();
-            }
+        for dicho in [self.sombra.cierra_el_frame(true), self.corte.cierra_el_frame(false)].into_iter().flatten() {
+            eprintln!("{dicho}");
         }
         if hud {
             // Los instrumentos ocupan la franja de abajo, que se añadió para ellos.

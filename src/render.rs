@@ -1088,6 +1088,7 @@ pub fn hilo(
             citas.push(*cuando);
         }
         let a_pintar: &[Instr] = if aviso.is_some() { &con_aviso } else { &escena.instrs };
+        dibujo.pegada_a(escena.superficie().ancla.pegada());
         dibujo.componer(a_pintar, c, &textos, &mut letras, vista, tam, op.hud);
         let Some(g) = &mut gpu else {
             // Aún no hay dónde: el tiempo corre igual, pero sin prisa.

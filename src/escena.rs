@@ -45,6 +45,24 @@ pub enum Ancla {
 }
 
 impl Ancla {
+    /// A qué bordes está pegada, en el orden de siempre: izquierda, arriba,
+    /// derecha, abajo. Contra un borde pegado no hay sitio que pedir —una barra
+    /// de arriba se sale por arriba porque quiere—, así que es donde no se
+    /// avisa de que algo se corta.
+    pub fn pegada(&self) -> [bool; 4] {
+        let (i, a, d, b) = match self {
+            Ancla::Arriba => (false, true, false, false),
+            Ancla::Abajo => (false, false, false, true),
+            Ancla::Izquierda => (true, false, false, false),
+            Ancla::Derecha => (false, false, true, false),
+            Ancla::ArribaIzquierda => (true, true, false, false),
+            Ancla::ArribaDerecha => (false, true, true, false),
+            Ancla::AbajoIzquierda => (true, false, false, true),
+            Ancla::AbajoDerecha => (false, false, true, true),
+            Ancla::Centro => (false, false, false, false),
+        };
+        [i, a, d, b]
+    }
     pub fn de_palabra(p: &str) -> Option<Ancla> {
         Some(match p {
             "top" => Ancla::Arriba,

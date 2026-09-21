@@ -90,9 +90,13 @@ scene Name {
   facts. For a number with decimals, `text number(expr, 2, " %")`.
 - **A surface does not grow with what it holds, and a shadow needs room.**
   `shadow: 0, 18, 44` reaches 62 px past its shape: leave it in `surface {
-  size: … }` or the shadow is cut into a straight line. The renderer warns once
-  ("a shadow is cut: it needs 30 px below…"), but only while it runs, never in
-  `--comprobar`.
+  size: … }` or the shadow is cut into a straight line. A panel that grows is
+  the usual way to find this out: the renderer warns once, both for the shadow
+  ("a shadow is cut: it needs 30 px below…") and for the drawing itself ("a
+  drawing is cut: it needs 36 px below…"), once it has been cut for three
+  seconds and never against an edge the surface is glued to. Only while it
+  runs, though, never in `--comprobar`: where a card ends is a sum that exists
+  only while the scene is alive.
 - **Zones are what catch the mouse.** A named shape only becomes a zone if a rule
   names it, if it carries `active`, or if it is declared with `zone`.
 - **A press goes to the zone declared LAST**, not to the smallest one. So a
