@@ -3050,14 +3050,21 @@ impl<'a> Obra<'a> {
         // Qué parte del reparto cae sobre `at`: `anchor: right` lo pega por la derecha
         // mida lo que mida, que es lo que quiere lo que va al final de una barra.
         let mut ancla = (0.0f32, 0.0f32);
+        let mut dicho_x = false;
         if let Some(c) = p.get_mut("anchor") {
             while !c.acabo() {
                 match c.id("left, center, right, top o bottom")?.as_str() {
-                    "left" => ancla.0 = 0.0,
-                    "right" => ancla.0 = 1.0,
+                    "left" => (ancla.0, dicho_x) = (0.0, true),
+                    "right" => (ancla.0, dicho_x) = (1.0, true),
                     "top" => ancla.1 = 0.0,
                     "bottom" => ancla.1 = 1.0,
-                    "center" => ancla.0 = 0.5,
+                    // Como en un texto: `center` es el eje que falte por decir.
+                    // Antes era siempre el horizontal, así que `right center`
+                    // —que en un texto es «por la derecha, a media altura»—
+                    // aquí se leía «derecha… no, centrado» y no decía nada: el
+                    // reparto caía encima de lo que tenía al lado.
+                    "center" if dicho_x => ancla.1 = 0.5,
+                    "center" => (ancla.0, dicho_x) = (0.5, true),
                     "middle" => ancla.1 = 0.5,
                     _ => return c.fallo("an anchor is left, center or right, and top, middle or bottom"),
                 }

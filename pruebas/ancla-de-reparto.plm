@@ -1,0 +1,13 @@
+// espera: bien
+language 0.1
+// `right center` vale lo mismo en un reparto que en un texto: por la derecha y
+// a media altura. `middle` sigue valiendo.
+scene Anclas {
+    surface { size: 300, 100 }
+    row uno { at: 280, 30; anchor: right center; gap: 4
+        box { size: 20, 20; color: #9ed6bd }
+        box { size: 20, 20; color: #9ed6bd } }
+    row dos { at: 280, 70; anchor: right middle; gap: 4
+        box { size: 20, 20; color: #e8c9a8 } }
+    text "a la derecha" { at: 280, 50; anchor: right center; size: 11; color: #ffffff }
+}
