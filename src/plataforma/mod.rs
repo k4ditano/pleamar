@@ -15,9 +15,9 @@
 //! la lógica pide por un nombre que es el mismo en todos los sistemas. Lo que un
 //! sistema no tenga, dice que no lo tiene, y la escena decide qué hacer sin ello.
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use crate::escena::{ARender, Superficie};
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use std::sync::mpsc::Sender;
 
 /// Un dato del sistema, con la forma de un JSON: es lo que un servicio le
@@ -182,6 +182,8 @@ pub fn consulta(de: &str, nombre: &str, args: &[Valor]) -> Result<Valor, String>
 pub fn emergente(k: usize, que: Option<([i32; 4], (f32, f32))>) {
     #[cfg(target_os = "linux")]
     wayland::emergente(k, que);
+    #[cfg(target_os = "windows")]
+    windows::emergente(k, que);
     let _ = (k, que);
 }
 
@@ -192,6 +194,8 @@ pub fn emergente(k: usize, que: Option<([i32; 4], (f32, f32))>) {
 pub fn anclar(cual: usize, ancla: crate::escena::Ancla) {
     #[cfg(target_os = "linux")]
     wayland::anclar(cual, ancla);
+    #[cfg(target_os = "windows")]
+    windows::anclar(cual, ancla);
     let _ = (cual, ancla);
 }
 
@@ -204,6 +208,8 @@ pub fn anclar(cual: usize, ancla: crate::escena::Ancla) {
 pub fn pedir_salir() {
     #[cfg(target_os = "linux")]
     wayland::pedir_salir();
+    #[cfg(target_os = "windows")]
+    windows::pedir_salir();
 }
 
 /// Que un proceso que lanzamos no nos sobreviva, ni aunque nos maten a la
@@ -348,9 +354,14 @@ mod wayland;
 #[cfg(target_os = "linux")]
 pub use wayland::atender;
 
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use windows::atender;
+
 /// Sin plataforma todavía: el núcleo compila —es la guarda de que sigue siendo
 /// portable— pero no hay dónde pintar.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn atender(_: Vec<Superficie>, _: u32, _: wgpu::Instance, _: Sender<ARender>) {
     eprintln!("pleamar cannot put windows on this system yet: its src/plataforma/ is missing");
     std::process::exit(1);
