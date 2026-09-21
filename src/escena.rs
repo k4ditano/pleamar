@@ -632,7 +632,9 @@ pub enum Instr {
     /// Un campo donde escribir. Edita un texto vivo; el cursor, la selección y el
     /// eco de cada tecla los lleva el render, sin esperar a la lógica. `zona` es
     /// el nombre de la zona que lo enfoca al pulsarla.
-    Campo { texto: TextoId, zona: &'static str, en: Punto, ancho: Expr, estilo: Estilo, alfa: Expr, marcador: String, seleccion: Color },
+    /// `secreto`: lo escrito se enseña como puntos, uno por letra. El texto de
+    /// verdad sigue siendo el texto vivo; lo que cambia es lo que se pinta.
+    Campo { texto: TextoId, zona: &'static str, en: Punto, ancho: Expr, estilo: Estilo, alfa: Expr, marcador: String, seleccion: Color, secreto: bool },
     /// Una imagen o un icono. Con `tinte`, su forma se pinta de ese color: lo
     /// que quiere un icono simbólico.
     Imagen { imagen: ImagenId, destino: (Expr, Expr, Expr, Expr), alfa: Expr, tinte: Option<Color> },
@@ -1281,6 +1283,11 @@ pub enum ARender {
     Soltado(String, String),
     Salir,
 }
+
+/// Los textos que edita un campo `secret: true`. Lo que lleven no se escribe
+/// en ningún log, ni en el eco de los ensayos: es una contraseña. Es de todo el
+/// proceso porque quien hace el eco —la lógica— no tiene la escena delante.
+pub static SECRETOS: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
 
 #[derive(Clone, Debug)]
 pub enum Evento {

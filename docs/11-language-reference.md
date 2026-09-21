@@ -346,7 +346,29 @@ surface { size: 460, 320;  kind: window;  title: "pleamar · settings" }
 box { from: 0, 0;  size: screen.width, screen.height;  color: coal }
 ```
 
-**`surface`**: `size: width, height` (`full` as the width is the whole monitor) · `kind:` `panel` `window` · `title:` (a window only) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` — or **the name of a fact whose values are anchors** (`fact corner: top_left | top_right = top_right`, `anchor: corner`), and then it moves from edge to edge while it runs, without being recreated · `margin: n` or `top, right, bottom, left` · `level:` `background` `bottom` `top` `overlay` · `reserve: n` (the room windows leave it) · `screens: all` or `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, and with `while expr` it only asks for it while that is true.
+**`surface`**: `size: width, height` (`full` as the width is the whole monitor) · `kind:` `panel` `window` `lock` · `title:` (a window only) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` — or **the name of a fact whose values are anchors** (`fact corner: top_left | top_right = top_right`, `anchor: corner`), and then it moves from edge to edge while it runs, without being recreated · `margin: n` or `top, right, bottom, left` · `level:` `background` `bottom` `top` `overlay` · `reserve: n` (the room windows leave it) · `screens: all` or `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, and with `while expr` it only asks for it while that is true.
+
+**A lock screen: `kind: lock`.** It is not a surface painted over everything: it is `ext-session-lock`, where the *compositor* guarantees that nothing else is seen or touched while it lasts, on every monitor. So it does not exist until its `open:` is true —which is mandatory: without it the session would be locked from the start— and it goes when `open:` stops being true. Its `size:` is the box that gets centred on each monitor; what lies around it shows too, so paint the backdrop large. `lock.held`, a name that always exists, is 1 once the compositor **confirms** the session is locked: a drawn padlock certifies nothing, this does. The password goes in an `input` with `secret: true` and is checked by the logic, `sys.ask("auth.check", text.password)`.
+
+```plm
+language 0.1
+scene Lock {
+    surface { size: 200, 50; anchor: top }
+    fact locked = false
+    surface screen_lock {
+        kind: lock
+        size: 600, 300
+        open: locked
+        box { from: -4000, -4000; size: 8600, 8300; color: #101214 }
+        text "locked" { at: 300, 140; anchor: center; size: 26; color: #ffffff; opacity: lock.held }
+    }
+    box lock_it { at: 100, 25; size: 180, 36; corner: 12; color: #9ed6bd; cursor: pointer }
+    on press lock_it { locked = true }
+    on still locked for 5s while locked { locked = false }
+}
+```
+
+If whoever locks dies with the lock held, the session **stays locked**. That is on purpose —the opposite would mean killing the locker unlocks— and it is the reason to try a lock screen inside a nested compositor first, never against a live session.
 
 ## 7. Expressions
 
@@ -383,7 +405,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` |
 | `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `show` |
 | `figure` | `at` (where the piece's centre goes) · `size: w, h` or `scale:` (without either, one unit of the svg is one pixel) · `pivot: x, y` (in the svg's units, from its centre: the point it **turns** around, which does not move it) · `rotate` · `color` (instead of the one in the file) · `opacity` · `blend` · `stroke` · `show` |
-| `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `show` |
+| `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `secret` · `show` |
 | `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` |
 | `popup` | `at` (inside the surface) · `size` · `open:` a fact |
 | `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `size: w, h` · `view: w, h` · `step` · `content` · `wrap: n` |
@@ -759,7 +781,7 @@ properties.body: color gradient rim light shadow border opacity show
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow
 properties.image: at size opacity tint show grow
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow
-properties.input: at width size weight color opacity family placeholder selection show
+properties.input: at width size weight color opacity family placeholder selection secret show
 properties.group: pivot rotate scale move opacity size show grow
 properties.popup: at size open
 properties.children: move

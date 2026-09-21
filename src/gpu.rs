@@ -67,6 +67,17 @@ pub struct CampoPuesto {
     /// Dónde empieza el texto, y cuánto se ha corrido para que el cursor se vea.
     pub x0: f32,
     pub corrido: f32,
+    /// Si lo pintado son puntos: entonces un byte de la maqueta no es un byte
+    /// del texto, y hay que pasar de uno a otro por el número de letra.
+    pub secreto: bool,
+}
+
+/// El punto con el que se pinta cada letra de un campo secreto. Mide tres
+/// bytes, sea cual sea la letra que tapa: de ahí salen las dos cuentas.
+pub const PUNTO: &str = "•";
+/// El byte del texto de verdad que corresponde a uno de la maqueta de puntos.
+pub fn byte_de_verdad(valor: &str, en_puntos: usize) -> usize {
+    valor.char_indices().nth(en_puntos / PUNTO.len()).map_or(valor.len(), |(i, _)| i)
 }
 
 /// Un grupo con opacidad, mientras se va llenando.
@@ -462,19 +473,26 @@ impl Dibujo {
                     let rgb = tinte.as_ref().map(&color);
                     self.trozo(d, hueco.uv(), a, rgb, afin, &recortes);
                 }
-                Instr::Campo { texto, zona, en, ancho, estilo, alfa, marcador, seleccion } => {
+                Instr::Campo { texto, zona, en, ancho, estilo, alfa, marcador, seleccion, secreto } => {
                     let k = texto.0 as usize;
-                    let valor = textos.get(k).map_or("", String::as_str);
-                    let vacio = valor.is_empty();
+                    let de_verdad = textos.get(k).map_or("", String::as_str);
+                    let vacio = de_verdad.is_empty();
+                    // Secreto, lo que se pinta son puntos: uno por letra.
+                    let puntos = if *secreto { PUNTO.repeat(de_verdad.chars().count()) } else { String::new() };
+                    let valor = if *secreto { puntos.as_str() } else { de_verdad };
                     // Vacío, enseña lo que se espera de él, más tenue.
                     let m = tip.maqueta(sitio, Clave::de(if vacio { marcador } else { valor }, estilo, None));
                     let (x0, y0, w) = (en.0.evaluar(c), en.1.evaluar(c), ancho.evaluar(c));
                     let h = estilo.px * estilo.interlinea;
                     let mio = campo.filter(|v| v.texto == k);
-                    let x_de = |b: usize| if vacio { 0.0 } else { m.as_ref().map_or(0.0, |m| m.x_de(b)) };
+                    // El cursor cuenta bytes del texto de verdad; en puntos, son letras por tres.
+                    let x_de = |b: usize| {
+                        let b = if *secreto { de_verdad[..b.min(de_verdad.len())].chars().count() * PUNTO.len() } else { b };
+                        if vacio { 0.0 } else { m.as_ref().map_or(0.0, |m| m.x_de(b)) }
+                    };
                     // Si el cursor se sale por la derecha, el texto se corre.
                     let corrido = mio.map_or(0.0, |v| (x_de(v.cursor) - w + 6.0).max(0.0));
-                    self.campos.push(CampoPuesto { texto: k, zona, maqueta: if vacio { None } else { m.clone() }, x0, corrido });
+                    self.campos.push(CampoPuesto { texto: k, zona, maqueta: if vacio { None } else { m.clone() }, x0, corrido, secreto: *secreto });
                     let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
                     if a <= 0.001 {
                         continue;

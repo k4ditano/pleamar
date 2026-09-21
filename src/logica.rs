@@ -136,7 +136,16 @@ pub fn hilo(mut guion: Box<dyn Guion>, rx: Receiver<Evento>, tx: Sender<ARender>
                     // vuelca: la salida de un `run` pueden ser ochocientos
                     // kilobytes de rutas de tu casa, y eso ni se lee ni se
                     // quiere en un log.
-                    let dicho = format!("{e:?}");
+                    // Y lo que se teclea en un campo secreto no se cuenta: ni el
+                    // texto, ni las teclas mientras haya alguno en la escena.
+                    let secretos = crate::escena::SECRETOS.lock().unwrap();
+                    let dicho = match &e {
+                        Evento::Texto(n, _) if secretos.contains(n) => format!("Texto({n:?}, «…»)"),
+                        Evento::Envia(n, _) if secretos.contains(n) => format!("Envia({n:?}, «…»)"),
+                        Evento::Tecla(..) if !secretos.is_empty() => "Tecla(«…»)".to_owned(),
+                        _ => format!("{e:?}"),
+                    };
+                    drop(secretos);
                     match dicho.char_indices().nth(160) {
                         Some((k, _)) => println!("logic  · {}… ({} caracteres)", &dicho[..k], dicho.chars().count()),
                         None => println!("logic  · {dicho}"),

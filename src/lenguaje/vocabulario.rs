@@ -29,7 +29,7 @@ pub const PROPIEDADES: &[(&str, &[&str])] = &[
     ("text", &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show", "grow"]),
     ("image", &["at", "size", "opacity", "tint", "show", "grow"]),
     ("figure", &["at", "size", "scale", "rotate", "pivot", "color", "opacity", "blend", "stroke", "show", "grow"]),
-    ("input", &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "show"]),
+    ("input", &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "secret", "show"]),
     ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show", "grow"]),
     ("popup", &["at", "size", "open"]),
     ("children", &["move"]),

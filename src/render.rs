@@ -569,6 +569,7 @@ pub fn hilo(
                         if let Some(puesto) = dibujo.campos.iter().find(|c| c.zona == id) {
                             let local = escena.zonas[k].a_local(Ctx { props: &props, hechos: &hechos }, p.0, p.1);
                             let b = puesto.maqueta.as_ref().map_or(0, |m| m.byte_en(local.0 - puesto.x0 + puesto.corrido));
+                            let b = if puesto.secreto { crate::gpu::byte_de_verdad(&textos[puesto.texto], b) } else { b };
                             let b = b.min(textos[puesto.texto].len());
                             edicion = Some(Edicion { campo: puesto.texto, cursor: b, ancla: b });
                             ultima_tecla = ahora;

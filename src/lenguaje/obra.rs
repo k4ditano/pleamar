@@ -2081,6 +2081,26 @@ impl<'a> Obra<'a> {
             Some(c) => c.cadena()?,
             None => String::new(),
         };
+        // `secret: true`: una contraseña. Se escribe igual y se pinta en puntos.
+        let secreto = match p.get_mut("secret") {
+            Some(c) => {
+                let v = c.id("true or false")?;
+                c.nada_mas()?;
+                match v.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => return c.fallo("`secret` is true or false"),
+                }
+            }
+            None => false,
+        };
+        if secreto {
+            let mut s = crate::escena::SECRETOS.lock().unwrap();
+            let suyo = fijo(&nombre);
+            if !s.contains(&suyo) {
+                s.push(suyo);
+            }
+        }
         let seleccion = match p.get_mut("selection") {
             Some(c) => self.color(c)?,
             None => color(0.25, 0.42, 0.62),
@@ -2104,7 +2124,7 @@ impl<'a> Obra<'a> {
             activa: None, visible: None, bajo: self.bajo.clone(), forzada: true, cursor: Cursor::Texto,
         });
         self.ultimo_tam = Some((ancho.clone(), alto.into()));
-        self.e.pintar(Instr::Campo { texto, zona: fijo(&zona), en, ancho, estilo, alfa, marcador, seleccion });
+        self.e.pintar(Instr::Campo { texto, zona: fijo(&zona), en, ancho, estilo, alfa, marcador, seleccion, secreto });
         Ok(())
     }
 

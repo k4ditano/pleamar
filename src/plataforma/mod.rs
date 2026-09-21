@@ -166,6 +166,11 @@ pub fn consulta(de: &str, nombre: &str, args: &[Valor]) -> Result<Valor, String>
         }
         ("env", _) => return Err("`env` takes the name of one variable: sys.ask(\"env\", \"HOME\")".into()),
         ("clipboard", []) => return Ok(portapapeles_leer().map_or(Valor::Nulo, Valor::Texto)),
+        // ¿Es esa la contraseña de quien tiene la sesión? Lo que necesita una
+        // pantalla de bloqueo para poder abrirse. Tarda a propósito cuando no lo es.
+        #[cfg(target_os = "linux")]
+        ("auth.check", [Valor::Texto(clave)]) => return autenticar::comprobar(clave).map(Valor::Si),
+        ("auth.check", _) => return Err("`auth.check` takes the password, and answers true or false: sys.ask(\"auth.check\", text.password)".into()),
         _ => {}
     }
     #[cfg(target_os = "linux")]
@@ -345,6 +350,8 @@ pub trait Ventana: Send {
     fn teclado(&self, t: crate::escena::Teclado);
 }
 
+#[cfg(target_os = "linux")]
+mod autenticar;
 #[cfg(target_os = "linux")]
 mod avisos;
 #[cfg(target_os = "linux")]
