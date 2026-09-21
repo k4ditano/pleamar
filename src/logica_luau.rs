@@ -797,7 +797,19 @@ impl GuionLuau {
         sys.set("ask", lua.create_function(move |lua, (nombre, args): (String, mlua::Variadic<Value>)| {
             permiso_de_servicio(&c, &nombre, false)?;
             let args: Vec<Valor> = args.iter().map(|v| de_lua(v, 0)).collect();
-            a_lua(lua, &crate::plataforma::consulta(&mio, &nombre, &args).map_err(mlua::Error::runtime)?)
+            // Lo que se tarde en preguntarle al sistema NO cuenta contra la
+            // paciencia del manejador: la paciencia está para cortar un bucle
+            // que se ha desbocado, y esperar no es desbocarse. PAM cobra dos
+            // segundos por una contraseña mala, que es justo el plazo: el
+            // manejador se cortaba a media faena, sin llegar a decir «no era
+            // esa», y la pantalla de bloqueo se quedaba «comprobando» para
+            // siempre. Es lo mismo que ya hacía `busy`.
+            let t0 = Instant::now();
+            let dicho = crate::plataforma::consulta(&mio, &nombre, &args);
+            if let Some(l) = &mut c.lock().unwrap().limite {
+                *l += t0.elapsed();
+            }
+            a_lua(lua, &dicho.map_err(mlua::Error::runtime)?)
         })?)?;
         g.set("sys", sys)?;
 
