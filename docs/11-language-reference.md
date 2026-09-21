@@ -205,7 +205,7 @@ A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `po
 | `image fox = icon "firefox", 48, 48` | An image, and the largest logical size it is painted at. `icon "name"`, `file "path"`, or `from some_text`: whichever that text says (an icon name, or a path if it starts with `/`) |
 | `figure hat = file "hat.svg"` | An svg **as geometry**: its layers become paths, each one named by the `id` of its group in the file. The path is relative to the file that writes it, so a library takes its pieces with it |
 | `measure label` | Creates `label.width` and `label.height`, filled by the text that carries `measure: label` |
-| `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | A name for an expression, or for a color |
+| `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | A name for an expression, or for a color. A small one is substituted where it is named; **a big one is computed once a frame** and what is named is that, so a chain of them —each naming the one before— costs a sum and not a product |
 | `spring bouncy = 170, 12` | A spring of one's own: stiffness, damping. From the house: `lively`, `calm`, `quick`, `slow`, `gentle`, `pose`. Inline: `~spring(170, 12)`, or **`~620ms`**: the spring that gets there in that long without overshooting |
 | `zone box whole { at: …; size: …; active: expr }` | A zone that is not painted |
 

@@ -75,6 +75,11 @@ scene Name {
 
 - **Ranges are exclusive at the end.** `repeat i in 1..10` gives 1 to 9. A model
   with `max 16` has records 0 to 15, and its logic fills `1..16` in Lua terms.
+- **A `let` is a name for an expression, not a variable**: a small one is
+  written out wherever it is named. A big one is computed once a frame instead,
+  so chaining them (`let b = a * (1 - t) + 60 * t`) is fine — but keep each link
+  naming the one before it **once**, which is what `a * (1 - t) + k * t` does
+  and `a + (k - a) * t` does not.
 - **`prop` is a spring, not a variable.** Do not set it every frame from the
   logic; declare where it goes (`follow`, a rule, `impulse`) and let it travel.
   **The spring is the property's**: `prop lid = 0 ~150ms` is what `lid: 1` uses,
