@@ -77,6 +77,8 @@ scene Name {
   with `max 16` has records 0 to 15, and its logic fills `1..16` in Lua terms.
 - **`prop` is a spring, not a variable.** Do not set it every frame from the
   logic; declare where it goes (`follow`, a rule, `impulse`) and let it travel.
+  **The spring is the property's**: `prop lid = 0 ~150ms` is what `lid: 1` uses,
+  and a rule only travels differently if it says so (`lid: 1 ~40ms`).
 - **A property belongs to its element.** `corner` is a `box` thing, `radius` an
   `ellipse` thing, `width`/`lines` are `text` things. `--comprobar` lists the
   valid ones when you miss.
@@ -99,6 +101,12 @@ scene Name {
   click inside it. This is the mistake that repeats: in marea-plm it happened
   five times, always the same way, and every time it looked like "the button
   does nothing".
+- **Two rules in the same frame: the one declared LAST sets the value, and a
+  `while` reads the frame BEFORE them.** A pointer that jumps from one row to
+  another gives `leave` on the old one and `enter` on the new one in the same
+  frame, so whatever clears has to be declared **before** whatever sets, or the
+  row just entered is cleared by the row just left. Guarding it (`while thing ==
+  what_it_set`) does not save it: the guard is reading the old value.
 - **A loose `clip` reaches further than it looks**: it clips everything after it
   until the next named `surface`, not until the end of the block it seems to
   belong to. Something written further down comes out clipped to a shape that

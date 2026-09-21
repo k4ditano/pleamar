@@ -577,11 +577,11 @@ The names of a slot are resolved where the string is written, not where it is us
 | `idle for 14s` | nobody touches anything for that long |
 | `event_name` | that event happens: the logic emits it, or another rule, or a gesture, or it comes from outside |
 
-**Any rule accepts `while expr`** at the end of its header: it is looked at at the moment of firing. In `idle` and `every` it also decides whether the wait counts.
+**Any rule accepts `while expr`** at the end of its header: it is looked at at the moment of firing — **at the state the frame began with**, so two rules that fire in the same frame both see the same one, and the one declared last is the one whose value stays. In `idle` and `every` it also decides whether the wait counts.
 
 | Effect | |
 | --- | --- |
-| `prop: value ~spring after 70ms` | that property heads there |
+| `prop: value ~spring after 70ms` | that property heads there. Without `~`, **with its own spring**: the one it was declared with |
 | `fact = expr` | evaluated on firing |
 | `toggle fact` | |
 | `emit event` · `emit event(expr)` | with a payload, which reaches the logic |

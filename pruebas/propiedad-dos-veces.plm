@@ -1,0 +1,5 @@
+// espera: fallo «'size' is said twice here»
+scene Dos {
+    surface { size: 200, 100; anchor: center }
+    box { from: 0, 0; size: 100, 50; size: 20, 20; color: #9ed6bd }
+}

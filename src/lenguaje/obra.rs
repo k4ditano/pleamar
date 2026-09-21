@@ -1005,7 +1005,13 @@ impl<'a> Obra<'a> {
                     let pista = parecido(nombre, v.iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
                     return Err(Fallo::en(*linea, *col, format!("'{nombre}' does not exist here.{pista} Valid ones: {}", validas.join(", "))));
                 }
-                m.insert(nombre.as_str(), Cur::de(valor, *linea, *col));
+                // Dicha dos veces, la segunda se comía a la primera sin decir
+                // nada: en marea-plm eso dejó sin permisos al servicio de audio
+                // —dos líneas de `services:`, una por tema, y la de abajo ganó—
+                // y se pasó un rato buscándolo en el sitio equivocado.
+                if m.insert(nombre.as_str(), Cur::de(valor, *linea, *col)).is_some() {
+                    return Err(Fallo::en(*linea, *col, format!("'{nombre}' is said twice here, and only the last one would count. Put it once, with everything it carries")));
+                }
             }
         }
         Ok(m)
@@ -2520,7 +2526,10 @@ impl<'a> Obra<'a> {
         };
         let mut c = Cur::de(valor, linea, col);
         let a = self.expr(&mut c)?;
-        let muelle = if c.sim("~") { self.muelle(&mut c)? } else { Muelle::VIVO };
+        // Sin `~`, el de la propiedad. Escribir `prop candado = 0 ~150ms` y que
+        // luego `candado: 1` fuera a 250 era desmentir la declaración: el muelle
+        // es de la propiedad, y la regla solo lo cambia si lo dice.
+        let muelle = if c.sim("~") { self.muelle(&mut c)? } else { self.e.muelle_de(prop) };
         let retraso = if c.palabra("after") { c.dur()? } else { Duration::ZERO };
         c.nada_mas()?;
         Ok(Transicion { prop, a, muelle, retraso })

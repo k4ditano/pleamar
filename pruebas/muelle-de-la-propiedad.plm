@@ -1,0 +1,14 @@
+// espera: bien
+language 0.1
+// El muelle es de la propiedad: una regla que la manda a un sitio sin decir
+// con cuál va con el suyo, y solo viaja de otra manera si lo dice.
+scene Suyo {
+    surface { size: 200, 80 }
+    fact go = false
+    prop x = 0 ~620ms
+    on change go while go { x: 100 }
+    on change go while not go { x: 0 ~90ms }
+    box { at: 40 + x, 40; size: 20, 20; corner: 6; color: #9ed6bd }
+    zone box hit { at: 40 + x, 40; size: 20, 20 }
+    on press hit { toggle go }
+}

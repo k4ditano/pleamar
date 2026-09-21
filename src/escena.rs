@@ -1086,6 +1086,12 @@ impl Escena {
         self.props.push((nombre, inicial, muelle));
         PropId(self.props.len() as u16 - 1)
     }
+    /// El muelle con el que se declaró una propiedad. Es el suyo: una regla que
+    /// la manda a un sitio sin decir con qué muelle va con este, que es lo que
+    /// dice `prop x = 0 ~620ms` al escribirse.
+    pub fn muelle_de(&self, p: PropId) -> Muelle {
+        self.props[p.0 as usize].2
+    }
     pub fn pintar(&mut self, i: Instr) {
         self.instrs.push(i);
     }
