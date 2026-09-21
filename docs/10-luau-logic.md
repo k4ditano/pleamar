@@ -32,6 +32,8 @@ cancel(t)
 
 run("date", { "+%H:%M" }, function(out, code) … end)   -- a system command; answers when it finishes
 run("wl-copy", { "--type", "image/png" }, nil, { stdin = path, output = false })   -- how: a file on its input; and not waiting for what it writes
+local id = spawn("wf-recorder", { "-f", file }, function(line) … end, function(_, code) … end)   -- one that does not end: a call per line, and one when it HAS ended
+kill(id, "int")                                       -- asks it to stop (or "term"); kill(id) alone kills it and forgets it
 local id = spawn("pactl", { "subscribe" }, function(line) … end)   -- one that does NOT finish: one call per line
 kill(id)
 

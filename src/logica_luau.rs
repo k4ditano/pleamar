@@ -748,9 +748,12 @@ impl GuionLuau {
         })?)?;
 
         // Una orden que no acaba —`pactl subscribe`, `playerctl --follow`—: una
-        // llamada por cada línea que escriba, y `kill(id)` para pararla.
+        // llamada por cada línea que escriba, y `kill(id)` para pararla. Con una
+        // cuarta función, se la llama cuando el proceso HA ACABADO, con su
+        // código: pedirle a algo que pare y que haya parado no son lo mismo, y
+        // en esa diferencia es donde se pierde una grabación.
         let (c, a_logica) = (self.c.clone(), self.a_logica.clone());
-        g.set("spawn", lua.create_function(move |_, (orden, args, f): (String, Option<Vec<String>>, Function)| {
+        g.set("spawn", lua.create_function(move |_, (orden, args, f, al_acabar): (String, Option<Vec<String>>, Function, Option<Function>)| {
             use std::io::BufRead;
             permiso_de_orden(&c, &orden)?;
             let mut lanzar = std::process::Command::new(&orden);
@@ -768,6 +771,9 @@ impl GuionLuau {
                 c.siguiente += 1;
                 let id = c.siguiente;
                 c.en_marcha.insert(id, (f, hijo.clone()));
+                if let Some(fin) = al_acabar {
+                    c.procesos.insert(id, fin);
+                }
                 id
             };
             let a_logica = a_logica.clone();
@@ -785,10 +791,37 @@ impl GuionLuau {
             Ok(id)
         })?)?;
         let c = self.c.clone();
-        g.set("kill", lua.create_function(move |_, id: u32| {
-            if let Some((_, hijo)) = c.lock().unwrap().en_marcha.remove(&id) {
-                if let Some(mut h) = hijo.lock().unwrap().take() {
-                    let _ = h.kill();
+        // `kill(id)` lo mata y se olvida de él. `kill(id, "int")` —o `"term"`— se
+        // lo PIDE: le manda la señal y lo sigue teniendo en cuenta hasta que se
+        // vaya por su pie. Un grabador al que se mata deja un MP4 sin índice, que
+        // no lo abre nadie; con SIGINT lo escribe y sale.
+        g.set("kill", lua.create_function(move |_, (id, como): (u32, Option<String>)| {
+            let senal = match como.as_deref() {
+                None => None,
+                Some("int") => Some(libc::SIGINT),
+                Some("term") => Some(libc::SIGTERM),
+                Some(otra) => return Err(mlua::Error::runtime(format!("kill(id, \"{otra}\"): it is \"int\" or \"term\" to ask, or nothing to kill"))),
+            };
+            let mut c = c.lock().unwrap();
+            match senal {
+                Some(senal) => {
+                    if let Some((_, hijo)) = c.en_marcha.get(&id) {
+                        if let Some(h) = hijo.lock().unwrap().as_ref() {
+                            #[cfg(unix)]
+                            unsafe {
+                                libc::kill(h.id() as libc::pid_t, senal);
+                            }
+                            let _ = (h, senal);
+                        }
+                    }
+                }
+                None => {
+                    c.procesos.remove(&id);
+                    if let Some((_, hijo)) = c.en_marcha.remove(&id) {
+                        if let Some(mut h) = hijo.lock().unwrap().take() {
+                            let _ = h.kill();
+                        }
+                    }
                 }
             }
             Ok(())
