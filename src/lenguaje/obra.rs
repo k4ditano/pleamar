@@ -1483,11 +1483,12 @@ impl<'a> Obra<'a> {
             None => None,
         };
         // `show:` se multiplica a la opacidad: lo que no está, no se ve.
-        let opacidad = match (p.get_mut("show"), opacidad) {
-            (Some(c), o) => {
-                let v = self.expr(c)?.acotar(0.0, 1.0);
-                Some(o.map_or(v.clone(), |o| o * v))
-            }
+        let esconde = match p.get_mut("show") {
+            Some(c) => Some(self.expr(c)?.acotar(0.0, 1.0)),
+            None => None,
+        };
+        let opacidad = match (&esconde, opacidad) {
+            (Some(v), o) => Some(o.map_or(v.clone(), |o| o * v.clone())),
             (None, o) => o,
         };
         if transforma {
@@ -1497,7 +1498,17 @@ impl<'a> Obra<'a> {
         if let Some(o) = &opacidad {
             self.e.pintar(Instr::Opacidad(Some(o.clone())));
         }
+        let desde = self.candidatas.len();
         self.grupo(cuerpo.iter());
+        // Lo escondido tampoco para el clic de nadie. Dentro de un reparto esto
+        // ya pasaba —un hijo con `show:` apaga sus zonas—, y que un `group` no
+        // lo hiciera era una trampa de las caras: la lista de otra página seguía
+        // cazando el ratón encima de lo que sí se veía, invisible y por delante.
+        if let Some(esta) = &esconde {
+            for c in &mut self.candidatas[desde..] {
+                c.visible = Some(match c.visible.take() { Some(v) => v * esta.clone(), None => esta.clone() });
+            }
+        }
         if tam.is_some() {
             self.ultimo_tam = tam;
         }
