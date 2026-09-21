@@ -42,6 +42,12 @@ enum Cosa {
 struct Estado {
     avisos: Vec<Aviso>,
     siguiente: u32,
+    /// Si los avisos se quedan hasta que alguien los resuelva. Caducar a los
+    /// seis segundos es lo que hace una barra de globos; un CENTRO de avisos
+    /// —un historial, una bandeja— los guarda, y la norma lo deja en manos del
+    /// servidor. Y no es solo cuánto se ven: al cerrarla, la aplicación deja
+    /// de escuchar su acción, así que una caducada ya no se puede abrir.
+    conserva: bool,
 }
 
 struct Central {
@@ -117,6 +123,7 @@ impl Servidor {
             e.siguiente
         };
         let caduca = match expire_timeout {
+            _ if e.conserva => None,
             0 => None,
             // Las críticas no se van solas, digan lo que digan.
             _ if urgencia >= 2 => None,
@@ -211,7 +218,8 @@ pub fn servicio(avisar: Box<dyn Fn(Valor) + Send>) -> bool {
     }).is_ok()
 }
 
-/// `notifications.dismiss(id)`, `notifications.invoke(id, "default")`, `notifications.clear()`.
+/// `notifications.dismiss(id)`, `notifications.invoke(id, "default")`, `notifications.clear()`,
+/// y `notifications.keep(true)`: que no caduquen solas, que es lo que quiere un centro de avisos.
 pub fn orden(que: &str, args: &[Valor]) -> Result<(), String> {
     let central = CENTRAL.get().ok_or("the notifications service is not running: sys.watch(\"notifications\", …) is missing")?;
     match (que, args) {
@@ -223,11 +231,19 @@ pub fn orden(que: &str, args: &[Valor]) -> Result<(), String> {
             central.decir(Cosa::Accion(*id as u32, clave.clone()));
             central.cerrar(*id as u32, 2);
         }
+        ("notifications.keep", [Valor::Si(si)]) => {
+            let mut e = central.estado.lock().unwrap();
+            e.conserva = *si;
+            if *si {
+                // Y las que ya estaban contando, dejan de contar.
+                e.avisos.iter_mut().for_each(|a| a.caduca = None);
+            }
+        }
         ("notifications.clear", []) => {
             let ids: Vec<u32> = central.estado.lock().unwrap().avisos.iter().map(|a| a.id).collect();
             ids.into_iter().for_each(|id| { central.cerrar(id, 2); });
         }
-        _ => return Err(format!("'{que}' is not asked like that: notifications.dismiss(id), notifications.invoke(id, key), notifications.clear()")),
+        _ => return Err(format!("'{que}' is not asked like that: notifications.dismiss(id), notifications.invoke(id, key), notifications.keep(true), notifications.clear()")),
     }
     central.decir(Cosa::Cambio);
     Ok(())
