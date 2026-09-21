@@ -11,11 +11,11 @@ The rule: **everything system-related lives behind `src/plataforma/`**, and the 
 | Piece | Linux | Windows | macOS | How it gets finished |
 | --- | --- | --- | --- | --- |
 | Core (model, renderer, layers, gestures, text, images) | ✅ | compiles | compiles | — |
-| Windows (`plataforma::atender`, `Ventana`) | ✅ Wayland | ⬜ says it does not know how and exits | ⬜ same | **Windows**: borderless layered window + DirectComposition for the alpha, `WM_NCHITTEST` for the input region, AppBar for `reserva`, `WM_DPICHANGED` for the scale. **macOS**: borderless `NSPanel`, floating level, non-opaque `CAMetalLayer`; transparent areas already let the click through; `reserva` does not exist and is ignored |
+| Windows (`plataforma::atender`, `Ventana`) | ✅ Wayland | ✅ Win32 + DX12/DirectComposition | ⬜ says it does not know how and exits | Windows has transparent panels and normal windows, one copy per selected monitor, dynamic input regions, pointer/keyboard/wheel input, DPI changes, anchors and AppBar reservation. Named popups and monitor hot-plug still need their own lifetime work. **macOS**: borderless `NSPanel`, floating level, non-opaque `CAMetalLayer`; transparent areas already let the click through; `reserva` does not exist and is ignored |
 | Icons by name (`plataforma::icono`) | 🟡 naive lookup | ⬜ returns nothing | ⬜ returns nothing | Windows: `IShellItemImageFactory`. macOS: `NSWorkspace.icon(forFile:)`. Both give a bitmap, not a path: `icono` will have to be able to return pixels |
-| System fonts | ✅ `fontdb` + fontconfig | untested | untested | `fontdb` reads each system's font folders; it still has to be seen running |
+| System fonts | ✅ `fontdb` + fontconfig | ✅ `fontdb` (runtime checked) | untested | `fontdb` reads each system's font folders; macOS still has to be seen running |
 | Global pointer | ⬜ Wayland forbids it | easy (`GetCursorPos`) | easy (`NSEvent.mouseLocation`) | On Linux, through the compositor's IPC. It is a fact in the data graph |
-| **Only compilation is checked**: nobody has run pleamar outside Linux | | | | A Windows virtual machine with a GPU, or CI that at least starts up with `wgpu`'s software adapter |
+| Runtime smoke test | ✅ | ✅ Intel Iris Xe, DX12, two monitors, fractional DPI and premultiplied alpha | ⬜ | CI should still compile all three and start Windows with a software adapter when one is available |
 
 ## Pending
 
@@ -143,6 +143,7 @@ The rule: **everything system-related lives behind `src/plataforma/`**, and the 
 
 | Date | What |
 | --- | --- |
+| 2026-09-21 | **Windows compiled but had no platform backend** → native Win32 surfaces backed by DX12/DirectComposition, with premultiplied transparency, per-monitor scale and refresh, normal framed windows, anchored panels, AppBar reservation, dynamic `WM_NCHITTEST` click-through, pointer/wheel/keyboard/focus events and live anchor/DPI changes. Checked on two real monitors (1.0× and 1.25×): both surfaces rendered and animated, using `Bgra8Unorm · PreMultiplied` |
 | 2026-09-20 | **A running pleamar kept the compiler it was born with**, so after changing the language a scene that used something new did not compile for it: it kept the last good one and said so —which is right— but it looked like hot reload was broken. It caught me three times in one afternoon → it watches its own binary and **starts itself again** when it changes, with the same arguments (`exec`, so the pid does not even change). `PLEAMAR_SIN_RELANZAR=1` turns it off, for whoever does not want a package upgrade to restart their bar |
 | 2026-09-20 | A named colour could not be a nested `mix`: `let tint = mix(mix(#a, #b, x), #c, y)` —four categories, which is what a notification tray has— was read as arithmetic, because the sniffing looked one level deep → it looks inward until the first thing that is not another `mix`, and that one decides |
 | 2026-09-20 | **`show:` did nothing on anything but a component copy.** The vocabulary offered it on shapes, `body`, `text`, `image`, `input`, `group` and layouts, `--comprobar` said ok, and it was silently ignored: a scene that drew two texts in the same place, each with its own `show:`, got both on top of each other → it works everywhere it is offered, multiplying the opacity, **and it turns off the element's zone too**: being able to press what cannot be seen is worse than not being able to press it |

@@ -197,7 +197,18 @@ fn main() {
     if std::env::var_os("PLEAMAR_VALIDAR").is_some() {
         flags = wgpu::InstanceFlags::VALIDATION | wgpu::InstanceFlags::DEBUG;
     }
-    let instancia = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, flags, ..wgpu::InstanceDescriptor::new_without_display_handle() });
+    let mut descriptor = wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, flags, ..wgpu::InstanceDescriptor::new_without_display_handle() };
+    // A swap chain tied straight to an HWND is opaque. On Windows, wgpu's
+    // DirectComposition path makes the same surface premultiplied-alpha, which
+    // is what a panel whose empty pixels let the desktop through needs.
+    #[cfg(target_os = "windows")]
+    {
+        // Vulkan's Win32 swap chain is opaque. Selecting DX12 is therefore part
+        // of the transparency contract, not just a backend preference.
+        descriptor.backends = wgpu::Backends::DX12;
+        descriptor.backend_options.dx12.presentation_system = wgpu::Dx12SwapchainKind::DxgiFromVisual;
+    }
+    let instancia = wgpu::Instance::new(descriptor);
     let pide = escena.superficies.clone();
 
     println!(
