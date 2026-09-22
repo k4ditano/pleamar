@@ -46,6 +46,9 @@ pub struct Dibujo {
     corte: Pendiente,
     /// Lo que mide la superficie de la escena, sin la franja de instrumentos.
     suya: (f32, f32),
+    /// Tramos de instrucciones que no se miran este frame: los de una copia de
+    /// pantalla cuya superficie está cerrada.
+    pub saltar: Vec<std::ops::Range<usize>>,
     /// Y a qué bordes está pegada: contra esos no se avisa de nada.
     pegada: [bool; 4],
 }
@@ -334,7 +337,18 @@ impl Dibujo {
         let color = |col: &Color| [col[0].evaluar(c), col[1].evaluar(c), col[2].evaluar(c)];
         let tip_escala = tip.escala();
 
+        let mut saltar = self.saltar.clone();
+        saltar.sort_by_key(|r| r.start);
+        let mut salto = saltar.into_iter().peekable();
         for (sitio, i) in instrs.iter().enumerate() {
+            if let Some(r) = salto.peek() {
+                if r.contains(&sitio) {
+                    continue;
+                }
+                if sitio >= r.end {
+                    salto.next();
+                }
+            }
             let oculto = opacos.iter().any(|g| matches!(g, GrupoOpaco::Oculto));
             // Lo que multiplica a cada elemento: los grupos que no tienen capa propia.
             let veces: f32 = opacos.iter().map(|g| if let GrupoOpaco::Multiplica(a) = g { *a } else { 1.0 }).product();

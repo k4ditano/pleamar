@@ -663,10 +663,25 @@ pub fn hilo(
             }
         }
 
+        // Con `screens: each`, lo de una copia cuya superficie está cerrada no se
+        // mira: ni sus reglas ni su dibujo. Sus comportamientos SÍ: un `follow`
+        // suyo es lo que la abre —`open: nada.aqui > 0.01` persigue un hecho—,
+        // y dormido nunca volvería. Son baratos; lo caro es leer el dibujo.
+        // Sin esto dos copias eran el doble de escena por frame aunque una no
+        // se viera.
+        let dormidos: Vec<&crate::escena::Tramo> = {
+            let c = Ctx { props: &props, hechos: &hechos };
+            escena.tramos.iter().filter(|t| escena.superficies.get(t.superficie).and_then(|s| s.abierta.as_ref()).is_some_and(|e| !e.es_verdad(c))).collect()
+        };
+        let duerme_regla = |k: usize| dormidos.iter().any(|t| t.reglas.contains(&k));
+
         // Reglas: todo esto ocurre aquí, esté la lógica como esté.
         {
             let c = Ctx { props: &props, hechos: &hechos };
-            for (r, e) in escena.reglas.iter().zip(reglas.iter_mut()) {
+            for (k, (r, e)) in escena.reglas.iter().zip(reglas.iter_mut()).enumerate() {
+                if duerme_regla(k) {
+                    continue;
+                }
                 let dispara = match &r.cuando {
                     Disparador::Entra(z) => bordes.contains(&(true, z.0 as usize)),
                     Disparador::Sale(z) => bordes.contains(&(false, z.0 as usize)),
@@ -1161,6 +1176,8 @@ pub fn hilo(
         let a_pintar: &[Instr] = if aviso.is_some() { &con_aviso } else { &escena.instrs };
         dibujo.pegada_a(escena.superficie().ancla.pegada());
         let leyendo = Instant::now();
+        let saltar: Vec<std::ops::Range<usize>> = dormidos.iter().map(|t| t.instrs.clone()).collect();
+        dibujo.saltar = saltar;
         dibujo.componer(a_pintar, c, &textos, &mut letras, vista, tam, op.hud);
         ciclo.componer += leyendo.elapsed().as_secs_f32() * 1000.0;
         let Some(g) = &mut gpu else {

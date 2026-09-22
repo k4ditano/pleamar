@@ -366,6 +366,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
         }
         for (ox, oy, k) in copias {
             let marca = o.reglas.len();
+            let (i0, c0) = (o.e.instrs.len(), o.e.comportamientos.len());
             o.entornos.push(o.ambito_de_pantalla(k));
             let t = Transformacion { mueve: (ox.into(), oy.into()), ..Transformacion::en((0.0.into(), 0.0.into())) };
             o.e.pintar(Instr::Transformar(Some(t.clone())));
@@ -374,16 +375,32 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
             o.bajo.pop();
             o.e.pintar(Instr::Transformar(None));
             o.cerrar_ambito(marca);
+            // Lo de esta copia, para que el render se lo pueda saltar entero si
+            // su superficie está cerrada. Las reglas se leen al final, en el
+            // mismo orden en que se apuntaron: su tramo es el de `o.reglas`.
+            // Las reglas se compilan después, todas seguidas y en este mismo orden:
+            // aquí se apunta cuántas NODOS son suyos y abajo se traduce a compiladas.
+            o.e.tramos.push(crate::escena::Tramo { superficie: k, instrs: i0..o.e.instrs.len(), comportamientos: c0..o.e.comportamientos.len(), reglas: marca..o.reglas.len() });
         }
     }
     o.zonas_de_verdad();
+    // De nodos de regla a reglas compiladas: una puede dar varias, o ninguna.
+    // Se anota, por cada nodo, en qué compilada empieza, y con eso el tramo de
+    // cada copia pasa a ser un tramo de compiladas.
+    let mut empieza_en: Vec<usize> = Vec::new();
     for (n, entornos) in std::mem::take(&mut o.reglas) {
+        empieza_en.push(o.e.reglas.len());
         o.entornos = entornos;
         let mut c = Cur::de(&n.cabeza, n.linea, n.col);
         let palabra = c.id("on o every").unwrap_or_default();
         if let Err(f) = o.regla(n, &palabra, &mut c) {
             o.anotar(f);
         }
+    }
+    empieza_en.push(o.e.reglas.len());
+    for t in &mut o.e.tramos {
+        let (a, b) = (t.reglas.start.min(empieza_en.len() - 1), t.reglas.end.min(empieza_en.len() - 1));
+        t.reglas = empieza_en[a]..empieza_en[b];
     }
     if let Some((fichas, (l, col))) = o.teclado_pendiente.take() {
         o.entornos.clear();
@@ -399,10 +416,27 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
     o.e.hechos[1].1 = h;
     for (cual, fichas, (l, col)) in std::mem::take(&mut o.superficies_pendientes) {
         o.entornos.clear();
-        let mut c = Cur::de(fichas, l, col);
-        match o.expr(&mut c) {
-            Ok(e) => o.e.superficies[cual].abierta = Some(e),
-            Err(f) => o.fallos.push(f),
+        // Con `screens: each`, el `open:` se lee UNA VEZ POR COPIA, en su
+        // ámbito: `open: nada.aqui > 0.01` tiene que valer el `nada.aqui` de
+        // cada una, y todas las copias tienen que tener su condición. Antes se
+        // leía una vez, fuera de todo ámbito, y solo la primera copia la
+        // recibía: las demás nacían siempre abiertas.
+        let copias: Vec<(usize, usize)> = o.e.superficies.iter().enumerate()
+            .filter(|(k, s)| *k == cual || (s.nombre == o.e.superficies[cual].nombre && matches!(s.pantallas, Pantallas::Numero(_))))
+            .map(|(k, s)| (k, s.instancia)).collect();
+        for (k, instancia) in copias {
+            let por_copia = matches!(o.e.superficies[k].pantallas, Pantallas::Numero(_));
+            if por_copia {
+                o.entornos.push(o.ambito_de_pantalla(instancia));
+            }
+            let mut c = Cur::de(fichas, l, col);
+            match o.expr(&mut c) {
+                Ok(e) => o.e.superficies[k].abierta = Some(e),
+                Err(f) => o.fallos.push(f),
+            }
+            if por_copia {
+                o.entornos.pop();
+            }
         }
     }
     // Una de bloqueo sin `open:` estaría echada desde que arranca: se exige.
@@ -898,6 +932,13 @@ impl<'a> Obra<'a> {
                     return Ok(e.clone());
                 }
                 let n = &self.global(n);
+                // Dentro de una copia de pantalla, un `let` que se leyó una vez por
+                // copia está guardado con su marca: ese es el suyo.
+                let con_marca = self.entornos.iter().rev().find(|e| e.sufijo.starts_with("#screen")).map(|e| format!("{n}{}", e.sufijo)).filter(|m| self.lets.contains_key(m));
+                let n = match &con_marca {
+                    Some(m) => m,
+                    None => n,
+                };
                 // Marcado por la copia de pantalla y sin declarar así: es el de la escena.
                 let base = self.sin_marca_de_pantalla(n);
                 let n = match &base {
@@ -1433,7 +1474,12 @@ impl<'a> Obra<'a> {
                     // que nada lo dijera. De un puñado de nodos en adelante se
                     // calcula **una vez por frame** en una propiedad, y lo que
                     // se sustituye es ella: un nodo.
-                    let e = if e.nodos() > 8 {
+                    // Y nunca uno que lea algo POR COPIA de pantalla —`screen.index`,
+                    // `screen.width`…—: vale distinto en cada copia, y una
+                    // propiedad calculada una vez sería la de la primera para
+                    // todas. Se queda sustituido, que es lo que lo hace de cada una.
+                    let por_copia = self.entornos.is_empty() && e.lee(|p| self.e.hechos.get(p.0 as usize).is_some_and(|(n, _)| n.starts_with("screen.")));
+                    let e = if e.nodos() > 8 && !por_copia {
                         self.copias += 1;
                         let p = self.e.prop_con(fijo(&format!("·{nombre}{}", self.copias)), 0.0, Muelle::VIVO);
                         self.e.comportamientos.push(Comportamiento::Es { prop: p, a: e });
@@ -1442,9 +1488,26 @@ impl<'a> Obra<'a> {
                         e
                     };
                     match self.entornos.last_mut() {
-                        Some(env) => env.exprs.insert(nombre, e),
-                        None => self.lets.insert(nombre, e),
+                        Some(env) => env.exprs.insert(nombre.clone(), e.clone()),
+                        None => self.lets.insert(nombre.clone(), e.clone()),
                     };
+                    // Un `let` suelto que lee algo POR COPIA de pantalla vale distinto
+                    // en cada copia, y se ha leído una vez con los nombres de la
+                    // primera. Se vuelve a leer una vez por copia, en su ámbito, y se
+                    // guarda con su marca (`cruza#screen1`): la copia lo encuentra por
+                    // su alias, y la escena suelta sigue viendo el de la primera.
+                    if por_copia && self.entornos.is_empty() {
+                        let copias: Vec<usize> = self.e.superficies.iter().filter(|s| s.nombre.is_empty() && matches!(s.pantallas, Pantallas::Numero(_))).map(|s| s.instancia).collect();
+                        for k in copias {
+                            self.entornos.push(self.ambito_de_pantalla(k));
+                            let mut c2 = Cur::de(&n.cabeza[3..], n.linea, n.col);
+                            let suyo = self.expr(&mut c2);
+                            self.entornos.pop();
+                            if let Ok(suyo) = suyo {
+                                self.lets.insert(format!("{nombre}#screen{k}"), suyo);
+                            }
+                        }
+                    }
                 }
                 "zone" => {
                     // Una forma que no se pinta: solo es sensible.

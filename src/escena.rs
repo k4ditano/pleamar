@@ -260,6 +260,16 @@ impl Expr {
     /// Cuántos nodos tiene. Un `let` se sustituye donde se usa, así que esto es
     /// lo que cuesta cada vez que se nombra, y lo que decide si vale la pena
     /// calcularlo una sola vez.
+    /// Si algún hecho de los que lee cumple la condición.
+    pub fn lee(&self, f: impl Fn(HechoId) -> bool + Copy) -> bool {
+        use Expr::*;
+        match self {
+            K(_) | P(_) | Vel(_) => false,
+            H(h) => f(*h),
+            Abs(a) | Suelo(a) | Seno(a) | Coseno(a) | Techo(a) | No(a) | Suave(_, _, a) => a.lee(f),
+            Suma(a, b) | Resta(a, b) | Por(a, b) | Entre(a, b) | Min(a, b) | Max(a, b) | Mayor(a, b) | Y(a, b) | O(a, b) => a.lee(f) || b.lee(f),
+        }
+    }
     pub fn nodos(&self) -> usize {
         use Expr::*;
         match self {
@@ -991,6 +1001,20 @@ pub struct Escena {
     pub plugins: Vec<Plugin>,
     /// Los servicios que la escena pide por su nombre, y qué campos quiere de cada uno.
     pub servicios: Vec<Servicio>,
+    /// Con `screens: each`, qué tramo de instrucciones, comportamientos y reglas
+    /// es de cada copia (por el índice de su superficie). Una copia cuya
+    /// superficie está cerrada no tiene nada que enseñar ni nada que mover:
+    /// el render se salta lo suyo entero. Sin esto, dos copias eran el doble
+    /// de escena por frame aunque una no se viera.
+    pub tramos: Vec<Tramo>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Tramo {
+    pub superficie: usize,
+    pub instrs: std::ops::Range<usize>,
+    pub comportamientos: std::ops::Range<usize>,
+    pub reglas: std::ops::Range<usize>,
 }
 
 /// Una biblioteca con lógica propia. Su frontera —hechos, textos, modelos, sucesos—
