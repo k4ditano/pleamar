@@ -274,7 +274,12 @@ pub fn hilo(
                     }
                     // Con `screens: each`, cada copia sabe de qué monitor es: su nombre y
                     // lo que mide. Es lo que le deja enseñar lo suyo y no lo de la otra.
-                    if let Some(suya) = escena.superficies.get(n.vista.superficie) {
+                    // Solo las copias de la principal: una superficie con nombre —la
+                    // esquina de grabar, el cerrojo— también tiene instancia 0, y al
+                    // llegar después PISABA `screen.0.name` con su monitor. Con la
+                    // esquina en DP-3, las dos copias decían «DP-3» y la lógica no
+                    // sabía cuál era cuál.
+                    if let Some(suya) = escena.superficies.get(n.vista.superficie).filter(|s| s.nombre.is_empty()) {
                         let k = suya.instancia;
                         if let Some(i) = escena.textos.iter().position(|t| t.0 == format!("screen.{k}.name")) {
                             textos.resize(escena.textos.len().max(textos.len()), String::new());
