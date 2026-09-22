@@ -1253,6 +1253,13 @@ pub fn hilo(
             let ahora_mismo = Instant::now();
             if g.con_buzon() {
                 let mhz = laminas.iter().find(|l| l.marca_el_ritmo).map_or(60_000, |l| l.mhz.max(1));
+                // Con `rate:`, el paso lo decide la escena y no el monitor: una barra
+                // que respira no necesita 165 frames por segundo, y pintarlos es lo
+                // que cuesta. Nunca más deprisa que la pantalla, que no serviría.
+                let mhz = match escena.superficie().ritmo {
+                    0 => mhz,
+                    r => mhz.min(r as i32 * 1000),
+                };
                 let periodo = Duration::from_secs_f64(1000.0 / mhz as f64);
                 if proximo_frame > ahora_mismo {
                     std::thread::sleep(proximo_frame - ahora_mismo);
@@ -1357,7 +1364,10 @@ pub fn hilo(
             // El periodo APRENDIDO no vale aquí: una escena que siempre va
             // tarde le enseña que la pantalla da 28 ms y entonces nunca llega
             // tarde. Se compara con el refresco de verdad del monitor.
-            let de_verdad = laminas.iter().find(|l| l.marca_el_ritmo).map_or(16.7, |l| 1_000_000.0 / l.mhz.max(1) as f32);
+            let mut de_verdad = laminas.iter().find(|l| l.marca_el_ritmo).map_or(16.7, |l| 1_000_000.0 / l.mhz.max(1) as f32);
+            if escena.superficie().ritmo > 0 {
+                de_verdad = de_verdad.max(1000.0 / escena.superficie().ritmo as f32);
+            }
             ciclo.vigilar(de_verdad);
         }
         if bloqueada {

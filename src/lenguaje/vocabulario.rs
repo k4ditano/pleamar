@@ -17,7 +17,7 @@ pub const DE_BIBLIOTECA: &[&str] = &["let", "spring", "component", "permissions"
 
 /// Qué propiedades acepta cada elemento. `shape` son las comunes a todas las formas.
 pub const PROPIEDADES: &[(&str, &[&str])] = &[
-    ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title"]),
+    ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title", "rate"]),
     ("permissions", &["run", "services"]),
     ("shape", &["rotate", "stroke", "color", "opacity", "blend", "active", "show", "cursor", "grow"]),
     ("ellipse", &["at", "radius", "scale"]),

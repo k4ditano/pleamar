@@ -137,6 +137,11 @@ pub struct Superficie {
     pub cerrojo: bool,
     /// Cuánto sitio le reserva el compositor: las ventanas no lo pisan.
     pub reserva: i32,
+    /// Cuántos frames por segundo como MUCHO, decidido por quien escribe la
+    /// escena y no por el monitor que toque. 0 es «los del monitor». Una barra
+    /// que respira no necesita 165 frames por segundo, y pintarlos es lo que
+    /// cuesta: con esto lo que consume es lo mismo en cualquier pantalla.
+    pub ritmo: u32,
     pub pantallas: Pantallas,
     pub teclado: Teclado,
     /// El teclado solo se pide mientras se cumpla `Escena::teclado_mientras`.
@@ -158,7 +163,7 @@ pub enum Teclado {
 impl Default for Superficie {
     fn default() -> Self {
         // Neutra: todo el ancho, arriba, en todos los monitores. Lo que pida la escena manda.
-        Superficie { nombre: String::new(), instancia: 0, origen: (0.0, 0.0), abierta: None, ventana: None, cerrojo: false, ancho: 0, alto: 40, ancla: Ancla::Arriba, ancla_de: None, margen: [0; 4], nivel: Nivel::Encima, reserva: 0, pantallas: Pantallas::Todas, teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
+        Superficie { nombre: String::new(), instancia: 0, origen: (0.0, 0.0), abierta: None, ventana: None, cerrojo: false, ancho: 0, alto: 40, ancla: Ancla::Arriba, ancla_de: None, margen: [0; 4], nivel: Nivel::Encima, reserva: 0, ritmo: 0, pantallas: Pantallas::Todas, teclado: Teclado::Nunca, teclado_mientras: false, derecho_cierra: true }
     }
 }
 

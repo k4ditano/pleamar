@@ -2469,6 +2469,15 @@ impl<'a> Obra<'a> {
         if let Some(c) = p.get_mut("reserve") {
             s.reserva = c.num()? as i32;
         }
+        // `rate: 60`: como mucho, tantos frames por segundo, en cualquier monitor.
+        if let Some(c) = p.get_mut("rate") {
+            let r = c.num()?;
+            c.nada_mas()?;
+            if !(1.0..=480.0).contains(&r) {
+                return Err(Fallo::en(n.linea, n.col, "`rate` is how many frames a second at most, from 1 to 480; without it, the monitor's"));
+            }
+            s.ritmo = r as u32;
+        }
         if let Some(c) = p.get_mut("screens") {
             s.pantallas = if c.palabra("all") {
                 Pantallas::Todas
