@@ -327,7 +327,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
     // Dos hechos que siempre existen: lo que mide la superficie de verdad. El
     // render los pone cuando el compositor la configura.
     // …y lo que una regla puede leer del ratón mientras se dispara.
-    for n in ["screen.width", "screen.height", "pointer.x", "pointer.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "lock.held"] {
+    for n in ["screen.width", "screen.height", "screen.index", "pointer.x", "pointer.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "lock.held"] {
         let h = o.e.hecho(n, 0.0);
         o.hechos.insert(n.into(), h);
     }
@@ -2549,6 +2549,14 @@ impl<'a> Obra<'a> {
                     let h = self.e.hecho(fijo(&entero), 0.0);
                     self.hechos.insert(entero, h);
                 }
+                // Y su número, como hecho: así un `let` suelto —que se lee una
+                // vez, no una por copia— puede decir `if(screen.index == 0, …)`
+                // y valer distinto en cada una, que es lo que necesita una
+                // bolita que cruza de un monitor al otro sin envolver tres mil
+                // líneas en un grupo.
+                let entero = format!("screen.{k}.index");
+                let h = self.e.hecho(fijo(&entero), k as f32);
+                self.hechos.insert(entero, h);
             }
             if !self.hechos.contains_key("screens.count") {
                 let h = self.e.hecho("screens.count", 0.0);
@@ -2563,9 +2571,8 @@ impl<'a> Obra<'a> {
         let mut env = Entorno { sufijo: format!("#screen{k}"), ..Default::default() };
         // `$screen` en un nombre es su número, como `$i` en un `repeat`.
         env.exprs.insert("screen".to_owned(), Expr::K(k as f32));
-        env.exprs.insert("screen.index".to_owned(), Expr::K(k as f32));
-        // Y `screen.name`, `screen.width`, `screen.height` son los de SU monitor.
-        for parte in ["name", "width", "height"] {
+        // Y `screen.name`, `screen.width`, `screen.height`, `screen.index` son los de SU monitor.
+        for parte in ["name", "width", "height", "index"] {
             env.alias.insert(format!("screen.{parte}"), format!("screen.{k}.{parte}"));
         }
         env.con_partes.insert("screen".to_owned());

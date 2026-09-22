@@ -187,7 +187,7 @@ A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `po
 
 **Every name is global**, except inside a component or inside one turn of a `repeat` or a `for`: there, what is declared belongs to that copy (two copies of `Note` each have their own `lit` and their own `hit` zone), and the inner things are looked up first —parameters, the component's `let`— and then the outer ones. A `let` of the scene with the name of an imported one treads on it: that is how a tone is changed. Two components with the same name do not coexist.
 
-**Names that always exist**, read like facts: `screen.width`, `screen.height` (what the real surface measures), and during a rule, the mouse's: `pointer.x`, `pointer.y` (on the surface), `local.x`, `local.y` (inside the zone), `drag.dx`, `drag.dy` (since the press), `wheel` (notches; positive is upwards). And the `demo` event, which `--demo` fires.
+**Names that always exist**, read like facts: `screen.width`, `screen.height` (what the real surface measures), `screen.index` (which monitor copy this is, with `screens: each`; 0 otherwise), and during a rule, the mouse's: `pointer.x`, `pointer.y` (on the surface), `local.x`, `local.y` (inside the zone), `drag.dx`, `drag.dy` (since the press), `wheel` (notches; positive is upwards). And the `demo` event, which `--demo` fires.
 
 ## 6. Declarations
 
@@ -806,7 +806,7 @@ services.battery: present percent charging
 services.brightness: present level
 services.network: online kind name strength
 services.media: playing title artist album player
-services.window: title class
+services.window: title class monitor
 parameter_types: number bool color text record event image gesture spring
 springs: lively calm quick slow gentle pose
 units: px % deg ms s

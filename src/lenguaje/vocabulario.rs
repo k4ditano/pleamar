@@ -115,7 +115,7 @@ pub const SERVICIOS: &[(&str, &[&str])] = &[
     ("brightness", &["present", "level"]),
     ("network", &["online", "kind", "name", "strength"]),
     ("media", &["playing", "title", "artist", "album", "player"]),
-    ("window", &["title", "class"]),
+    ("window", &["title", "class", "monitor"]),
 ];
 
 /// Los pasos de un camino: por dónde pasa. `curve … via …` es una Bézier cuadrática.

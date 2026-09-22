@@ -64,8 +64,12 @@ fn escritorios() -> Valor {
 fn ventana() -> Valor {
     let v = json("j/activewindow").unwrap_or_default();
     let texto = |k: &str| Valor::Texto(v[k].as_str().unwrap_or("").to_owned());
-    // Y en qué monitor está. Hyprland da el número; el nombre se busca aparte.
-    let monitor = v["monitor"].as_i64().and_then(|k| json("j/monitors").and_then(|ms| ms.as_array()?.iter().find(|m| m["id"].as_i64() == Some(k)).and_then(|m| m["name"].as_str().map(str::to_owned)))).unwrap_or_default();
+    // Y en qué monitor está el FOCO. No el de la ventana activa: un monitor
+    // sin ventanas también puede tener el foco, y es justo entonces cuando una
+    // escena que te sigue tiene que ir allí. `j/monitors` lo dice siempre.
+    let monitor = json("j/monitors")
+        .and_then(|ms| ms.as_array()?.iter().find(|m| m["focused"].as_bool() == Some(true)).and_then(|m| m["name"].as_str().map(str::to_owned)))
+        .unwrap_or_default();
     Valor::Mapa(vec![("title".into(), texto("title")), ("class".into(), texto("class")), ("monitor".into(), Valor::Texto(monitor))])
 }
 
