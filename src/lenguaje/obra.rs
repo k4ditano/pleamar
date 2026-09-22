@@ -474,7 +474,8 @@ fn vuelta_de(e: &Entrada) -> u8 {
     match n.cabeza.first().map(|f| &f.f) {
         Some(F::Id(p)) => match p.as_str() {
             "surface" | "permissions" | "model" | "service" | "spring" | "prop" | "pose" | "fact" | "event" | "measure" | "component" => 0,
-            "text" | "image" if es_asignacion => 0,
+            // Una imagen o una figura se leen una vez: son de la escena, no de cada copia.
+            "text" | "image" | "figure" if es_asignacion => 0,
             "let" | "layer" => 1,
             _ => 2,
         },
@@ -509,6 +510,18 @@ impl<'a> Obra<'a> {
     /// Cómo se llama de verdad un nombre visto desde aquí dentro: lo que declaró
     /// esta copia de un componente lleva su sufijo. Vale para el nombre entero o
     /// para su principio: `label.width` es de la medida `label`.
+    /// Un nombre marcado con la copia de pantalla (`gotea#screen0`) que nadie
+    /// declaró así: es de la escena, compartido por todas las copias. Pasa con
+    /// los `let` y las `figure` sueltos, que se leen una vez —no una por
+    /// monitor— y una copia los busca con su marca.
+    fn sin_marca_de_pantalla(&self, n: &str) -> Option<String> {
+        let k = n.find("#screen")?;
+        let resto = &n[k + 7..];
+        let digitos = resto.find(|c: char| !c.is_ascii_digit()).unwrap_or(resto.len());
+        // La marca puede ir al final (`gotea#screen0`) o en medio (`gorro#screen0.ala`).
+        Some(format!("{}{}", &n[..k], &resto[digitos..]))
+    }
+
     fn global(&self, n: &str) -> String {
         // Dónde se ha nombrado esto: es lo que el editor enseña en «dónde se usa».
         if !self.sin_vigilar.get() {
@@ -593,8 +606,14 @@ impl<'a> Obra<'a> {
             let clase = if self.clase_actual.is_empty() { "name".to_owned() } else { self.clase_actual.clone() };
             self.declarados.push(Simbolo { local: interpolado.clone(), clase, linea, col });
         }
+        // Dentro de una copia de pantalla, un nombre que la escena YA tiene —el
+        // texto `consulta`, que su `input` vuelve a declarar como zona— sigue
+        // siendo el de la escena: si la copia lo aliasase a `consulta#screen0`,
+        // todo lo que venga después en ella buscaría un texto que no existe.
+        let de_la_escena = self.entornos.last().is_some_and(|e| e.sufijo.starts_with("#screen"))
+            && (self.textos.contains_key(&interpolado) || self.hechos.contains_key(&interpolado) || self.props.contains_key(&interpolado) || self.lets.contains_key(&interpolado));
         match self.entornos.last_mut() {
-            Some(e) if !e.sufijo.is_empty() && !local.contains('$') => {
+            Some(e) if !e.sufijo.is_empty() && !local.contains('$') && !de_la_escena => {
                 let g = format!("{interpolado}{}", e.sufijo);
                 e.alias.insert(interpolado, g.clone());
                 g
@@ -879,6 +898,12 @@ impl<'a> Obra<'a> {
                     return Ok(e.clone());
                 }
                 let n = &self.global(n);
+                // Marcado por la copia de pantalla y sin declarar así: es el de la escena.
+                let base = self.sin_marca_de_pantalla(n);
+                let n = match &base {
+                    Some(base) if !self.lets.contains_key(n.as_str()) && !self.props.contains_key(n.as_str()) && !self.hechos.contains_key(n.as_str()) && (self.lets.contains_key(base) || self.props.contains_key(base) || self.hechos.contains_key(base)) => base,
+                    _ => n,
+                };
                 if let Some(e) = self.lets.get(n) {
                     Ok(e.clone())
                 } else if let Some(p) = self.props.get(n) {
@@ -2147,6 +2172,11 @@ impl<'a> Obra<'a> {
         let mut c = Cur::de(&n.cabeza[1..], n.linea, n.col);
         let escrito = c.id("the name of a figure")?;
         let nombre = self.global(&escrito);
+        // Las figuras son de la escena: una copia de pantalla las busca con su marca.
+        let nombre = match self.sin_marca_de_pantalla(&nombre) {
+            Some(base) if !self.figuras.contains_key(&nombre) => base,
+            _ => nombre,
+        };
         let (pieza, capa) = if self.figuras.contains_key(&nombre) {
             (nombre.clone(), None)
         } else if let Some((f, hoja)) = nombre.rsplit_once('.') {
@@ -2661,6 +2691,12 @@ impl<'a> Obra<'a> {
         }
         c.nada_mas()?;
         if let Some(ya) = self.componentes.get(&nombre) {
+            // Con `screens: each` el dibujo se lee una vez por monitor, y un
+            // componente escrito dentro de él vuelve a pasar por aquí: es el
+            // mismo, en la misma línea, y no dos. Dos de verdad son de líneas distintas.
+            if ya.nodo.linea == n.linea && ya.nodo.col == n.col {
+                return Ok(());
+            }
             return Err(Fallo::en(n.linea, n.col, format!("there is already a component '{nombre}', at {}. Two with the same name cannot live together: change one", super::sitio(self.ficheros, ya.nodo.linea))));
         }
         if n.cuerpo.is_none() {

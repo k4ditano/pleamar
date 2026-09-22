@@ -29,6 +29,11 @@ struct Ventana {
     titulo: String,
     clase: String,
     activa: bool,
+    /// En qué monitor está: lo cuenta el protocolo con `output_enter` y
+    /// `output_leave`. Es lo que necesita una escena con una copia por monitor
+    /// para saber en cuál estás: una superficie solo recibe el puntero cuando
+    /// está encima de ella, así que «dónde está el foco» hay que preguntarlo.
+    monitor: String,
 }
 
 #[derive(Default, Clone)]
@@ -63,7 +68,7 @@ impl Estado {
     fn contar_ventana(&mut self) {
         let Some(avisar) = &self.avisar_ventana else { return };
         let activa = self.ventanas.values().find(|v| v.activa).cloned().unwrap_or_default();
-        let v = Valor::Mapa(vec![("title".into(), Valor::Texto(activa.titulo)), ("class".into(), Valor::Texto(activa.clase))]);
+        let v = Valor::Mapa(vec![("title".into(), Valor::Texto(activa.titulo)), ("class".into(), Valor::Texto(activa.clase)), ("monitor".into(), Valor::Texto(activa.monitor))]);
         let huella = format!("{v:?}");
         if huella != self.ultimo_ventana {
             self.ultimo_ventana = huella;
@@ -161,6 +166,17 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for Estado {
                 // La lista de estados viene como bytes; `activated` es el 2.
                 let activada = state.chunks_exact(4).any(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]) == ventana::State::Activated as u32);
                 e.ventanas.entry(k).or_default().activa = activada;
+            }
+            ventana::Event::OutputEnter { output } => {
+                let nombre = e.nombre_de_salida.get(&clave(&output)).cloned().unwrap_or_default();
+                e.ventanas.entry(k).or_default().monitor = nombre;
+            }
+            ventana::Event::OutputLeave { output } => {
+                let nombre = e.nombre_de_salida.get(&clave(&output)).cloned().unwrap_or_default();
+                let v = e.ventanas.entry(k).or_default();
+                if v.monitor == nombre {
+                    v.monitor.clear();
+                }
             }
             ventana::Event::Closed => {
                 e.ventanas.remove(&k);

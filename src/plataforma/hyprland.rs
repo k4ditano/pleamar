@@ -64,7 +64,9 @@ fn escritorios() -> Valor {
 fn ventana() -> Valor {
     let v = json("j/activewindow").unwrap_or_default();
     let texto = |k: &str| Valor::Texto(v[k].as_str().unwrap_or("").to_owned());
-    Valor::Mapa(vec![("title".into(), texto("title")), ("class".into(), texto("class"))])
+    // Y en qué monitor está. Hyprland da el número; el nombre se busca aparte.
+    let monitor = v["monitor"].as_i64().and_then(|k| json("j/monitors").and_then(|ms| ms.as_array()?.iter().find(|m| m["id"].as_i64() == Some(k)).and_then(|m| m["name"].as_str().map(str::to_owned)))).unwrap_or_default();
+    Valor::Mapa(vec![("title".into(), texto("title")), ("class".into(), texto("class")), ("monitor".into(), Valor::Texto(monitor))])
 }
 
 /// Escucha lo que cuenta Hyprland y, cuando algo de lo que interesa cambia,
@@ -72,7 +74,7 @@ fn ventana() -> Valor {
 pub fn servicio(nombre: &str, avisar: Box<dyn Fn(Valor) + Send>) -> bool {
     let (leer, interesan): (fn() -> Valor, &'static [&'static str]) = match nombre {
         "workspaces" => (escritorios, &["workspace", "createworkspace", "destroyworkspace", "openwindow", "closewindow", "movewindow", "focusedmon", "moveworkspace"]),
-        "window" => (ventana, &["activewindow", "closewindow", "windowtitle"]),
+        "window" => (ventana, &["activewindow", "closewindow", "windowtitle", "focusedmon"]),
         _ => return false,
     };
     let Some(ruta) = socket(".socket2.sock") else { return false };
