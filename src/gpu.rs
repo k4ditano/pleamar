@@ -53,6 +53,79 @@ pub struct Dibujo {
     pegada: [bool; 4],
 }
 
+/// La lista de dibujo del frame anterior, para saber **dónde** ha cambiado algo.
+/// Cada superficie paga por presentar un frame (~0,5 ms, ver P11) aunque no
+/// cambie nada suyo: con una copia por monitor, la bolita respirando en uno
+/// repintaba también el otro. Comparar bit a bit es mucho más barato que eso.
+#[derive(Default)]
+pub struct Anterior {
+    formas: Vec<f32>,
+    puntos: Vec<f32>,
+    paradas: Vec<f32>,
+    elementos: Vec<f32>,
+    apartes: Vec<(Range<u32>, usize)>,
+    hay: bool,
+}
+
+impl Anterior {
+    /// Las cajas —en el plano de la escena— de lo que ha cambiado desde el
+    /// frame anterior: la de antes y la de ahora, porque lo que se va de una
+    /// superficie también la cambia. `false` si no se puede saber elemento a
+    /// elemento —algo ha aparecido o desaparecido y los índices ya no casan—:
+    /// entonces ha cambiado todo.
+    pub fn cambios(&mut self, d: &Dibujo, cajas: &mut Vec<[f32; 4]>) -> bool {
+        cajas.clear();
+        fn bits(v: &[f32]) -> &[u32] {
+            bytemuck::cast_slice(v)
+        }
+        let misma_forma = self.hay
+            && self.formas.len() == d.formas.len()
+            && self.puntos.len() == d.puntos.len()
+            && self.paradas.len() == d.paradas.len()
+            && self.elementos.len() == d.elementos.len()
+            && self.apartes == d.apartes;
+        let sabido = misma_forma && {
+            let puntos_iguales = bits(&self.puntos) == bits(&d.puntos);
+            let paradas_iguales = bits(&self.paradas) == bits(&d.paradas);
+            // Una forma cambia si cambian sus números, o si es un camino y han cambiado los puntos.
+            let forma_cambiada: Vec<bool> = self
+                .formas
+                .chunks_exact(POR_FORMA)
+                .zip(d.formas.chunks_exact(POR_FORMA))
+                .map(|(a, b)| bits(a) != bits(b) || (!puntos_iguales && b[0] as u32 == 4))
+                .collect();
+            let cambiada = |k: f32| k >= 0.0 && forma_cambiada.get(k as usize).copied().unwrap_or(true);
+            for (a, b) in self.elementos.chunks_exact(POR_ELEMENTO).zip(d.elementos.chunks_exact(POR_ELEMENTO)) {
+                let mut cambio = bits(a) != bits(b);
+                // Un cuerpo es sus formas; un recorte también es una forma.
+                if !cambio && b[0] == 0.0 {
+                    cambio = (b[1] as usize..b[1] as usize + b[2] as usize).any(|k| cambiada(k as f32)) || (!paradas_iguales && b[15] > 0.5);
+                }
+                if !cambio {
+                    cambio = b[32..36].iter().any(|&r| cambiada(r));
+                }
+                if cambio {
+                    cajas.push([a[4], a[5], a[6], a[7]]);
+                    cajas.push([b[4], b[5], b[6], b[7]]);
+                }
+            }
+            true
+        };
+        self.formas.clone_from(&d.formas);
+        self.puntos.clone_from(&d.puntos);
+        self.paradas.clone_from(&d.paradas);
+        self.elementos.clone_from(&d.elementos);
+        self.apartes.clone_from(&d.apartes);
+        self.hay = true;
+        sabido
+    }
+
+    /// Que el frame que viene no se compare con este: lo que había en el atlas ya no vale.
+    pub fn olvidar(&mut self) {
+        self.hay = false;
+    }
+}
+
 /// El campo donde se está escribiendo, visto desde quien pinta.
 #[derive(Clone, Copy)]
 pub struct VistaDeCampo {
@@ -692,6 +765,10 @@ pub struct Lamina {
     grupo_uniformes: wgpu::BindGroup,
     vistas_de_capa: Vec<wgpu::TextureView>,
     grupo_capas: wgpu::BindGroup,
+    /// Qué trozo del plano y a qué escala tiene pintado, si lo que enseña está
+    /// al día. Con otro sitio, otra escala o sin nada (recién hecha,
+    /// reconfigurada), se pinta aunque la escena no haya cambiado.
+    pub pintada: Option<([f32; 4], f32)>,
 }
 
 pub struct Gpu {
@@ -874,7 +951,7 @@ impl Gpu {
         let (vistas_de_capa, grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, 1, 1);
         let mut l = Lamina {
             id: n.id, nombre: n.nombre, mhz: n.mhz, escala: n.escala, marca_el_ritmo: true, abierta: true, vaciada: false, vista: n.vista,
-            superficie: n.superficie, ventana: n.ventana, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas,
+            superficie: n.superficie, ventana: n.ventana, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas, pintada: None,
         };
         self.configurar(&mut l, tam);
         l
@@ -885,6 +962,7 @@ impl Gpu {
         let tam = l.vista.tam;
         let px = ((tam.0 * l.escala).round().max(1.0) as u32, (tam.1 * l.escala).round().max(1.0) as u32);
         self.superficie_configurar(l, px);
+        l.pintada = None;
         if px != l.px {
             l.px = px;
             (l.vistas_de_capa, l.grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, px.0, px.1);
@@ -966,7 +1044,7 @@ impl Gpu {
         // Con `PLEAMAR_CRONO=1`, cuánto se va en pedir el hueco de la pantalla y
         // cuánto en mandarle el trabajo a la tarjeta. Es la cuenta que dice si un
         // frame cuesta por lo que dibuja o por esperar al monitor.
-        let crono = std::env::var_os("PLEAMAR_CRONO").is_some();
+        let crono = crono();
         let t0 = crono.then(std::time::Instant::now);
         let marco = match l.superficie.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -1037,6 +1115,12 @@ impl Gpu {
         }
         true
     }
+}
+
+/// `PLEAMAR_CRONO=1`: leído una vez, no en cada frame de cada lámina.
+pub fn crono() -> bool {
+    static CRONO: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CRONO.get_or_init(|| std::env::var_os("PLEAMAR_CRONO").is_some())
 }
 
 thread_local! {

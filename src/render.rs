@@ -96,6 +96,9 @@ pub fn hilo(
     let mut gpu: Option<Gpu> = None;
     let mut laminas: Vec<Lamina> = Vec::new();
     let mut dibujo = Dibujo::default();
+    let mut anterior = crate::gpu::Anterior::default();
+    let mut cambiado: Vec<[f32; 4]> = Vec::new();
+    let mut cuenta_de_laminas = (0u32, 0u32, 0u32);
     let mut atlas_por_rehacer = false;
     let mut primer_frame = true;
     let mut textos: Vec<String> = Vec::new();
@@ -1190,8 +1193,15 @@ pub fn hilo(
             std::thread::sleep(Duration::from_millis(8));
             continue;
         };
+        // Lo subido al atlas puede ocupar el hueco de algo que ya no está: con
+        // atlas nuevo, cualquier letra puede haber cambiado sin cambiar su `uv`.
+        if !letras.por_subir.is_empty() {
+            anterior.olvidar();
+        }
         g.subir_atlas(&mut letras.por_subir);
         g.subir(&dibujo);
+        // Qué ha cambiado, y dónde. La gráfica de frames cambia siempre.
+        let todo_cambiado = !anterior.cambios(&dibujo, &mut cambiado) || op.hud;
 
         // Por dónde entra el ratón: las zonas activas, y nada más. Lo demás de
         // la superficie es transparente también para el clic.
@@ -1297,18 +1307,52 @@ pub fn hilo(
                 }
             }
         }
+        let antes_de_pintar = ultimo_presentado;
         ultimo_presentado = Instant::now();
         let mut pintadas = 0;
+        let mut al_dia = 0;
+        let mut espero_a_la_pantalla = false;
         for l in &mut laminas {
-            // Cerrada se pinta una vez, vacía, y ya.
+            // Cerrada se pinta una vez, vacía, y ya: eso sí, siempre, cambie algo o no.
             if !l.abierta && std::mem::replace(&mut l.vaciada, true) {
                 continue;
             }
-            pintadas += g.pintar(l, &dibujo, &uniformes) as u32;
+            // Lo que enseña ya está al día: nada de lo que ha cambiado cae en su trozo del plano.
+            let donde = (l.vista.caja(), l.escala);
+            let v = donde.0;
+            let le_toca = !l.abierta || todo_cambiado || l.pintada != Some(donde) || cambiado.iter().any(|b| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]);
+            if !le_toca {
+                al_dia += 1;
+                continue;
+            }
+            let pintada = g.pintar(l, &dibujo, &uniformes);
+            // Vaciada no enseña lo de la escena: al reabrirse, se pinta sí o sí.
+            l.pintada = (pintada && l.abierta).then_some(donde);
+            espero_a_la_pantalla |= pintada && l.marca_el_ritmo && !g.con_buzon();
+            pintadas += pintada as u32;
         }
-        if pintadas == 0 {
+        // Con vsync de cola, el paso lo daba la espera de la que marca el ritmo.
+        // Si esta vez no le tocaba pintar, el paso lo da el reloj: un periodo entero.
+        if pintadas + al_dia > 0 && !espero_a_la_pantalla && !g.con_buzon() && !op.sin_vsync && !op.ingenuo {
+            let periodo = Duration::from_secs_f32(periodo_ms / 1000.0);
+            let desde = antes_de_pintar.elapsed();
+            if desde < periodo {
+                std::thread::sleep(periodo - desde);
+            }
+            ultimo_presentado = Instant::now();
+        }
+        if crate::gpu::crono() && pintadas + al_dia > 0 {
+            cuenta_de_laminas.0 += pintadas;
+            cuenta_de_laminas.1 += al_dia;
+            cuenta_de_laminas.2 += 1;
+            if cuenta_de_laminas.2 >= 300 {
+                println!("crono  · superficies por frame: {:.2} pintadas, {:.2} al día", cuenta_de_laminas.0 as f32 / 300.0, cuenta_de_laminas.1 as f32 / 300.0);
+                cuenta_de_laminas = (0, 0, 0);
+            }
+        }
+        if pintadas + al_dia == 0 {
             std::thread::sleep(Duration::from_millis(8));
-        } else if primer_frame {
+        } else if pintadas > 0 && primer_frame {
             primer_frame = false;
             println!("render · first frame {} ms after starting", op.arranque.elapsed().as_millis());
         }
