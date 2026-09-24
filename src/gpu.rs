@@ -10,6 +10,8 @@ const POR_FORMA: usize = 20;
 const POR_ELEMENTO: usize = 52;
 /// Cuántos grupos con opacidad pueden estar fundiéndose en el mismo frame.
 pub const MAX_CAPAS: usize = 4;
+/// Cuántos frames pintados sin grupos con opacidad hasta devolver sus capas.
+const CAPAS_OCIOSAS: u32 = 300;
 /// La franja que se le añade a la superficie para la gráfica de frames.
 pub const ALTO_INSTRUMENTOS: f32 = 84.0;
 /// Con cuánto sitio se empieza. Si una escena pide más, los almacenes crecen al doble.
@@ -249,6 +251,14 @@ impl Pendiente {
 impl Dibujo {
     pub fn n_elementos(&self) -> usize {
         self.elementos.len() / POR_ELEMENTO
+    }
+
+    /// Si algún elemento de ese tramo cae en ese trozo del plano.
+    fn toca_la_vista(&self, tramo: &Range<u32>, v: [f32; 4]) -> bool {
+        tramo.clone().any(|k| {
+            let b = &self.elementos[k as usize * POR_ELEMENTO + 4..k as usize * POR_ELEMENTO + 8];
+            b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]
+        })
     }
 
     fn forma(&mut self, p: crate::formas::Plana, fusion: f32) -> usize {
@@ -765,6 +775,10 @@ pub struct Lamina {
     grupo_uniformes: wgpu::BindGroup,
     vistas_de_capa: Vec<wgpu::TextureView>,
     grupo_capas: wgpu::BindGroup,
+    /// Cuántas capas tiene del tamaño de la superficie (0: solo la de mentira),
+    /// y cuántos frames lleva sin usar ninguna.
+    capas: u32,
+    capas_ociosas: u32,
     /// Qué trozo del plano y a qué escala tiene pintado, si lo que enseña está
     /// al día. Con otro sitio, otra escala o sin nada (recién hecha,
     /// reconfigurada), se pinta aunque la escena no haya cambiado.
@@ -805,7 +819,15 @@ impl Gpu {
         }))
         .expect("there is no graphics adapter");
         let (dispositivo, cola) =
-            pollster::block_on(adaptador.request_device(&wgpu::DeviceDescriptor::default())).expect("there is no device");
+            pollster::block_on(adaptador.request_device(&wgpu::DeviceDescriptor {
+                // Por defecto, wgpu reserva bloques de 128 MB en la tarjeta y 64 en
+                // la memoria del sistema, pensando en un juego. Una escena entera
+                // cabe en menos de 20: con bloques de 8, lo reservado es lo usado.
+                // Pedir memoria es raro aquí —crecer un almacén, una capa—, así que
+                // lo que se pierde en rapidez no se nota.
+                memory_hints: wgpu::MemoryHints::MemoryUsage,
+                ..Default::default()
+            })).expect("there is no device");
         let caps = primera.get_capabilities(&adaptador);
         // Sin sRGB: el compositor mezcla los bytes tal cual, y el alfa
         // premultiplicado solo cuadra si nadie los recodifica por el camino.
@@ -875,7 +897,7 @@ impl Gpu {
         let vista_del_atlas = atlas.create_view(&Default::default());
         let grupo_escena = Self::grupo_de_escena(&dispositivo, &tuberia, &bufer_formas, &bufer_elementos, &bufer_puntos, &bufer_paradas, &vista_del_atlas, &muestreo);
         let tope = dispositivo.limits().max_storage_buffer_binding_size as usize / 4;
-        let grupo_sin_capas = Self::capas_de(&dispositivo, &tuberia, formato, 1, 1).1;
+        let grupo_sin_capas = Self::capas_de(&dispositivo, &tuberia, formato, 1, 1, 1).1;
         Gpu { adaptador, dispositivo, cola, formato, alfa, sin_bloqueo, tuberia, bufer_formas, bufer_elementos, bufer_puntos, bufer_paradas, atlas, vista_del_atlas, muestreo, caben: (FORMAS_DE_SALIDA * POR_FORMA, ELEMENTOS_DE_SALIDA * POR_ELEMENTO, PUNTOS_DE_SALIDA, PARADAS_DE_SALIDA), tope, avisado_del_tope: false, grupo_escena, grupo_sin_capas }
     }
 
@@ -906,10 +928,11 @@ impl Gpu {
 
     /// Las capas donde se pintan aparte los grupos con opacidad. Mientras se
     /// pinta EN una no se puede leer de ellas, y ese rato se enlaza una de mentira.
-    fn capas_de(dispositivo: &wgpu::Device, tuberia: &wgpu::RenderPipeline, formato: wgpu::TextureFormat, ancho: u32, alto: u32) -> (Vec<wgpu::TextureView>, wgpu::BindGroup) {
+    /// Cada capa mide lo que la superficie entera: se piden solo las que hacen falta.
+    fn capas_de(dispositivo: &wgpu::Device, tuberia: &wgpu::RenderPipeline, formato: wgpu::TextureFormat, ancho: u32, alto: u32, n: u32) -> (Vec<wgpu::TextureView>, wgpu::BindGroup) {
         let t = dispositivo.create_texture(&wgpu::TextureDescriptor {
             label: Some("capas"),
-            size: wgpu::Extent3d { width: ancho.max(1), height: alto.max(1), depth_or_array_layers: MAX_CAPAS as u32 },
+            size: wgpu::Extent3d { width: ancho.max(1), height: alto.max(1), depth_or_array_layers: n.max(1) },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -918,7 +941,7 @@ impl Gpu {
             view_formats: &[],
         });
         let todas = t.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
-        let cada = (0..MAX_CAPAS as u32)
+        let cada = (0..n.max(1))
             .map(|k| {
                 t.create_view(&wgpu::TextureViewDescriptor {
                     dimension: Some(wgpu::TextureViewDimension::D2),
@@ -948,10 +971,10 @@ impl Gpu {
             layout: &self.tuberia.get_bind_group_layout(2),
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniformes.as_entire_binding() }],
         });
-        let (vistas_de_capa, grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, 1, 1);
+        let (vistas_de_capa, grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, 1, 1, 1);
         let mut l = Lamina {
             id: n.id, nombre: n.nombre, mhz: n.mhz, escala: n.escala, marca_el_ritmo: true, abierta: true, vaciada: false, vista: n.vista,
-            superficie: n.superficie, ventana: n.ventana, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas, pintada: None,
+            superficie: n.superficie, ventana: n.ventana, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas, capas: 0, capas_ociosas: 0, pintada: None,
         };
         self.configurar(&mut l, tam);
         l
@@ -965,7 +988,32 @@ impl Gpu {
         l.pintada = None;
         if px != l.px {
             l.px = px;
-            (l.vistas_de_capa, l.grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, px.0, px.1);
+            // Las que hubiera ya no miden lo que la superficie: se piden de nuevo cuando hagan falta.
+            self.soltar_capas(l);
+        }
+    }
+
+    fn soltar_capas(&self, l: &mut Lamina) {
+        (l.vistas_de_capa, l.grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, 1, 1, 1);
+        l.capas = 0;
+        l.capas_ociosas = 0;
+    }
+
+    /// Que haya al menos `n` capas del tamaño de la superficie; y si lleva un
+    /// rato sin necesitar ninguna, devolverlas. Un grupo que se funde al abrir
+    /// un panel las pide un momento, no para siempre.
+    fn capas_para(&self, l: &mut Lamina, n: u32) {
+        if n > l.capas {
+            (l.vistas_de_capa, l.grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, l.px.0, l.px.1, n);
+            l.capas = n;
+        }
+        if n == 0 && l.capas > 0 {
+            l.capas_ociosas += 1;
+            if l.capas_ociosas > CAPAS_OCIOSAS {
+                self.soltar_capas(l);
+            }
+        } else {
+            l.capas_ociosas = 0;
         }
     }
 
@@ -1036,6 +1084,13 @@ impl Gpu {
 
     /// Pinta el dibujo en una lámina. Devuelve si llegó a presentarse.
     pub fn pintar(&self, l: &mut Lamina, d: &Dibujo, uniformes: &[f32]) -> bool {
+        // Solo las capas de los grupos que caen en esta superficie: el que se
+        // funde en otro monitor no le cuesta memoria ni un pase a esta. Lo que
+        // funde la capa ocupa la unión de lo de dentro, así que si eso no toca
+        // la vista, la capa no se lee.
+        let v = l.vista.caja();
+        let hacen_falta = d.apartes.iter().filter(|(t, _)| d.toca_la_vista(t, v)).map(|(_, c)| *c as u32 + 1).max().unwrap_or(0);
+        self.capas_para(l, hacen_falta);
         let mut u = uniformes.to_vec();
         u[3] = l.escala;
         let (v, o) = (l.vista.tam, l.vista.origen);
@@ -1084,7 +1139,9 @@ impl Gpu {
         let mut principal: Vec<Range<u32>> = Vec::new();
         let mut desde = 0u32;
         for (tramo, capa) in &d.apartes {
-            pase_a(&mut codificador, &l.vistas_de_capa[*capa], &self.grupo_sin_capas, std::slice::from_ref(tramo));
+            if l.capas as usize > *capa && d.toca_la_vista(tramo, l.vista.caja()) {
+                pase_a(&mut codificador, &l.vistas_de_capa[*capa], &self.grupo_sin_capas, std::slice::from_ref(tramo));
+            }
             principal.push(desde..tramo.start);
             desde = tramo.end;
         }
@@ -1108,6 +1165,10 @@ impl Gpu {
                 v.4 += 1.0;
                 if v.4 >= 300.0 {
                     println!("crono  · hueco {:.2} · apuntar {:.2} · cerrar {:.2} · mandar+presentar {:.2} ms", v.0 / v.4, v.1 / v.4, v.2 / v.4, v.3 / v.4);
+                    // Lo que ocupa en la tarjeta: lo pedido de verdad, no los bloques que reserva el asignador.
+                    if let Some(r) = self.dispositivo.generate_allocator_report() {
+                        println!("crono  · memoria de la tarjeta: {:.1} MB en uso ({:.1} MB reservados)", r.total_allocated_bytes as f64 / 1e6, r.total_reserved_bytes as f64 / 1e6);
+                    }
                     v = (0.0, 0.0, 0.0, 0.0, 0.0);
                 }
                 c.set(v);
