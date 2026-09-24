@@ -1139,13 +1139,20 @@ impl Gpu {
         let mut principal: Vec<Range<u32>> = Vec::new();
         let mut desde = 0u32;
         for (tramo, capa) in &d.apartes {
-            if l.capas as usize > *capa && d.toca_la_vista(tramo, l.vista.caja()) {
+            if l.abierta && l.capas as usize > *capa && d.toca_la_vista(tramo, l.vista.caja()) {
                 pase_a(&mut codificador, &l.vistas_de_capa[*capa], &self.grupo_sin_capas, std::slice::from_ref(tramo));
             }
             principal.push(desde..tramo.start);
             desde = tramo.end;
         }
         principal.push(desde..d.n_elementos() as u32);
+        // Cerrada, se vacía: transparente y nada encima. No vale pintar lo que
+        // haya en el dibujo, porque se cierra en mitad de un frame —el dibujo se
+        // compuso cuando aún estaba abierta— y ese frame se quedaba para
+        // siempre: en Marea, un trozo de bolita a punto de salir por el borde.
+        if !l.abierta {
+            principal.clear();
+        }
         // …y luego todo lo demás, con las capas ya hechas entre medias.
         pase_a(&mut codificador, &vista, &l.grupo_capas, &principal);
         let t1 = crono.then(std::time::Instant::now);
