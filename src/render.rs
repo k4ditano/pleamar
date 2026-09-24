@@ -211,6 +211,7 @@ pub fn hilo(
                     }
                 }
                 ARender::Escena(nueva) => {
+                    crate::plataforma::devolver_memoria();
                     // Las propiedades que se llaman igual sobreviven al cambio.
                     let viejas: Vec<(&str, Animada)> =
                         escena.props.iter().map(|p| p.0).zip(props.iter().copied()).collect();

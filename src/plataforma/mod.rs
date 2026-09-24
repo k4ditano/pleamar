@@ -350,6 +350,24 @@ pub fn portapapeles_escribir(texto: &str) {
     });
 }
 
+/// Devolver al sistema la memoria que se usó para leer una escena. Compilar
+/// Marea (3 700 instrucciones) pasa por 128 MB un momento para quedarse en 9,
+/// y glibc se guarda lo liberado en las arenas de cada hilo: el proceso
+/// seguía en 355 MB de RSS para siempre. Se hace un rato después, cuando el
+/// taller y la lógica ya han hecho lo suyo con ella. En otros sistemas, o con
+/// otra libc, no hace falta o no se sabe pedir: no hace nada.
+pub fn devolver_memoria() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    std::thread::Builder::new()
+        .name("devolver".into())
+        .spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            // Solo devuelve páginas libres: no toca nada vivo.
+            unsafe { libc::malloc_trim(0) };
+        })
+        .ok();
+}
+
 /// Lo que el render le pide a una ventana del sistema.
 pub trait Ventana: Send {
     /// Por dónde entra el ratón: solo por estas cajas, en píxeles lógicos.
