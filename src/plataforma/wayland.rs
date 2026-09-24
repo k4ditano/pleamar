@@ -61,6 +61,9 @@ struct VentanaWayland {
     serie: Arc<AtomicU32>,
     /// Una emergente no tiene: el teclado es cosa de su madre.
     capa: Option<LayerSurface>,
+    /// Para pedir el aviso de «ya puedes pintar otro»: con qué cola, y de quién es.
+    qh: QueueHandle<Estado>,
+    id: u32,
 }
 
 fn interactividad(t: Teclado) -> KeyboardInteractivity {
@@ -87,6 +90,12 @@ impl Ventana for VentanaWayland {
         if let Some(capa) = &self.capa {
             capa.set_keyboard_interactivity(interactividad(t));
         }
+    }
+
+    /// Se aplica con el `commit` que hace el propio driver al presentar, como
+    /// la región de entrada: el aviso llega cuando el compositor quiera otro.
+    fn pedir_frame(&self) {
+        self.wl.frame(&self.qh, FrameDe(self.id));
     }
 
     fn cursor(&self, c: Cursor) {
@@ -169,12 +178,25 @@ struct Estado {
     dispositivo_de_datos: Option<DataDevice>,
     salir: bool,
     a_render: Sender<ARender>,
+    qh: QueueHandle<Estado>,
 }
 
 /// Los objetos de Wayland que no nos cuentan nada.
 struct Mudo;
 impl<I: Proxy> Dispatch2<I, Estado> for Mudo {
     fn event(&self, _: &mut Estado, _: &I, _: I::Event, _: &Connection, _: &QueueHandle<Estado>) {}
+}
+
+/// El compositor ya ha enseñado el último frame de esa lámina y quiere otro.
+/// A lo que no se ve —un monitor apagado— no se le avisa: ese silencio es lo
+/// que deja al render dejar de pintar para nadie.
+struct FrameDe(u32);
+impl Dispatch2<wayland_client::protocol::wl_callback::WlCallback, Estado> for FrameDe {
+    fn event(&self, e: &mut Estado, _: &wayland_client::protocol::wl_callback::WlCallback, ev: wayland_client::protocol::wl_callback::Event, _: &Connection, _: &QueueHandle<Estado>) {
+        if let wayland_client::protocol::wl_callback::Event::Done { .. } = ev {
+            let _ = e.a_render.send(ARender::Frame(self.0));
+        }
+    }
 }
 
 /// La escala que el compositor prefiere para una superficie, en 120avos.
@@ -585,7 +607,7 @@ impl PopupHandler for Estado {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: a.id,
                 superficie,
-                ventana: Box::new(VentanaWayland { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursores: e.cursores.clone(), serie: e.serie.clone(), capa: None }),
+                ventana: Box::new(VentanaWayland { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursores: e.cursores.clone(), serie: e.serie.clone(), capa: None, qh: e.qh.clone(), id: a.id }),
                 escala: a.madre.escala,
                 tam: a.tam,
                 mhz: a.madre.mhz,
@@ -620,6 +642,7 @@ pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance
         escalas: globales.bind(&qh, 1..=1, Mudo).ok(),
         compositor,
         conexion: conexion.clone(),
+        qh: qh.clone(),
         instancia,
         pide,
         alto_extra,
@@ -731,7 +754,7 @@ impl Estado {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: p.id,
                 superficie,
-                ventana: Box::new(VentanaWayland { wl: p.concha.wl().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: p.concha.capa().cloned() }),
+                ventana: Box::new(VentanaWayland { wl: p.concha.wl().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: p.concha.capa().cloned(), qh: self.qh.clone(), id: p.id }),
                 escala: p.escala,
                 tam,
                 mhz,
@@ -786,7 +809,7 @@ impl smithay_client_toolkit::session_lock::SessionLockHandler for Estado {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: cara.id,
                 superficie: pinta,
-                ventana: Box::new(VentanaWayland { wl: cara.superficie.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: None }),
+                ventana: Box::new(VentanaWayland { wl: cara.superficie.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: None, qh: self.qh.clone(), id: cara.id }),
                 escala: 1.0,
                 tam,
                 mhz: cara.mhz,

@@ -1326,6 +1326,8 @@ pub enum ARender {
     /// de enchufar.
     Lamina(Box<crate::gpu::NuevaLamina>),
     LaminaFuera(u32),
+    /// El compositor ya enseñó el último frame de esa lámina y quiere otro.
+    Frame(u32),
     /// El taller ha terminado algo: una maqueta, unas imágenes.
     Taller(Box<crate::texto::Paquete>),
     Escala(u32, f32),

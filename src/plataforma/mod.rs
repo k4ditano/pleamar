@@ -359,6 +359,9 @@ pub trait Ventana: Send {
     /// Pedir o soltar el teclado con la escena en marcha: un lanzador lo quiere
     /// entero mientras está abierto, y nada cuando no.
     fn teclado(&self, t: crate::escena::Teclado);
+    /// Que el sistema avise (`ARender::Frame`) cuando quiera el frame siguiente
+    /// al que se va a presentar. Donde no se sepa, no avisa, y el paso lo da el reloj.
+    fn pedir_frame(&self) {}
 }
 
 #[cfg(target_os = "linux")]

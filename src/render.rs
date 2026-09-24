@@ -99,6 +99,13 @@ pub fn hilo(
     let mut anterior = crate::gpu::Anterior::default();
     let mut cambiado: Vec<[f32; 4]> = Vec::new();
     let mut cuenta_de_laminas = (0u32, 0u32, 0u32);
+    // El aviso del compositor de que quiere otro frame: de qué lámina se
+    // espera, si ya ha llegado, cuántas veces seguidas no llegó, y lo que llegó
+    // del resto del mundo mientras se esperaba (se atiende en la vuelta siguiente).
+    let mut frame_pedido: Option<u32> = None;
+    let mut frame_listo = false;
+    let mut sin_aviso = 0u32;
+    let mut guardados: Vec<ARender> = Vec::new();
     let mut atlas_por_rehacer = false;
     let mut primer_frame = true;
     let mut textos: Vec<String> = Vec::new();
@@ -167,15 +174,17 @@ pub fn hilo(
         // (cuál, si viene de la lógica)
         let mut sucesos: Vec<(usize, bool, Option<f32>)> = sucesos_tardios.drain(..).map(|s| (s.0 as usize, false, None)).collect();
         let mut gestos_pedidos: Vec<usize> = Vec::new();
-        let mut entrada: Vec<ARender> = Vec::new();
+        let mut entrada: Vec<ARender> = std::mem::take(&mut guardados);
         if en_reposo {
             // Quieta: ni un frame. Solo la despiertan un mensaje o la próxima
             // cita: un retraso que vence, un parpadeo, una reclamación que caduca.
             let hasta = proxima_cita.unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
-            match rx.recv_timeout(hasta.saturating_duration_since(Instant::now())) {
-                Ok(m) => entrada.push(m),
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => return,
+            if entrada.is_empty() {
+                match rx.recv_timeout(hasta.saturating_duration_since(Instant::now())) {
+                    Ok(m) => entrada.push(m),
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
             }
             en_reposo = false;
             ultimo = Instant::now() - Duration::from_secs_f32(periodo_ms / 1000.0);
@@ -325,6 +334,11 @@ pub fn hilo(
                 ARender::Taller(p) => letras.recibir(*p),
                 // Una ventana que alguien estira: la lámina cambia, y con ella lo que la
                 // escena lee en `screen.width` y `screen.height`.
+                ARender::Frame(id) => {
+                    if frame_pedido == Some(id) {
+                        frame_listo = true;
+                    }
+                }
                 ARender::TamLamina(id, nuevo) => {
                     if let (Some(g), Some(l)) = (&gpu, laminas.iter_mut().find(|l| l.id == id)) {
                         if l.vista.tam != nuevo {
@@ -1293,11 +1307,48 @@ pub fn hilo(
                     r => mhz.min(r as i32 * 1000),
                 };
                 let periodo = Duration::from_secs_f64(1000.0 / mhz as f64);
+                // El paso lo da el reloj: un plazo por periodo. El aviso del
+                // compositor no sirve de metrónomo —Hyprland avisa cuando compone,
+                // y si le llega un frame justo después, compone otra vez y avisa
+                // enseguida: dos frames por refresco—, pero sí dice otra cosa: si
+                // alguien está mirando.
                 if proximo_frame > ahora_mismo {
                     std::thread::sleep(proximo_frame - ahora_mismo);
                     proximo_frame += periodo;
                 } else {
                     proximo_frame = ahora_mismo + periodo;
+                }
+                // A lo que no enseña —un monitor apagado, una ventana en otro
+                // escritorio— no le avisa. Tras tres esperas en vano, se pinta una
+                // vez por segundo en vez de 60 o 165 veces para nadie.
+                if let Some(id) = frame_pedido {
+                    let paciencia = if sin_aviso >= 3 { Duration::from_secs(1) } else { (periodo * 3).max(Duration::from_millis(50)) };
+                    let limite = Instant::now() + paciencia;
+                    while !frame_listo {
+                        let queda = limite.saturating_duration_since(Instant::now());
+                        if queda.is_zero() {
+                            sin_aviso += 1;
+                            if sin_aviso == 3 {
+                                println!("render · the compositor is not showing this surface: painting once a second until it shows it again");
+                            }
+                            break;
+                        }
+                        match rx.recv_timeout(queda) {
+                            Ok(ARender::Frame(k)) => frame_listo |= k == id,
+                            Ok(m) => guardados.push(m),
+                            Err(RecvTimeoutError::Timeout) => {}
+                            Err(RecvTimeoutError::Disconnected) => return,
+                        }
+                    }
+                    if frame_listo {
+                        if sin_aviso >= 3 {
+                            println!("render · the compositor is showing it again");
+                        }
+                        sin_aviso = 0;
+                    }
+                    if Instant::now() > proximo_frame {
+                        proximo_frame = Instant::now() + periodo;
+                    }
                 }
             } else {
                 let minimo = Duration::from_secs_f32(periodo_ms * 0.8 / 1000.0);
@@ -1312,6 +1363,10 @@ pub fn hilo(
         let mut pintadas = 0;
         let mut al_dia = 0;
         let mut espero_a_la_pantalla = false;
+        // Si la que marca el ritmo no pinta esta vez, no hay aviso que esperar:
+        // la vuelta siguiente la marca el reloj.
+        frame_pedido = None;
+        frame_listo = false;
         for l in &mut laminas {
             // Cerrada se pinta una vez, vacía, y ya: eso sí, siempre, cambie algo o no.
             if !l.abierta && std::mem::replace(&mut l.vaciada, true) {
@@ -1325,7 +1380,13 @@ pub fn hilo(
                 al_dia += 1;
                 continue;
             }
-            let pintada = g.pintar(l, &dibujo, &uniformes);
+            // La que marca el ritmo pide que el compositor avise cuando quiera otro.
+            let pide = l.marca_el_ritmo && g.con_buzon() && !op.sin_vsync && !op.ingenuo;
+            let pintada = g.pintar(l, &dibujo, &uniformes, pide);
+            if pide {
+                frame_pedido = pintada.then_some(l.id);
+                frame_listo = false;
+            }
             // Vaciada no enseña lo de la escena: al reabrirse, se pinta sí o sí.
             l.pintada = (pintada && l.abierta).then_some(donde);
             espero_a_la_pantalla |= pintada && l.marca_el_ritmo && !g.con_buzon();

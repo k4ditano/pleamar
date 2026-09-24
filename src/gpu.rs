@@ -1083,7 +1083,7 @@ impl Gpu {
     }
 
     /// Pinta el dibujo en una lámina. Devuelve si llegó a presentarse.
-    pub fn pintar(&self, l: &mut Lamina, d: &Dibujo, uniformes: &[f32]) -> bool {
+    pub fn pintar(&self, l: &mut Lamina, d: &Dibujo, uniformes: &[f32], pedir_frame: bool) -> bool {
         // Solo las capas de los grupos que caen en esta superficie: el que se
         // funde en otro monitor no le cuesta memoria ni un pase a esta. Lo que
         // funde la capa ocupa la unión de lo de dentro, así que si eso no toca
@@ -1153,6 +1153,9 @@ impl Gpu {
         let t2 = crono.then(std::time::Instant::now);
         self.cola.submit(Some(orden));
         let t3 = crono.then(std::time::Instant::now);
+        if pedir_frame {
+            l.ventana.pedir_frame();
+        }
         self.cola.present(marco);
         if let (Some(t0), Some(t1), Some(t2), Some(t3)) = (t0, t1, t2, t3) {
             let ms = |a: std::time::Instant, b: std::time::Instant| b.duration_since(a).as_secs_f32() * 1000.0;
