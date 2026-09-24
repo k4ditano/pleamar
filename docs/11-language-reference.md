@@ -384,7 +384,7 @@ From weakest to strongest: `or` · `and` · `not` · `< > <= >= == !=` (they do 
 | `clamp(x, a, b)` | x, between a and b |
 | `smooth(a, b, x)` | from 0 to 1 while x goes from a to b, easing in and out |
 | `mix(a, b, t)` | between a and b. Also between two colors |
-| `if(cond, a, b)` | |
+| `if(cond, a, b)` | a if the condition holds, b if not: only that side is evaluated. With a spring as the condition (`if(hot, a, b)`), it goes between the two, like `mix(b, a, hot)` |
 | `vel(prop)` | the velocity of a spring, which only the renderer knows |
 
 Valid as a name: a `let`, a `prop`, a `fact`, a measure (`label.width`), how much a named layout takes up and how many children it has in view (`list.width`, `list.height`, `list.count`: they can also be read before the point where it is declared), the numeric field of a record (`r.depth`, `r.index`, `rows.count`), and the presence of a claim (`shape.rec`: 1 while it wins).

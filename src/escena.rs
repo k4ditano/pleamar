@@ -218,6 +218,11 @@ pub enum Expr {
     Techo(Box<Expr>),
     /// smoothstep(a, b, x)
     Suave(f32, f32, Box<Expr>),
+    /// `mix(a, b, t)` y también `if(c, x, y)`, que es mezclar con 0 o 1. Cada
+    /// lado aparece una sola vez: escrito `a + (b - a) * t`, `a` salía dos, y
+    /// una cadena de `if` doblaba el árbol en cada eslabón. Y con `t` justo en
+    /// 0 o en 1, que es lo que da una condición, solo se evalúa un lado.
+    Mezcla(Box<Expr>, Box<Expr>, Box<Expr>),
     // Condiciones: verdad es > 0.5, y devuelven 1 o 0.
     Mayor(Box<Expr>, Box<Expr>),
     Y(Box<Expr>, Box<Expr>),
@@ -248,6 +253,14 @@ impl Expr {
                 let t = ((x.evaluar(c) - a) / (b - a)).clamp(0.0, 1.0);
                 t * t * (3.0 - 2.0 * t)
             }
+            Mezcla(a, b, t) => match t.evaluar(c) {
+                0.0 => a.evaluar(c),
+                1.0 => b.evaluar(c),
+                t => {
+                    let a = a.evaluar(c);
+                    a + (b.evaluar(c) - a) * t
+                }
+            },
             Mayor(a, b) => (a.evaluar(c) > b.evaluar(c)) as u8 as f32,
             Y(a, b) => (a.evaluar(c) > 0.5 && b.evaluar(c) > 0.5) as u8 as f32,
             O(a, b) => (a.evaluar(c) > 0.5 || b.evaluar(c) > 0.5) as u8 as f32,
@@ -268,6 +281,7 @@ impl Expr {
             H(h) => f(*h),
             Abs(a) | Suelo(a) | Seno(a) | Coseno(a) | Techo(a) | No(a) | Suave(_, _, a) => a.lee(f),
             Suma(a, b) | Resta(a, b) | Por(a, b) | Entre(a, b) | Min(a, b) | Max(a, b) | Mayor(a, b) | Y(a, b) | O(a, b) => a.lee(f) || b.lee(f),
+            Mezcla(a, b, t) => a.lee(f) || b.lee(f) || t.lee(f),
         }
     }
     pub fn nodos(&self) -> usize {
@@ -276,46 +290,87 @@ impl Expr {
             K(_) | P(_) | H(_) | Vel(_) => 1,
             Abs(a) | Suelo(a) | Seno(a) | Coseno(a) | Techo(a) | No(a) | Suave(_, _, a) => 1 + a.nodos(),
             Suma(a, b) | Resta(a, b) | Por(a, b) | Entre(a, b) | Min(a, b) | Max(a, b) | Mayor(a, b) | Y(a, b) | O(a, b) => 1 + a.nodos() + b.nodos(),
+            Mezcla(a, b, t) => 1 + a.nodos() + b.nodos() + t.nodos(),
         }
     }
+    /// Lo que vale, si no depende de nada.
+    pub fn constante(&self) -> Option<f32> {
+        match self {
+            Expr::K(v) => Some(*v),
+            _ => None,
+        }
+    }
+    /// Lo que se puede saber al leer la escena se sabe una vez, no cada frame:
+    /// `2 * 3` es `6`, `-4` es `-4` (y no `0 - 4`), `x * 1` es `x`. Los hijos
+    /// ya vienen plegados, porque se construye de abajo arriba.
+    fn plegada(self) -> Expr {
+        use Expr::*;
+        let k = |e: &Expr| e.constante();
+        let hijos_constantes = match &self {
+            K(_) | P(_) | H(_) | Vel(_) => return self,
+            Abs(a) | Suelo(a) | Seno(a) | Coseno(a) | Techo(a) | No(a) | Suave(_, _, a) => k(a).is_some(),
+            Suma(a, b) | Resta(a, b) | Por(a, b) | Entre(a, b) | Min(a, b) | Max(a, b) | Mayor(a, b) | Y(a, b) | O(a, b) => k(a).is_some() && k(b).is_some(),
+            Mezcla(a, b, t) => k(a).is_some() && k(b).is_some() && k(t).is_some(),
+        };
+        if hijos_constantes {
+            return K(self.evaluar(Ctx { props: &[], hechos: &[] }));
+        }
+        match self {
+            Suma(a, b) if k(&b) == Some(0.0) => *a,
+            Suma(a, b) if k(&a) == Some(0.0) => *b,
+            Resta(a, b) if k(&b) == Some(0.0) => *a,
+            Por(a, b) if k(&b) == Some(1.0) => *a,
+            Por(a, b) if k(&a) == Some(1.0) => *b,
+            Entre(a, b) if k(&b) == Some(1.0) => *a,
+            Mezcla(a, b, t) => match k(&t) {
+                Some(0.0) => *a,
+                Some(1.0) => *b,
+                _ => Mezcla(a, b, t),
+            },
+            otra => otra,
+        }
+    }
+    pub fn mezcla(self, b: impl Into<Expr>, t: impl Into<Expr>) -> Expr {
+        Expr::Mezcla(Box::new(self), Box::new(b.into()), Box::new(t.into())).plegada()
+    }
     pub fn mayor(self, o: impl Into<Expr>) -> Expr {
-        Expr::Mayor(Box::new(self), Box::new(o.into()))
+        Expr::Mayor(Box::new(self), Box::new(o.into())).plegada()
     }
     pub fn y(self, o: impl Into<Expr>) -> Expr {
-        Expr::Y(Box::new(self), Box::new(o.into()))
+        Expr::Y(Box::new(self), Box::new(o.into())).plegada()
     }
     pub fn o(self, o: impl Into<Expr>) -> Expr {
-        Expr::O(Box::new(self), Box::new(o.into()))
+        Expr::O(Box::new(self), Box::new(o.into())).plegada()
     }
     pub fn no(self) -> Expr {
-        Expr::No(Box::new(self))
+        Expr::No(Box::new(self)).plegada()
     }
     pub fn min(self, o: impl Into<Expr>) -> Expr {
-        Expr::Min(Box::new(self), Box::new(o.into()))
+        Expr::Min(Box::new(self), Box::new(o.into())).plegada()
     }
     pub fn max(self, o: impl Into<Expr>) -> Expr {
-        Expr::Max(Box::new(self), Box::new(o.into()))
+        Expr::Max(Box::new(self), Box::new(o.into())).plegada()
     }
     pub fn acotar(self, a: f32, b: f32) -> Expr {
         self.max(a).min(b)
     }
     pub fn abs(self) -> Expr {
-        Expr::Abs(Box::new(self))
+        Expr::Abs(Box::new(self)).plegada()
     }
     pub fn seno(self) -> Expr {
-        Expr::Seno(Box::new(self))
+        Expr::Seno(Box::new(self)).plegada()
     }
     pub fn coseno(self) -> Expr {
-        Expr::Coseno(Box::new(self))
+        Expr::Coseno(Box::new(self)).plegada()
     }
     pub fn suelo(self) -> Expr {
-        Expr::Suelo(Box::new(self))
+        Expr::Suelo(Box::new(self)).plegada()
     }
     pub fn techo(self) -> Expr {
-        Expr::Techo(Box::new(self))
+        Expr::Techo(Box::new(self)).plegada()
     }
     pub fn suave(self, a: f32, b: f32) -> Expr {
-        Expr::Suave(a, b, Box::new(self))
+        Expr::Suave(a, b, Box::new(self)).plegada()
     }
 }
 
@@ -358,25 +413,25 @@ macro_rules! operador {
         impl<T: Into<Expr>> $rasgo<T> for Expr {
             type Output = Expr;
             fn $metodo(self, o: T) -> Expr {
-                Expr::$variante(Box::new(self), Box::new(o.into()))
+                Expr::$variante(Box::new(self), Box::new(o.into())).plegada()
             }
         }
         impl<T: Into<Expr>> $rasgo<T> for PropId {
             type Output = Expr;
             fn $metodo(self, o: T) -> Expr {
-                Expr::$variante(Box::new(self.into()), Box::new(o.into()))
+                Expr::$variante(Box::new(self.into()), Box::new(o.into())).plegada()
             }
         }
         impl $rasgo<Expr> for f32 {
             type Output = Expr;
             fn $metodo(self, o: Expr) -> Expr {
-                Expr::$variante(Box::new(self.into()), Box::new(o))
+                Expr::$variante(Box::new(self.into()), Box::new(o)).plegada()
             }
         }
         impl $rasgo<PropId> for f32 {
             type Output = Expr;
             fn $metodo(self, o: PropId) -> Expr {
-                Expr::$variante(Box::new(self.into()), Box::new(o.into()))
+                Expr::$variante(Box::new(self.into()), Box::new(o.into())).plegada()
             }
         }
     };
@@ -1396,5 +1451,44 @@ impl Animada {
         self.x = x;
         self.objetivo = x;
         self.v = 0.0;
+    }
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+
+    fn con(props: &[f32]) -> Vec<Animada> {
+        props.iter().map(|&x| Animada { x, v: 0.0, objetivo: x, muelle: Muelle::VIVO }).collect()
+    }
+
+    #[test]
+    fn lo_constante_se_pliega_al_leer() {
+        assert!(matches!((Expr::K(2.0) * 3.0 + 1.0), Expr::K(7.0)));
+        assert!(matches!(Expr::K(0.0) - Expr::K(4.0), Expr::K(-4.0)));
+        assert!(matches!(PropId(0) * 1.0, Expr::P(_)));
+        assert!(matches!(PropId(0) + 0.0, Expr::P(_)));
+        assert!(matches!(Expr::K(3.0).mezcla(PropId(0), 0.0), Expr::K(3.0)));
+        assert!(matches!(Expr::K(3.0).mezcla(PropId(0), 1.0), Expr::P(_)));
+    }
+
+    #[test]
+    fn mezclar_da_lo_mismo_que_antes() {
+        let props = con(&[0.25, 1.0, 0.0]);
+        let c = Ctx { props: &props, hechos: &[] };
+        let (a, b) = (Expr::K(10.0), Expr::K(20.0));
+        for p in 0..3 {
+            let t = props[p].x;
+            assert_eq!(a.clone().mezcla(b.clone() + PropId(2), PropId(p as u16)).evaluar(c), 10.0 + 10.0 * t);
+        }
+    }
+
+    #[test]
+    fn una_cadena_de_if_crece_en_linea() {
+        let mut e = Expr::K(1.0);
+        for k in 0..30 {
+            e = e.mezcla(Expr::K(k as f32), PropId(0).e().mayor(k as f32));
+        }
+        assert!(e.nodos() < 200, "{} nodos", e.nodos());
     }
 }

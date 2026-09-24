@@ -1016,12 +1016,12 @@ impl<'a> Obra<'a> {
             }
             "mix" => {
                 let (x, y, t) = (toma()?, toma()?, toma()?);
-                x.clone() + (y - x) * t
+                x.mezcla(y, t)
             }
             // La condición vale 1 o 0: elegir es mezclar.
             "if" => {
                 let (si, x, y) = (toma()?, toma()?, toma()?);
-                y.clone() + (x - y) * si
+                y.mezcla(x, si)
             }
             otra => unreachable!("'{otra}' is in the vocabulary, but `funcion` cannot compute it"),
         })
@@ -1058,7 +1058,7 @@ impl<'a> Obra<'a> {
                 c.exige_sim(")")?;
                 let [a0, a1, a2] = a;
                 let [b0, b1, b2] = b;
-                Ok([a0.clone() + (b0 - a0) * t.clone(), a1.clone() + (b1 - a1) * t.clone(), a2.clone() + (b2 - a2) * t])
+                Ok([a0.mezcla(b0, t.clone()), a1.mezcla(b1, t.clone()), a2.mezcla(b2, t)])
             }
             _ => c.fallo("expected a colour here: #151616, the name of one, or mix(#a, #b, how much)"),
         }
@@ -1810,10 +1810,14 @@ impl<'a> Obra<'a> {
             // (`sand 40%`); los que no lo digan se reparten por igual. Dos colores a
             // secas es el degradado de siempre.
             let mut paradas: Vec<(Expr, Color)> = Vec::new();
+            // Cuáles no dijeron dónde. No vale marcarlas con un -1: `mint -10%` ya
+            // es un -0,1 constante al leerlo, y se confundiría con no decir nada.
+            let mut sin_sitio: Vec<bool> = Vec::new();
             while c.sim(",") {
                 let col = self.color(c)?;
-                let donde = if !c.acabo() && !matches!(c.mira(), Some(F::Sim(","))) { self.expr(c)? } else { Expr::K(-1.0) };
-                paradas.push((donde, col));
+                let dice = !c.acabo() && !matches!(c.mira(), Some(F::Sim(",")));
+                paradas.push((if dice { self.expr(c)? } else { Expr::K(0.0) }, col));
+                sin_sitio.push(!dice);
             }
             c.nada_mas()?;
             if paradas.len() < 2 {
@@ -1824,7 +1828,7 @@ impl<'a> Obra<'a> {
             }
             let ultimo = paradas.len() - 1;
             for (k, parada) in paradas.iter_mut().enumerate() {
-                if matches!(parada.0, Expr::K(v) if v < 0.0) {
+                if sin_sitio[k] {
                     parada.0 = Expr::K(k as f32 / ultimo as f32);
                 }
             }
@@ -3355,15 +3359,18 @@ impl<'a> Obra<'a> {
                 visible = f.clone();
             }
             // Lo que decide si está, sin muelles: es lo que apaga sus zonas.
-            let esta = (!matches!(visible, Expr::K(_))).then(|| visible.clone());
-            if let (Some(m), false) = (muelle, matches!(visible, Expr::K(_))) {
+            // Constante no quiere decir «siempre»: `show: k < 3` dentro de un
+            // `repeat` se sabe al leerlo, y para k = 5 es un cero.
+            let siempre = matches!(visible, Expr::K(k) if k == 1.0);
+            let esta = (!siempre).then(|| visible.clone());
+            if let (Some(m), false) = (muelle, siempre) {
                 // Con muelle, aparecer y desaparecer también es un viaje.
                 self.copias += 1;
                 let v = self.e.prop_con(fijo(&format!("·visible{}", self.copias)), 0.0, m);
                 self.e.comportamientos.push(Comportamiento::Sigue { prop: v, a: visible });
                 visible = v.e().acotar(0.0, 1.0);
             }
-            let con_opacidad = !matches!(visible, Expr::K(_));
+            let con_opacidad = !siempre;
             if con_opacidad {
                 self.e.pintar(Instr::Opacidad(Some(visible.clone())));
             }
