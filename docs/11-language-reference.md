@@ -401,7 +401,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `line` | `from` · `to` · `width` |
 | `path` | `at` (what its points hang from) · `size: w, h` (what it takes up in a layout), and inside it its steps: `move x, y` (once, the first one) · `line x, y` · `curve x, y via cx, cy` · `close`. Closed, it is filled; open, or with `stroke`, it is a line |
 | …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `show` |
-| `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
+| `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `glass` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` |
 | `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `show` |
 | `figure` | `at` (where the piece's centre goes) · `size: w, h` or `scale:` (without either, one unit of the svg is one pixel) · `pivot: x, y` (in the svg's units, from its centre: the point it **turns** around, which does not move it) · `rotate` · `color` (instead of the one in the file) · `opacity` · `blend` · `stroke` · `show` |
@@ -423,6 +423,34 @@ too, a shadow can show up only when there is something to cast one: `shadow: 0,
 2 * open, 12 * open, 32% * open` gives a card the shadow of a card and leaves
 the thing it grew out of with none. With the count at zero there is no shadow
 to work out, and the renderer does not look at it.
+
+**`glass` turns a body into glass**, from `0%` to `100%`, and like everything
+else it is an expression, so it can come and go. Three things happen. The fill
+becomes a tint: its `color` is still there, but what is behind shows through.
+The edge catches the light: a thin highlight on the side facing the top left,
+a softer one on the opposite side, and the glass getting lighter towards its
+edge, like glass seen side-on; all of it comes from where the edge points,
+which a signed distance knows. And the body's `shadow` stops showing through
+it: only around it. On top of that, **the compositor is asked to blur what is
+behind the silhouette**, following its shape in 2 px strips —a round thing
+gets round blur, not a square—, through the standard `ext-background-effect`
+protocol (Hyprland and KWin have it). Nobody has to write a blur rule for the
+compositor: the scene asks. Where the compositor cannot do it, the glass is
+still a tint with its light, just with nothing blurred behind. How strong the
+blur is belongs to the compositor's settings. Below 30 % of glass (times
+opacity) no blur is asked for. What glass cannot do is bend what is behind it
+like a lens: that needs the pixels behind, and on Linux only the compositor has
+them.
+
+```
+body {
+    color: #1b2127
+    glass: 100%
+    shadow: 0, 10, 28, 30%
+    box { at: 250, 160; size: 420, 220; corner: 36 }
+    ellipse { at: 520, 90; radius: 46; blend: 26 }
+}
+```
 
 **A figure is an svg read as geometry, not as a stamp.** An image is rasterised
 into an atlas: it shows, but it is a sticker —it melts into nothing, it cannot
@@ -777,7 +805,7 @@ properties.box: at from size corner
 properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
-properties.body: color gradient rim light shadow border opacity show
+properties.body: color gradient rim light shadow border glass opacity show
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow
 properties.image: at size opacity tint show grow
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow

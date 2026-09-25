@@ -380,6 +380,9 @@ pub trait Ventana: Send {
     /// Que el sistema avise (`ARender::Frame`) cuando quiera el frame siguiente
     /// al que se va a presentar. Donde no se sepa, no avisa, y el paso lo da el reloj.
     fn pedir_frame(&self) {}
+    /// Qué desenfoca el sistema detrás de la ventana: rectángulos en píxeles
+    /// lógicos, los de su cristal. Vacío, nada. Donde no se sepa pedir, no hace nada.
+    fn region_de_desenfoque(&self, _cajas: &[[i32; 4]]) {}
 }
 
 #[cfg(target_os = "linux")]

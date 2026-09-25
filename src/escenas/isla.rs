@@ -37,7 +37,7 @@ impl Guion for Isla {
         e.pintar(Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0.into(), 8.0.into()), difusa: 26.0.into(), alfa: 0.3.into(), color: None }) });
         e.pintar(Instr::Forma { forma: isla.clone(), fusion: 0.0.into() });
         e.pintar(Instr::Forma { forma: Forma::circulo((gota_x.clone(), gota_y.into()), 18.0 * gota.e().suave(0.0, 0.35)), fusion: fusion.e() });
-        e.pintar(Instr::Relleno { pintura: color(0.04, 0.043, 0.045).into(), alfa: 1.0.into(), filo: 0.06, luz: None, borde: None });
+        e.pintar(Instr::Relleno { pintura: color(0.04, 0.043, 0.045).into(), alfa: 1.0.into(), filo: 0.06, luz: None, borde: None, vidrio: None });
 
         // El piloto de la gota, que late solo.
         e.pintar(Instr::Plano {

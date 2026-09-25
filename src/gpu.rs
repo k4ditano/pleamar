@@ -53,6 +53,12 @@ pub struct Dibujo {
     pub saltar: Vec<std::ops::Range<usize>>,
     /// Y a qué bordes está pegada: contra esos no se avisa de nada.
     pegada: [bool; 4],
+    /// Dónde hay cristal este frame, en franjas del plano de la escena: lo que
+    /// se le pide al compositor que desenfoque.
+    pub cristales: Vec<[f32; 4]>,
+    /// Las franjas de cada forma de cristal, en el origen, por lo que la hace
+    /// ser como es menos dónde está: mientras solo se mueva, no se vuelven a buscar.
+    cache_de_cristales: std::collections::HashMap<[u32; 12], (Vec<[f32; 4]>, bool)>,
 }
 
 /// La lista de dibujo del frame anterior, para saber **dónde** ha cambiado algo.
@@ -173,6 +179,71 @@ struct CuerpoAbierto {
     caja: Option<[f32; 4]>,
     holgura: f32,
     sombra: Option<Sombra>,
+    /// Sus formas tal cual, para saber en la CPU por dónde pasa su borde: lo
+    /// necesita el cristal, que pide al compositor que desenfoque justo ahí.
+    planas: Vec<crate::formas::Plana>,
+}
+
+/// Por debajo de esto, un cristal casi no se ve y no se pide desenfoque.
+const CRISTAL_VISIBLE: f32 = 0.3;
+/// El alto de cada franja de la región de desenfoque, en píxeles lógicos.
+const FRANJA: f32 = 2.0;
+
+/// La silueta de una forma como rectángulos, **centrada en el origen**: franjas
+/// de 2 px, y en cada una los tramos que caen dentro. La región que se pide al
+/// compositor se hace de rectángulos; con la caja entera, alrededor de una
+/// bolita redonda se veían las esquinas de un cuadrado desenfocado. Las filas
+/// iguales seguidas —los lados rectos de una tarjeta— se juntan en una.
+///
+/// En el origen porque lo que casi siempre cambia de una forma es dónde está:
+/// así, una bolita que viaja no se vuelve a medir, solo se corre.
+fn franjas_de(p: &crate::formas::Plana, puntos: &[f32]) -> Vec<[f32; 4]> {
+    let mut franjas: Vec<[f32; 4]> = Vec::new();
+    let Some(caja) = p.caja() else { return franjas };
+    let dentro = |x: f32, y: f32| p.distancia_con(x, y, puntos) < 0.0;
+    // Dónde cambia de fuera a dentro entre a y b: por bisección, a un cuarto de píxel.
+    let borde = |mut a: f32, mut b: f32, y: f32, entra: bool| {
+        while b - a > 0.25 {
+            let m = (a + b) * 0.5;
+            if dentro(m, y) == entra { b = m } else { a = m }
+        }
+        if entra { a } else { b }
+    };
+    let paso = 3.0;
+    let mut y = (caja[1] / FRANJA).floor() * FRANJA;
+    let mut fila: Vec<(f32, f32)> = Vec::new();
+    while y < caja[3] {
+        let yc = y + FRANJA * 0.5;
+        fila.clear();
+        let mut x = caja[0];
+        let mut desde: Option<f32> = dentro(x, yc).then_some(x);
+        while x < caja[2] {
+            let sig = (x + paso).min(caja[2]);
+            let esta = dentro(sig, yc);
+            match (desde, esta) {
+                (None, true) => desde = Some(borde(x, sig, yc, true)),
+                (Some(a), false) => {
+                    fila.push((a, borde(x, sig, yc, false)));
+                    desde = None;
+                }
+                _ => {}
+            }
+            x = sig;
+        }
+        if let Some(a) = desde {
+            fila.push((a, caja[2]));
+        }
+        for &(a, b) in &fila {
+            let (a, b) = (a.floor(), b.ceil());
+            // La fila de arriba con el mismo tramo, pegada a esta: se alarga.
+            match franjas.iter_mut().rev().take(fila.len() + 2).find(|f| f[0] == a && f[2] == b && f[3] == y) {
+                Some(f) => f[3] = y + FRANJA,
+                None => franjas.push([a, y, b, y + FRANJA]),
+            }
+        }
+        y += FRANJA;
+    }
+    franjas
 }
 
 fn unir(a: Option<[f32; 4]>, b: [f32; 4]) -> [f32; 4] {
@@ -407,6 +478,7 @@ impl Dibujo {
         self.elementos.clear();
         let mut paradas_puestas: Vec<f32> = Vec::new();
         self.apartes.clear();
+        self.cristales.clear();
         let mut recortes: Vec<(usize, [f32; 4])> = Vec::new();
         // Cada entrada es ya el producto de todas las de encima.
         let mut giros: Vec<Afin> = Vec::new();
@@ -470,7 +542,7 @@ impl Dibujo {
                 }
                 _ if oculto => {}
                 Instr::Grupo { sombra } => {
-                    cuerpo = Some(CuerpoAbierto { primera: self.formas.len() / POR_FORMA, n: 0, caja: None, holgura: 0.0, sombra: sombra.clone() })
+                    cuerpo = Some(CuerpoAbierto { primera: self.formas.len() / POR_FORMA, n: 0, caja: None, holgura: 0.0, sombra: sombra.clone(), planas: Vec::new() })
                 }
                 Instr::Forma { forma, fusion } => {
                     let p = aplanar(forma, &giros, &mut self.puntos);
@@ -478,6 +550,7 @@ impl Dibujo {
                     let caja = p.caja();
                     self.forma(p, k);
                     if let Some(g) = &mut cuerpo {
+                        g.planas.push(p);
                         g.n += 1;
                         g.holgura = g.holgura.max(k * 0.5);
                         if let Some(b) = caja {
@@ -485,7 +558,7 @@ impl Dibujo {
                         }
                     }
                 }
-                Instr::Relleno { pintura, alfa, filo, luz, borde } => {
+                Instr::Relleno { pintura, alfa, filo, luz, borde, vidrio } => {
                     let Some(g) = cuerpo.take() else { continue };
                     let Some(mut caja) = g.caja else { continue };
                     let forma_sola = caja;
@@ -505,6 +578,31 @@ impl Dibujo {
                     }
                     if a > 0.01 {
                         self.mirar_el_corte(forma_sola);
+                    }
+                    // Un cristal que se ve pide que se desenfoque lo de detrás, por su silueta.
+                    let v = vidrio.as_ref().map_or(0.0, |v| v.evaluar(c));
+                    if v * a > CRISTAL_VISIBLE {
+                        // Cada forma por separado: la unión de sus siluetas es la del
+                        // cuerpo, menos el cuello donde dos se funden, que es poco.
+                        let mut corte = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
+                        for (_, r) in &recortes {
+                            corte = [corte[0].max(r[0]), corte[1].max(r[1]), corte[2].min(r[2]), corte[3].min(r[3])];
+                        }
+                        for p in &g.planas {
+                            let (ox, oy) = p.afin.aplicar(p.cx, p.cy);
+                            let mut en_origen = *p;
+                            (en_origen.cx, en_origen.cy, en_origen.afin.t) = (0.0, 0.0, [0.0, 0.0]);
+                            // Un camino es sus puntos, que la clave no ve: ese se mide siempre.
+                            let franjas = if p.tipo == 4 {
+                                franjas_de(&en_origen, &self.puntos)
+                            } else {
+                                let clave = [en_origen.tipo as f32, en_origen.mx, en_origen.my, en_origen.radio, en_origen.giro, en_origen.ex, en_origen.ey, en_origen.trazo, en_origen.afin.m[0], en_origen.afin.m[1], en_origen.afin.m[2], en_origen.afin.m[3]].map(f32::to_bits);
+                                let puesta = self.cache_de_cristales.entry(clave).or_insert_with(|| (franjas_de(&en_origen, &[]), false));
+                                puesta.1 = true;
+                                puesta.0.clone()
+                            };
+                            self.cristales.extend(franjas.into_iter().map(|f| [(f[0] + ox).max(corte[0]), (f[1] + oy).max(corte[1]), (f[2] + ox).min(corte[2]), (f[3] + oy).min(corte[3])]).filter(|f| f[2] > f[0] && f[3] > f[1]));
+                        }
                     }
                     self.elemento(0.0, caja, &recortes, |e| {
                         afin.codificar(&mut e[44..52]);
@@ -526,6 +624,8 @@ impl Dibujo {
                             }
                         }
                         e[11] = *filo;
+                        // Un cuerpo no usa `uv`, que es de las texturas: ahí va el cristal.
+                        e[40] = v;
                         if let Some(l) = luz {
                             e[20..23].copy_from_slice(&[l.cantidad, l.desde_y.evaluar(c), l.alto]);
                         }
@@ -697,6 +797,9 @@ impl Dibujo {
         for dicho in [self.sombra.cierra_el_frame(true), self.corte.cierra_el_frame(false)].into_iter().flatten() {
             eprintln!("{dicho}");
         }
+        // Las siluetas que nadie ha usado este frame se olvidan; las demás, a
+        // empezar de nuevo la cuenta.
+        self.cache_de_cristales.retain(|_, (_, usada)| std::mem::take(usada));
         if hud {
             // Los instrumentos ocupan la franja de abajo, que se añadió para ellos.
             self.elemento(9.0, [0.0, tam.1 - ALTO_INSTRUMENTOS, tam.0, tam.1], &[], |e| Afin::IDENTIDAD.codificar(&mut e[44..52]));
@@ -779,6 +882,8 @@ pub struct Lamina {
     /// y cuántos frames lleva sin usar ninguna.
     capas: u32,
     capas_ociosas: u32,
+    /// Lo último que se le pidió al compositor que desenfocase, en sus coordenadas.
+    pub desenfoque: Vec<[i32; 4]>,
     /// Qué trozo del plano y a qué escala tiene pintado, si lo que enseña está
     /// al día. Con otro sitio, otra escala o sin nada (recién hecha,
     /// reconfigurada), se pinta aunque la escena no haya cambiado.
@@ -974,7 +1079,7 @@ impl Gpu {
         let (vistas_de_capa, grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, 1, 1, 1);
         let mut l = Lamina {
             id: n.id, nombre: n.nombre, mhz: n.mhz, escala: n.escala, marca_el_ritmo: true, abierta: true, vaciada: false, vista: n.vista,
-            superficie: n.superficie, ventana: n.ventana, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas, capas: 0, capas_ociosas: 0, pintada: None,
+            superficie: n.superficie, ventana: n.ventana, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas, capas: 0, capas_ociosas: 0, desenfoque: Vec::new(), pintada: None,
         };
         self.configurar(&mut l, tam);
         l
@@ -1207,6 +1312,10 @@ impl Lamina {
 
     pub fn cursor(&self, c: Cursor) {
         self.ventana.cursor(c);
+    }
+
+    pub fn region_de_desenfoque(&self, cajas: &[[i32; 4]]) {
+        self.ventana.region_de_desenfoque(cajas);
     }
 
     pub fn teclado(&self, t: Teclado) {

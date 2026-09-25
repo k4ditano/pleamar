@@ -26,7 +26,7 @@ impl Guion for Muestrario {
         // Un fondo oscuro para que todo se lea sobre cualquier escritorio.
         e.pintar(Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0.into(), 8.0.into()), difusa: 24.0.into(), alfa: 0.3.into(), color: None }) });
         e.pintar(Instr::Forma { forma: Forma::Caja { centro: (360.0.into(), 186.0.into()), mitad: (350.0.into(), 176.0.into()), radio: 22.0.into() }, fusion: 0.0.into() });
-        e.pintar(Instr::Relleno { pintura: tinta.clone().into(), alfa: 0.94.into(), filo: 0.04, luz: None, borde: None });
+        e.pintar(Instr::Relleno { pintura: tinta.clone().into(), alfa: 0.94.into(), filo: 0.04, luz: None, borde: None, vidrio: None });
 
         // 1 · degradado y borde, en una caja que gira sobre sí misma.
         e.pintar(Instr::Grupo { sombra: None });
@@ -40,6 +40,7 @@ impl Guion for Muestrario {
             filo: 0.0,
             luz: None,
             borde: Some((2.5.into(), blanco.clone())),
+            vidrio: None,
         });
 
         // 2 · un reloj: escala ∘ giro ∘ giro. Todo él late; dentro giran las
@@ -136,7 +137,7 @@ impl Guion for Muestrario {
         e.comportamientos.push(Comportamiento::Sigue { prop: caja_w, a: rot_w + 32.0 });
         e.pintar(Instr::Grupo { sombra: None });
         e.pintar(Instr::Forma { forma: Forma::Caja { centro: (360.0.into(), 326.0.into()), mitad: (caja_w * 0.5, rot_h * 0.5 + 7.0), radio: 16.0.into() }, fusion: 0.0.into() });
-        e.pintar(Instr::Relleno { pintura: color(0.62, 0.84, 0.74).into(), alfa: 1.0.into(), filo: 0.0, luz: None, borde: None });
+        e.pintar(Instr::Relleno { pintura: color(0.62, 0.84, 0.74).into(), alfa: 1.0.into(), filo: 0.0, luz: None, borde: None, vidrio: None });
         e.pintar(Instr::Texto { contenido: Contenido::Vivo(etiqueta), en: (360.0.into(), 326.0.into()), ancla: (0.5, 0.5), ancho: None, estilo: Estilo::de(15.0, color(0.07, 0.12, 0.10)).peso(500), alfa: 1.0.into(), mide: Some((rot_w, rot_h)) });
 
         e.superficies = vec![Superficie { alto: 372, ..Default::default() }];

@@ -86,6 +86,7 @@ impl Guion for Cara {
             filo: 0.05,
             luz: Some(Luz { cantidad: 0.03, desde_y: (CY - R).into(), alto: R * 2.0 }),
             borde: None,
+            vidrio: None,
         });
         e.pintar(Instr::Recorte(Some((cuerpo, 3.0))));
 

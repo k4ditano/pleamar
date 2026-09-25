@@ -1,3 +1,8 @@
+// El cristal mira hacia dónde apunta el borde con `dpdx`/`dpdy` de la
+// distancia. Todos los píxeles de un quad son del mismo elemento, así que las
+// ramas por tipo no parten un cuadro de 2×2 en dos: la derivada vale.
+diagnostic(off, derivative_uniformity);
+
 // Un quad por elemento. Cada elemento trae su caja envolvente, y un píxel solo
 // ejecuta las formas del elemento que lo cubre: la escena puede crecer sin que
 // cada píxel pague por toda ella.
@@ -261,9 +266,13 @@ fn fs(e: Salida) -> @location(0) vec4<f32> {
         d = min_suave(d, distancia(primera + k, p), fusion);
         if (con_sombra) { d_sombra = min_suave(d_sombra, distancia(primera + k, p - el.sombra.xy), fusion); }
     }
+    // Cristal: de 0 a 1, en el hueco de `uv`, que un cuerpo no usa.
+    let vidrio = el.uv.x;
     if (con_sombra) {
         // Su color son los tres huecos de `color1`; sin decir nada, negra.
-        c = sobre(c, el.color1.rgb, el.sombra.w * alfa * (1.0 - smoothstep(-8.0, el.sombra.z, d_sombra)));
+        // Bajo un cristal la sombra no se ve a través: solo alrededor.
+        let tapada = 1.0 - cubre(d) * vidrio;
+        c = sobre(c, el.color1.rgb, el.sombra.w * alfa * tapada * (1.0 - smoothstep(-8.0, el.sombra.z, d_sombra)));
     }
     var tono = el.color0.rgb;
     if (el.color1.w > 0.5) {
@@ -279,7 +288,25 @@ fn fs(e: Salida) -> @location(0) vec4<f32> {
     }
     let luz = clamp(1.0 - (local.y - el.luz.y) / max(el.luz.z, 1.0), 0.0, 1.0) * el.luz.x;
     tono += vec3<f32>(luz) + vec3<f32>(el.color0.w) * smoothstep(-2.2, -0.4, d);
-    c = sobre(c, tono, cubre(d) * alfa);
+    // Hecho cristal, el relleno es un tinte: deja ver lo que hay detrás (que el
+    // compositor desenfoca) y guarda su color.
+    c = sobre(c, tono, cubre(d) * alfa * mix(1.0, 0.36, vidrio));
+    if (vidrio > 0.0) {
+        // Hacia dónde apunta el borde: hacia donde crece la distancia.
+        let g = vec2<f32>(dpdx(d), dpdy(d));
+        let n = g / max(length(g), 1e-6);
+        let dentro = max(-d, 0.0);
+        // La luz viene de arriba a la izquierda. El canto que la mira brilla
+        // fino y fuerte; el de enfrente, más flojo: es la luz que sale.
+        let hacia_la_luz = normalize(vec2<f32>(-0.55, -0.83));
+        let canto = 1.0 - smoothstep(0.4, 3.0, dentro);
+        let mira = pow(max(dot(n, hacia_la_luz), 0.0), 1.6);
+        let sale = pow(max(-dot(n, hacia_la_luz), 0.0), 1.6);
+        // Y cuanto más cerca del borde, más claro: el cristal visto de canto.
+        let fresnel = exp(-dentro / 10.0);
+        let brillo = canto * (0.85 * mira + 0.4 * sale + 0.12) + 0.14 * fresnel;
+        c = sobre(c, vec3<f32>(1.0), clamp(brillo, 0.0, 1.0) * vidrio * cubre(d) * alfa);
+    }
     if (el.luz.w > 0.0) {
         c = sobre(c, el.borde.rgb, cubre(abs(d + el.luz.w * 0.5) - el.luz.w * 0.5) * alfa);
     }

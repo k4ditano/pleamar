@@ -1860,6 +1860,10 @@ impl<'a> Obra<'a> {
             Some(c) => c.num()?,
             None => 0.0,
         };
+        let vidrio = match p.get_mut("glass") {
+            Some(c) => Some(self.expr(c)?.acotar(0.0, 1.0)),
+            None => None,
+        };
         let alfa = match p.get_mut("opacity") {
             Some(c) => self.expr(c)?,
             None => Expr::K(1.0),
@@ -1869,7 +1873,7 @@ impl<'a> Obra<'a> {
             Some(c) => alfa * self.expr(c)?.acotar(0.0, 1.0),
             None => alfa,
         };
-        self.e.pintar(Instr::Relleno { pintura, alfa, filo, luz, borde });
+        self.e.pintar(Instr::Relleno { pintura, alfa, filo, luz, borde, vidrio });
         self.ultimo_tam = tam;
         Ok(())
     }

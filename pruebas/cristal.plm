@@ -1,0 +1,16 @@
+// espera: bien
+language 0.1
+// Un cuerpo de cristal: tinte, luz en los cantos, y el compositor desenfoca lo de detrás.
+scene Cristal {
+    prop cerca = 0 ~calm
+    surface { size: 300, 160; anchor: top }
+    body {
+        color: #1b2127
+        glass: 60% + cerca * 40%
+        shadow: 0, 8, 22, 28%
+        box { at: 150, 80; size: 240, 110; corner: 28 }
+    }
+    zone box encima { at: 150, 80; size: 240, 110; corner: 28 }
+    on enter encima { cerca: 1 }
+    on leave encima { cerca: 0 }
+}

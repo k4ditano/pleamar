@@ -679,8 +679,9 @@ pub enum Instr {
     /// Añade una forma al cuerpo, fundida con lo que lleve (`fusion` es el
     /// radio del mínimo suave; 0 es una unión seca).
     Forma { forma: Forma, fusion: Expr },
-    /// Pinta el cuerpo acumulado: sombra, relleno, luz y filo.
-    Relleno { pintura: Pintura, alfa: Expr, filo: f32, luz: Option<Luz>, borde: Option<(Expr, Color)> },
+    /// Pinta el cuerpo acumulado: sombra, relleno, luz y filo. Con `vidrio`, de
+    /// 0 a 1, el relleno se vuelve cristal: translúcido, y con la luz en los cantos.
+    Relleno { pintura: Pintura, alfa: Expr, filo: f32, luz: Option<Luz>, borde: Option<(Expr, Color)>, vidrio: Option<Expr> },
     /// Todo lo que venga después se recorta a esta forma, además de a las que
     /// ya hubiera (hasta cuatro). `None` quita la última.
     Recorte(Option<(Forma, f32)>),

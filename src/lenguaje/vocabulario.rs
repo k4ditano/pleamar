@@ -25,7 +25,7 @@ pub const PROPIEDADES: &[(&str, &[&str])] = &[
     ("arc", &["at", "radius", "span", "width"]),
     ("line", &["from", "to", "width"]),
     ("path", &["at", "size"]),
-    ("body", &["color", "gradient", "rim", "light", "shadow", "border", "opacity", "show"]),
+    ("body", &["color", "gradient", "rim", "light", "shadow", "border", "glass", "opacity", "show"]),
     ("text", &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show", "grow"]),
     ("image", &["at", "size", "opacity", "tint", "show", "grow"]),
     ("figure", &["at", "size", "scale", "rotate", "pivot", "color", "opacity", "blend", "stroke", "show", "grow"]),

@@ -1251,6 +1251,21 @@ pub fn hilo(
             }
             region = cajas;
         }
+        // Y detrás del cristal, lo que el compositor desenfoca: las franjas que
+        // caen en el trozo de cada superficie, en sus coordenadas. Solo cuando cambian.
+        for l in laminas.iter_mut() {
+            let v = l.vista.caja();
+            let suyas: Vec<[i32; 4]> = dibujo
+                .cristales
+                .iter()
+                .filter(|b| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1])
+                .map(|b| [(b[0].max(v[0]) - v[0]) as i32, (b[1].max(v[1]) - v[1]) as i32, (b[2].min(v[2]) - v[0]).ceil() as i32, (b[3].min(v[3]) - v[1]).ceil() as i32])
+                .collect();
+            if suyas != l.desenfoque {
+                l.region_de_desenfoque(&suyas);
+                l.desenfoque = suyas;
+            }
+        }
 
         // El 4 y el 7 son el origen de la vista: cero en la principal; cada emergente pone el suyo.
         uniformes[..8].copy_from_slice(&[tam.0, tam.1, t_total, 1.0, 0.0, periodo_ms, if bloqueada { 1.0 } else { 0.0 }, 0.0]);
@@ -1548,11 +1563,11 @@ fn banda_de_fallo(mensaje: &str, ancho: f32) -> Vec<Instr> {
     vec![
         Instr::Grupo { sombra: Some(Sombra { desplazada: (0.0.into(), 6.0.into()), difusa: 18.0.into(), alfa: 0.45.into(), color: None }) },
         Instr::Forma { forma: caja(8.0, ancho - 16.0, 10.0), fusion: 0.0.into() },
-        Instr::Relleno { pintura: color(0.18, 0.05, 0.06).into(), alfa: 1.0.into(), filo: 0.05, luz: None, borde: None },
+        Instr::Relleno { pintura: color(0.18, 0.05, 0.06).into(), alfa: 1.0.into(), filo: 0.05, luz: None, borde: None, vidrio: None },
         // Una pestaña del color de los errores, a la izquierda: se lee antes que el texto.
         Instr::Grupo { sombra: None },
         Instr::Forma { forma: caja(8.0, 5.0, 2.5), fusion: 0.0.into() },
-        Instr::Relleno { pintura: color(0.99, 0.41, 0.33).into(), alfa: 1.0.into(), filo: 0.05, luz: None, borde: None },
+        Instr::Relleno { pintura: color(0.99, 0.41, 0.33).into(), alfa: 1.0.into(), filo: 0.05, luz: None, borde: None, vidrio: None },
         Instr::Texto {
             contenido: Contenido::Fijo("this does not compile — the last good scene is still running".into()),
             en: (26.0.into(), 17.0.into()),

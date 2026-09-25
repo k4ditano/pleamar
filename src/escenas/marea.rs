@@ -62,6 +62,7 @@ impl Guion for Marea {
             filo: 0.05,
             luz: Some(Luz { cantidad: 0.03, desde_y: orbe_y - ANCLA_Y, alto: PANEL_H }),
             borde: None,
+            vidrio: None,
         });
 
         // Lo de dentro de la tarjeta, anclado a donde quedará y recortado a

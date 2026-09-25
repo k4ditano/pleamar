@@ -43,6 +43,12 @@ use smithay_client_toolkit::reexports::protocols::wp::fractional_scale::v1::clie
     wp_fractional_scale_v1::{self, WpFractionalScaleV1},
 };
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
+use wayland_protocols::ext::background_effect::v1::client::{ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1, ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1};
+
+/// Quien desenfoca lo de detrás de una superficie, si el compositor lo sabe
+/// hacer (`ext-background-effect`): Hyprland y KWin, sí. Sin él, el cristal
+/// es un tinte con su luz, sin nada borroso detrás.
+static EFECTOS: std::sync::OnceLock<ExtBackgroundEffectManagerV1> = std::sync::OnceLock::new();
 use wayland_client::protocol::wl_data_device_manager::DndAction;
 use wayland_client::{
     globals::registry_queue_init,
@@ -64,6 +70,9 @@ struct VentanaWayland {
     /// Para pedir el aviso de «ya puedes pintar otro»: con qué cola, y de quién es.
     qh: QueueHandle<Estado>,
     id: u32,
+    /// Su desenfoque, que se pide la primera vez que tiene cristal: pedirlo dos
+    /// veces para la misma superficie es un error del protocolo.
+    efecto: Mutex<Option<ExtBackgroundEffectSurfaceV1>>,
 }
 
 fn interactividad(t: Teclado) -> KeyboardInteractivity {
@@ -96,6 +105,24 @@ impl Ventana for VentanaWayland {
     /// la región de entrada: el aviso llega cuando el compositor quiera otro.
     fn pedir_frame(&self) {
         self.wl.frame(&self.qh, FrameDe(self.id));
+    }
+
+    /// Como la región de entrada, vale con el siguiente frame que se presente.
+    fn region_de_desenfoque(&self, cajas: &[[i32; 4]]) {
+        let Some(efectos) = EFECTOS.get() else { return };
+        let mut efecto = self.efecto.lock().unwrap();
+        if efecto.is_none() && cajas.is_empty() {
+            return;
+        }
+        let efecto = efecto.get_or_insert_with(|| efectos.get_background_effect(&self.wl, &self.qh, Mudo));
+        if cajas.is_empty() {
+            efecto.set_blur_region(None);
+        } else if let Ok(region) = Region::new(&self.compositor) {
+            for c in cajas {
+                region.add(c[0], c[1], c[2] - c[0], c[3] - c[1]);
+            }
+            efecto.set_blur_region(Some(region.wl_region()));
+        }
     }
 
     fn cursor(&self, c: Cursor) {
@@ -607,7 +634,7 @@ impl PopupHandler for Estado {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: a.id,
                 superficie,
-                ventana: Box::new(VentanaWayland { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursores: e.cursores.clone(), serie: e.serie.clone(), capa: None, qh: e.qh.clone(), id: a.id }),
+                ventana: Box::new(VentanaWayland { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursores: e.cursores.clone(), serie: e.serie.clone(), capa: None, qh: e.qh.clone(), id: a.id, efecto: Mutex::new(None) }),
                 escala: a.madre.escala,
                 tam: a.tam,
                 mhz: a.madre.mhz,
@@ -633,6 +660,9 @@ pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance
     let (globales, mut eventos) = registry_queue_init::<Estado>(&conexion).unwrap();
     let qh = eventos.handle();
     let compositor = CompositorState::bind(&globales, &qh).expect("sin wl_compositor");
+    if let Ok(m) = globales.bind::<ExtBackgroundEffectManagerV1, _, _>(&qh, 1..=1, Mudo) {
+        let _ = EFECTOS.set(m);
+    }
     let mut estado = Estado {
         registro: RegistryState::new(&globales),
         asientos: SeatState::new(&globales, &qh),
@@ -754,7 +784,7 @@ impl Estado {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: p.id,
                 superficie,
-                ventana: Box::new(VentanaWayland { wl: p.concha.wl().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: p.concha.capa().cloned(), qh: self.qh.clone(), id: p.id }),
+                ventana: Box::new(VentanaWayland { wl: p.concha.wl().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: p.concha.capa().cloned(), qh: self.qh.clone(), id: p.id, efecto: Mutex::new(None) }),
                 escala: p.escala,
                 tam,
                 mhz,
@@ -809,7 +839,7 @@ impl smithay_client_toolkit::session_lock::SessionLockHandler for Estado {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: cara.id,
                 superficie: pinta,
-                ventana: Box::new(VentanaWayland { wl: cara.superficie.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: None, qh: self.qh.clone(), id: cara.id }),
+                ventana: Box::new(VentanaWayland { wl: cara.superficie.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: None, qh: self.qh.clone(), id: cara.id, efecto: Mutex::new(None) }),
                 escala: 1.0,
                 tam,
                 mhz: cara.mhz,
