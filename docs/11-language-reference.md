@@ -421,7 +421,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `shader` | `at` (its top left corner) · `size: w, h` · `corner` · `opacity` · `show` · `values: a, b, …` (up to eight numbers, any expression) · `colors: c1, c2` (up to two). What it is and how it is written: §8.1 |
 | `figure` | `at` (where the piece's centre goes) · `size: w, h` or `scale:` (without either, one unit of the svg is one pixel) · `pivot: x, y` (in the svg's units, from its centre: the point it **turns** around, which does not move it) · `rotate` · `color` (instead of the one in the file) · `opacity` · `blend` · `stroke` · `show` |
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `secret` · `show` |
-| `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` |
+| `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` · and its **effects**: `blur` · `glow` · `saturation` · `brightness` · `contrast` · `hue` · `mask` · `mode` (§8.2) |
 | `popup` | `at` (inside the surface) · `size` · `open:` a fact |
 | `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `size: w, h` · `view: w, h` · `step` · `content` · `wrap: n` |
 
@@ -606,6 +606,55 @@ it comes back unknown. And the box itself should not cover it all either —an
 alpha of 0.88, like the lens— or the next frame does not know what is behind
 it. It is read with the same capture as the glass, so the same thing applies:
 on a compositor that does not let the screen be captured, it is always unknown.
+
+### 8.2. Effects on a group
+
+A `group` can do something to everything it holds, as ONE thing, when it is
+blended: what is inside is painted apart and the effect is applied to the whole.
+
+```plm
+language 0.1
+scene Effects {
+    surface { size: 400, 160; anchor: top }
+    let mint = #5ef2b0
+    group {
+        glow: 14, 90%, mint                      // a halo of that colour around it
+        text "online" { at: 80, 40; anchor: center; size: 16; weight: 700; color: mint }
+    }
+    group {
+        blur: 6                                  // out of focus
+        saturation: 0                            // and grey
+        ellipse { at: 200, 40; radius: 20; color: #ff4d6d }
+    }
+    group {
+        mask: 300, 20 to 300, 140                // whole at the top, gone at the bottom
+        box { at: 330, 80; size: 80, 120; corner: 12; color: #7a6cff }
+    }
+}
+```
+
+| | |
+| --- | --- |
+| `blur: r` | out of focus, over `r` pixels |
+| `glow: r, amount` · `glow: r, amount, color` | a light spilling from its edges, under what it holds: with a colour, a halo of that colour; without one, a *bloom* of its own colours. `amount` can go over 100 % |
+| `saturation: s` | 0 is grey, 1 as it is, more than 1 more vivid |
+| `brightness: b` · `contrast: k` | 1 is as it is |
+| `hue: angle` | turns every colour round the colour wheel: `hue: 120deg` makes red green |
+| `mask: x1, y1 to x2, y2` | whole at the first point, gone at the second, along that line |
+| `mask: radial x, y radius r` · `… radius r1 to r2` | whole at the centre (or up to `r1`), gone at `r` (or `r2`) |
+| `mode: add` | it **adds light** instead of covering: what it holds brightens whatever is under it, also the desktop behind the surface. `mode: normal` is the default |
+
+All of them are expressions, so they animate like anything else: `blur: 8 * (1
+- open)` brings something into focus as it opens. The mask moves with the group
+(`move:`, `rotate:`). Each group with effects is painted into a layer right
+before it is blended, one after another, so there can be as many as the scene
+wants; what they cost is the pixels they cover, and `blur` and `glow` read 32
+points per pixel.
+
+Two groups with effects cannot go **one inside the other** —only the outer one
+would get them, and so it is an error—; side by side, as many as needed. A group
+with only `opacity` around one with effects is fine: it fades each thing inside
+instead of the whole, and the effects keep their layer.
 
 ## 9. Layouts
 
@@ -930,7 +979,7 @@ properties.image: at size opacity tint show grow
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow
 properties.shader: at size corner opacity show values colors grow
 properties.input: at width size weight color opacity family placeholder selection secret show
-properties.group: pivot rotate scale move opacity size show grow
+properties.group: pivot rotate scale move opacity size show grow blur glow saturation brightness contrast hue mask mode
 properties.popup: at size open
 properties.children: move
 properties.layout: at anchor gap padding align fill glass lens corner show opacity cursor view step content wrap size grow
@@ -965,6 +1014,7 @@ surface.kind: panel window lock
 surface.keyboard: none on_demand exclusive
 text.align: left center right
 layout.align: start center end
+group.mode: normal add
 ```
 
 `properties.shape` are the ones common to `ellipse`, `box`, `arc` and `line`; `properties.layout`, those of `row` and `column`.

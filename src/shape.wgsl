@@ -275,7 +275,9 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
 
     var c = vec4<f32>(0.0);
     if (kind == LAYER) {
-        return textureLoad(layers, vec2<i32>(e.pos.xy), i32(el.header.y), 0) * alpha;
+        // A plain opacity group: its layer as is. With effects, `layer_with_effects`.
+        if (el.border.y < 0.5) { return textureLoad(layers, vec2<i32>(e.pos.xy), i32(el.header.y), 0) * alpha; }
+        return layer_with_effects(el, e.pos.xy, p, alpha);
     }
     if (kind == SHADER) {
         return user_shader(el, p) * alpha;
@@ -427,5 +429,72 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
     if (el.light.w > 0.0) {
         c = over(c, el.border.rgb, coverage(abs(d + el.light.w * 0.5) - el.light.w * 0.5) * alpha);
     }
+    return c;
+}
+
+// ── a group's effects ─────────────────────────────────────────────
+// Its layer, blurred over a disc of `radius` real pixels: 32 samples on a
+// golden-angle spiral, weighted like a gaussian. Bilinear reads between them
+// fill what 32 points leave; what is outside what was painted is transparent.
+fn layer_blurred(layer: i32, at: vec2<f32>, radius: f32) -> vec4<f32> {
+    let dims = vec2<f32>(textureDimensions(layers));
+    var sum = vec4<f32>(0.0);
+    var weights = 0.0;
+    for (var k = 0; k < 32; k++) {
+        let f = (f32(k) + 0.5) / 32.0;
+        let r = radius * sqrt(f);
+        let angle = f32(k) * 2.39996323;
+        let w = exp(-2.0 * f);
+        sum += textureSampleLevel(layers, atlas_sampler, (at + vec2<f32>(cos(angle), sin(angle)) * r) / dims, layer, 0.0) * w;
+        weights += w;
+    }
+    return sum / weights;
+}
+
+// `hue: 120deg` arrives in radians, like every angle written with `deg`.
+fn hue_rotate(c: vec3<f32>, a: f32) -> vec3<f32> {
+    let k = vec3<f32>(0.57735027);
+    return c * cos(a) + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - cos(a));
+}
+
+// color0: glow colour, and how much · color1: saturation, brightness, contrast, hue
+// line: the mask's points · light: blur, glow radius, mask kind (1 linear, 2 radial), add
+// border: whether the glow has its own colour, whether there are effects
+fn layer_with_effects(el: Element, at: vec2<f32>, p: vec2<f32>, alpha: f32) -> vec4<f32> {
+    let layer = i32(el.header.y);
+    let scale = u.header.w;
+    var c = textureLoad(layers, vec2<i32>(at), layer, 0);
+    if (el.light.x > 0.25) { c = layer_blurred(layer, at, el.light.x * scale); }
+    // The glow goes under what is inside: light that spills from its edges.
+    if (el.light.y > 0.25 && el.color0.w > 0.0) {
+        let g = layer_blurred(layer, at, el.light.y * scale);
+        var glow = g * el.color0.w;
+        if (el.border.x > 0.5) { glow = vec4<f32>(el.color0.rgb, 1.0) * g.a * el.color0.w; }
+        c = c + glow * (1.0 - c.a);
+    }
+    // Colour: on the straight colour, not the premultiplied one.
+    let tone = el.color1;
+    if (any(tone != vec4<f32>(1.0, 1.0, 1.0, 0.0)) && c.a > 0.0) {
+        var rgb = c.rgb / c.a;
+        rgb = rgb * tone.y;
+        rgb = (rgb - vec3<f32>(0.5)) * tone.z + vec3<f32>(0.5);
+        let gray = dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        rgb = mix(vec3<f32>(gray), rgb, tone.x);
+        if (tone.w != 0.0) { rgb = hue_rotate(rgb, tone.w); }
+        c = vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * c.a, c.a);
+    }
+    // The mask, where the group is (it moves with it): whole at the start, nothing at the end.
+    var m = 1.0;
+    let local = to_local(p, el.t0, el.t1);
+    if (el.light.z > 0.5 && el.light.z < 1.5) {
+        let axis = el.line.zw - el.line.xy;
+        m = 1.0 - smoothstep(0.0, 1.0, dot(local - el.line.xy, axis) / max(dot(axis, axis), 0.0001));
+    } else if (el.light.z > 1.5) {
+        m = 1.0 - smoothstep(el.line.z, max(el.line.w, el.line.z + 0.001), distance(local, el.line.xy));
+    }
+    c = c * m * alpha;
+    // Added: light that adds up instead of covering. Premultiplied with no alpha
+    // is exactly that, here and in the compositor.
+    if (el.light.w > 0.5) { return vec4<f32>(c.rgb, 0.0); }
     return c;
 }

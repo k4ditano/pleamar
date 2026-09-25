@@ -1,0 +1,39 @@
+// expect: ok
+// Every effect a group can have, one of each, and animated; and a group with
+// opacity around one with effects, which gives up its layer to it.
+scene GroupEffects {
+    surface { size: 400, 200; anchor: top }
+    prop open = 0 ~calm
+    let mint = #5ef2b0
+    group {
+        blur: 8 * (1 - open)
+        glow: 12, 80%, mint
+        text "focus" { at: 60, 40; anchor: center; size: 16; color: mint }
+    }
+    group {
+        glow: 16, 120%
+        saturation: 0.2 + open
+        brightness: 1.1
+        contrast: 1.2
+        hue: 40deg * open
+        ellipse { at: 150, 40; radius: 20; color: #ff4d6d }
+    }
+    group {
+        mask: 220, 20 to 220, 120
+        box { at: 240, 70; size: 60, 100; color: #7a6cff }
+    }
+    group {
+        move: 0, 10 * open
+        mask: radial 330, 70 radius 10 to 50
+        mode: add
+        box { at: 330, 70; size: 100, 100; color: #3a2a90 }
+    }
+    group {
+        opacity: open
+        box { at: 200, 170; size: 380, 40; corner: 12; color: #26303a }
+        group {
+            blur: 2
+            text "inside a fade" { at: 200, 170; anchor: center; size: 12; color: #fff }
+        }
+    }
+}

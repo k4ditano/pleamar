@@ -8,8 +8,10 @@ use std::ops::Range;
 
 const PER_SHAPE: usize = 20;
 const PER_ELEMENT: usize = 52;
-/// How many groups with opacity can be blending in the same frame.
-pub const MAX_LAYERS: usize = 4;
+/// How many groups with opacity or effects can be blending in the same frame.
+/// They all share ONE layer: each one is painted into it right before it is
+/// blended (see `paint`), so this is not memory, only a sanity limit.
+pub const MAX_LAYERS: usize = 64;
 /// How many frames painted without groups with opacity until their layers are given back.
 const IDLE_LAYER_FRAMES: u32 = 300;
 /// The strip added to the surface for the frame graph.
@@ -43,6 +45,7 @@ pub struct DrawList {
     /// The pieces of the scene that some open popup is showing.
     pub views: Vec<[f32; 4]>,
     clips_warned: bool,
+    effects_warned: bool,
     /// A cut shadow and a cut shape, waiting to be reported.
     shadow: Pending,
     clipping: Pending,
@@ -170,7 +173,19 @@ enum OpacityGroup {
     Multiply(f32),
     /// Invisible: nothing inside is emitted.
     Hidden,
-    Layer { alpha: f32, index: usize, first_element: usize },
+    Layer { alpha: f32, index: usize, first_element: usize, fx: Option<Fx> },
+}
+
+/// A group's effects, already evaluated for this frame: what goes into the
+/// element that blends its layer. See `Instr::Effect` and `shape.wgsl`.
+#[derive(Clone, Copy)]
+struct Fx {
+    blur: f32,
+    glow: (f32, f32, Option<[f32; 3]>),
+    tone: [f32; 4],
+    mask: (f32, [f32; 4]),
+    add: bool,
+    affine: Affine,
 }
 
 struct OpenBody {
@@ -604,14 +619,58 @@ impl DrawList {
                     } else if a >= 0.999 || inside_layer || self.offscreen_groups.len() >= MAX_LAYERS {
                         OpacityGroup::Multiply(a)
                     } else {
-                        OpacityGroup::Layer { alpha: a, index: self.offscreen_groups.len(), first_element: self.element_count() }
+                        OpacityGroup::Layer { alpha: a, index: self.offscreen_groups.len(), first_element: self.element_count(), fx: None }
                     });
-                    if let Some(OpacityGroup::Layer { index, first_element, .. }) = opacity_groups.last() {
-                        self.offscreen_groups.push((*first_element as u32..*first_element as u32, *index));
+                    if let Some(OpacityGroup::Layer { first_element, .. }) = opacity_groups.last() {
+                        self.offscreen_groups.push((*first_element as u32..*first_element as u32, 0));
                     }
                 }
+                Instr::Effect(fx) => {
+                    let a = fx.alpha.eval(c).clamp(0.0, 1.0);
+                    let inside_layer = opacity_groups.iter().any(|g| matches!(g, OpacityGroup::Layer { .. }));
+                    let full = self.offscreen_groups.len() >= MAX_LAYERS;
+                    if full && !std::mem::replace(&mut self.effects_warned, true) {
+                        eprintln!("render · more than {MAX_LAYERS} groups with effects or opacity at once: the rest are painted without their effects");
+                    }
+                    opacity_groups.push(if a <= 0.001 {
+                        OpacityGroup::Hidden
+                    } else if inside_layer || full {
+                        OpacityGroup::Multiply(a)
+                    } else {
+                        let v = |e: &Option<Expr>, default: f32| e.as_ref().map_or(default, |e| e.eval(c));
+                        let point = |p: &Point| [p.0.eval(c), p.1.eval(c)];
+                        let mask = match &fx.mask {
+                            None => (0.0, [0.0; 4]),
+                            Some(Mask::Linear(from, to)) => {
+                                let (a, b) = (point(from), point(to));
+                                (1.0, [a[0], a[1], b[0], b[1]])
+                            }
+                            Some(Mask::Radial(at, r1, r2)) => {
+                                let a = point(at);
+                                (2.0, [a[0], a[1], r1.eval(c).max(0.0), r2.eval(c).max(0.0)])
+                            }
+                        };
+                        let glow = fx.glow.as_ref().map_or((0.0, 0.0, None), |(r, k, col)| (r.eval(c).max(0.0), k.eval(c).max(0.0), col.as_ref().map(&color)));
+                        let fx = Fx {
+                            blur: v(&fx.blur, 0.0).max(0.0),
+                            glow,
+                            tone: [v(&fx.saturation, 1.0), v(&fx.brightness, 1.0), v(&fx.contrast, 1.0), v(&fx.hue, 0.0)],
+                            mask,
+                            add: fx.add,
+                            affine,
+                        };
+                        OpacityGroup::Layer { alpha: a, index: self.offscreen_groups.len(), first_element: self.element_count(), fx: Some(fx) }
+                    });
+                    if let Some(OpacityGroup::Layer { first_element, .. }) = opacity_groups.last() {
+                        self.offscreen_groups.push((*first_element as u32..*first_element as u32, 0));
+                    }
+                }
+                Instr::Fade(a) => {
+                    let a = a.eval(c).clamp(0.0, 1.0);
+                    opacity_groups.push(if a <= 0.001 { OpacityGroup::Hidden } else { OpacityGroup::Multiply(a) });
+                }
                 Instr::Opacity(None) => {
-                    if let Some(OpacityGroup::Layer { alpha, index, first_element }) = opacity_groups.pop() {
+                    if let Some(OpacityGroup::Layer { alpha, index, first_element, fx }) = opacity_groups.pop() {
                         let end = self.element_count();
                         self.offscreen_groups[index].0 = first_element as u32..end as u32;
                         // The group's box is the union of those inside.
@@ -620,9 +679,23 @@ impl DrawList {
                             Some(union(u, [e[0], e[1], e[2], e[3]]))
                         });
                         if let Some(bounds) = bounds {
+                            // A blur and a glow spill out of what is inside: the box grows with them.
+                            let spill = fx.map_or(0.0, |f| f.blur.max(f.glow.0) * 1.5 + 2.0);
+                            let bounds = [bounds[0] - spill, bounds[1] - spill, bounds[2] + spill, bounds[3] + spill];
                             self.element(2.0, bounds, &[], |e| {
-                                e[1] = index as f32;
+                                e[1] = 0.0;
                                 e[3] = alpha * mult;
+                                if let Some(f) = fx {
+                                    if let Some(k) = f.glow.2 {
+                                        e[8..11].copy_from_slice(&k);
+                                    }
+                                    e[11] = f.glow.1;
+                                    e[12..16].copy_from_slice(&f.tone);
+                                    e[16..20].copy_from_slice(&f.mask.1);
+                                    e[20..24].copy_from_slice(&[f.blur, f.glow.0, f.mask.0, f.add as u8 as f32]);
+                                    e[24..28].copy_from_slice(&[f.glow.2.is_some() as u8 as f32, 1.0, 0.0, 0.0]);
+                                    f.affine.encode(&mut e[44..52]);
+                                }
                             });
                         }
                     }
@@ -1490,14 +1563,14 @@ impl Gpu {
             lens.prepare(self, &self.lens, &mut encoder, scale);
         }
         let backdrop_group = l.lens.as_ref().and_then(|x| x.group.as_ref()).unwrap_or(&self.no_backdrop_group);
-        let pass_to = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, layers: &wgpu::BindGroup, spans: &[Range<u32>]| {
+        let pass_to = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, layers: &wgpu::BindGroup, spans: &[Range<u32>], keep: bool| {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations { load: if keep { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT) }, store: wgpu::StoreOp::Store },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -1515,32 +1588,43 @@ impl Gpu {
                 pass.draw(0..6, t);
             }
         };
-        // First the groups with opacity, each one to its layer…
-        let mut main: Vec<Range<u32>> = Vec::new();
-        let mut from = 0u32;
-        for (span, layer) in &d.offscreen_groups {
-            if l.open && l.layers as usize > *layer && d.touches_view(span, l.view.bounds()) {
-                pass_to(&mut encoder, &l.layer_views[*layer], &self.no_layers_group, std::slice::from_ref(span));
-            }
-            main.push(from..span.start);
-            from = span.end;
-        }
-        main.push(from..d.element_count() as u32);
+        // Everything in order, and each group with opacity or effects painted
+        // into THE layer right before the stretch that blends it: all of them
+        // share one, so there can be as many as the scene wants and they cost
+        // the memory of one. The target is cleared once, at the start; the
+        // following stretches paint on top of it.
+        let target = match &l.lens {
+            // With a lens, on its canvas, which is then copied to the screen: one
+            // has to know exactly what was painted to unmix what is behind.
+            Some(lens) => lens.canvas(),
+            None => &view,
+        };
         // Closed, it is cleared: transparent and nothing on top. Painting what
         // is in the draw list will not do, because it closes in the middle of
         // a frame —the draw list was composed while it was still open— and
         // that frame stayed forever: in Marea, a piece of the little ball about
         // to come out through the edge.
-        if !l.open {
-            main.clear();
+        let total = if l.open { d.element_count() as u32 } else { 0 };
+        let groups: &[(Range<u32>, usize)] = if l.open { &d.offscreen_groups } else { &[] };
+        let mut from = 0u32;
+        let mut keep = false;
+        for (span, layer) in groups {
+            // The element that blends it comes right after its span: if that one
+            // falls in view, the layer is needed, even if what is inside does not.
+            let with_blend = span.start..(span.end + 1).min(total);
+            if l.layers as usize > *layer && d.touches_view(&with_blend, l.view.bounds()) {
+                if span.start > from || !keep {
+                    pass_to(&mut encoder, target, &l.layer_group, &[from..span.start], keep);
+                    keep = true;
+                }
+                pass_to(&mut encoder, &l.layer_views[*layer], &self.no_layers_group, std::slice::from_ref(span), false);
+            } else {
+                pass_to(&mut encoder, target, &l.layer_group, &[from..span.start], keep);
+                keep = true;
+            }
+            from = span.end;
         }
-        // …and then everything else, with the layers already done in between.
-        // With a lens, on its canvas, which is then copied to the screen: one
-        // has to know exactly what was painted to unmix what is behind.
-        match &l.lens {
-            Some(lens) => pass_to(&mut encoder, lens.canvas(), &l.layer_group, &main),
-            None => pass_to(&mut encoder, &view, &l.layer_group, &main),
-        }
+        pass_to(&mut encoder, target, &l.layer_group, &[from..total], keep);
         if let Some(lens) = &mut l.lens {
             lens.copy_to(&mut encoder, &frame.texture);
         }

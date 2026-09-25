@@ -286,6 +286,8 @@ struct Compiler<'a> {
     scopes: Vec<Scope>,
     components: HashMap<String, Component<'a>>,
     copies: usize,
+    /// How many groups with effects are open around what is being read.
+    effects_depth: usize,
     /// Inside a `row` or a `column`, a child does not say where it goes: it goes to its slot.
     in_slot: bool,
     /// How much room the last thing painted took, for whoever is sharing out slots.
@@ -332,7 +334,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None,
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None,
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -525,6 +527,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     // And every time something was named, once per location: the passes repeat.
     let mut seen_places = std::collections::HashSet::new();
     symbols.extend(o.used.take().into_iter().filter(|s| seen_places.insert((s.local.clone(), s.line, s.col))));
+    crate::scene::settle_effects(&mut o.e.instrs);
     (if o.errors.is_empty() { Ok(o.e) } else { Err(o.errors) }, symbols)
 }
 
@@ -1771,11 +1774,21 @@ impl<'a> Compiler<'a> {
             self.e.paint(Instr::Transform(Some(t.clone())));
             self.under.push(t);
         }
-        if let Some(o) = &opacity {
-            self.e.paint(Instr::Opacity(Some(o.clone())));
+        let effects = self.group_effects(n, &mut p, &opacity)?;
+        match (&effects, &opacity) {
+            (Some(fx), _) => {
+                if self.effects_depth > 0 {
+                    return Err(CompileError::at(n.line, n.col, "a group with effects inside another group with effects: only the outer one would get them. Put the effects on one of the two, or side by side"));
+                }
+                self.e.paint(Instr::Effect(Box::new(fx.clone())));
+            }
+            (None, Some(o)) => self.e.paint(Instr::Opacity(Some(o.clone()))),
+            (None, None) => {}
         }
+        self.effects_depth += effects.is_some() as usize;
         let from = self.candidates.len();
         self.group(body.iter());
+        self.effects_depth -= effects.is_some() as usize;
         // What is not seen does not stop anyone's click, whether it went away with `show:` or
         // with an opacity that reaches zero. Inside a stack that already happened with
         // `show:`; a `group` not doing it was a trap for the faces: the
@@ -1795,7 +1808,7 @@ impl<'a> Compiler<'a> {
         if size.is_some() {
             self.last_size = size;
         }
-        if opacity.is_some() {
+        if opacity.is_some() || effects.is_some() {
             self.e.paint(Instr::Opacity(None));
         }
         if transforms {
@@ -1803,6 +1816,59 @@ impl<'a> Compiler<'a> {
             self.e.paint(Instr::Transform(None));
         }
         Ok(())
+    }
+
+    /// `blur`, `glow`, `saturation`, `brightness`, `contrast`, `hue`, `mask` and
+    /// `mode` of a group: what is done to what it holds when blending it.
+    fn group_effects(&mut self, n: &Node, p: &mut HashMap<&str, Cur>, opacity: &Option<Expr>) -> R<Option<Effects>> {
+        let words = ["blur", "glow", "saturation", "brightness", "contrast", "hue", "mask", "mode"];
+        if !words.iter().any(|w| p.contains_key(*w)) {
+            return Ok(None);
+        }
+        let one = |o: &Self, name: &str, p: &mut HashMap<&str, Cur>| -> R<Option<Expr>> {
+            match p.get_mut(name) {
+                Some(c) => Ok(Some(o.expr(c)?)),
+                None => Ok(None),
+            }
+        };
+        let blur = one(self, "blur", p)?;
+        let saturation = one(self, "saturation", p)?;
+        let brightness = one(self, "brightness", p)?;
+        let contrast = one(self, "contrast", p)?;
+        let hue = one(self, "hue", p)?;
+        // `glow: 16, 80%` or `glow: 16, 80%, mint`.
+        let glow = match p.get_mut("glow") {
+            Some(c) => {
+                let r = self.expr(c)?;
+                c.expect_sym(",")?;
+                let k = self.expr(c)?;
+                let col = if c.sym(",") { Some(self.color(c)?) } else { None };
+                Some((r, k, col))
+            }
+            None => None,
+        };
+        // `mask: x1, y1 to x2, y2` · `mask: radial x, y radius r` · `… radius r1 to r2`.
+        let mask = match p.get_mut("mask") {
+            Some(c) => {
+                if c.word("radial") {
+                    let at = self.point(c)?;
+                    c.expect_word("radius")?;
+                    let r = self.expr(c)?;
+                    Some(if c.word("to") { Mask::Radial(at, r, self.expr(c)?) } else { Mask::Radial(at, Expr::K(0.0), r) })
+                } else {
+                    let from = self.point(c)?;
+                    c.expect_word("to")?;
+                    Some(Mask::Linear(from, self.point(c)?))
+                }
+            }
+            None => None,
+        };
+        let add = match p.get_mut("mode") {
+            Some(c) => c.one_of(vocab::GROUP_MODES, "how a group blends")? == "add",
+            None => false,
+        };
+        let _ = n;
+        Ok(Some(Effects { alpha: opacity.clone().unwrap_or(Expr::K(1.0)), blur, glow, saturation, brightness, contrast, hue, mask, add }))
     }
 
     /// How much room a named stack takes is known when it finishes drawing, but it

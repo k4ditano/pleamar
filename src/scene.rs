@@ -598,6 +598,61 @@ pub struct Light {
 
 pub type Color = [Expr; 3];
 
+/// What a `group` does to what it holds when blending it: `blur: 12`,
+/// `glow: 16, 80%, mint`, `saturation: 0`, `brightness: 1.2`, `contrast: 1.1`,
+/// `hue: 40deg`, `mask: …`, `mode: add`.
+#[derive(Clone, Debug)]
+pub struct Effects {
+    pub alpha: Expr,
+    pub blur: Option<Expr>,
+    /// Radius, how much, and its colour —without one, the colours of what is inside—.
+    pub glow: Option<(Expr, Expr, Option<Color>)>,
+    pub saturation: Option<Expr>,
+    pub brightness: Option<Expr>,
+    pub contrast: Option<Expr>,
+    pub hue: Option<Expr>,
+    pub mask: Option<Mask>,
+    /// `mode: add`: it adds light instead of covering.
+    pub add: bool,
+}
+
+/// Where a group can be seen: whole at the start, nothing at the end.
+#[derive(Clone, Debug)]
+pub enum Mask {
+    /// `mask: x1, y1 to x2, y2`.
+    Linear(Point, Point),
+    /// `mask: radial x, y radius r1 to r2`: whole up to r1, nothing from r2.
+    Radial(Point, Expr, Expr),
+}
+
+/// A group with effects inside another group with opacity: the outer one gives
+/// up its layer (see `Instr::Fade`). Called once, when the scene has been read.
+pub fn settle_effects(instrs: &mut [Instr]) {
+    let mut open: Vec<(usize, bool)> = Vec::new();
+    for k in 0..instrs.len() {
+        match &instrs[k] {
+            Instr::Opacity(Some(_)) => open.push((k, false)),
+            Instr::Fade(_) => open.push((k, false)),
+            Instr::Effect(_) => {
+                for o in open.iter_mut() {
+                    o.1 = true;
+                }
+                open.push((k, false));
+            }
+            Instr::Opacity(None) => {
+                if let Some((at, holds_effects)) = open.pop() {
+                    if holds_effects {
+                        if let Instr::Opacity(Some(a)) = &instrs[at] {
+                            instrs[at] = Instr::Fade(a.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Paint {
     Color(Color),
@@ -820,6 +875,14 @@ pub enum Instr {
     /// this opacity: what is in front does not let what is behind show through half blended.
     /// `None` closes the group.
     Opacity(Option<Expr>),
+    /// Like `Opacity(Some(..))`, but what is inside is painted apart WITH
+    /// effects applied when it is blended: blur, glow, colour, mask, how it
+    /// blends. It always wants a layer of its own. `Opacity(None)` closes it.
+    Effect(Box<Effects>),
+    /// An opacity that multiplies each thing inside instead of painting it
+    /// apart: what a group with opacity becomes when there is a group with
+    /// effects inside it, so that the effects, which need the layer, get it.
+    Fade(Expr),
     /// A loose shape, of a solid color.
     Solid { shape: Shape, color: Color, alpha: Expr, glass_spec: Option<Glass> },
     /// A box painted by one of the scene's own shaders: `target` is where

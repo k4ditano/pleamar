@@ -1,0 +1,8 @@
+// expect: error «multiply»
+scene X {
+    surface { size: 100, 100 }
+    group {
+        mode: multiply
+        ellipse { at: 50, 50; radius: 10; color: #fff }
+    }
+}

@@ -16,7 +16,11 @@ scene Effects {
         box { at: 270, 130; size: 520, 240; corner: 28 }
     }
     shader aurora { at: 30, 30; size: 300, 200; corner: 20; values: bright; colors: #5ef2b0, #7a6cff }
-    text "aurora" { at: 180, 215; anchor: center; size: 12; color: ink; opacity: 70% }
+    // The labels glow a little in the aurora's colour: an effect of the group, not a shader.
+    group {
+        glow: 8, 60%, #5ef2b0
+        text "aurora" { at: 180, 215; anchor: center; size: 12; color: ink; opacity: 70% }
+    }
     shader ripple { at: 350, 30; size: 180, 200; corner: 20; colors: #1d6fa5 }
     text "ripple" { at: 440, 215; anchor: center; size: 12; color: ink; opacity: 70% }
     shader haze { at: 550, 30; size: 180, 200; corner: 20; values: 1; colors: #202830 }

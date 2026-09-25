@@ -154,6 +154,11 @@ does not keep the scene painting. `--check` validates the WGSL with its line.
 Contract and rules: §8.1 of the reference; working examples in
 `examples/effects.plm` and `examples/shaders/`.
 
+A `group` can also treat what it holds as one thing: `blur: 6`, `glow: 14, 90%,
+mint` (or without a colour, a bloom), `saturation`, `brightness`, `contrast`,
+`hue: 120deg`, `mask: x1, y1 to x2, y2` / `mask: radial x, y radius r1 to r2`,
+`mode: add`. All animatable; §8.2. Two groups with effects cannot nest.
+
 For smaller things there is maths: `noise(x)`, `noise(x, y)`, `random(k)`,
 `sqrt`, `pow`, `fract`, `mod`, `atan2`, `length`… and `time`, the seconds since
 the scene started (naming it keeps the scene painting). Gesture frames take
