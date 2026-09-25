@@ -49,8 +49,11 @@ fn despejar(e: Salida) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
     let fondo = (f - s.rgb) / queda;
-    // Un fondo que no puede ser: la foto no es de este lienzo.
-    if (any(fondo < vec3<f32>(-0.03)) || any(fondo > vec3<f32>(1.03))) {
+    // Un fondo que no puede ser: la foto no es de este lienzo. Con margen para
+    // el redondeo, que al dividir por lo que queda crece: medio nivel entre lo
+    // que queda.
+    let margen = 0.03 + 0.5 / 255.0 / queda;
+    if (any(fondo < vec3<f32>(-margen)) || any(fondo > vec3<f32>(1.0 + margen))) {
         return a;
     }
     return vec4<f32>(clamp(fondo, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
