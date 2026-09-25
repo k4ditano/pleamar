@@ -1,0 +1,3 @@
+// expect: error «cannot find 'common/does-not-exist.plm'»
+import "common/does-not-exist.plm"
+scene X { surface { size: 10, 10 } }

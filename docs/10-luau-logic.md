@@ -1,8 +1,8 @@
 # The logic, in Luau
 
-**Status:** implemented (`src/logica_luau.rs`). If there is a `marea.luau` next to `marea.plm`, that is its logic. It reloads itself when saved, just like the scene.
+**Status:** implemented (`src/logic_luau.rs`). If there is a `marea.luau` next to `marea.plm`, that is its logic. It reloads itself when saved, just like the scene.
 
-Examples: `escenas/marea.luau` (notices coming in) and `escenas/bandeja.luau` (a list of data that grows and shrinks).
+Examples: `examples/marea.luau` (notices coming in) and `examples/bandeja.luau` (a list of data that grows and shrinks).
 
 ## What it can do, and what it cannot
 
@@ -50,7 +50,7 @@ A misspelled name is an error there and then, with a suggestion: `the scene has 
 
 ## The system services
 
-`sys.watch(name, fn)` listens to something that happens in the system. The function receives the state right now and then every change, as a table. **The names are the same on every system**; who answers is `src/plataforma/`'s business. If this system does not have that service, `sys.watch` returns `false` and the scene decides what to do without it.
+`sys.watch(name, fn)` listens to something that happens in the system. The function receives the state right now and then every change, as a table. **The names are the same on every system**; who answers is `src/platform/`'s business. If this system does not have that service, `sys.watch` returns `false` and the scene decides what to do without it.
 
 | Service | What it reports | Who provides it today |
 | --- | --- | --- |
@@ -84,7 +84,7 @@ On exit, the program stops everything the logic left running; on reloading the l
 A library with a `.luau` next to it is a plugin (see [[pleamar · 11 Referencia del lenguaje 0.1]], §5). Its logic is a script like any other, with four differences:
 
 - **It only sees its own.** `text.now` is the scene's `Clock.now`; `fact.secret`, if `secret` belongs to the scene, does not exist: `plugin 'Nosy' has no fact called 'secret'. A plugin only sees what its library declares`. The same with `model`, `emit` and what it listens to: `on("tapped", …)` is `Clock.tapped`, and `on("key", …)` hears nothing.
-- **Its permissions are approved by whoever uses it.** `pleamar --aprobar scene.plm` shows what each plugin asks for and asks about it; unapproved, it runs with none (`plugin 'Clock' wants to run 'date', but nobody has approved its permissions`), and if its code or what it asks for changes, it goes back to unapproved.
+- **Its permissions are approved by whoever uses it.** `pleamar --approve scene.plm` shows what each plugin asks for and asks about it; unapproved, it runs with none (`plugin 'Clock' wants to run 'date', but nobody has approved its permissions`), and if its code or what it asks for changes, it goes back to unapproved.
 - **Its permissions are the ones in its own `.plm`**, not those of the scene using it: `plugin 'Nosy' has no permission to run 'sh'. If it should be able to, declare it in its own .plm (the scene's do not count)`.
 - **It does not ask for gestures or move the typing caret**: that belongs to the scene. If it wants something to happen, it emits an event of its own, and the scene decides (`on Clock.tapped { play nod }`).
 

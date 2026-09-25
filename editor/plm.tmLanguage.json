@@ -1,5 +1,5 @@
 {
-  "$comment": "Lo hace `pleamar --resaltado vscode`: no se escribe a mano.",
+  "$comment": "Made by `pleamar --highlight vscode`: it is not written by hand.",
   "fileTypes": [
     "plm"
   ],

@@ -1,6 +1,0 @@
-// espera: fallo «there is already a component 'Dot', at paleta.plm:4»
-import "comun/paleta.plm"
-scene X {
-    surface { size: 10, 10 }
-    component Dot(t) { size: 1, 1 }
-}

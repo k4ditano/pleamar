@@ -1,8 +1,0 @@
-// espera: fallo «needs the layout to say how big it is»
-scene X {
-    surface { size: 200, 100 }
-    row r { at: 10, 10; gap: 6
-        group { size: 20, 20; box { from: 0, 0; size: 20, 20; color: #9ed6bd } }
-        group { grow: 1; size: 10, 20; box { from: 0, 0; size: 10, 20; color: #e0655a } }
-    }
-}

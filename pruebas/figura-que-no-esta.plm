@@ -1,6 +1,0 @@
-// espera: fallo «that svg cannot be read»
-scene Figura {
-    surface { size: 200, 120; anchor: center }
-    figure pieza = file "comun/no-existe.svg"
-    figure pieza { at: 40, 60; size: 40, 40 }
-}

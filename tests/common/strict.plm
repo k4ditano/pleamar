@@ -1,0 +1,16 @@
+import "palette.plm"
+library Strict strict {
+    let gap = 6
+    component Good(chosen: event, tone: color = ink) {
+        size: 40, 20
+        prop lit = 0 ~snappy
+        box hit { from: 0, 0; size: 40 - gap, 20; corner: 6; color: tone; opacity: 40% + lit * 60% }
+        on enter hit { lit: 1 ~quick }
+        on press hit { emit chosen(local.x) }
+    }
+    component Nosy {
+        size: 40, 20
+        box hit { from: 0, 0; size: 40, 20; color: accent; opacity: secret }
+        on press hit { emit leaked; secret = 0 }
+    }
+}

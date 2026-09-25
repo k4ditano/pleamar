@@ -1,0 +1,22 @@
+// expect: ok
+language 0.1
+// `anchor:` with a fact: the surface sticks to one edge or another WHILE RUNNING.
+// Layer-shell lets it change on a live surface, so something that has to pick a
+// corner does not need four surfaces, one per corner.
+scene Corners {
+    surface { size: 200, 60; anchor: top }
+    fact corner: top_left | top_right | bottom_right | bottom_left = top_left
+    box { from: 0, 0; size: 200, 60; color: #151616 }
+    zone box spin { from: 0, 0; size: 200, 60; cursor: pointer }
+    //  Goes round the four. No `corner + 1`: an enum does no arithmetic, and the
+    //  compiler says so.
+    on press spin { corner = if(corner == top_left, top_right, if(corner == top_right, bottom_right, if(corner == bottom_right, bottom_left, top_left))) }
+
+    surface mark {
+        size: 90, 90
+        anchor: corner
+        level: overlay
+        ellipse { at: 45, 45; radius: 22; color: #e3a35c }
+        text "{corner}" { at: 45, 45; anchor: center; size: 8; weight: 700; color: #0a0c10 }
+    }
+}

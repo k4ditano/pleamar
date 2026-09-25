@@ -1,5 +1,0 @@
-// espera: fallo «this model unfolds more than 4096 records»
-scene X {
-    surface { size: 10, 10 }
-    model big max 100 { a: text; list inner max 100 { b: text } }
-}

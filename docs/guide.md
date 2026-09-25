@@ -1,7 +1,7 @@
 # From zero to a bar
 
 This guide writes a real bar, one piece at a time. Everything here compiles:
-`./probar.sh` checks it on every change, so if any of this stops being true, the
+`./run-tests.sh` checks it on every change, so if any of this stops being true, the
 tests go red.
 
 The program has to be built:
@@ -23,7 +23,7 @@ scene Bar {
 }
 ```
 
-`pleamar --escena bar.plm`. It sticks to the top and takes the whole width
+`pleamar --scene bar.plm`. It sticks to the top and takes the whole width
 (`full`). Save the file after any change and it reloads on its own, without
 losing whatever was in motion.
 
@@ -215,7 +215,7 @@ emit that event, and it can touch nothing else of the scene.
   [the reference](11-language-reference.md).
 - What the logic can do: [the Luau boundary](10-luau-logic.md).
 - In the editor: `pleamar --lsp` gives errors as you type, and
-  `pleamar --resaltado vim` the highlighting. See [`editor/`](../editor/).
+  `pleamar --highlight vim` the highlighting. See [`editor/`](../editor/).
 
-And a habit that saves trouble: **`pleamar --comprobar yours.plm`** before
+And a habit that saves trouble: **`pleamar --check yours.plm`** before
 launching it. Reads it, says whether it is fine, exits.

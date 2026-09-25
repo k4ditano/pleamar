@@ -1,0 +1,29 @@
+// expect: ok
+language 0.1
+// Gradients: the usual one (two colours), with stops, and radial.
+scene Gradients {
+    surface { size: 400, 260 }
+    box { from: 0, 0; size: 400, 260; color: #101111 }
+
+    //  The usual one: two colours and four numbers.
+    body {
+        gradient: 20, 20, 180, 20, #9ed6bd, #e86a9a
+        box { from: 20, 20; size: 160, 50; corner: 12 }
+    }
+    //  With stops, one of them halfway.
+    body {
+        gradient: 220, 20 to 380, 20, #9ed6bd, #e8c07a 30%, #e86a9a, #151616
+        box { from: 220, 20; size: 160, 50; corner: 12 }
+    }
+    //  Radial, from a centre.
+    body {
+        gradient: radial 100, 160 radius 60, #f5f7f5, #9ed6bd 40%, #151616
+        ellipse { at: 100, 160; radius: 60 }
+    }
+    //  Radial in a box, with shadow and rim, to see it gets along with the rest.
+    body {
+        rim: 8%; shadow: 0, 6, 14, 40%
+        gradient: radial 300, 160 radius 80, #e8c07a, #6a3fd6
+        box { from: 220, 100; size: 160, 120; corner: 20 }
+    }
+}

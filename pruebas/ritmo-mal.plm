@@ -1,3 +1,0 @@
-// espera: fallo «from 1 to 480»
-language 0.1
-scene Ritmo { surface { size: 200, 80; anchor: top; rate: 0 } }

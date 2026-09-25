@@ -22,7 +22,7 @@ RTX 2060, 60 Hz screen. Opening Marea's card with the logic blocked for 600 ms r
 | | frames during the block | longest frame |
 | --- | --- | --- |
 | pleamar | 38 | 17–19 ms |
-| pleamar `--ingenuo` (logic on the thread that paints) | 0 | 617 ms |
+| pleamar `--naive` (logic on the thread that paints) | 0 | 617 ms |
 | QtQuick on Quickshell (`comparar/shell.qml`) | 0 | 600 ms |
 
 Memory at rest: 119 MB against the 214 MB of the Quickshell bench. **Half, not a quarter**: almost everything pleamar holds is NVIDIA's Vulkan driver. Painting the static parts on the CPU would be the way to go below that.

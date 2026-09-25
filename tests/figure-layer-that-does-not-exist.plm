@@ -1,0 +1,6 @@
+// expect: error «has no layer called 'backgroun': it has background, dot»
+scene Figure {
+    surface { size: 200, 120; anchor: center }
+    figure piece = file "common/piece.svg"
+    figure piece.backgroun { at: 40, 60; size: 40, 40 }
+}

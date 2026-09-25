@@ -1,0 +1,39 @@
+// expect: ok
+language 0.1
+// Typed facts —a yes or no, a number, an enum—, an enum as a field, an
+// image as a field, and records inside records: a menu with its submenus.
+scene Types {
+    surface { size: 320, 260; anchor: top; margin: 60; screens: "HDMI-A-1" }
+    permissions { services: "apps" }
+    let ink = #f5f7f5
+    fact open = true
+    fact tries: number = 3
+    fact mode: low | normal | critical = normal
+    fact armed: bool = false
+
+    model menu max 3 {
+        label: text
+        icon: image 20, 20
+        kind: plain | checked | danger = plain
+        list items max 3 { label: text; enabled: bool = true }
+    }
+
+    box { from: 0, 0; size: 320, 260; corner: 12; color: #151616 }
+    text "mode: {mode} · tries: {tries}" { at: 14, 20; anchor: left center; size: 13; color: ink
+                                              opacity: if(mode == critical, 1, 0.6) }
+    box { from: 14, 34; size: 292, 2; color: mix(#9ed6bd, #e8776a, mode == critical) }
+
+    column all { at: 14, 46; gap: 8
+        for m in menu { Entry(m) }
+    }
+    component Entry(m: record) {
+        size: 292, 22 + sub.height
+        image m.icon { at: 0, 1; size: 20, 20 }
+        text m.label { at: 28, 11; anchor: left center; size: 14; color: mix(ink, #e8776a, m.kind == danger) }
+        ellipse { at: 284, 11; radius: 4; color: #9ed6bd; opacity: m.kind == checked }
+        column sub { at: 28, 22; gap: 2
+            for it in m.items { text "· {it.label}" { size: 12; color: ink; opacity: 40% + it.enabled * 50% } }
+        }
+    }
+    on press all while open and not armed { mode = critical; armed = true }
+}

@@ -1,0 +1,14 @@
+// A scene with no logic of its own that uses a plugin. The clock fills the time by itself:
+// the scene knows neither about `date` nor about how often. And the scene granted it no permission.
+
+import "common/palette.plm"
+import "plugins/clock.plm"
+
+scene WithPlugin {
+    surface { size: 300, 60; anchor: top; margin: 60; screens: "HDMI-A-1" }
+    row { at: 150, 12; anchor: center; gap: 10; align: center
+        Clock(tone: mint)
+        //  A plugin's boundary can be read from outside, by its whole name.
+        text "{? seconds: {Clock.seconds}}" { size: 11; color: ink; opacity: 50% }
+    }
+}

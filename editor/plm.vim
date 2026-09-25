@@ -1,5 +1,5 @@
-" Sintaxis de pleamar para Vim y Neovim. La hace `pleamar --resaltado vim`:
-" no se escribe a mano, y así no se queda atrás del lenguaje.
+" pleamar syntax for Vim and Neovim. Made by `pleamar --highlight vim`:
+" it is not written by hand, so it does not lag behind the language.
 if exists("b:current_syntax") | finish | endif
 syn keyword plmStatement surface permissions model service spring prop pose fact event text image figure measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
 syn keyword plmStatement scene library import language

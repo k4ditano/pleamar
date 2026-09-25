@@ -1,0 +1,26 @@
+// expect: ok
+language 0.1
+// A glass body: tint, light on the edges, and the compositor blurs what is behind.
+scene Glass {
+    prop near = 0 ~calm
+    surface { size: 300, 160; anchor: top }
+    body {
+        color: #1b2127
+        glass: 60% + near * 40%
+        lens: near > 0.5
+        shadow: 0, 8, 22, 28%
+        box { at: 150, 80; size: 240, 110; corner: 28 }
+    }
+    zone box over { at: 150, 80; size: 240, 110; corner: 28 }
+    on enter over { near: 1 }
+    on leave over { near: 0 }
+    //  And inside, plates: a loose shape and the background of a layout.
+    box { at: 90, 80; size: 80, 60; corner: 14; color: #4a5057; glass: 100% }
+    row { at: 150, 55; padding: 8; fill: #4a5057; glass: 100%; corner: 12
+        text "plate" { size: 12; color: #f5f7f5 }
+    }
+    //  A veil: a background that can barely be seen.
+    row { at: 150, 110; padding: 8; fill: #f5f7f5 9%; corner: 12
+        text "plate" { size: 12; color: #f5f7f5 }
+    }
+}

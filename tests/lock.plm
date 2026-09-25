@@ -1,0 +1,22 @@
+// expect: ok
+language 0.1
+// The lock screen: it does not exist until `open:` becomes true, and once it
+// exists the session is really locked. Its `size:` is the box that is centred
+// on each monitor; the background is painted big, because the monitor is bigger.
+scene Padlock {
+    surface { size: 220, 60; anchor: top }
+    fact locked = false
+    surface lock_screen {
+        kind: lock
+        size: 600, 300
+        open: locked
+        box { from: -4000, -4000; size: 8600, 8300; color: #101214 }
+        text "locked" { at: 300, 130; anchor: center; size: 28; color: #ffffff }
+        text "held by the compositor" { at: 300, 170; anchor: center; size: 12; color: #9ed6bd; opacity: lock.held }
+    }
+    box button { at: 110, 30; size: 200, 40; corner: 12; color: #9ed6bd; cursor: pointer }
+    text "lock" { at: 110, 30; anchor: center; size: 13; color: #101214 }
+    on press button { locked = true }
+    //  It removes itself: a lock test that cannot be opened is not a test.
+    on still locked for 4s while locked { locked = false }
+}

@@ -1,0 +1,11 @@
+// expect: error «there is already a `let outside`»
+language 0.1
+// A second `let` with the same name would change what the first one means.
+scene LetTwice {
+    surface { size: 200, 100 }
+    prop place = 0
+    let outside = place
+    ellipse { at: 100, 40 + outside * 20; radius: 10; color: #ffffff }
+    fact open = false
+    let outside = open
+}

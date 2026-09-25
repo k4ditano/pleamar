@@ -48,7 +48,7 @@ The numbers, how they were taken and what to watch out for: `marea-plm/MEDIDAS.m
   the same way —as paths, by layers—, so a piece drawn in Inkscape melts into
   what carries it instead of sitting on top of it like a sticker.
 - **Cross-platform by design:** everything system-specific behind
-  `src/plataforma/`, and `./portable.sh` checks it still builds for Windows and
+  `src/platform/`, and `./portable.sh` checks it still builds for Windows and
   macOS.
 
 ## A whole scene
@@ -79,7 +79,7 @@ scene Clock {
 }
 ```
 
-`pleamar --escena clock.plm`. Save the file and it reloads without losing
+`pleamar --scene clock.plm`. Save the file and it reloads without losing
 whatever was in motion; save it broken and the last good scene stays on screen,
 with a band on top saying what does not compile and where. Rebuild pleamar itself and the
 running one starts again with the same arguments.
@@ -88,19 +88,19 @@ running one starts again with the same arguments.
 
 ```sh
 cargo build --release
-./target/release/pleamar --escena escenas/barra.plm       # a bar: workspaces, window, time and volume
-./target/release/pleamar --escena escenas/lista-larga.plm # five thousand rows in sixteen copies
-./target/release/pleamar --escena escenas/caminos.plm     # paths, curves and gradients
-./target/release/pleamar --escena escenas/ventana.plm     # a normal window, with its frame
-./target/release/pleamar --escena escenas/iconos.plm      # the system tray; right-click opens an icon's menu
-./target/release/pleamar --escena escenas/ajustes.plm     # saves what you pick in its own folder
-./target/release/pleamar --comprobar escenas/barra.plm    # reads it, says whether it is fine, exits
-./probar.sh                                               # the language tests, and the examples in its reference
+./target/release/pleamar --scene examples/barra.plm       # a bar: workspaces, window, time and volume
+./target/release/pleamar --scene examples/lista-larga.plm # five thousand rows in sixteen copies
+./target/release/pleamar --scene examples/caminos.plm     # paths, curves and gradients
+./target/release/pleamar --scene examples/ventana.plm     # a normal window, with its frame
+./target/release/pleamar --scene examples/iconos.plm      # the system tray; right-click opens an icon's menu
+./target/release/pleamar --scene examples/ajustes.plm     # saves what you pick in its own folder
+./target/release/pleamar --check examples/barra.plm    # reads it, says whether it is fine, exits
+./run-tests.sh                                               # the language tests, and the examples in its reference
 ```
 
-Options used daily: `--pantalla A,B` (which monitors), `--decir` (talk to it from
-outside, or from a compositor shortcut), `--raton "360,90@500 pulsa@3200"` (a
-pretend mouse, to rehearse without touching the real one), `--bloqueo MS` (stall
+Options used daily: `--screen A,B` (which monitors), `--say` (talk to it from
+outside, or from a compositor shortcut), `--mouse "360,90@500 click@3200"` (a
+pretend mouse, to rehearse without touching the real one), `--stall MS` (stall
 the logic on purpose and watch the screen carry on).
 
 ## The language in five minutes
@@ -140,7 +140,7 @@ services and `run` for system commands, all behind permissions. Reference in
 
 A library with its own `.luau` next to it is a **plugin**: its boundary lives
 under its name (`Clock.now`), it runs on its own thread, and its permissions are
-approved by whoever uses it, with `pleamar --aprobar`. Unapproved, it runs
+approved by whoever uses it, with `pleamar --approve`. Unapproved, it runs
 touching nothing.
 
 ## In the editor
@@ -148,7 +148,7 @@ touching nothing.
 `pleamar --lsp` is a language server over stdio, with this same compiler behind
 it: mistakes as you type, which words fit here, what the word under the cursor
 means, go to where a name was declared, where it is used, and renaming it.
-`pleamar --resaltado vim|vscode` writes the syntax file straight from the
+`pleamar --highlight vim|vscode` writes the syntax file straight from the
 vocabulary, so it cannot fall behind. Both, already generated, in
 [`editor/`](editor/).
 

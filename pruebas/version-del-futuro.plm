@@ -1,3 +1,0 @@
-// espera: fallo «this file asks for language 0.7, and this pleamar understands 0.1»
-language 0.7
-scene X { surface { size: 10, 10 } }

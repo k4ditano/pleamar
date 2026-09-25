@@ -33,7 +33,7 @@ The mouse goes **to the renderer**, which is the one that knows what is undernea
 - **Layers**: claims in order of priority — `while <expr>`, `N ms after <event>`, `from … until`, or the default one. The first one that holds wins. Each claim has a **presence** (a property that goes to 1 when it wins), to paint according to who is in charge, and it can **pin** properties with their spring and their delay: that is a choreography.
 - **Gestures**: keyframes with a duration, a curve (`OutBack`, `InQuad`…) and a hold, over the **pose** properties. Whatever a keyframe does not name goes back to its base; when it ends, the springs pick the pose up. **Classes**: `Estado > Pedido > Reflejo > Postura > Ambiente`; one only cuts off another of its own class or lower. A **posture** repeats on its own while something is true.
 - **Rules**: `Entra`, `Sale`, `Pulsa`, `Encima{durante}`, `Fuera{durante}`, `Quieto{durante}`, `Cada{a..b}`, `Al(suceso)` → effects (`Animar`, `Hecho`, `Alternar`, `Suceso`, `Impulso`, `Gesto`). **The renderer runs all of it.**
-- **Reduced motion** (`--movimiento-reducido`): the springs settle, each gesture shows the keyframe furthest from the base held still, and what carries itself goes quiet — a `blink` stays open, a `wave` rests at the middle of its travel and a `spin` stops where it was. Nothing is left going round on its own.
+- **Reduced motion** (`--reduced-motion`): the springs settle, each gesture shows the keyframe furthest from the base held still, and what carries itself goes quiet — a `blink` stays open, a `wave` rests at the middle of its travel and a `spin` stops where it was. Nothing is left going round on its own.
 
 ## The renderer: one quad per element (`render.rs`, `forma.wgsl`, `formas.rs`)
 
@@ -58,7 +58,7 @@ It is painted with **a single** instanced call: one quad per element, in order, 
 
 `formas.rs` holds the geometry once for three uses: encoding it for the GPU, knowing what is under the mouse, and computing boxes.
 
-**Measured** (RTX 2060, 720×300, `--escena enjambre --sin-vsync`, ms per frame):
+**Measured** (RTX 2060, 720×300, `--scene enjambre --no-vsync`, ms per frame):
 
 | shapes | per-pixel interpreter (before) | per element |
 | --- | --- | --- |
@@ -82,7 +82,7 @@ Everything that ends up as a piece of the atlas. Three pure-Rust crates that exi
 - **Measuring.** A `Texto` with `mide` leaves its width and its height in two read-only properties. With `Comportamiento::Sigue` —a property that chases an expression with its spring— a box grows with its label.
 - There is a permanent snitch: any frame longer than 2.4 periods is printed to the console with its time.
 
-## The platform boundary (`src/plataforma/`)
+## The platform boundary (`src/platform/`)
 
 The only part of the program that knows what Wayland is. A platform puts up the surfaces a scene asks for and hands them to the renderer as render surfaces; it tells it about the mouse, the scale and the monitors coming and going; it gives it a `Ventana` with one method (`region_de_entrada`); and it knows how to find an icon by its name. Today there is only `wayland.rs`. On any other system the core compiles and says it does not know how to put up windows yet. **`./portable.sh` checks it against Linux, Windows and macOS**, and it is the guard that nothing belonging to one system slips out of here.
 
@@ -111,7 +111,7 @@ Key repeat is ours (400 ms, then one every 33): that way it is the same on every
 
 ## Commands from outside (`plataforma/mod.rs`)
 
-A thread listens on `$XDG_RUNTIME_DIR/pleamar-SCENE.sock`; `pleamar --decir SCENE "emit toggle"` writes one line and leaves (2 ms). A question (`get open`) goes to the renderer with a channel back (`ARender::Pregunta`) and is answered over the same socket. The command enters the renderer as `ARender::SucesoDeFuera`, through the same door as the logic's events. It is `cfg(unix)`: on Windows it will be a named pipe.
+A thread listens on `$XDG_RUNTIME_DIR/pleamar-SCENE.sock`; `pleamar --say SCENE "emit toggle"` writes one line and leaves (2 ms). A question (`get open`) goes to the renderer with a channel back (`ARender::Pregunta`) and is answered over the same socket. The command enters the renderer as `ARender::SucesoDeFuera`, through the same door as the logic's events. It is `cfg(unix)`: on Windows it will be a named pipe.
 
 ## Dropping from another application (`plataforma/wayland.rs`)
 
@@ -141,12 +141,12 @@ If no property is moving and no behavior is alive, the renderer does not paint: 
 
 ```sh
 ./target/release/pleamar                 # Marea; right click closes it
-./target/release/pleamar --escena isla   # the island
-./target/release/pleamar --escena cara   # Marea's face: layers and gestures, with its script
-./target/release/pleamar --escena muestrario   # gradient, border, nested transforms, rotated texture, group opacity
-./target/release/pleamar --demo --segundos 9
-./target/release/pleamar --ingenuo       # the logic blocks the renderer, like QtQuick
-./target/release/pleamar --raton "360,90@500 500,172@1100 pulsa@3200 fuera@4500"
+./target/release/pleamar --scene isla   # the island
+./target/release/pleamar --scene cara   # Marea's face: layers and gestures, with its script
+./target/release/pleamar --scene muestrario   # gradient, border, nested transforms, rotated texture, group opacity
+./target/release/pleamar --demo --seconds 9
+./target/release/pleamar --naive       # the logic blocks the renderer, like QtQuick
+./target/release/pleamar --mouse "360,90@500 500,172@1100 click@3200 out@4500"
 ```
 
 It comes up on `HDMI-A-1`. The graph at the bottom is one bar per frame; the red band is the time with the logic blocked. **Do not measure while capturing with `grim`**: it causes dropped frames.

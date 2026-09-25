@@ -25,7 +25,7 @@ shares them.
 
 ## Frames and the cost of one
 
-pleamar prints its own cycle when it exits, and with `PLEAMAR_CRONO=1` it breaks
+pleamar prints its own cycle when it exits, and with `PLEAMAR_TIMING=1` it breaks
 down every frame:
 
 ```
@@ -44,12 +44,12 @@ lines to get frames per second, average the numbers to get the cost of a frame.
 ## Checking an animation against its contract
 
 The other kind of measuring, and the one that gets used daily: not what it
-costs, but **whether it lasts what it says**. `--registrar` prints the value of
+costs, but **whether it lasts what it says**. `--record` prints the value of
 properties, facts and live texts once per frame:
 
 ```sh
-pleamar --escena bolita.plm --sin-hud --bloqueo 0 --segundos 8 \
-        --registrar calma,dibuja,capsula > log.tsv
+pleamar --scene bolita.plm --no-hud --stall 0 --seconds 8 \
+        --record calma,dibuja,capsula > log.tsv
 ```
 
 ```
@@ -62,7 +62,7 @@ ms	calma	dibuja	capsula
 - The names are the ones the scene declares. **Inside a component's copy they
   carry their mark** (`px#Hat2`), which is why it says what there is when it
   cannot find one.
-- Driving it: `--raton "360,30@400 pulsa@1500"` for the pointer, `--decir` from
+- Driving it: `--mouse "360,30@400 click@1500"` for the pointer, `--say` from
   another shell for facts and events. Both are exact in time; the real mouse is
   not.
 - Reading it: `grep -P '^[\d.]+\t' log.tsv | awk …`. What is usually wanted is

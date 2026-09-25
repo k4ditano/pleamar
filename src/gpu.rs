@@ -1,391 +1,392 @@
-//! La parte que habla con la GPU: el dispositivo, las láminas —una por
-//! superficie de Wayland— y la composición de la lista de dibujo en elementos.
+//! The part that talks to the GPU: the device, the sheets —one per Wayland
+//! surface— and the composition of the draw list into elements.
 
-use crate::escena::*;
-use crate::plataforma::Ventana;
-use crate::texto::{Clave, Hueco, Textos, LADO_DEL_ATLAS};
+use crate::scene::*;
+use crate::platform::PlatformWindow;
+use crate::text::{LayoutKey, AtlasSlot, Texts, ATLAS_SIZE};
 use std::ops::Range;
 
-const POR_FORMA: usize = 20;
-const POR_ELEMENTO: usize = 52;
-/// Cuántos grupos con opacidad pueden estar fundiéndose en el mismo frame.
-pub const MAX_CAPAS: usize = 4;
-/// Cuántos frames pintados sin grupos con opacidad hasta devolver sus capas.
-const CAPAS_OCIOSAS: u32 = 300;
-/// La franja que se le añade a la superficie para la gráfica de frames.
-pub const ALTO_INSTRUMENTOS: f32 = 84.0;
-/// Con cuánto sitio se empieza. Si una escena pide más, los almacenes crecen al doble.
-const FORMAS_DE_SALIDA: usize = 1024;
-/// Floats (pares x, y) para los caminos. Crece como los demás.
-const PUNTOS_DE_SALIDA: usize = 1024;
-/// Floats (r, g, b, dónde) para las paradas de los degradados.
-const PARADAS_DE_SALIDA: usize = 512;
-const ELEMENTOS_DE_SALIDA: usize = 1024;
+const PER_SHAPE: usize = 20;
+const PER_ELEMENT: usize = 52;
+/// How many groups with opacity can be blending in the same frame.
+pub const MAX_LAYERS: usize = 4;
+/// How many frames painted without groups with opacity until their layers are given back.
+const IDLE_LAYER_FRAMES: u32 = 300;
+/// The strip added to the surface for the frame graph.
+pub const HUD_HEIGHT: f32 = 84.0;
+/// How much room to start with. If a scene asks for more, the stores grow to double.
+const INITIAL_SHAPES: usize = 1024;
+/// Floats (x, y pairs) for the paths. It grows like the others.
+const INITIAL_POINTS: usize = 1024;
+/// Floats (r, g, b, where) for the gradient stops.
+const INITIAL_STOPS: usize = 512;
+const INITIAL_ELEMENTS: usize = 1024;
 
-/// La lista de dibujo convertida en lo que pinta la GPU: formas evaluadas y
-/// elementos con su caja. Se recompone cada frame; son unos pocos cientos de
-/// números.
+/// The draw list turned into what the GPU paints: evaluated shapes and
+/// elements with their box. It is recomposed every frame; it is a few hundred
+/// numbers.
 #[derive(Default)]
-pub struct Dibujo {
-    pub formas: Vec<f32>,
-    /// Los puntos de los caminos, en pares x, y: cada camino se lleva un tramo.
-    pub puntos: Vec<f32>,
-    /// Las paradas de los degradados: r, g, b y dónde cae cada una.
-    pub paradas: Vec<f32>,
-    pub elementos: Vec<f32>,
-    tam: (f32, f32),
-    /// Lo que han medido los textos que lo pidieron: propiedad y valor.
-    pub medidas: Vec<(PropId, f32)>,
-    /// Los campos de texto, como quedaron: para saber dónde cae un clic.
-    pub campos: Vec<CampoPuesto>,
-    /// Grupos que se pintan aparte: qué elementos, y en qué capa.
-    pub apartes: Vec<(Range<u32>, usize)>,
-    /// Los trozos de la escena que alguna emergente abierta está enseñando.
-    pub vistas: Vec<[f32; 4]>,
-    avisado_de_recortes: bool,
-    /// Una sombra cortada y una forma cortada, esperando a decirse.
-    sombra: Pendiente,
-    corte: Pendiente,
-    /// Lo que mide la superficie de la escena, sin la franja de instrumentos.
-    suya: (f32, f32),
-    /// Tramos de instrucciones que no se miran este frame: los de una copia de
-    /// pantalla cuya superficie está cerrada.
-    pub saltar: Vec<std::ops::Range<usize>>,
-    /// Y a qué bordes está pegada: contra esos no se avisa de nada.
-    pegada: [bool; 4],
-    /// Dónde hay cristal este frame, en franjas del plano de la escena: lo que
-    /// se le pide al compositor que desenfoque.
-    pub cristales: Vec<([f32; 4], bool)>,
-    /// Las franjas de cada forma de cristal, en el origen, por lo que la hace
-    /// ser como es menos dónde está: mientras solo se mueva, no se vuelven a buscar.
-    cache_de_cristales: std::collections::HashMap<[u32; 12], (Vec<[f32; 4]>, bool)>,
+pub struct DrawList {
+    pub shapes: Vec<f32>,
+    /// The points of the paths, in x, y pairs: each path takes a stretch.
+    pub points: Vec<f32>,
+    /// The gradient stops: r, g, b and where each one falls.
+    pub stops: Vec<f32>,
+    pub elements: Vec<f32>,
+    size: (f32, f32),
+    /// What the texts that asked for it have measured: property and value.
+    pub measurements: Vec<(PropId, f32)>,
+    /// The text fields, as they ended up: to know where a click falls.
+    pub fields: Vec<PlacedField>,
+    /// Groups painted separately: which elements, and on which layer.
+    pub offscreen_groups: Vec<(Range<u32>, usize)>,
+    /// The pieces of the scene that some open popup is showing.
+    pub views: Vec<[f32; 4]>,
+    clips_warned: bool,
+    /// A cut shadow and a cut shape, waiting to be reported.
+    shadow: Pending,
+    clipping: Pending,
+    /// The size of the scene's surface, without the instruments strip.
+    own_size: (f32, f32),
+    /// Stretches of instructions that are not looked at this frame: those of a
+    /// per-screen copy whose surface is closed.
+    pub skip: Vec<std::ops::Range<usize>>,
+    /// And which edges it is attached to: nothing is reported against those.
+    attached_edges: [bool; 4],
+    /// Where there is glass this frame, in strips of the scene plane: what the
+    /// compositor is asked to blur.
+    pub glass_regions: Vec<([f32; 4], bool)>,
+    /// The strips of each glass shape, at the origin, keyed by what makes it
+    /// what it is except where it is: while it only moves, they are not searched again.
+    glass_cache: std::collections::HashMap<[u32; 12], (Vec<[f32; 4]>, bool)>,
 }
 
-/// La lista de dibujo del frame anterior, para saber **dónde** ha cambiado algo.
-/// Cada superficie paga por presentar un frame (~0,5 ms, ver P11) aunque no
-/// cambie nada suyo: con una copia por monitor, la bolita respirando en uno
-/// repintaba también el otro. Comparar bit a bit es mucho más barato que eso.
+/// The draw list of the previous frame, to know **where** something has changed.
+/// Each surface pays for presenting a frame (~0.5 ms, see P11) even if nothing
+/// of its own changes: with one copy per monitor, the little ball breathing on
+/// one repainted the other too. Comparing bit by bit is much cheaper than that.
 #[derive(Default)]
-pub struct Anterior {
-    formas: Vec<f32>,
-    puntos: Vec<f32>,
-    paradas: Vec<f32>,
-    elementos: Vec<f32>,
-    apartes: Vec<(Range<u32>, usize)>,
-    hay: bool,
+pub struct PreviousFrame {
+    shapes: Vec<f32>,
+    points: Vec<f32>,
+    stops: Vec<f32>,
+    elements: Vec<f32>,
+    offscreen_groups: Vec<(Range<u32>, usize)>,
+    valid: bool,
 }
 
-impl Anterior {
-    /// Las cajas —en el plano de la escena— de lo que ha cambiado desde el
-    /// frame anterior: la de antes y la de ahora, porque lo que se va de una
-    /// superficie también la cambia. `false` si no se puede saber elemento a
-    /// elemento —algo ha aparecido o desaparecido y los índices ya no casan—:
-    /// entonces ha cambiado todo.
-    pub fn cambios(&mut self, d: &Dibujo, cajas: &mut Vec<[f32; 4]>) -> bool {
-        cajas.clear();
+impl PreviousFrame {
+    /// The boxes —in the scene plane— of what has changed since the previous
+    /// frame: the one from before and the one from now, because what leaves a
+    /// surface also changes it. `false` if it cannot be known element by
+    /// element —something has appeared or disappeared and the indices no
+    /// longer match—: then everything has changed.
+    pub fn changed_rects(&mut self, d: &DrawList, rects: &mut Vec<[f32; 4]>) -> bool {
+        rects.clear();
         fn bits(v: &[f32]) -> &[u32] {
             bytemuck::cast_slice(v)
         }
-        let misma_forma = self.hay
-            && self.formas.len() == d.formas.len()
-            && self.puntos.len() == d.puntos.len()
-            && self.paradas.len() == d.paradas.len()
-            && self.elementos.len() == d.elementos.len()
-            && self.apartes == d.apartes;
-        let sabido = misma_forma && {
-            let puntos_iguales = bits(&self.puntos) == bits(&d.puntos);
-            let paradas_iguales = bits(&self.paradas) == bits(&d.paradas);
-            // Una forma cambia si cambian sus números, o si es un camino y han cambiado los puntos.
-            let forma_cambiada: Vec<bool> = self
-                .formas
-                .chunks_exact(POR_FORMA)
-                .zip(d.formas.chunks_exact(POR_FORMA))
-                .map(|(a, b)| bits(a) != bits(b) || (!puntos_iguales && b[0] as u32 == 4))
+        let same_layout = self.valid
+            && self.shapes.len() == d.shapes.len()
+            && self.points.len() == d.points.len()
+            && self.stops.len() == d.stops.len()
+            && self.elements.len() == d.elements.len()
+            && self.offscreen_groups == d.offscreen_groups;
+        let known = same_layout && {
+            let same_points = bits(&self.points) == bits(&d.points);
+            let same_stops = bits(&self.stops) == bits(&d.stops);
+            // A shape changes if its numbers change, or if it is a path and the points have changed.
+            let shape_changed: Vec<bool> = self
+                .shapes
+                .chunks_exact(PER_SHAPE)
+                .zip(d.shapes.chunks_exact(PER_SHAPE))
+                .map(|(a, b)| bits(a) != bits(b) || (!same_points && b[0] as u32 == 4))
                 .collect();
-            let cambiada = |k: f32| k >= 0.0 && forma_cambiada.get(k as usize).copied().unwrap_or(true);
-            for (a, b) in self.elementos.chunks_exact(POR_ELEMENTO).zip(d.elementos.chunks_exact(POR_ELEMENTO)) {
-                let mut cambio = bits(a) != bits(b);
-                // Un cuerpo es sus formas; un recorte también es una forma.
-                if !cambio && b[0] == 0.0 {
-                    cambio = (b[1] as usize..b[1] as usize + b[2] as usize).any(|k| cambiada(k as f32)) || (!paradas_iguales && b[15] > 0.5);
+            let changed = |k: f32| k >= 0.0 && shape_changed.get(k as usize).copied().unwrap_or(true);
+            for (a, b) in self.elements.chunks_exact(PER_ELEMENT).zip(d.elements.chunks_exact(PER_ELEMENT)) {
+                let mut change = bits(a) != bits(b);
+                // A body is its shapes; a clip is also a shape.
+                if !change && b[0] == 0.0 {
+                    change = (b[1] as usize..b[1] as usize + b[2] as usize).any(|k| changed(k as f32)) || (!same_stops && b[15] > 0.5);
                 }
-                if !cambio {
-                    cambio = b[32..36].iter().any(|&r| cambiada(r));
+                if !change {
+                    change = b[32..36].iter().any(|&r| changed(r));
                 }
-                if cambio {
-                    cajas.push([a[4], a[5], a[6], a[7]]);
-                    cajas.push([b[4], b[5], b[6], b[7]]);
+                if change {
+                    rects.push([a[4], a[5], a[6], a[7]]);
+                    rects.push([b[4], b[5], b[6], b[7]]);
                 }
             }
             true
         };
-        self.formas.clone_from(&d.formas);
-        self.puntos.clone_from(&d.puntos);
-        self.paradas.clone_from(&d.paradas);
-        self.elementos.clone_from(&d.elementos);
-        self.apartes.clone_from(&d.apartes);
-        self.hay = true;
-        sabido
+        self.shapes.clone_from(&d.shapes);
+        self.points.clone_from(&d.points);
+        self.stops.clone_from(&d.stops);
+        self.elements.clone_from(&d.elements);
+        self.offscreen_groups.clone_from(&d.offscreen_groups);
+        self.valid = true;
+        known
     }
 
-    /// Que el frame que viene no se compare con este: lo que había en el atlas ya no vale.
-    pub fn olvidar(&mut self) {
-        self.hay = false;
+    /// That the coming frame is not compared with this one: what was in the atlas is no longer valid.
+    pub fn forget(&mut self) {
+        self.valid = false;
     }
 }
 
-/// El campo donde se está escribiendo, visto desde quien pinta.
+/// The field being typed into, as seen by whoever paints.
 #[derive(Clone, Copy)]
-pub struct VistaDeCampo {
-    pub texto: usize,
+pub struct FieldView {
+    pub text: usize,
     pub cursor: usize,
-    pub ancla: usize,
-    /// El cursor parpadea.
-    pub se_ve: bool,
+    pub anchor: usize,
+    /// The cursor blinks.
+    pub visible: bool,
 }
 
-pub struct CampoPuesto {
-    pub texto: usize,
-    pub zona: &'static str,
-    pub maqueta: Option<std::sync::Arc<crate::texto::Maqueta>>,
-    /// Dónde empieza el texto, y cuánto se ha corrido para que el cursor se vea.
+pub struct PlacedField {
+    pub text: usize,
+    pub zone: &'static str,
+    pub layout: Option<std::sync::Arc<crate::text::Layout>>,
+    /// Where the text starts, and how much it has scrolled so the cursor is visible.
     pub x0: f32,
-    pub corrido: f32,
-    /// Si lo pintado son puntos: entonces un byte de la maqueta no es un byte
-    /// del texto, y hay que pasar de uno a otro por el número de letra.
-    pub secreto: bool,
+    pub scroll: f32,
+    /// Whether what is painted are dots: then a byte of the layout is not a
+    /// byte of the text, and one has to go from one to the other by letter number.
+    pub secret: bool,
 }
 
-/// El punto con el que se pinta cada letra de un campo secreto. Mide tres
-/// bytes, sea cual sea la letra que tapa: de ahí salen las dos cuentas.
-pub const PUNTO: &str = "•";
-/// El byte del texto de verdad que corresponde a uno de la maqueta de puntos.
-pub fn byte_de_verdad(valor: &str, en_puntos: usize) -> usize {
-    valor.char_indices().nth(en_puntos / PUNTO.len()).map_or(valor.len(), |(i, _)| i)
+/// The dot each letter of a secret field is painted with. It is three bytes
+/// long, whatever the letter it covers: both computations come from that.
+pub const MASK_DOT: &str = "•";
+/// The byte of the real text that corresponds to one of the dots layout.
+pub fn unmasked_byte(value: &str, in_dots: usize) -> usize {
+    value.char_indices().nth(in_dots / MASK_DOT.len()).map_or(value.len(), |(i, _)| i)
 }
 
-/// Un grupo con opacidad, mientras se va llenando.
-enum GrupoOpaco {
-    /// No hace falta capa: opaco del todo, o no quedan capas. Se multiplica y ya.
-    Multiplica(f32),
-    /// Invisible: nada de dentro se emite.
-    Oculto,
-    Capa { alfa: f32, indice: usize, primer_elemento: usize },
+/// A group with opacity, while it is being filled.
+enum OpacityGroup {
+    /// No layer needed: fully opaque, or there are no layers left. It multiplies and that is it.
+    Multiply(f32),
+    /// Invisible: nothing inside is emitted.
+    Hidden,
+    Layer { alpha: f32, index: usize, first_element: usize },
 }
 
-struct CuerpoAbierto {
-    primera: usize,
+struct OpenBody {
+    first: usize,
     n: usize,
-    caja: Option<[f32; 4]>,
-    holgura: f32,
-    sombra: Option<Sombra>,
-    /// Sus formas tal cual, para saber en la CPU por dónde pasa su borde: lo
-    /// necesita el cristal, que pide al compositor que desenfoque justo ahí.
-    planas: Vec<crate::formas::Plana>,
+    bounds: Option<[f32; 4]>,
+    slack: f32,
+    shadow: Option<Shadow>,
+    /// Its shapes as they are, to know on the CPU where its edge goes: the
+    /// glass needs it, since it asks the compositor to blur exactly there.
+    flats: Vec<crate::shapes::FlatShape>,
 }
 
-/// El ancho del bisel de un cristal: un tercio de su lado corto, sin pasar de 30 px.
-fn bisel_de(caja: [f32; 4]) -> f32 {
-    ((caja[2] - caja[0]).min(caja[3] - caja[1]) * 0.33).clamp(4.0, 30.0)
+/// The width of a glass's bevel: a third of its short side, not going over 30 px.
+fn bevel_for(bounds: [f32; 4]) -> f32 {
+    ((bounds[2] - bounds[0]).min(bounds[3] - bounds[1]) * 0.33).clamp(4.0, 30.0)
 }
 
-/// Por debajo de esto, un cristal casi no se ve y no se pide desenfoque.
-const CRISTAL_VISIBLE: f32 = 0.3;
-/// El alto de cada franja de la región de desenfoque, en píxeles lógicos.
-const FRANJA: f32 = 2.0;
+/// Below this, a glass can barely be seen and no blur is requested.
+const GLASS_VISIBLE: f32 = 0.3;
+/// The height of each strip of the blur region, in logical pixels.
+const STRIP: f32 = 2.0;
 
-/// La silueta de una forma como rectángulos, **centrada en el origen**: franjas
-/// de 2 px, y en cada una los tramos que caen dentro. La región que se pide al
-/// compositor se hace de rectángulos; con la caja entera, alrededor de una
-/// bolita redonda se veían las esquinas de un cuadrado desenfocado. Las filas
-/// iguales seguidas —los lados rectos de una tarjeta— se juntan en una.
+/// The silhouette of a shape as rectangles, **centred at the origin**: strips
+/// of 2 px, and in each one the spans that fall inside. The region requested
+/// from the compositor is made of rectangles; with the whole box, around a
+/// round little ball one could see the corners of a blurred square. Identical
+/// consecutive rows —the straight sides of a card— are merged into one.
 ///
-/// En el origen porque lo que casi siempre cambia de una forma es dónde está:
-/// así, una bolita que viaja no se vuelve a medir, solo se corre.
-fn franjas_de(p: &crate::formas::Plana, puntos: &[f32]) -> Vec<[f32; 4]> {
-    let mut franjas: Vec<[f32; 4]> = Vec::new();
-    let Some(caja) = p.caja() else { return franjas };
-    // Una caja redondeada o una elipse, rellenas, sin girar ni torcer: el ancho
-    // de cada fila tiene fórmula, y no hace falta buscarlo. Es lo que hace que
-    // una tarjeta que crece al abrirse no cueste un milisegundo por frame.
-    let m = p.afin.m;
-    if (p.tipo == 0 || p.tipo == 1) && p.giro == 0.0 && p.trazo == 0.0 && m[1] == 0.0 && m[2] == 0.0 && m[0] > 0.0 && m[3] > 0.0 {
+/// At the origin because what almost always changes about a shape is where it
+/// is: that way, a little ball that travels is not measured again, only shifted.
+fn strips_of(p: &crate::shapes::FlatShape, points: &[f32]) -> Vec<[f32; 4]> {
+    let mut strips: Vec<[f32; 4]> = Vec::new();
+    let Some(bounds) = p.bounds() else { return strips };
+    // A rounded box or an ellipse, filled, not rotated or skewed: the width of
+    // each row has a formula, and there is no need to search for it. It is what
+    // makes a card that grows as it opens not cost a millisecond per frame.
+    let m = p.affine.m;
+    if (p.kind == 0 || p.kind == 1) && p.rotation == 0.0 && p.stroke == 0.0 && m[1] == 0.0 && m[2] == 0.0 && m[0] > 0.0 && m[3] > 0.0 {
         let (sx, sy) = (m[0], m[3]);
-        // Media altura y, para cada altura desde el centro, medio ancho: en local.
-        let (alto, ancho): (f32, Box<dyn Fn(f32) -> f32>) = if p.tipo == 1 {
-            let r = p.radio.clamp(0.0, p.mx.min(p.my));
+        // Half height and, for each height from the centre, half width: in local.
+        let (half_height, half_width): (f32, Box<dyn Fn(f32) -> f32>) = if p.kind == 1 {
+            let r = p.radius.clamp(0.0, p.mx.min(p.my));
             let (mx, my) = (p.mx, p.my);
             (my, Box::new(move |y: f32| {
                 let dy = y.abs() - (my - r);
                 if dy <= 0.0 { mx } else { mx - r + (r * r - dy * dy).max(0.0).sqrt() }
             }))
         } else {
-            let (a, b) = (p.radio * p.ex, p.radio * p.ey);
+            let (a, b) = (p.radius * p.ex, p.radius * p.ey);
             (b, Box::new(move |y: f32| a * (1.0 - (y / b).powi(2)).max(0.0).sqrt()))
         };
-        let (y0, y1) = (-alto * sy, alto * sy);
-        let mut y = (y0 / FRANJA).floor() * FRANJA;
+        let (y0, y1) = (-half_height * sy, half_height * sy);
+        let mut y = (y0 / STRIP).floor() * STRIP;
         while y < y1 {
-            // El ancho a media franja, como cuando se busca.
-            let medio = ancho(((y + FRANJA * 0.5) / sy).clamp(-alto, alto)) * sx;
-            if medio > 0.25 {
-                let (a, b) = ((-medio).floor(), medio.ceil());
-                match franjas.last_mut() {
-                    Some(f) if f[0] == a && f[2] == b && f[3] == y => f[3] = y + FRANJA,
-                    _ => franjas.push([a, y, b, y + FRANJA]),
+            // The width at mid strip, as when it is searched for.
+            let half = half_width(((y + STRIP * 0.5) / sy).clamp(-half_height, half_height)) * sx;
+            if half > 0.25 {
+                let (a, b) = ((-half).floor(), half.ceil());
+                match strips.last_mut() {
+                    Some(f) if f[0] == a && f[2] == b && f[3] == y => f[3] = y + STRIP,
+                    _ => strips.push([a, y, b, y + STRIP]),
                 }
             }
-            y += FRANJA;
+            y += STRIP;
         }
-        return franjas;
+        return strips;
     }
-    let dentro = |x: f32, y: f32| p.distancia_con(x, y, puntos) < 0.0;
-    // Dónde cambia de fuera a dentro entre a y b: por bisección, a un cuarto de píxel.
-    let borde = |mut a: f32, mut b: f32, y: f32, entra: bool| {
+    let inside = |x: f32, y: f32| p.distance_with(x, y, points) < 0.0;
+    // Where it changes from outside to inside between a and b: by bisection, to a quarter of a pixel.
+    let edge = |mut a: f32, mut b: f32, y: f32, entering: bool| {
         while b - a > 0.25 {
             let m = (a + b) * 0.5;
-            if dentro(m, y) == entra { b = m } else { a = m }
+            if inside(m, y) == entering { b = m } else { a = m }
         }
-        if entra { a } else { b }
+        if entering { a } else { b }
     };
-    let paso = 3.0;
-    let mut y = (caja[1] / FRANJA).floor() * FRANJA;
-    let mut fila: Vec<(f32, f32)> = Vec::new();
-    while y < caja[3] {
-        let yc = y + FRANJA * 0.5;
-        fila.clear();
-        let mut x = caja[0];
-        let mut desde: Option<f32> = dentro(x, yc).then_some(x);
-        while x < caja[2] {
-            let sig = (x + paso).min(caja[2]);
-            let esta = dentro(sig, yc);
-            match (desde, esta) {
-                (None, true) => desde = Some(borde(x, sig, yc, true)),
+    let step = 3.0;
+    let mut y = (bounds[1] / STRIP).floor() * STRIP;
+    let mut row: Vec<(f32, f32)> = Vec::new();
+    while y < bounds[3] {
+        let yc = y + STRIP * 0.5;
+        row.clear();
+        let mut x = bounds[0];
+        let mut start: Option<f32> = inside(x, yc).then_some(x);
+        while x < bounds[2] {
+            let next = (x + step).min(bounds[2]);
+            let is_in = inside(next, yc);
+            match (start, is_in) {
+                (None, true) => start = Some(edge(x, next, yc, true)),
                 (Some(a), false) => {
-                    fila.push((a, borde(x, sig, yc, false)));
-                    desde = None;
+                    row.push((a, edge(x, next, yc, false)));
+                    start = None;
                 }
                 _ => {}
             }
-            x = sig;
+            x = next;
         }
-        if let Some(a) = desde {
-            fila.push((a, caja[2]));
+        if let Some(a) = start {
+            row.push((a, bounds[2]));
         }
-        for &(a, b) in &fila {
+        for &(a, b) in &row {
             let (a, b) = (a.floor(), b.ceil());
-            // La fila de arriba con el mismo tramo, pegada a esta: se alarga.
-            match franjas.iter_mut().rev().take(fila.len() + 2).find(|f| f[0] == a && f[2] == b && f[3] == y) {
-                Some(f) => f[3] = y + FRANJA,
-                None => franjas.push([a, y, b, y + FRANJA]),
+            // The row above with the same span, touching this one: it gets extended.
+            match strips.iter_mut().rev().take(row.len() + 2).find(|f| f[0] == a && f[2] == b && f[3] == y) {
+                Some(f) => f[3] = y + STRIP,
+                None => strips.push([a, y, b, y + STRIP]),
             }
         }
-        y += FRANJA;
+        y += STRIP;
     }
-    franjas
+    strips
 }
 
-fn unir(a: Option<[f32; 4]>, b: [f32; 4]) -> [f32; 4] {
+fn union(a: Option<[f32; 4]>, b: [f32; 4]) -> [f32; 4] {
     a.map_or(b, |a| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
 }
 
-/// Algo que se ve cortado y aún no se ha dicho: lo peor visto y cómo contarlo.
-/// No se dice en cuanto se ve —una tarjeta que se abre se sale más a cada
-/// frame, y el primer píxel no es el que hay que arreglar—, sino cuando la
-/// cuenta deja de crecer o la escena se queda quieta. Y si deja de estar
-/// cortado, es que pasaba por ahí: entonces no se dice nunca.
+/// Something that looks cut and has not been reported yet: the worst seen and
+/// how to tell it. It is not reported as soon as it is seen —a card that opens
+/// sticks out further every frame, and the first pixel is not the one that
+/// needs fixing—, but when the count stops growing or the scene goes still.
+/// And if it stops being cut, it was just passing through: then it is never
+/// reported.
 #[derive(Default)]
-struct Pendiente {
-    /// Lo peor de este episodio, que es lo que dice si la cosa sigue creciendo,
-    /// y lo peor de ESTE frame, que es quien pone el texto cuando hay varias
-    /// cosas cortadas a la vez.
-    peor: f32,
-    peor_ahora: f32,
-    dicho: Option<String>,
-    sin_crecer: u8,
-    /// Cuántos frames seguidos lleva cortado. Una escena viva —una que respira—
-    /// no se queda quieta nunca, así que esperar al reposo sería no decirlo
-    /// jamás: a los tres segundos cortado, ya no pasaba por ahí.
-    visto: u16,
-    este_frame: bool,
-    dicha: bool,
+struct Pending {
+    /// The worst of this episode, which is what says whether the thing keeps
+    /// growing, and the worst of THIS frame, which is what sets the text when
+    /// several things are cut at once.
+    worst: f32,
+    worst_now: f32,
+    message: Option<String>,
+    not_growing: u8,
+    /// How many frames in a row it has been cut. A live scene —one that
+    /// breathes— never goes still, so waiting for rest would mean never
+    /// reporting it: after three seconds cut, it was not just passing through.
+    seen: u16,
+    this_frame: bool,
+    told: bool,
 }
 
-impl Pendiente {
-    fn apunta(&mut self, peor: f32, dicho: impl FnOnce() -> String) {
-        self.este_frame = true;
-        if peor > self.peor {
-            self.peor = peor;
-            self.sin_crecer = 0;
+impl Pending {
+    fn note(&mut self, worst: f32, message: impl FnOnce() -> String) {
+        self.this_frame = true;
+        if worst > self.worst {
+            self.worst = worst;
+            self.not_growing = 0;
         }
-        // El texto es el de AHORA, no el del pico: una tarjeta que se abre pasa
-        // por encima del borde de arriba y acaba sobrando por abajo, y lo que
-        // hay que arreglar es lo segundo. Se rehace cuatro veces por segundo, y
-        // lo dice la peor de las que estén cortadas en ese frame.
-        if peor >= self.peor_ahora {
-            self.peor_ahora = peor;
-            if self.dicho.is_none() || self.visto % 15 == 14 {
-                self.dicho = Some(dicho());
+        // The text is the one from NOW, not the one from the peak: a card that
+        // opens goes past the top edge and ends up sticking out at the bottom,
+        // and what needs fixing is the latter. It is redone four times per
+        // second, and it is told by the worst of those cut in that frame.
+        if worst >= self.worst_now {
+            self.worst_now = worst;
+            if self.message.is_none() || self.seen % 15 == 14 {
+                self.message = Some(message());
             }
         }
     }
-    /// Al cerrar el frame: lo que ya no está cortado se olvida. Y lo que lleva
-    /// un cuarto de segundo sin crecer se cuenta ya, si es de los que pueden
-    /// adelantarse. **Una forma no lo es**: cruzar un borde de camino es lo
-    /// normal —una tarjeta que se abre sube por encima del borde y vuelve—, así
-    /// que de esas solo se habla cuando la escena se queda quieta y lo cortado
-    /// es lo que se queda mirando.
-    fn cierra_el_frame(&mut self, puede_adelantarse: bool) -> Option<String> {
-        self.peor_ahora = 0.0;
-        if !std::mem::take(&mut self.este_frame) {
-            self.dicho = None;
-            self.peor = 0.0;
-            self.sin_crecer = 0;
-            self.visto = 0;
+    /// When closing the frame: what is no longer cut is forgotten. And what has
+    /// gone a quarter of a second without growing is reported now, if it is of
+    /// the kind that can be reported early. **A shape is not**: crossing an
+    /// edge on the way is normal —a card that opens rises past the edge and
+    /// comes back—, so those are only mentioned when the scene goes still and
+    /// what is cut is what stays in view.
+    fn end_frame(&mut self, can_report_early: bool) -> Option<String> {
+        self.worst_now = 0.0;
+        if !std::mem::take(&mut self.this_frame) {
+            self.message = None;
+            self.worst = 0.0;
+            self.not_growing = 0;
+            self.seen = 0;
             return None;
         }
-        self.visto = self.visto.saturating_add(1);
-        self.sin_crecer = self.sin_crecer.saturating_add(1);
-        if (puede_adelantarse && self.sin_crecer >= 15) || self.visto >= 180 {
-            return self.ya();
+        self.seen = self.seen.saturating_add(1);
+        self.not_growing = self.not_growing.saturating_add(1);
+        if (can_report_early && self.not_growing >= 15) || self.seen >= 180 {
+            return self.flush();
         }
         None
     }
-    fn ya(&mut self) -> Option<String> {
-        let dicho = self.dicho.take()?;
-        self.dicha = true;
-        Some(dicho)
+    fn flush(&mut self) -> Option<String> {
+        let message = self.message.take()?;
+        self.told = true;
+        Some(message)
     }
 }
 
-impl Dibujo {
-    pub fn n_elementos(&self) -> usize {
-        self.elementos.len() / POR_ELEMENTO
+impl DrawList {
+    pub fn element_count(&self) -> usize {
+        self.elements.len() / PER_ELEMENT
     }
 
-    /// Si algún elemento de ese tramo cae en ese trozo del plano.
-    fn toca_la_vista(&self, tramo: &Range<u32>, v: [f32; 4]) -> bool {
-        tramo.clone().any(|k| {
-            let b = &self.elementos[k as usize * POR_ELEMENTO + 4..k as usize * POR_ELEMENTO + 8];
+    /// Whether some element of that span falls in that piece of the plane.
+    fn touches_view(&self, span: &Range<u32>, v: [f32; 4]) -> bool {
+        span.clone().any(|k| {
+            let b = &self.elements[k as usize * PER_ELEMENT + 4..k as usize * PER_ELEMENT + 8];
             b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]
         })
     }
 
-    fn forma(&mut self, p: crate::formas::Plana, fusion: f32) -> usize {
-        let k = self.formas.len() / POR_FORMA;
-        self.formas.resize(self.formas.len() + POR_FORMA, 0.0);
-        p.codificar(fusion, &mut self.formas[k * POR_FORMA..]);
+    fn push_shape(&mut self, p: crate::shapes::FlatShape, blend: f32) -> usize {
+        let k = self.shapes.len() / PER_SHAPE;
+        self.shapes.resize(self.shapes.len() + PER_SHAPE, 0.0);
+        p.encode(blend, &mut self.shapes[k * PER_SHAPE..]);
         k
     }
 
-    /// Un trozo del atlas —un glifo, una imagen— colocado en pantalla. Con
-    /// `tinte`, su alfa es una máscara que se pinta de ese color.
-    fn trozo(&mut self, d: [f32; 4], uv: [f32; 4], alfa: f32, tinte: Option<[f32; 3]>, afin: Afin, recortes: &[(usize, [f32; 4])]) {
-        let caja = afin.caja([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
-        self.elemento(1.0, [caja[0] - 1.0, caja[1] - 1.0, caja[2] + 1.0, caja[3] + 1.0], recortes, |e| {
-            afin.codificar(&mut e[44..52]);
-            e[3] = alfa;
-            if let Some(rgb) = tinte {
+    /// A piece of the atlas —a glyph, an image— placed on screen. With
+    /// `tint`, its alpha is a mask painted in that colour.
+    fn sprite(&mut self, d: [f32; 4], uv: [f32; 4], alpha: f32, tint: Option<[f32; 3]>, affine: Affine, clips: &[(usize, [f32; 4])]) {
+        let bounds = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
+        self.element(1.0, [bounds[0] - 1.0, bounds[1] - 1.0, bounds[2] + 1.0, bounds[3] + 1.0], clips, |e| {
+            affine.encode(&mut e[44..52]);
+            e[3] = alpha;
+            if let Some(rgb) = tint {
                 e[2] = 1.0;
                 e[8..11].copy_from_slice(&rgb);
             }
@@ -394,377 +395,379 @@ impl Dibujo {
         });
     }
 
-    /// Una sombra no se corta a propósito nunca. Si la forma entra entera en la
-    /// superficie y su sombra no, el borde queda recto y quien lo ve no tiene
-    /// dónde mirar: la sombra no se declara con un tamaño, sale de dos números.
-    /// La cuenta ya está hecha ahí arriba; decirla cuesta cuatro restas.
-    fn mirar_la_sombra(&mut self, forma: [f32; 4], (dx, dy, d): (f32, f32, f32)) {
-        if self.sombra.dicha {
+    /// A shadow is never cut on purpose. If the shape fits whole in the
+    /// surface and its shadow does not, the edge is left straight and whoever
+    /// sees it has nowhere to look: the shadow is not declared with a size, it
+    /// comes from two numbers. The computation is already done up there;
+    /// reporting it costs four subtractions.
+    fn check_shadow(&mut self, shape: [f32; 4], (dx, dy, d): (f32, f32, f32)) {
+        if self.shadow.told {
             return;
         }
-        let (w, alto) = self.suya;
-        // Lo que pide la sombra son sus propios números: desplazamiento y
-        // difusión. Los márgenes que el render se guarda no cuentan, o el aviso
-        // diría dos píxeles que nadie escribió.
-        let falta = [d - dx - forma[0], d - dy - forma[1], forma[2] + dx + d - w, forma[3] + dy + d - alto];
-        // Solo por los lados donde la forma flota dentro. Una barra pegada al
-        // borde de arriba tiene la sombra cortada por arriba, claro: ahí no
-        // había sitio ni lo quería. Lo que no se explica solo es una tarjeta que
-        // cabe entera y cuya sombra, aun así, choca contra el borde.
-        let flota = [forma[0] > 0.5, forma[1] > 0.5, forma[2] < w - 0.5, forma[3] < alto - 0.5];
-        let lados = ["on the left", "above", "on the right", "below"];
-        let dichos: Vec<String> = (0..4)
-            .filter(|&k| flota[k] && falta[k] > 0.5)
-            .map(|k| format!("{:.0} px {}", falta[k].ceil(), lados[k]))
+        let (w, height) = self.own_size;
+        // What the shadow asks for is its own numbers: offset and blur. The
+        // margins the render keeps do not count, or the warning would mention
+        // two pixels nobody wrote.
+        let missing = [d - dx - shape[0], d - dy - shape[1], shape[2] + dx + d - w, shape[3] + dy + d - height];
+        // Only on the sides where the shape floats inside. A bar attached to
+        // the top edge has its shadow cut at the top, of course: there was no
+        // room there nor was it wanted. What does not explain itself is a card
+        // that fits whole and whose shadow, even so, hits the edge.
+        let floats = [shape[0] > 0.5, shape[1] > 0.5, shape[2] < w - 0.5, shape[3] < height - 0.5];
+        let sides = ["on the left", "above", "on the right", "below"];
+        let told: Vec<String> = (0..4)
+            .filter(|&k| floats[k] && missing[k] > 0.5)
+            .map(|k| format!("{:.0} px {}", missing[k].ceil(), sides[k]))
             .collect();
-        let peor = falta.iter().zip(flota).filter(|(_, f)| *f).map(|(v, _)| *v).fold(0.0f32, f32::max);
-        if dichos.is_empty() {
+        let worst = missing.iter().zip(floats).filter(|(_, f)| *f).map(|(v, _)| *v).fold(0.0f32, f32::max);
+        if told.is_empty() {
             return;
         }
-        self.sombra.apunta(peor, || {
+        self.shadow.note(worst, || {
             format!(
                 "render · a shadow is cut: it needs {} more than this {:.0} x {:.0} surface has. The shape fits; its shadow does not",
-                dichos.join(" and "),
+                told.join(" and "),
                 w,
-                alto
+                height
             )
         });
     }
 
-    /// Y lo mismo de la forma, que es lo que de verdad se ve cortado cuando un
-    /// panel crece más de lo que su superficie tiene. Salirse por un borde a
-    /// propósito es legítimo —el cuello de una bolita cuelga del borde de
-    /// arriba, y ahí no sobra sitio ni se quiere—, así que solo se dice de lo
-    /// que **casi entero** cabía: si tres cuartas partes de lo que se dibuja
-    /// están dentro y el resto choca contra el borde, la que se ha quedado
-    /// corta es la superficie, y nadie lo va a ver en `--comprobar` porque
-    /// dónde acaba una tarjeta es una cuenta que solo existe mientras corre.
-    fn mirar_el_corte(&mut self, forma: [f32; 4]) {
-        if self.corte.dicha {
+    /// And the same for the shape, which is what really looks cut when a
+    /// panel grows more than its surface has. Sticking out of an edge on
+    /// purpose is legitimate —the neck of a little ball hangs from the top
+    /// edge, and there is no room to spare there nor is it wanted—, so it is
+    /// only reported for what **almost entirely** fitted: if three quarters of
+    /// what is drawn are inside and the rest hits the edge, the one that fell
+    /// short is the surface, and nobody will see it in `--check` because where
+    /// a card ends is a computation that only exists while it runs.
+    fn check_clipping(&mut self, shape: [f32; 4]) {
+        if self.clipping.told {
             return;
         }
-        let (w, alto) = self.suya;
-        let (mide_x, mide_y) = (forma[2] - forma[0], forma[3] - forma[1]);
-        if mide_x <= 0.5 || mide_y <= 0.5 {
+        let (w, height) = self.own_size;
+        let (size_x, size_y) = (shape[2] - shape[0], shape[3] - shape[1]);
+        if size_x <= 0.5 || size_y <= 0.5 {
             return;
         }
-        let falta = [-forma[0], -forma[1], forma[2] - w, forma[3] - alto];
-        let dentro_x = (forma[2].min(w) - forma[0].max(0.0)).max(0.0) / mide_x;
-        let dentro_y = (forma[3].min(alto) - forma[1].max(0.0)).max(0.0) / mide_y;
-        let casi = [dentro_x, dentro_y, dentro_x, dentro_y];
-        let lados = ["on the left", "above", "on the right", "below"];
-        let vale = |k: usize| !self.pegada[k] && falta[k] > 0.5 && casi[k] >= 0.75;
-        let dichos: Vec<String> = (0..4).filter(|&k| vale(k)).map(|k| format!("{:.0} px {}", falta[k].ceil(), lados[k])).collect();
-        if dichos.is_empty() {
+        let missing = [-shape[0], -shape[1], shape[2] - w, shape[3] - height];
+        let inside_x = (shape[2].min(w) - shape[0].max(0.0)).max(0.0) / size_x;
+        let inside_y = (shape[3].min(height) - shape[1].max(0.0)).max(0.0) / size_y;
+        let almost = [inside_x, inside_y, inside_x, inside_y];
+        let sides = ["on the left", "above", "on the right", "below"];
+        let counts = |k: usize| !self.attached_edges[k] && missing[k] > 0.5 && almost[k] >= 0.75;
+        let told: Vec<String> = (0..4).filter(|&k| counts(k)).map(|k| format!("{:.0} px {}", missing[k].ceil(), sides[k])).collect();
+        if told.is_empty() {
             return;
         }
-        let peor = (0..4).filter(|&k| vale(k)).map(|k| falta[k]).fold(0.0f32, f32::max);
-        self.corte.apunta(peor, || {
+        let worst = (0..4).filter(|&k| counts(k)).map(|k| missing[k]).fold(0.0f32, f32::max);
+        self.clipping.note(worst, || {
             format!(
                 "render · a drawing is cut: it needs {} more than this {:.0} x {:.0} surface has. Almost all of it is inside, so it looks like the surface is the one that fell short",
-                dichos.join(" and "),
+                told.join(" and "),
                 w,
-                alto
+                height
             )
         });
     }
 
-    /// Lo de la sombra, cuando ya se sabe del todo: la escena se ha quedado
-    /// quieta, o la cuenta lleva un cuarto de segundo sin crecer.
-    pub fn decir_lo_pendiente(&mut self) {
-        for dicho in [self.sombra.ya(), self.corte.ya()].into_iter().flatten() {
-            eprintln!("{dicho}");
+    /// The shadow business, once it is fully known: the scene has gone
+    /// still, or the count has gone a quarter of a second without growing.
+    pub fn report_pending(&mut self) {
+        for message in [self.shadow.flush(), self.clipping.flush()].into_iter().flatten() {
+            eprintln!("{message}");
         }
     }
 
-    /// Que el compositor desenfoque lo que hay detrás de estas formas: sus
-    /// franjas, cada una por separado —la unión de sus siluetas es la del
-    /// cuerpo, menos el cuello donde dos se funden, que es poco— y recortadas.
-    fn pedir_cristal(&mut self, planas: &[crate::formas::Plana], recortes: &[(usize, [f32; 4])], lente: bool) {
-        let mut corte = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
-        for (_, r) in recortes {
-            corte = [corte[0].max(r[0]), corte[1].max(r[1]), corte[2].min(r[2]), corte[3].min(r[3])];
+    /// That the compositor blurs what is behind these shapes: their strips,
+    /// each one separately —the union of their silhouettes is that of the
+    /// body, minus the neck where two blend, which is little— and clipped.
+    fn request_glass(&mut self, flats: &[crate::shapes::FlatShape], clips: &[(usize, [f32; 4])], lens: bool) {
+        let mut cut = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
+        for (_, r) in clips {
+            cut = [cut[0].max(r[0]), cut[1].max(r[1]), cut[2].min(r[2]), cut[3].min(r[3])];
         }
-        for p in planas {
-            let (ox, oy) = p.afin.aplicar(p.cx, p.cy);
-            let mut en_origen = *p;
-            (en_origen.cx, en_origen.cy, en_origen.afin.t) = (0.0, 0.0, [0.0, 0.0]);
-            // Un camino es sus puntos, que la clave no ve: ese se mide siempre.
-            let franjas = if p.tipo == 4 {
-                franjas_de(&en_origen, &self.puntos)
+        for p in flats {
+            let (ox, oy) = p.affine.apply(p.cx, p.cy);
+            let mut at_origin = *p;
+            (at_origin.cx, at_origin.cy, at_origin.affine.t) = (0.0, 0.0, [0.0, 0.0]);
+            // A path is its points, which the key does not see: that one is always measured.
+            let strips = if p.kind == 4 {
+                strips_of(&at_origin, &self.points)
             } else {
-                let clave = [en_origen.tipo as f32, en_origen.mx, en_origen.my, en_origen.radio, en_origen.giro, en_origen.ex, en_origen.ey, en_origen.trazo, en_origen.afin.m[0], en_origen.afin.m[1], en_origen.afin.m[2], en_origen.afin.m[3]].map(f32::to_bits);
-                let puesta = self.cache_de_cristales.entry(clave).or_insert_with(|| (franjas_de(&en_origen, &[]), false));
-                puesta.1 = true;
-                puesta.0.clone()
+                let key = [at_origin.kind as f32, at_origin.mx, at_origin.my, at_origin.radius, at_origin.rotation, at_origin.ex, at_origin.ey, at_origin.stroke, at_origin.affine.m[0], at_origin.affine.m[1], at_origin.affine.m[2], at_origin.affine.m[3]].map(f32::to_bits);
+                let cached = self.glass_cache.entry(key).or_insert_with(|| (strips_of(&at_origin, &[]), false));
+                cached.1 = true;
+                cached.0.clone()
             };
-            self.cristales.extend(franjas.into_iter().map(|f| [(f[0] + ox).max(corte[0]), (f[1] + oy).max(corte[1]), (f[2] + ox).min(corte[2]), (f[3] + oy).min(corte[3])]).filter(|f| f[2] > f[0] && f[3] > f[1]).map(|f| (f, lente)));
+            self.glass_regions.extend(strips.into_iter().map(|f| [(f[0] + ox).max(cut[0]), (f[1] + oy).max(cut[1]), (f[2] + ox).min(cut[2]), (f[3] + oy).min(cut[3])]).filter(|f| f[2] > f[0] && f[3] > f[1]).map(|f| (f, lens)));
         }
     }
 
-    /// Un elemento solo existe si su caja, recortada, toca la pantalla.
-    fn elemento(&mut self, tipo: f32, caja: [f32; 4], recortes: &[(usize, [f32; 4])], rellenar: impl FnOnce(&mut [f32])) {
-        // Lo que no cae en la superficie ni en ninguna emergente abierta, no existe.
-        let toca = |v: &[f32; 4]| caja[0] < v[2] && caja[2] > v[0] && caja[1] < v[3] && caja[3] > v[1];
-        let marco = [0.0, 0.0, self.tam.0, self.tam.1];
-        let marco = if toca(&marco) { marco } else { self.vistas.iter().copied().find(|v| toca(v)).unwrap_or(marco) };
-        let mut c = [caja[0].max(marco[0]), caja[1].max(marco[1]), caja[2].min(marco[2]), caja[3].min(marco[3])];
-        for (_, r) in recortes {
+    /// An element only exists if its box, clipped, touches the screen.
+    fn element(&mut self, kind: f32, bounds: [f32; 4], clips: &[(usize, [f32; 4])], fill: impl FnOnce(&mut [f32])) {
+        // What does not fall on the surface nor on any open popup does not exist.
+        let touches = |v: &[f32; 4]| bounds[0] < v[2] && bounds[2] > v[0] && bounds[1] < v[3] && bounds[3] > v[1];
+        let frame = [0.0, 0.0, self.size.0, self.size.1];
+        let frame = if touches(&frame) { frame } else { self.views.iter().copied().find(|v| touches(v)).unwrap_or(frame) };
+        let mut c = [bounds[0].max(frame[0]), bounds[1].max(frame[1]), bounds[2].min(frame[2]), bounds[3].min(frame[3])];
+        for (_, r) in clips {
             c = [c[0].max(r[0]), c[1].max(r[1]), c[2].min(r[2]), c[3].min(r[3])];
         }
         if c[2] <= c[0] || c[3] <= c[1] {
             return;
         }
-        let k = self.elementos.len();
-        self.elementos.resize(k + POR_ELEMENTO, 0.0);
-        let e = &mut self.elementos[k..];
-        e[0] = tipo;
+        let k = self.elements.len();
+        self.elements.resize(k + PER_ELEMENT, 0.0);
+        let e = &mut self.elements[k..];
+        e[0] = kind;
         e[4..8].copy_from_slice(&c);
         for j in 0..4 {
-            // Caben cuatro: si hay más, los de más adentro. La caja sí es la de todos.
-            e[32 + j] = recortes[recortes.len().saturating_sub(4)..].get(j).map_or(-1.0, |r| r.0 as f32);
+            // Four fit: if there are more, the innermost ones. The box is indeed that of all of them.
+            e[32 + j] = clips[clips.len().saturating_sub(4)..].get(j).map_or(-1.0, |r| r.0 as f32);
         }
-        rellenar(e);
+        fill(e);
     }
 
-    /// A qué bordes está pegada la superficie, que lo sabe quien la pide.
-    pub fn pegada_a(&mut self, lados: [bool; 4]) {
-        self.pegada = lados;
+    /// Which edges the surface is attached to, which whoever requests it knows.
+    pub fn set_attached_edges(&mut self, sides: [bool; 4]) {
+        self.attached_edges = sides;
     }
 
-    pub fn componer(&mut self, instrs: &[Instr], c: Ctx, textos: &[String], tip: &mut Textos, campo: Option<VistaDeCampo>, tam: (f32, f32), hud: bool) {
-        self.medidas.clear();
-        self.campos.clear();
-        self.tam = tam;
-        self.suya = (tam.0, tam.1 - if hud { ALTO_INSTRUMENTOS } else { 0.0 });
-        self.formas.clear();
-        self.puntos.clear();
-        self.elementos.clear();
-        let mut paradas_puestas: Vec<f32> = Vec::new();
-        self.apartes.clear();
-        self.cristales.clear();
-        let mut recortes: Vec<(usize, [f32; 4])> = Vec::new();
-        // Cada entrada es ya el producto de todas las de encima.
-        let mut giros: Vec<Afin> = Vec::new();
-        let mut opacos: Vec<GrupoOpaco> = Vec::new();
-        let mut cuerpo: Option<CuerpoAbierto> = None;
-        let aplanar = |f: &Forma, giros: &[Afin], pts: &mut Vec<f32>| {
-            let mut p = f.aplanar_en(c, pts);
-            p.afin = giros.last().copied().unwrap_or(Afin::IDENTIDAD);
+    pub fn compose(&mut self, instrs: &[Instr], c: Ctx, texts: &[String], tip: &mut Texts, field: Option<FieldView>, size: (f32, f32), hud: bool) {
+        self.measurements.clear();
+        self.fields.clear();
+        self.size = size;
+        self.own_size = (size.0, size.1 - if hud { HUD_HEIGHT } else { 0.0 });
+        self.shapes.clear();
+        self.points.clear();
+        self.elements.clear();
+        let mut placed_stops: Vec<f32> = Vec::new();
+        self.offscreen_groups.clear();
+        self.glass_regions.clear();
+        let mut clips: Vec<(usize, [f32; 4])> = Vec::new();
+        // Each entry is already the product of all those above it.
+        let mut transforms: Vec<Affine> = Vec::new();
+        let mut opacity_groups: Vec<OpacityGroup> = Vec::new();
+        let mut body: Option<OpenBody> = None;
+        let flatten = |f: &Shape, transforms: &[Affine], pts: &mut Vec<f32>| {
+            let mut p = f.flatten_into(c, pts);
+            p.affine = transforms.last().copied().unwrap_or(Affine::IDENTITY);
             p
         };
-        let color = |col: &Color| [col[0].evaluar(c), col[1].evaluar(c), col[2].evaluar(c)];
-        let tip_escala = tip.escala();
+        let color = |col: &Color| [col[0].eval(c), col[1].eval(c), col[2].eval(c)];
+        let tip_scale = tip.scale();
 
-        let mut saltar = self.saltar.clone();
-        saltar.sort_by_key(|r| r.start);
-        let mut salto = saltar.into_iter().peekable();
-        for (sitio, i) in instrs.iter().enumerate() {
-            if let Some(r) = salto.peek() {
-                if r.contains(&sitio) {
+        let mut skip = self.skip.clone();
+        skip.sort_by_key(|r| r.start);
+        let mut skips = skip.into_iter().peekable();
+        for (idx, i) in instrs.iter().enumerate() {
+            if let Some(r) = skips.peek() {
+                if r.contains(&idx) {
                     continue;
                 }
-                if sitio >= r.end {
-                    salto.next();
+                if idx >= r.end {
+                    skips.next();
                 }
             }
-            let oculto = opacos.iter().any(|g| matches!(g, GrupoOpaco::Oculto));
-            // Lo que multiplica a cada elemento: los grupos que no tienen capa propia.
-            let veces: f32 = opacos.iter().map(|g| if let GrupoOpaco::Multiplica(a) = g { *a } else { 1.0 }).product();
-            let afin = giros.last().copied().unwrap_or(Afin::IDENTIDAD);
+            let hidden = opacity_groups.iter().any(|g| matches!(g, OpacityGroup::Hidden));
+            // What multiplies each element: the groups that have no layer of their own.
+            let mult: f32 = opacity_groups.iter().map(|g| if let OpacityGroup::Multiply(a) = g { *a } else { 1.0 }).product();
+            let affine = transforms.last().copied().unwrap_or(Affine::IDENTITY);
             match i {
-                Instr::Opacidad(Some(a)) => {
-                    let a = a.evaluar(c).clamp(0.0, 1.0);
-                    let dentro_de_capa = opacos.iter().any(|g| matches!(g, GrupoOpaco::Capa { .. }));
-                    opacos.push(if a <= 0.001 {
-                        GrupoOpaco::Oculto
-                    } else if a >= 0.999 || dentro_de_capa || self.apartes.len() >= MAX_CAPAS {
-                        GrupoOpaco::Multiplica(a)
+                Instr::Opacity(Some(a)) => {
+                    let a = a.eval(c).clamp(0.0, 1.0);
+                    let inside_layer = opacity_groups.iter().any(|g| matches!(g, OpacityGroup::Layer { .. }));
+                    opacity_groups.push(if a <= 0.001 {
+                        OpacityGroup::Hidden
+                    } else if a >= 0.999 || inside_layer || self.offscreen_groups.len() >= MAX_LAYERS {
+                        OpacityGroup::Multiply(a)
                     } else {
-                        GrupoOpaco::Capa { alfa: a, indice: self.apartes.len(), primer_elemento: self.n_elementos() }
+                        OpacityGroup::Layer { alpha: a, index: self.offscreen_groups.len(), first_element: self.element_count() }
                     });
-                    if let Some(GrupoOpaco::Capa { indice, primer_elemento, .. }) = opacos.last() {
-                        self.apartes.push((*primer_elemento as u32..*primer_elemento as u32, *indice));
+                    if let Some(OpacityGroup::Layer { index, first_element, .. }) = opacity_groups.last() {
+                        self.offscreen_groups.push((*first_element as u32..*first_element as u32, *index));
                     }
                 }
-                Instr::Opacidad(None) => {
-                    if let Some(GrupoOpaco::Capa { alfa, indice, primer_elemento }) = opacos.pop() {
-                        let fin = self.n_elementos();
-                        self.apartes[indice].0 = primer_elemento as u32..fin as u32;
-                        // La caja del grupo es la unión de las de dentro.
-                        let caja = (primer_elemento..fin).fold(None, |u, k| {
-                            let e = &self.elementos[k * POR_ELEMENTO + 4..k * POR_ELEMENTO + 8];
-                            Some(unir(u, [e[0], e[1], e[2], e[3]]))
+                Instr::Opacity(None) => {
+                    if let Some(OpacityGroup::Layer { alpha, index, first_element }) = opacity_groups.pop() {
+                        let end = self.element_count();
+                        self.offscreen_groups[index].0 = first_element as u32..end as u32;
+                        // The group's box is the union of those inside.
+                        let bounds = (first_element..end).fold(None, |u, k| {
+                            let e = &self.elements[k * PER_ELEMENT + 4..k * PER_ELEMENT + 8];
+                            Some(union(u, [e[0], e[1], e[2], e[3]]))
                         });
-                        if let Some(caja) = caja {
-                            self.elemento(2.0, caja, &[], |e| {
-                                e[1] = indice as f32;
-                                e[3] = alfa * veces;
+                        if let Some(bounds) = bounds {
+                            self.element(2.0, bounds, &[], |e| {
+                                e[1] = index as f32;
+                                e[3] = alpha * mult;
                             });
                         }
                     }
                 }
-                _ if oculto => {}
-                Instr::Grupo { sombra } => {
-                    cuerpo = Some(CuerpoAbierto { primera: self.formas.len() / POR_FORMA, n: 0, caja: None, holgura: 0.0, sombra: sombra.clone(), planas: Vec::new() })
+                _ if hidden => {}
+                Instr::Group { shadow } => {
+                    body = Some(OpenBody { first: self.shapes.len() / PER_SHAPE, n: 0, bounds: None, slack: 0.0, shadow: shadow.clone(), flats: Vec::new() })
                 }
-                Instr::Forma { forma, fusion } => {
-                    let p = aplanar(forma, &giros, &mut self.puntos);
-                    let k = fusion.evaluar(c).max(0.0);
-                    let caja = p.caja();
-                    self.forma(p, k);
-                    if let Some(g) = &mut cuerpo {
-                        g.planas.push(p);
+                Instr::Shape { shape, fusion: blend } => {
+                    let p = flatten(shape, &transforms, &mut self.points);
+                    let k = blend.eval(c).max(0.0);
+                    let bounds = p.bounds();
+                    self.push_shape(p, k);
+                    if let Some(g) = &mut body {
+                        g.flats.push(p);
                         g.n += 1;
-                        g.holgura = g.holgura.max(k * 0.5);
-                        if let Some(b) = caja {
-                            g.caja = Some(unir(g.caja, b));
+                        g.slack = g.slack.max(k * 0.5);
+                        if let Some(b) = bounds {
+                            g.bounds = Some(union(g.bounds, b));
                         }
                     }
                 }
-                Instr::Relleno { pintura, alfa, filo, luz, borde, vidrio } => {
-                    let Some(g) = cuerpo.take() else { continue };
-                    let Some(mut caja) = g.caja else { continue };
-                    let forma_sola = caja;
-                    let h = g.holgura + 2.0;
-                    caja = [caja[0] - h, caja[1] - h, caja[2] + h, caja[3] + h];
-                    //  Sus números se leen aquí, que es donde se sabe cómo está
-                    //  la escena ahora mismo: una sombra puede ir cambiando.
-                    let sombra = g.sombra.as_ref().map(|s| (s.desplazada.0.evaluar(c), s.desplazada.1.evaluar(c), s.difusa.evaluar(c).max(0.0), s.alfa.evaluar(c).clamp(0.0, 1.0)));
-                    if let Some((sx, sy, sd, _)) = sombra {
+                Instr::Fill { paint, alpha, rim: edge, light, border, glass_spec } => {
+                    let Some(g) = body.take() else { continue };
+                    let Some(mut bounds) = g.bounds else { continue };
+                    let shape_only = bounds;
+                    let h = g.slack + 2.0;
+                    bounds = [bounds[0] - h, bounds[1] - h, bounds[2] + h, bounds[3] + h];
+                    //  Its numbers are read here, which is where it is known how
+                    //  the scene is right now: a shadow can keep changing.
+                    let shadow = g.shadow.as_ref().map(|s| (s.offset.0.eval(c), s.offset.1.eval(c), s.blur.eval(c).max(0.0), s.alpha.eval(c).clamp(0.0, 1.0)));
+                    if let Some((sx, sy, sd, _)) = shadow {
                         let d = sd + 2.0;
-                        caja = unir(Some(caja), [caja[0] + sx - d, caja[1] + sy - d, caja[2] + sx + d, caja[3] + sy + d]);
+                        bounds = union(Some(bounds), [bounds[0] + sx - d, bounds[1] + sy - d, bounds[2] + sx + d, bounds[3] + sy + d]);
                     }
-                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
-                    if let Some((sx, sy, sd, sa)) = sombra.filter(|s| a > 0.01 && s.3 > 0.01) {
-                        self.mirar_la_sombra(forma_sola, (sx, sy, sd));
+                    let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
+                    if let Some((sx, sy, sd, sa)) = shadow.filter(|s| a > 0.01 && s.3 > 0.01) {
+                        self.check_shadow(shape_only, (sx, sy, sd));
                         let _ = sa;
                     }
                     if a > 0.01 {
-                        self.mirar_el_corte(forma_sola);
+                        self.check_clipping(shape_only);
                     }
-                    // Un cristal que se ve pide que se desenfoque lo de detrás, por su silueta.
-                    let v = vidrio.as_ref().map_or(0.0, |v| v.cuanto.evaluar(c));
-                    let lente = vidrio.as_ref().is_some_and(|v| v.lente.es_verdad(c));
-                    if v * a > CRISTAL_VISIBLE {
-                        self.pedir_cristal(&g.planas, &recortes, lente);
+                    // A visible glass asks for what is behind to be blurred, following its silhouette.
+                    let v = glass_spec.as_ref().map_or(0.0, |v| v.amount.eval(c));
+                    let lens = glass_spec.as_ref().is_some_and(|v| v.lens.is_true(c));
+                    if v * a > GLASS_VISIBLE {
+                        self.request_glass(&g.flats, &clips, lens);
                     }
-                    self.elemento(0.0, caja, &recortes, |e| {
-                        afin.codificar(&mut e[44..52]);
-                        e[1] = g.primera as f32;
+                    self.element(0.0, bounds, &clips, |e| {
+                        affine.encode(&mut e[44..52]);
+                        e[1] = g.first as f32;
                         e[2] = g.n as f32;
                         e[3] = a;
-                        match pintura {
-                            Pintura::Color(col) => e[8..11].copy_from_slice(&color(col)),
-                            Pintura::Degradado { radial, de, a, paradas } => {
+                        match paint {
+                            Paint::Color(col) => e[8..11].copy_from_slice(&color(col)),
+                            Paint::Gradient { radial, from, to, stops } => {
                                 e[15] = if *radial { 2.0 } else { 1.0 };
-                                e[16..20].copy_from_slice(&[de.0.evaluar(c), de.1.evaluar(c), a.0.evaluar(c), a.1.evaluar(c)]);
-                                // Las paradas van en su almacén: dónde cae cada una y de qué color.
-                                e[36] = (paradas_puestas.len() / 4) as f32;
-                                e[37] = paradas.len() as f32;
-                                for (donde, col) in paradas {
+                                e[16..20].copy_from_slice(&[from.0.eval(c), from.1.eval(c), to.0.eval(c), to.1.eval(c)]);
+                                // The stops go in their store: where each one falls and what colour.
+                                e[36] = (placed_stops.len() / 4) as f32;
+                                e[37] = stops.len() as f32;
+                                for (at, col) in stops {
                                     let rgb = color(col);
-                                    paradas_puestas.extend_from_slice(&[rgb[0], rgb[1], rgb[2], donde.evaluar(c).clamp(0.0, 1.0)]);
+                                    placed_stops.extend_from_slice(&[rgb[0], rgb[1], rgb[2], at.eval(c).clamp(0.0, 1.0)]);
                                 }
                             }
                         }
-                        e[11] = *filo;
-                        // Un cuerpo no usa `uv`, que es de las texturas: ahí va el
-                        // cristal, y el ancho de su bisel, que crece con él: lo grande
-                        // dobla más la luz, como un cristal más grueso.
+                        e[11] = *edge;
+                        // A body does not use `uv`, which is for textures: the
+                        // glass goes there, and the width of its bevel, which
+                        // grows with it: something big bends the light more,
+                        // like thicker glass.
                         e[40] = v;
-                        e[41] = bisel_de(forma_sola);
-                        e[42] = lente as u8 as f32;
-                        if let Some(l) = luz {
-                            e[20..23].copy_from_slice(&[l.cantidad, l.desde_y.evaluar(c), l.alto]);
+                        e[41] = bevel_for(shape_only);
+                        e[42] = lens as u8 as f32;
+                        if let Some(l) = light {
+                            e[20..23].copy_from_slice(&[l.amount, l.from_y.eval(c), l.height]);
                         }
-                        if let Some((grosor, col)) = borde {
-                            e[23] = grosor.evaluar(c).max(0.0);
+                        if let Some((thickness, col)) = border {
+                            e[23] = thickness.eval(c).max(0.0);
                             e[24..27].copy_from_slice(&color(col));
                         }
-                        if let Some((sx, sy, sd, sa)) = sombra {
+                        if let Some((sx, sy, sd, sa)) = shadow {
                             e[28..32].copy_from_slice(&[sx, sy, sd, sa]);
-                            //  Su color va en los tres huecos de `color1`, que
-                            //  solo usaba el cuarto para decir si hay degradado.
-                            if let Some(col) = g.sombra.as_ref().and_then(|s| s.color.as_ref()) {
+                            //  Its colour goes in the three slots of `color1`,
+                            //  which only used the fourth to say whether there is a gradient.
+                            if let Some(col) = g.shadow.as_ref().and_then(|s| s.color.as_ref()) {
                                 e[12..15].copy_from_slice(&color(col));
                             }
                         }
                     });
                 }
-                Instr::Plano { forma, color: col, alfa, vidrio } => {
-                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
+                Instr::Solid { shape, color: col, alpha, glass_spec } => {
+                    let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
                     if a <= 0.001 {
-                        continue; // lo invisible no ocupa ni un quad
+                        continue; // what is invisible does not take up even a quad
                     }
-                    let p = aplanar(forma, &giros, &mut self.puntos);
-                    let Some(b) = p.caja() else { continue };
-                    let v = vidrio.as_ref().map_or(0.0, |v| v.cuanto.evaluar(c).clamp(0.0, 1.0));
-                    let lente = vidrio.as_ref().is_some_and(|v| v.lente.es_verdad(c));
-                    if v * a > CRISTAL_VISIBLE {
-                        self.pedir_cristal(&[p], &recortes, lente);
+                    let p = flatten(shape, &transforms, &mut self.points);
+                    let Some(b) = p.bounds() else { continue };
+                    let v = glass_spec.as_ref().map_or(0.0, |v| v.amount.eval(c).clamp(0.0, 1.0));
+                    let lens = glass_spec.as_ref().is_some_and(|v| v.lens.is_true(c));
+                    if v * a > GLASS_VISIBLE {
+                        self.request_glass(&[p], &clips, lens);
                     }
-                    let k = self.forma(p, 0.0);
+                    let k = self.push_shape(p, 0.0);
                     let rgb = color(col);
-                    self.elemento(0.0, [b[0] - 2.0, b[1] - 2.0, b[2] + 2.0, b[3] + 2.0], &recortes, |e| {
-                        afin.codificar(&mut e[44..52]);
+                    self.element(0.0, [b[0] - 2.0, b[1] - 2.0, b[2] + 2.0, b[3] + 2.0], &clips, |e| {
+                        affine.encode(&mut e[44..52]);
                         e[1] = k as f32;
                         e[2] = 1.0;
                         e[3] = a;
                         e[8..11].copy_from_slice(&rgb);
                         e[40] = v;
-                        e[41] = bisel_de(b);
-                        e[42] = lente as u8 as f32;
+                        e[41] = bevel_for(b);
+                        e[42] = lens as u8 as f32;
                     });
                 }
-                Instr::Imagen { imagen, destino, alfa, tinte } => {
-                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
-                    let Some(hueco) = tip.imagen(imagen.0 as usize, textos) else { continue };
+                Instr::Image { image, target, alpha, tint } => {
+                    let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
+                    let Some(slot) = tip.image(image.0 as usize, texts) else { continue };
                     if a <= 0.001 {
                         continue;
                     }
-                    let d = [destino.0.evaluar(c), destino.1.evaluar(c), destino.2.evaluar(c), destino.3.evaluar(c)];
-                    let rgb = tinte.as_ref().map(&color);
-                    self.trozo(d, hueco.uv(), a, rgb, afin, &recortes);
+                    let d = [target.0.eval(c), target.1.eval(c), target.2.eval(c), target.3.eval(c)];
+                    let rgb = tint.as_ref().map(&color);
+                    self.sprite(d, slot.uv(), a, rgb, affine, &clips);
                 }
-                Instr::Campo { texto, zona, en, ancho, estilo, alfa, marcador, seleccion, secreto } => {
-                    let k = texto.0 as usize;
-                    let de_verdad = textos.get(k).map_or("", String::as_str);
-                    let vacio = de_verdad.is_empty();
-                    // Secreto, lo que se pinta son puntos: uno por letra.
-                    let puntos = if *secreto { PUNTO.repeat(de_verdad.chars().count()) } else { String::new() };
-                    let valor = if *secreto { puntos.as_str() } else { de_verdad };
-                    // Vacío, enseña lo que se espera de él, más tenue.
-                    let m = tip.maqueta(sitio, Clave::de(if vacio { marcador } else { valor }, estilo, None));
-                    let (x0, y0, w) = (en.0.evaluar(c), en.1.evaluar(c), ancho.evaluar(c));
-                    let h = estilo.px * estilo.interlinea;
-                    let mio = campo.filter(|v| v.texto == k);
-                    // El cursor cuenta bytes del texto de verdad; en puntos, son letras por tres.
-                    let x_de = |b: usize| {
-                        let b = if *secreto { de_verdad[..b.min(de_verdad.len())].chars().count() * PUNTO.len() } else { b };
-                        if vacio { 0.0 } else { m.as_ref().map_or(0.0, |m| m.x_de(b)) }
+                Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret } => {
+                    let k = text.0 as usize;
+                    let real = texts.get(k).map_or("", String::as_str);
+                    let empty = real.is_empty();
+                    // When secret, what gets painted are dots: one per letter.
+                    let dots = if *secret { MASK_DOT.repeat(real.chars().count()) } else { String::new() };
+                    let value = if *secret { dots.as_str() } else { real };
+                    // When empty, it shows what is expected of it, fainter.
+                    let m = tip.layout(idx, LayoutKey::new(if empty { placeholder } else { value }, style, None));
+                    let (x0, y0, w) = (at.0.eval(c), at.1.eval(c), width.eval(c));
+                    let h = style.px * style.line_height;
+                    let mine = field.filter(|v| v.text == k);
+                    // The cursor counts bytes of the real text; in dots, they are letters times three.
+                    let x_at_byte = |b: usize| {
+                        let b = if *secret { real[..b.min(real.len())].chars().count() * MASK_DOT.len() } else { b };
+                        if empty { 0.0 } else { m.as_ref().map_or(0.0, |m| m.x_at_byte(b)) }
                     };
-                    // Si el cursor se sale por la derecha, el texto se corre.
-                    let corrido = mio.map_or(0.0, |v| (x_de(v.cursor) - w + 6.0).max(0.0));
-                    self.campos.push(CampoPuesto { texto: k, zona, maqueta: if vacio { None } else { m.clone() }, x0, corrido, secreto: *secreto });
-                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
+                    // If the cursor goes out on the right, the text scrolls.
+                    let scroll = mine.map_or(0.0, |v| (x_at_byte(v.cursor) - w + 6.0).max(0.0));
+                    self.fields.push(PlacedField { text: k, zone, layout: if empty { None } else { m.clone() }, x0, scroll, secret: *secret });
+                    let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
                     if a <= 0.001 {
                         continue;
                     }
-                    // Recortado a su caja: lo que no cabe, no se ve.
-                    let mut caja = crate::formas::Plana { tipo: 1, cx: x0 + w * 0.5, cy: y0 + h * 0.5, mx: w * 0.5, my: h * 0.5 + 2.0, radio: 0.0, giro: 0.0, ex: 1.0, ey: 1.0, trazo: 0.0, afin };
-                    let limite = caja.caja().unwrap_or([0.0; 4]);
-                    let kf = self.forma(caja, 0.0);
-                    recortes.push((kf, limite));
-                    let rgb = color(&estilo.color);
-                    if let Some(v) = mio {
-                        let (s0, s1) = (x_de(v.cursor.min(v.ancla)), x_de(v.cursor.max(v.ancla)));
+                    // Clipped to its box: what does not fit is not seen.
+                    let mut rect = crate::shapes::FlatShape { kind: 1, cx: x0 + w * 0.5, cy: y0 + h * 0.5, mx: w * 0.5, my: h * 0.5 + 2.0, radius: 0.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke: 0.0, affine };
+                    let limit = rect.bounds().unwrap_or([0.0; 4]);
+                    let kf = self.push_shape(rect, 0.0);
+                    clips.push((kf, limit));
+                    let rgb = color(&style.color);
+                    if let Some(v) = mine {
+                        let (s0, s1) = (x_at_byte(v.cursor.min(v.anchor)), x_at_byte(v.cursor.max(v.anchor)));
                         if s1 > s0 {
-                            caja = crate::formas::Plana { cx: x0 - corrido + (s0 + s1) * 0.5, mx: (s1 - s0) * 0.5, my: h * 0.5, ..caja };
-                            let (kf, b) = (self.forma(caja, 0.0), caja.caja().unwrap_or([0.0; 4]));
-                            let sel = color(seleccion);
-                            self.elemento(0.0, b, &recortes, |e| {
-                                afin.codificar(&mut e[44..52]);
+                            rect = crate::shapes::FlatShape { cx: x0 - scroll + (s0 + s1) * 0.5, mx: (s1 - s0) * 0.5, my: h * 0.5, ..rect };
+                            let (kf, b) = (self.push_shape(rect, 0.0), rect.bounds().unwrap_or([0.0; 4]));
+                            let sel = color(selection);
+                            self.element(0.0, b, &clips, |e| {
+                                affine.encode(&mut e[44..52]);
                                 e[1] = kf as f32;
                                 e[2] = 1.0;
                                 e[3] = a;
@@ -773,308 +776,309 @@ impl Dibujo {
                         }
                     }
                     if let Some(m) = &m {
-                        let s = tip_escala;
-                        let (tx, ty) = (((x0 - corrido) * s).round() / s, (y0 * s).round() / s);
-                        for g in &m.glifos {
+                        let s = tip_scale;
+                        let (tx, ty) = (((x0 - scroll) * s).round() / s, (y0 * s).round() / s);
+                        for g in &m.glyphs {
                             let d = [tx + g.rect[0], ty + g.rect[1], g.rect[2], g.rect[3]];
-                            self.trozo(d, g.uv, if vacio { a * 0.4 } else { a }, if g.en_color { None } else { Some(rgb) }, afin, &recortes);
+                            self.sprite(d, g.uv, if empty { a * 0.4 } else { a }, if g.colored { None } else { Some(rgb) }, affine, &clips);
                         }
                     }
-                    if let Some(v) = mio.filter(|v| v.se_ve) {
-                        caja = crate::formas::Plana { cx: x0 - corrido + x_de(v.cursor) + 0.5, mx: 0.8, my: h * 0.5 - 1.0, ..caja };
-                        let (kf, b) = (self.forma(caja, 0.0), caja.caja().unwrap_or([0.0; 4]));
-                        self.elemento(0.0, [b[0] - 1.0, b[1], b[2] + 1.0, b[3]], &recortes, |e| {
-                            afin.codificar(&mut e[44..52]);
+                    if let Some(v) = mine.filter(|v| v.visible) {
+                        rect = crate::shapes::FlatShape { cx: x0 - scroll + x_at_byte(v.cursor) + 0.5, mx: 0.8, my: h * 0.5 - 1.0, ..rect };
+                        let (kf, b) = (self.push_shape(rect, 0.0), rect.bounds().unwrap_or([0.0; 4]));
+                        self.element(0.0, [b[0] - 1.0, b[1], b[2] + 1.0, b[3]], &clips, |e| {
+                            affine.encode(&mut e[44..52]);
                             e[1] = kf as f32;
                             e[2] = 1.0;
                             e[3] = a;
                             e[8..11].copy_from_slice(&rgb);
                         });
                     }
-                    recortes.pop();
+                    clips.pop();
                 }
-                Instr::Texto { contenido, en, ancla, ancho, estilo, alfa, mide } => {
-                    let numero;
-                    let texto = match contenido {
-                        Contenido::Fijo(t) => t.as_str(),
-                        Contenido::Vivo(id) => textos.get(id.0 as usize).map_or("", String::as_str),
-                        Contenido::Numero(e, decimales, detras) => {
-                            numero = format!("{:.*}{detras}", *decimales as usize, e.evaluar(c));
-                            numero.as_str()
+                Instr::Text { content, at, anchor, width, style, alpha, measure } => {
+                    let number;
+                    let text = match content {
+                        Content::Literal(t) => t.as_str(),
+                        Content::Live(id) => texts.get(id.0 as usize).map_or("", String::as_str),
+                        Content::Number(e, decimals, after) => {
+                            number = format!("{:.*}{after}", *decimals as usize, e.eval(c));
+                            number.as_str()
                         }
-                        Contenido::Plantilla(trozos) => {
-                            let mut montado = String::new();
-                            Trozo::escribir(trozos, c, textos, &mut montado);
-                            numero = montado;
-                            numero.as_str()
+                        Content::Template(pieces) => {
+                            let mut assembled = String::new();
+                            Piece::write_into(pieces, c, texts, &mut assembled);
+                            number = assembled;
+                            number.as_str()
                         }
                     };
-                    // Se encarga aunque no se vea: cuando aparezca, que ya esté.
-                    let clave = Clave::de(texto, estilo, ancho.as_ref().map(|w| w.evaluar(c)));
-                    let Some(m) = tip.maqueta(sitio, clave) else { continue };
-                    if let Some((w, h)) = mide {
-                        self.medidas.push((*w, m.tam.0));
-                        self.medidas.push((*h, m.tam.1));
+                    // It is ordered even if not visible: so that when it appears, it is already there.
+                    let key = LayoutKey::new(text, style, width.as_ref().map(|w| w.eval(c)));
+                    let Some(m) = tip.layout(idx, key) else { continue };
+                    if let Some((w, h)) = measure {
+                        self.measurements.push((*w, m.size.0));
+                        self.measurements.push((*h, m.size.1));
                     }
-                    let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
+                    let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
                     if a <= 0.001 {
                         continue;
                     }
-                    let rgb = color(&estilo.color);
-                    // A píxeles de verdad: un texto a medio píxel sale blando.
-                    let s = tip_escala;
-                    let x0 = ((en.0.evaluar(c) - m.tam.0 * ancla.0) * s).round() / s;
-                    let y0 = ((en.1.evaluar(c) - m.tam.1 * ancla.1) * s).round() / s;
-                    for g in &m.glifos {
+                    let rgb = color(&style.color);
+                    // On real pixels: a text at half a pixel comes out soft.
+                    let s = tip_scale;
+                    let x0 = ((at.0.eval(c) - m.size.0 * anchor.0) * s).round() / s;
+                    let y0 = ((at.1.eval(c) - m.size.1 * anchor.1) * s).round() / s;
+                    for g in &m.glyphs {
                         let d = [x0 + g.rect[0], y0 + g.rect[1], g.rect[2], g.rect[3]];
-                        self.trozo(d, g.uv, a, if g.en_color { None } else { Some(rgb) }, afin, &recortes);
+                        self.sprite(d, g.uv, a, if g.colored { None } else { Some(rgb) }, affine, &clips);
                     }
                 }
-                Instr::Recorte(Some((forma, margen))) => {
-                    let p = aplanar(forma, &giros, &mut self.puntos).encoger(*margen);
-                    let caja = p.caja().unwrap_or([0.0; 4]);
-                    let k = self.forma(p, 0.0);
-                    recortes.push((k, [caja[0] - 1.0, caja[1] - 1.0, caja[2] + 1.0, caja[3] + 1.0]));
-                    if recortes.len() == 5 && !std::mem::replace(&mut self.avisado_de_recortes, true) {
+                Instr::Clip(Some((shape, margin))) => {
+                    let p = flatten(shape, &transforms, &mut self.points).shrink(*margin);
+                    let bounds = p.bounds().unwrap_or([0.0; 4]);
+                    let k = self.push_shape(p, 0.0);
+                    clips.push((k, [bounds[0] - 1.0, bounds[1] - 1.0, bounds[2] + 1.0, bounds[3] + 1.0]));
+                    if clips.len() == 5 && !std::mem::replace(&mut self.clips_warned, true) {
                         eprintln!("render · more than four nested clips: the outer ones clip by their box only, not by their shape");
                     }
                 }
-                Instr::Recorte(None) => {
-                    recortes.pop();
+                Instr::Clip(None) => {
+                    clips.pop();
                 }
-                Instr::Transformar(Some(t)) => {
-                    let propia = t.afin(c);
-                    giros.push(afin.por(propia));
+                Instr::Transform(Some(t)) => {
+                    let own = t.affine(c);
+                    transforms.push(affine.mul(own));
                 }
-                Instr::Transformar(None) => {
-                    giros.pop();
+                Instr::Transform(None) => {
+                    transforms.pop();
                 }
             }
         }
-        for dicho in [self.sombra.cierra_el_frame(true), self.corte.cierra_el_frame(false)].into_iter().flatten() {
-            eprintln!("{dicho}");
+        for message in [self.shadow.end_frame(true), self.clipping.end_frame(false)].into_iter().flatten() {
+            eprintln!("{message}");
         }
-        // Las siluetas que nadie ha usado este frame se olvidan; las demás, a
-        // empezar de nuevo la cuenta.
-        self.cache_de_cristales.retain(|_, (_, usada)| std::mem::take(usada));
+        // The silhouettes nobody has used this frame are forgotten; the others
+        // start the count again.
+        self.glass_cache.retain(|_, (_, used)| std::mem::take(used));
         if hud {
-            // Los instrumentos ocupan la franja de abajo, que se añadió para ellos.
-            self.elemento(9.0, [0.0, tam.1 - ALTO_INSTRUMENTOS, tam.0, tam.1], &[], |e| Afin::IDENTIDAD.codificar(&mut e[44..52]));
+            // The instruments take the bottom strip, which was added for them.
+            self.element(9.0, [0.0, size.1 - HUD_HEIGHT, size.0, size.1], &[], |e| Affine::IDENTITY.encode(&mut e[44..52]));
         }
-        self.paradas = paradas_puestas;
-        // Un almacén vacío no se puede enlazar ni escribir.
-        if self.paradas.is_empty() {
-            self.paradas.resize(4, 0.0);
+        self.stops = placed_stops;
+        // An empty store can be neither bound nor written.
+        if self.stops.is_empty() {
+            self.stops.resize(4, 0.0);
         }
-        if self.puntos.is_empty() {
-            self.puntos.resize(2, 0.0);
+        if self.points.is_empty() {
+            self.points.resize(2, 0.0);
         }
-        if self.formas.is_empty() {
-            self.formas.resize(POR_FORMA, 0.0);
+        if self.shapes.is_empty() {
+            self.shapes.resize(PER_SHAPE, 0.0);
         }
-        if self.elementos.is_empty() {
-            self.elementos.resize(POR_ELEMENTO, 0.0);
+        if self.elements.is_empty() {
+            self.elements.resize(PER_ELEMENT, 0.0);
         }
     }
 }
 
-// ── el dispositivo y las láminas ────────────────────────────────
+// ── the device and the sheets ───────────────────────────────────
 
-/// Lo que el hilo de Wayland le entrega al de render por cada superficie.
-pub struct NuevaLamina {
+/// What the Wayland thread hands the render thread for each surface.
+pub struct NewSheet {
     pub id: u32,
-    pub superficie: wgpu::Surface<'static>,
-    pub ventana: Box<dyn Ventana>,
-    pub escala: f32,
-    /// El tamaño lógico que le ha dado el compositor.
-    pub tam: (u32, u32),
-    /// Milihercios del monitor; 0 si no se sabe.
+    pub surface: wgpu::Surface<'static>,
+    pub window: Box<dyn PlatformWindow>,
+    pub scale: f32,
+    /// The logical size the compositor has given it.
+    pub size: (u32, u32),
+    /// Millihertz of the monitor; 0 if unknown.
     pub mhz: i32,
-    pub nombre: String,
-    pub vista: Vista,
+    pub name: String,
+    pub view: View,
 }
 
-/// Qué trozo del plano de la escena enseña una lámina, y de quién es. Cada superficie
-/// —y cada emergente— mira a un sitio distinto del mismo plano.
+/// Which piece of the scene plane a sheet shows, and whose it is. Each surface
+/// —and each popup— looks at a different place of the same plane.
 #[derive(Clone, Copy, Debug)]
-pub struct Vista {
-    /// Qué superficie de la escena es.
-    pub superficie: usize,
-    /// Y si es una emergente, cuál.
-    pub emergente: Option<usize>,
-    pub origen: (f32, f32),
-    pub tam: (f32, f32),
+pub struct View {
+    /// Which surface of the scene it is.
+    pub surface: usize,
+    /// And if it is a popup, which one.
+    pub popup: Option<usize>,
+    pub origin: (f32, f32),
+    pub size: (f32, f32),
 }
 
-impl Vista {
-    pub fn caja(&self) -> [f32; 4] {
-        [self.origen.0, self.origen.1, self.origen.0 + self.tam.0, self.origen.1 + self.tam.1]
+impl View {
+    pub fn bounds(&self) -> [f32; 4] {
+        [self.origin.0, self.origin.1, self.origin.0 + self.size.0, self.origin.1 + self.size.1]
     }
 }
 
-/// La foto de lo de detrás que una lámina con lente tiene en camino. Para
-/// despejar el fondo hay que saber **exactamente** qué había pintado nuestro
-/// cuando se hizo: con el lienzo equivocado el error se multiplica por
-/// α / (1 − α) en cada vuelta —×6 con el cristal al 86 %— y la lente se
-/// llena de colores que no existen. Así que tras presentar se pide la foto, y
-/// hasta que llega no se presenta otra: la trae la siguiente vez que el
-/// compositor pinta, que ya lleva nuestro frame. Y sin nada que pintar se
-/// vigila: la foto llega cuando algo cambie detrás, y si antes hay que
-/// pintar, se olvida.
+/// The capture of what is behind that a sheet with a lens has on the way. To
+/// unmix the background one has to know **exactly** what we had painted
+/// when it was taken: with the wrong canvas the error gets multiplied by
+/// α / (1 − α) on each round —×6 with the glass at 86 %— and the lens fills
+/// with colours that do not exist. So after presenting the capture is
+/// requested, and until it arrives no other frame is presented: it comes the
+/// next time the compositor paints, which already carries our frame. And with
+/// nothing to paint it watches: the capture arrives when something changes
+/// behind, and if something has to be painted before that, it is forgotten.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum FotoDetras {
-    Nada,
-    TrasPresentar,
-    Vigilando,
+pub enum BackdropCapture {
+    Idle,
+    AfterPresent,
+    Watching,
 }
 
-/// Una superficie de Wayland vista desde la GPU: su cadena de imágenes, a su
-/// escala, con sus capas y sus uniformes.
-pub struct Lamina {
+/// A Wayland surface as seen from the GPU: its chain of images, at its scale,
+/// with its layers and its uniforms.
+pub struct Sheet {
     pub id: u32,
     #[allow(dead_code)]
-    pub nombre: String,
+    pub name: String,
     pub mhz: i32,
-    pub escala: f32,
-    /// La que espera a la pantalla y marca el ritmo; las demás no bloquean.
-    pub marca_el_ritmo: bool,
-    /// Si su superficie está abierta ahora. Una cerrada no marca el ritmo ni se
-    /// pinta más que una vez, para vaciarla: el compositor no le da frames a lo
-    /// que no se ve, y esperarlos con vsync paraba el render entero.
-    pub abierta: bool,
-    pub vaciada: bool,
-    pub vista: Vista,
-    superficie: wgpu::Surface<'static>,
-    ventana: Box<dyn Ventana>,
+    pub scale: f32,
+    /// The one that waits for the screen and sets the pace; the others do not block.
+    pub drives_pace: bool,
+    /// Whether its surface is open now. A closed one does not set the pace
+    /// and is not painted more than once, to clear it: the compositor gives no
+    /// frames to what is not visible, and waiting for them with vsync stopped
+    /// the whole render.
+    pub open: bool,
+    pub cleared: bool,
+    pub view: View,
+    surface: wgpu::Surface<'static>,
+    window: Box<dyn PlatformWindow>,
     px: (u32, u32),
-    uniformes: wgpu::Buffer,
-    grupo_uniformes: wgpu::BindGroup,
-    vistas_de_capa: Vec<wgpu::TextureView>,
-    grupo_capas: wgpu::BindGroup,
-    /// Cuántas capas tiene del tamaño de la superficie (0: solo la de mentira),
-    /// y cuántos frames lleva sin usar ninguna.
-    capas: u32,
-    capas_ociosas: u32,
-    /// Lo último que se le pidió al compositor que desenfocase, en sus coordenadas.
-    pub desenfoque: Vec<[i32; 4]>,
-    /// Si enseña cristal y se puede ver lo de detrás: su lienzo y su fondo.
-    pub lente: Option<crate::lente::Lente>,
-    /// Si este frame tiene cristal en su trozo del plano.
-    pub quiere_lente: bool,
-    /// Qué foto de lo de detrás hay en camino, y desde cuándo.
-    pub foto: FotoDetras,
-    /// Dónde hay cristal en su trozo, con margen para esmerilar —en píxeles
-    /// lógicos suyos—, y la caja de la foto que está en camino.
-    pub caja_cristal: Option<[i32; 4]>,
-    pub caja_pedida: [i32; 4],
-    pub foto_pedida: std::time::Instant,
-    /// La última foto pedida tras presentar: marca el ritmo de las fotos.
-    pub foto_hecha: std::time::Instant,
-    /// Si se ha pintado en esta vuelta del render.
-    pub pintada_ahora: bool,
-    /// Qué trozo del plano y a qué escala tiene pintado, si lo que enseña está
-    /// al día. Con otro sitio, otra escala o sin nada (recién hecha,
-    /// reconfigurada), se pinta aunque la escena no haya cambiado.
-    pub pintada: Option<([f32; 4], f32)>,
+    uniforms: wgpu::Buffer,
+    uniform_group: wgpu::BindGroup,
+    layer_views: Vec<wgpu::TextureView>,
+    layer_group: wgpu::BindGroup,
+    /// How many layers it has of the surface's size (0: only the dummy one),
+    /// and how many frames it has gone without using any.
+    layers: u32,
+    idle_layer_frames: u32,
+    /// The last thing the compositor was asked to blur, in its coordinates.
+    pub blur_rects: Vec<[i32; 4]>,
+    /// If it shows glass and what is behind can be seen: its canvas and its background.
+    pub lens: Option<crate::lens::Lens>,
+    /// Whether this frame has glass in its piece of the plane.
+    pub wants_lens: bool,
+    /// Which capture of what is behind is on the way, and since when.
+    pub capture: BackdropCapture,
+    /// Where there is glass in its piece, with a margin for frosting —in its
+    /// own logical pixels—, and the box of the capture that is on the way.
+    pub glass_box: Option<[i32; 4]>,
+    pub asked_box: [i32; 4],
+    pub capture_asked: std::time::Instant,
+    /// The last capture requested after presenting: it sets the pace of the captures.
+    pub capture_taken: std::time::Instant,
+    /// Whether it has been painted in this round of the render.
+    pub painted_now: bool,
+    /// Which piece of the plane and at which scale it has painted, if what it
+    /// shows is up to date. With another place, another scale or nothing (just
+    /// made, reconfigured), it is painted even if the scene has not changed.
+    pub painted: Option<([f32; 4], f32)>,
 }
 
 pub struct Gpu {
-    /// Lo que despeja y esmerila lo de detrás del cristal.
-    lente: crate::lente::Tuberias,
-    /// Para una lámina sin lente: un fondo de un píxel que nadie lee.
-    grupo_sin_detras: wgpu::BindGroup,
-    /// Si la pantalla acepta que se le copie un lienzo: sin eso, no hay lente.
-    puede_copiar: bool,
-    adaptador: wgpu::Adapter,
-    pub dispositivo: wgpu::Device,
-    pub cola: wgpu::Queue,
-    formato: wgpu::TextureFormat,
-    alfa: wgpu::CompositeAlphaMode,
-    sin_bloqueo: Option<wgpu::PresentMode>,
-    tuberia: wgpu::RenderPipeline,
-    bufer_formas: wgpu::Buffer,
-    bufer_puntos: wgpu::Buffer,
-    bufer_paradas: wgpu::Buffer,
-    bufer_elementos: wgpu::Buffer,
+    /// What unmixes and frosts what is behind the glass.
+    lens: crate::lens::Pipelines,
+    /// For a sheet without a lens: a one-pixel background nobody reads.
+    no_backdrop_group: wgpu::BindGroup,
+    /// Whether the screen accepts having a canvas copied to it: without that, there is no lens.
+    can_copy: bool,
+    adapter: wgpu::Adapter,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    format: wgpu::TextureFormat,
+    alpha: wgpu::CompositeAlphaMode,
+    non_blocking: Option<wgpu::PresentMode>,
+    pipeline: wgpu::RenderPipeline,
+    shapes_buffer: wgpu::Buffer,
+    points_buffer: wgpu::Buffer,
+    stops_buffer: wgpu::Buffer,
+    elements_buffer: wgpu::Buffer,
     atlas: wgpu::Texture,
-    vista_del_atlas: wgpu::TextureView,
-    muestreo: wgpu::Sampler,
-    /// Cuántos floats caben ahora en cada almacén, y cuántos como mucho en esta tarjeta.
-    caben: (usize, usize, usize, usize),
-    tope: usize,
-    avisado_del_tope: bool,
-    grupo_escena: wgpu::BindGroup,
-    grupo_sin_capas: wgpu::BindGroup,
+    atlas_view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+    /// How many floats fit now in each store, and how many at most on this card.
+    capacity: (usize, usize, usize, usize),
+    limit: usize,
+    limit_warned: bool,
+    scene_group: wgpu::BindGroup,
+    no_layers_group: wgpu::BindGroup,
 }
 
 impl Gpu {
-    /// Se crea con la primera superficie que llega: hace falta una para saber
-    /// qué adaptador y qué formato valen.
-    pub fn nueva(instancia: &wgpu::Instance, primera: &wgpu::Surface<'static>) -> Gpu {
-        let adaptador = pollster::block_on(instancia.request_adapter(&wgpu::RequestAdapterOptions {
-            compatible_surface: Some(primera),
+    /// It is created with the first surface that arrives: one is needed to know
+    /// which adapter and which format are valid.
+    pub fn new(instance: &wgpu::Instance, first: &wgpu::Surface<'static>) -> Gpu {
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            compatible_surface: Some(first),
             power_preference: wgpu::PowerPreference::LowPower,
             ..Default::default()
         }))
         .expect("there is no graphics adapter");
-        let (dispositivo, cola) =
-            pollster::block_on(adaptador.request_device(&wgpu::DeviceDescriptor {
-                // Por defecto, wgpu reserva bloques de 128 MB en la tarjeta y 64 en
-                // la memoria del sistema, pensando en un juego. Una escena entera
-                // cabe en menos de 20: con bloques de 8, lo reservado es lo usado.
-                // Pedir memoria es raro aquí —crecer un almacén, una capa—, así que
-                // lo que se pierde en rapidez no se nota.
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                // By default, wgpu reserves blocks of 128 MB on the card and 64 in
+                // system memory, thinking of a game. A whole scene fits in less
+                // than 20: with blocks of 8, what is reserved is what is used.
+                // Asking for memory is rare here —growing a store, a layer—, so
+                // what is lost in speed is not noticed.
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 ..Default::default()
             })).expect("there is no device");
-        let caps = primera.get_capabilities(&adaptador);
-        // Sin sRGB: el compositor mezcla los bytes tal cual, y el alfa
-        // premultiplicado solo cuadra si nadie los recodifica por el camino.
-        let formato = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
-        let alfa = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
+        let caps = first.get_capabilities(&adapter);
+        // No sRGB: the compositor blends the bytes as they are, and premultiplied
+        // alpha only works out if nobody re-encodes them along the way.
+        let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
+        let alpha = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
             wgpu::CompositeAlphaMode::PreMultiplied
         } else {
             eprintln!("warning: no premultiplied alpha ({:?}); the background will come out opaque", caps.alpha_modes);
             wgpu::CompositeAlphaMode::Auto
         };
-        let sin_bloqueo = [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate].into_iter().find(|m| caps.present_modes.contains(m));
-        let info = adaptador.get_info();
-        println!("render · {} ({:?}) · {:?} · {:?}", info.name, info.backend, formato, alfa);
+        let non_blocking = [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate].into_iter().find(|m| caps.present_modes.contains(m));
+        let info = adapter.get_info();
+        println!("render · {} ({:?}) · {:?} · {:?}", info.name, info.backend, format, alpha);
 
-        let almacen = |etiqueta, floats: usize| {
-            dispositivo.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(etiqueta),
+        let store = |label, floats: usize| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
                 size: (floats * 4) as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })
         };
-        let bufer_formas = almacen("formas", FORMAS_DE_SALIDA * POR_FORMA);
-        let bufer_puntos = almacen("puntos", PUNTOS_DE_SALIDA);
-        let bufer_paradas = almacen("paradas", PARADAS_DE_SALIDA);
-        let bufer_elementos = almacen("elementos", ELEMENTOS_DE_SALIDA * POR_ELEMENTO);
-        let muestreo = dispositivo.create_sampler(&wgpu::SamplerDescriptor {
+        let shapes_buffer = store("shapes", INITIAL_SHAPES * PER_SHAPE);
+        let points_buffer = store("points", INITIAL_POINTS);
+        let stops_buffer = store("stops", INITIAL_STOPS);
+        let elements_buffer = store("elements", INITIAL_ELEMENTS * PER_ELEMENT);
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let modulo = dispositivo.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("forma"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("forma.wgsl").into()),
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shape"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shape.wgsl").into()),
         });
-        let tuberia = dispositivo.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("elementos"),
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("elements"),
             layout: None,
-            vertex: wgpu::VertexState { module: &modulo, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+            vertex: wgpu::VertexState { module: &module, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
-                module: &modulo,
+                module: &module,
                 entry_point: Some("fs"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: formato,
+                    format,
                     blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -1082,10 +1086,10 @@ impl Gpu {
             multiview_mask: None,
             cache: None,
         });
-        // Un solo atlas para glifos e imágenes. 2048² en RGBA son 16 MB.
-        let atlas = dispositivo.create_texture(&wgpu::TextureDescriptor {
+        // A single atlas for glyphs and images. 2048² in RGBA is 16 MB.
+        let atlas = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("atlas"),
-            size: wgpu::Extent3d { width: LADO_DEL_ATLAS, height: LADO_DEL_ATLAS, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d { width: ATLAS_SIZE, height: ATLAS_SIZE, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -1093,14 +1097,14 @@ impl Gpu {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let vista_del_atlas = atlas.create_view(&Default::default());
-        let grupo_escena = Self::grupo_de_escena(&dispositivo, &tuberia, &bufer_formas, &bufer_elementos, &bufer_puntos, &bufer_paradas, &vista_del_atlas, &muestreo);
-        let tope = dispositivo.limits().max_storage_buffer_binding_size as usize / 4;
-        let grupo_sin_capas = Self::capas_de(&dispositivo, &tuberia, formato, 1, 1, 1).1;
-        let lente = crate::lente::Tuberias::nuevas(&dispositivo);
-        let puede_copiar = caps.usages.contains(wgpu::TextureUsages::COPY_DST);
-        let nada = dispositivo.create_texture(&wgpu::TextureDescriptor {
-            label: Some("sin detras"),
+        let atlas_view = atlas.create_view(&Default::default());
+        let scene_group = Self::build_scene_group(&device, &pipeline, &shapes_buffer, &elements_buffer, &points_buffer, &stops_buffer, &atlas_view, &sampler);
+        let limit = device.limits().max_storage_buffer_binding_size as usize / 4;
+        let no_layers_group = Self::make_layers(&device, &pipeline, format, 1, 1, 1).1;
+        let lens = crate::lens::Pipelines::new(&device);
+        let can_copy = caps.usages.contains(wgpu::TextureUsages::COPY_DST);
+        let nothing = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("no backdrop"),
             size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
@@ -1109,77 +1113,78 @@ impl Gpu {
             usage: wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         }).create_view(&Default::default());
-        let grupo_sin_detras = Self::grupo_detras(&dispositivo, &tuberia, &nada, &nada, &muestreo);
-        Gpu { lente, grupo_sin_detras, puede_copiar, adaptador, dispositivo, cola, formato, alfa, sin_bloqueo, tuberia, bufer_formas, bufer_elementos, bufer_puntos, bufer_paradas, atlas, vista_del_atlas, muestreo, caben: (FORMAS_DE_SALIDA * POR_FORMA, ELEMENTOS_DE_SALIDA * POR_ELEMENTO, PUNTOS_DE_SALIDA, PARADAS_DE_SALIDA), tope, avisado_del_tope: false, grupo_escena, grupo_sin_capas }
+        let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
+        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
     }
 
-    fn grupo_detras(d: &wgpu::Device, tuberia: &wgpu::RenderPipeline, nitido: &wgpu::TextureView, borroso: &wgpu::TextureView, muestreo: &wgpu::Sampler) -> wgpu::BindGroup {
+    fn build_backdrop_group(d: &wgpu::Device, pipeline: &wgpu::RenderPipeline, sharp: &wgpu::TextureView, blurred: &wgpu::TextureView, sampler: &wgpu::Sampler) -> wgpu::BindGroup {
         d.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("detras"),
-            layout: &tuberia.get_bind_group_layout(3),
+            label: Some("backdrop"),
+            layout: &pipeline.get_bind_group_layout(3),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(nitido) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(borroso) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(muestreo) },
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(sharp) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(blurred) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
             ],
         })
     }
 
-    /// Lo que lee el shader de las formas de una lámina con lente.
-    pub fn grupo_de_detras(&self, nitido: &wgpu::TextureView, borroso: &wgpu::TextureView) -> wgpu::BindGroup {
-        Self::grupo_detras(&self.dispositivo, &self.tuberia, nitido, borroso, &self.muestreo)
+    /// What the shapes shader of a sheet with a lens reads.
+    pub fn backdrop_group(&self, sharp: &wgpu::TextureView, blurred: &wgpu::TextureView) -> wgpu::BindGroup {
+        Self::build_backdrop_group(&self.device, &self.pipeline, sharp, blurred, &self.sampler)
     }
 
-    /// Llega una foto de lo de detrás de una lámina. `true` si hay que volver a pintarla.
-    pub fn recibir_detras(&self, l: &mut Lamina, d: crate::plataforma::Detras) -> bool {
-        let (escala, caja) = (l.escala, l.caja_pedida);
-        match &mut l.lente {
-            Some(lente) => lente.recibir(self, d, escala, caja),
+    /// A capture of what is behind a sheet arrives. `true` if it has to be painted again.
+    pub fn receive_backdrop(&self, l: &mut Sheet, d: crate::platform::Backdrop) -> bool {
+        let (scale, bounds) = (l.scale, l.asked_box);
+        match &mut l.lens {
+            Some(lens) => lens.receive(self, d, scale, bounds),
             None => false,
         }
     }
 
-    /// Sube al atlas lo que el taller haya pintado desde la última vez.
-    /// Si se presenta por buzón y el paso lo marca el render con su reloj.
+    /// Uploads to the atlas whatever the workshop has painted since last time.
+    /// Whether it presents via mailbox and the render sets the pace with its clock.
     ///
-    /// Con vsync de cola (`Fifo`) pedir la siguiente imagen espera a que el
-    /// compositor suelte una, y aquí —Hyprland con NVIDIA— a veces no la suelta:
-    /// cuatro frames después de despertar de un reposo largo, 300 ms parado en
-    /// `vkAcquireNextImage` en mitad de una animación. Con buzón nunca se espera
-    /// a nadie; lo que se pierde es ir clavado al refresco, y se recupera
-    /// marcando el paso con plazos absolutos al periodo del monitor.
-    /// `PLEAMAR_FIFO=1` vuelve a lo de antes, para comparar.
-    pub fn con_buzon(&self) -> bool {
-        self.sin_bloqueo == Some(wgpu::PresentMode::Mailbox) && std::env::var_os("PLEAMAR_FIFO").is_none()
+    /// With queue vsync (`Fifo`) asking for the next image waits for the
+    /// compositor to release one, and here —Hyprland with NVIDIA— sometimes it
+    /// does not release it: four frames after waking up from a long rest, 300
+    /// ms stuck in `vkAcquireNextImage` in the middle of an animation. With
+    /// mailbox nobody is ever waited for; what is lost is being locked to the
+    /// refresh, and that is recovered by setting the pace with absolute
+    /// deadlines at the monitor's period.
+    /// `PLEAMAR_FIFO=1` goes back to the old way, to compare.
+    pub fn uses_mailbox(&self) -> bool {
+        self.non_blocking == Some(wgpu::PresentMode::Mailbox) && std::env::var_os("PLEAMAR_FIFO").is_none()
     }
 
-    pub fn subir_atlas(&self, por_subir: &mut Vec<(Hueco, Vec<u8>)>) {
-        for (h, rgba) in por_subir.drain(..) {
-            self.cola.write_texture(
+    pub fn upload_atlas(&self, pending_upload: &mut Vec<(AtlasSlot, Vec<u8>)>) {
+        for (h, rgba) in pending_upload.drain(..) {
+            self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo { texture: &self.atlas, mip_level: 0, origin: wgpu::Origin3d { x: h.x, y: h.y, z: 0 }, aspect: wgpu::TextureAspect::All },
                 &rgba,
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * h.ancho), rows_per_image: None },
-                wgpu::Extent3d { width: h.ancho, height: h.alto, depth_or_array_layers: 1 },
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * h.width), rows_per_image: None },
+                wgpu::Extent3d { width: h.width, height: h.height, depth_or_array_layers: 1 },
             );
         }
     }
 
-    /// Las capas donde se pintan aparte los grupos con opacidad. Mientras se
-    /// pinta EN una no se puede leer de ellas, y ese rato se enlaza una de mentira.
-    /// Cada capa mide lo que la superficie entera: se piden solo las que hacen falta.
-    fn capas_de(dispositivo: &wgpu::Device, tuberia: &wgpu::RenderPipeline, formato: wgpu::TextureFormat, ancho: u32, alto: u32, n: u32) -> (Vec<wgpu::TextureView>, wgpu::BindGroup) {
-        let t = dispositivo.create_texture(&wgpu::TextureDescriptor {
-            label: Some("capas"),
-            size: wgpu::Extent3d { width: ancho.max(1), height: alto.max(1), depth_or_array_layers: n.max(1) },
+    /// The layers where groups with opacity are painted separately. While
+    /// painting ON one, they cannot be read from, and meanwhile a dummy one is
+    /// bound. Each layer is as big as the whole surface: only those needed are requested.
+    fn make_layers(device: &wgpu::Device, pipeline: &wgpu::RenderPipeline, format: wgpu::TextureFormat, width: u32, height: u32, n: u32) -> (Vec<wgpu::TextureView>, wgpu::BindGroup) {
+        let t = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("layers"),
+            size: wgpu::Extent3d { width: width.max(1), height: height.max(1), depth_or_array_layers: n.max(1) },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: formato,
+            format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let todas = t.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
-        let cada = (0..n.max(1))
+        let all = t.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
+        let each = (0..n.max(1))
             .map(|k| {
                 t.create_view(&wgpu::TextureViewDescriptor {
                     dimension: Some(wgpu::TextureViewDimension::D2),
@@ -1189,187 +1194,188 @@ impl Gpu {
                 })
             })
             .collect();
-        let grupo = dispositivo.create_bind_group(&wgpu::BindGroupDescriptor {
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: &tuberia.get_bind_group_layout(1),
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&todas) }],
+            layout: &pipeline.get_bind_group_layout(1),
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&all) }],
         });
-        (cada, grupo)
+        (each, group)
     }
 
-    pub fn lamina(&self, n: NuevaLamina, tam: (f32, f32)) -> Lamina {
-        let uniformes = self.dispositivo.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("uniformes"),
-            size: (N_UNIFORMES * 4) as u64,
+    pub fn sheet(&self, n: NewSheet, size: (f32, f32)) -> Sheet {
+        let uniforms = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("uniforms"),
+            size: (N_UNIFORMS * 4) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let grupo_uniformes = self.dispositivo.create_bind_group(&wgpu::BindGroupDescriptor {
+        let uniform_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: &self.tuberia.get_bind_group_layout(2),
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniformes.as_entire_binding() }],
+            layout: &self.pipeline.get_bind_group_layout(2),
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniforms.as_entire_binding() }],
         });
-        let (vistas_de_capa, grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, 1, 1, 1);
-        let mut l = Lamina {
-            id: n.id, nombre: n.nombre, mhz: n.mhz, escala: n.escala, marca_el_ritmo: true, abierta: true, vaciada: false, vista: n.vista,
-            superficie: n.superficie, ventana: n.ventana, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas, capas: 0, capas_ociosas: 0, desenfoque: Vec::new(), lente: None, quiere_lente: false, foto: FotoDetras::Nada, caja_cristal: None, caja_pedida: [0; 4], foto_pedida: std::time::Instant::now(), foto_hecha: std::time::Instant::now(), pintada_ahora: false, pintada: None,
+        let (layer_views, layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
+        let mut l = Sheet {
+            id: n.id, name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, cleared: false, view: n.view,
+            surface: n.surface, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: std::time::Instant::now(), painted_now: false, painted: None,
         };
-        self.configurar(&mut l, tam);
+        self.reconfigure(&mut l, size);
         l
     }
 
-    /// Al cambiar de escala, de tamaño o de papel en el ritmo.
-    pub fn configurar(&self, l: &mut Lamina, _tam: (f32, f32)) {
-        let tam = l.vista.tam;
-        let px = ((tam.0 * l.escala).round().max(1.0) as u32, (tam.1 * l.escala).round().max(1.0) as u32);
-        self.superficie_configurar(l, px);
-        l.pintada = None;
+    /// When the scale, the size or the role in the pacing changes.
+    pub fn reconfigure(&self, l: &mut Sheet, _size: (f32, f32)) {
+        let size = l.view.size;
+        let px = ((size.0 * l.scale).round().max(1.0) as u32, (size.1 * l.scale).round().max(1.0) as u32);
+        self.configure_surface(l, px);
+        l.painted = None;
         if px != l.px {
             l.px = px;
-            // Un lienzo de otro tamaño ya no vale: se hace otro cuando haga falta.
-            l.lente = None;
-            // Las que hubiera ya no miden lo que la superficie: se piden de nuevo cuando hagan falta.
-            self.soltar_capas(l);
+            // A canvas of another size is no longer valid: another is made when needed.
+            l.lens = None;
+            // Whatever there were no longer match the surface: they are requested again when needed.
+            self.release_layers(l);
         }
     }
 
-    fn soltar_capas(&self, l: &mut Lamina) {
-        (l.vistas_de_capa, l.grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, 1, 1, 1);
-        l.capas = 0;
-        l.capas_ociosas = 0;
+    fn release_layers(&self, l: &mut Sheet) {
+        (l.layer_views, l.layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
+        l.layers = 0;
+        l.idle_layer_frames = 0;
     }
 
-    /// Que haya al menos `n` capas del tamaño de la superficie; y si lleva un
-    /// rato sin necesitar ninguna, devolverlas. Un grupo que se funde al abrir
-    /// un panel las pide un momento, no para siempre.
-    fn capas_para(&self, l: &mut Lamina, n: u32) {
-        if n > l.capas {
-            (l.vistas_de_capa, l.grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, l.px.0, l.px.1, n);
-            l.capas = n;
+    /// That there are at least `n` layers of the surface's size; and if it has
+    /// gone a while without needing any, give them back. A group that fades
+    /// when a panel opens asks for them for a moment, not forever.
+    fn ensure_layers(&self, l: &mut Sheet, n: u32) {
+        if n > l.layers {
+            (l.layer_views, l.layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, l.px.0, l.px.1, n);
+            l.layers = n;
         }
-        if n == 0 && l.capas > 0 {
-            l.capas_ociosas += 1;
-            if l.capas_ociosas > CAPAS_OCIOSAS {
-                self.soltar_capas(l);
+        if n == 0 && l.layers > 0 {
+            l.idle_layer_frames += 1;
+            if l.idle_layer_frames > IDLE_LAYER_FRAMES {
+                self.release_layers(l);
             }
         } else {
-            l.capas_ociosas = 0;
+            l.idle_layer_frames = 0;
         }
     }
 
-    fn superficie_configurar(&self, l: &Lamina, px: (u32, u32)) {
-        let _ = &self.adaptador;
-        l.superficie.configure(
-            &self.dispositivo,
+    fn configure_surface(&self, l: &Sheet, px: (u32, u32)) {
+        let _ = &self.adapter;
+        l.surface.configure(
+            &self.device,
             &wgpu::SurfaceConfiguration {
-                // Con COPY_DST se le puede copiar el lienzo de la lente.
-                usage: if self.puede_copiar { wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST } else { wgpu::TextureUsages::RENDER_ATTACHMENT },
-                format: self.formato,
+                // With COPY_DST the lens canvas can be copied onto it.
+                usage: if self.can_copy { wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST } else { wgpu::TextureUsages::RENDER_ATTACHMENT },
+                format: self.format,
                 view_formats: vec![],
-                alpha_mode: self.alfa,
+                alpha_mode: self.alpha,
                 width: px.0,
                 height: px.1,
                 desired_maximum_frame_latency: 1,
-                // Solo una lámina espera a su pantalla. Si esperasen todas, dos
-                // monitores a distinto ritmo se frenarían el uno al otro.
-                // Con buzón, ninguna espera a la pantalla: el paso lo marca el render
-                // (ver `con_buzon`). Sin él, la que marca el ritmo espera con vsync.
-                present_mode: if l.marca_el_ritmo && !self.con_buzon() { wgpu::PresentMode::Fifo } else { self.sin_bloqueo.unwrap_or(wgpu::PresentMode::Fifo) },
+                // Only one sheet waits for its screen. If they all waited, two
+                // monitors at different rates would hold each other back.
+                // With mailbox, none waits for the screen: the render sets the
+                // pace (see `uses_mailbox`). Without it, the one that sets the pace waits with vsync.
+                present_mode: if l.drives_pace && !self.uses_mailbox() { wgpu::PresentMode::Fifo } else { self.non_blocking.unwrap_or(wgpu::PresentMode::Fifo) },
                 color_space: wgpu::SurfaceColorSpace::Auto,
             },
         );
     }
 
-    fn grupo_de_escena(dispositivo: &wgpu::Device, tuberia: &wgpu::RenderPipeline, formas: &wgpu::Buffer, elementos: &wgpu::Buffer, puntos: &wgpu::Buffer, paradas: &wgpu::Buffer, atlas: &wgpu::TextureView, muestreo: &wgpu::Sampler) -> wgpu::BindGroup {
-        dispositivo.create_bind_group(&wgpu::BindGroupDescriptor {
+    fn build_scene_group(device: &wgpu::Device, pipeline: &wgpu::RenderPipeline, shapes: &wgpu::Buffer, elements: &wgpu::Buffer, points: &wgpu::Buffer, stops: &wgpu::Buffer, atlas: &wgpu::TextureView, sampler: &wgpu::Sampler) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: &tuberia.get_bind_group_layout(0),
+            layout: &pipeline.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: formas.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: elementos.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 0, resource: shapes.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: elements.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(atlas) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(muestreo) },
-                wgpu::BindGroupEntry { binding: 4, resource: puntos.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: paradas.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry { binding: 4, resource: points.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: stops.as_entire_binding() },
             ],
         })
     }
 
-    /// Lo que se va a pintar, a la tarjeta. Si no cabe, los almacenes crecen al
-    /// doble —las veces que haga falta— y no vuelven a encoger.
-    pub fn subir(&mut self, d: &Dibujo) {
-        let pide = (d.formas.len(), d.elementos.len(), d.puntos.len(), d.paradas.len());
-        if pide.0 > self.caben.0 || pide.1 > self.caben.1 || pide.2 > self.caben.2 || pide.3 > self.caben.3 {
-            let crecer = |cabe: usize, pide: usize| if pide > cabe { pide.next_power_of_two() } else { cabe }.min(self.tope);
-            let nuevo = (crecer(self.caben.0, pide.0) / POR_FORMA * POR_FORMA, crecer(self.caben.1, pide.1) / POR_ELEMENTO * POR_ELEMENTO, crecer(self.caben.2, pide.2) / 2 * 2, crecer(self.caben.3, pide.3) / 4 * 4);
-            if nuevo != self.caben {
-                let almacen = |etiqueta, floats: usize| self.dispositivo.create_buffer(&wgpu::BufferDescriptor { label: Some(etiqueta), size: (floats * 4) as u64, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
-                if nuevo.0 != self.caben.0 { self.bufer_formas = almacen("formas", nuevo.0) }
-                if nuevo.1 != self.caben.1 { self.bufer_elementos = almacen("elementos", nuevo.1) }
-                if nuevo.2 != self.caben.2 { self.bufer_puntos = almacen("puntos", nuevo.2) }
-                if nuevo.3 != self.caben.3 { self.bufer_paradas = almacen("paradas", nuevo.3) }
-                self.grupo_escena = Self::grupo_de_escena(&self.dispositivo, &self.tuberia, &self.bufer_formas, &self.bufer_elementos, &self.bufer_puntos, &self.bufer_paradas, &self.vista_del_atlas, &self.muestreo);
-                self.caben = nuevo;
-                println!("render · the scene has grown: now {} shapes and {} elements fit", nuevo.0 / POR_FORMA, nuevo.1 / POR_ELEMENTO);
+    /// What is going to be painted, to the card. If it does not fit, the
+    /// stores grow to double —as many times as needed— and never shrink again.
+    pub fn upload(&mut self, d: &DrawList) {
+        let wants = (d.shapes.len(), d.elements.len(), d.points.len(), d.stops.len());
+        if wants.0 > self.capacity.0 || wants.1 > self.capacity.1 || wants.2 > self.capacity.2 || wants.3 > self.capacity.3 {
+            let grow = |fits: usize, wants: usize| if wants > fits { wants.next_power_of_two() } else { fits }.min(self.limit);
+            let new = (grow(self.capacity.0, wants.0) / PER_SHAPE * PER_SHAPE, grow(self.capacity.1, wants.1) / PER_ELEMENT * PER_ELEMENT, grow(self.capacity.2, wants.2) / 2 * 2, grow(self.capacity.3, wants.3) / 4 * 4);
+            if new != self.capacity {
+                let store = |label, floats: usize| self.device.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size: (floats * 4) as u64, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+                if new.0 != self.capacity.0 { self.shapes_buffer = store("shapes", new.0) }
+                if new.1 != self.capacity.1 { self.elements_buffer = store("elements", new.1) }
+                if new.2 != self.capacity.2 { self.points_buffer = store("points", new.2) }
+                if new.3 != self.capacity.3 { self.stops_buffer = store("stops", new.3) }
+                self.scene_group = Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.sampler);
+                self.capacity = new;
+                println!("render · the scene has grown: now {} shapes and {} elements fit", new.0 / PER_SHAPE, new.1 / PER_ELEMENT);
             }
-            if (pide.0 > self.caben.0 || pide.1 > self.caben.1) && !std::mem::replace(&mut self.avisado_del_tope, true) {
-                eprintln!("render · this card cannot take more than {} shapes and {} elements: the rest is not painted", self.caben.0 / POR_FORMA, self.caben.1 / POR_ELEMENTO);
+            if (wants.0 > self.capacity.0 || wants.1 > self.capacity.1) && !std::mem::replace(&mut self.limit_warned, true) {
+                eprintln!("render · this card cannot take more than {} shapes and {} elements: the rest is not painted", self.capacity.0 / PER_SHAPE, self.capacity.1 / PER_ELEMENT);
             }
         }
-        let (f, e, pt, pa) = (pide.0.min(self.caben.0), pide.1.min(self.caben.1), pide.2.min(self.caben.2), pide.3.min(self.caben.3));
-        self.cola.write_buffer(&self.bufer_formas, 0, bytemuck::cast_slice(&d.formas[..f]));
-        self.cola.write_buffer(&self.bufer_elementos, 0, bytemuck::cast_slice(&d.elementos[..e]));
-        self.cola.write_buffer(&self.bufer_puntos, 0, bytemuck::cast_slice(&d.puntos[..pt]));
-        self.cola.write_buffer(&self.bufer_paradas, 0, bytemuck::cast_slice(&d.paradas[..pa]));
+        let (f, e, pt, pa) = (wants.0.min(self.capacity.0), wants.1.min(self.capacity.1), wants.2.min(self.capacity.2), wants.3.min(self.capacity.3));
+        self.queue.write_buffer(&self.shapes_buffer, 0, bytemuck::cast_slice(&d.shapes[..f]));
+        self.queue.write_buffer(&self.elements_buffer, 0, bytemuck::cast_slice(&d.elements[..e]));
+        self.queue.write_buffer(&self.points_buffer, 0, bytemuck::cast_slice(&d.points[..pt]));
+        self.queue.write_buffer(&self.stops_buffer, 0, bytemuck::cast_slice(&d.stops[..pa]));
     }
 
-    /// Pinta el dibujo en una lámina. Devuelve si llegó a presentarse.
-    pub fn pintar(&self, l: &mut Lamina, d: &Dibujo, uniformes: &[f32], pedir_frame: bool) -> bool {
-        // Solo las capas de los grupos que caen en esta superficie: el que se
-        // funde en otro monitor no le cuesta memoria ni un pase a esta. Lo que
-        // funde la capa ocupa la unión de lo de dentro, así que si eso no toca
-        // la vista, la capa no se lee.
-        let v = l.vista.caja();
-        let hacen_falta = d.apartes.iter().filter(|(t, _)| d.toca_la_vista(t, v)).map(|(_, c)| *c as u32 + 1).max().unwrap_or(0);
-        self.capas_para(l, hacen_falta);
-        // La lente, si enseña cristal y la pantalla deja que se le copie un lienzo.
-        if !l.quiere_lente || !self.puede_copiar {
-            l.lente = None;
-        } else if l.lente.is_none() {
-            l.lente = Some(crate::lente::Lente::nueva(&self.dispositivo, self.formato, l.px));
+    /// Paints the draw list on a sheet. Returns whether it got to be presented.
+    pub fn paint(&self, l: &mut Sheet, d: &DrawList, uniforms: &[f32], request_frame: bool) -> bool {
+        // Only the layers of the groups that fall on this surface: the one
+        // fading on another monitor costs this one neither memory nor a pass.
+        // What blends the layer takes up the union of what is inside, so if
+        // that does not touch the view, the layer is not read.
+        let v = l.view.bounds();
+        let needed = d.offscreen_groups.iter().filter(|(t, _)| d.touches_view(t, v)).map(|(_, c)| *c as u32 + 1).max().unwrap_or(0);
+        self.ensure_layers(l, needed);
+        // The lens, if it shows glass and the screen lets a canvas be copied onto it.
+        if !l.wants_lens || !self.can_copy {
+            l.lens = None;
+        } else if l.lens.is_none() {
+            l.lens = Some(crate::lens::Lens::new(&self.device, self.format, l.px));
         }
-        let mut u = uniformes.to_vec();
-        u[3] = l.escala;
-        u[128] = l.lente.as_ref().is_some_and(|x| x.listo) as u8 as f32;
-        let (v, o) = (l.vista.tam, l.vista.origen);
+        let mut u = uniforms.to_vec();
+        u[3] = l.scale;
+        u[128] = l.lens.as_ref().is_some_and(|x| x.ready) as u8 as f32;
+        let (v, o) = (l.view.size, l.view.origin);
         (u[0], u[1], u[4], u[7]) = (v.0, v.1, o.0, o.1);
-        self.cola.write_buffer(&l.uniformes, 0, bytemuck::cast_slice(&u));
-        // Con `PLEAMAR_CRONO=1`, cuánto se va en pedir el hueco de la pantalla y
-        // cuánto en mandarle el trabajo a la tarjeta. Es la cuenta que dice si un
-        // frame cuesta por lo que dibuja o por esperar al monitor.
-        let crono = crono();
-        let t0 = crono.then(std::time::Instant::now);
-        let marco = match l.superficie.get_current_texture() {
+        self.queue.write_buffer(&l.uniforms, 0, bytemuck::cast_slice(&u));
+        // With `PLEAMAR_TIMING=1`, how much goes into asking for the screen's
+        // slot and how much into sending the work to the card. It is the
+        // figure that says whether a frame costs because of what it draws or
+        // because of waiting for the monitor.
+        let timing = timing_enabled();
+        let t0 = timing.then(std::time::Instant::now);
+        let frame = match l.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.superficie_configurar(l, l.px);
+                self.configure_surface(l, l.px);
                 return false;
             }
             _ => return false,
         };
-        let vista = marco.texture.create_view(&Default::default());
-        let mut codificador = self.dispositivo.create_command_encoder(&Default::default());
-        // Lo que dejó la última foto de lo de detrás, antes de pintar con ello.
-        let escala = l.escala;
-        if let Some(lente) = &mut l.lente {
-            lente.preparar(self, &self.lente, &mut codificador, escala);
+        let view = frame.texture.create_view(&Default::default());
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        // What the last capture of what is behind left, before painting with it.
+        let scale = l.scale;
+        if let Some(lens) = &mut l.lens {
+            lens.prepare(self, &self.lens, &mut encoder, scale);
         }
-        let grupo_detras = l.lente.as_ref().and_then(|x| x.grupo.as_ref()).unwrap_or(&self.grupo_sin_detras);
-        let pase_a = |codificador: &mut wgpu::CommandEncoder, destino: &wgpu::TextureView, capas: &wgpu::BindGroup, tramos: &[Range<u32>]| {
-            let mut pase = codificador.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let backdrop_group = l.lens.as_ref().and_then(|x| x.group.as_ref()).unwrap_or(&self.no_backdrop_group);
+        let pass_to = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, layers: &wgpu::BindGroup, spans: &[Range<u32>]| {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: destino,
+                    view: target,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
@@ -1379,57 +1385,58 @@ impl Gpu {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pase.set_pipeline(&self.tuberia);
-            pase.set_bind_group(0, &self.grupo_escena, &[]);
-            pase.set_bind_group(1, capas, &[]);
-            pase.set_bind_group(2, &l.grupo_uniformes, &[]);
-            pase.set_bind_group(3, grupo_detras, &[]);
-            // Nunca más allá de lo que se subió (solo pasa si la tarjeta no dio para todo).
-            let subidos = (self.caben.1 / POR_ELEMENTO) as u32;
-            for t in tramos.iter().map(|t| t.start.min(subidos)..t.end.min(subidos)).filter(|t| !t.is_empty()) {
-                pase.draw(0..6, t);
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.scene_group, &[]);
+            pass.set_bind_group(1, layers, &[]);
+            pass.set_bind_group(2, &l.uniform_group, &[]);
+            pass.set_bind_group(3, backdrop_group, &[]);
+            // Never beyond what was uploaded (only happens if the card could not take it all).
+            let uploaded = (self.capacity.1 / PER_ELEMENT) as u32;
+            for t in spans.iter().map(|t| t.start.min(uploaded)..t.end.min(uploaded)).filter(|t| !t.is_empty()) {
+                pass.draw(0..6, t);
             }
         };
-        // Primero los grupos con opacidad, cada uno a su capa…
-        let mut principal: Vec<Range<u32>> = Vec::new();
-        let mut desde = 0u32;
-        for (tramo, capa) in &d.apartes {
-            if l.abierta && l.capas as usize > *capa && d.toca_la_vista(tramo, l.vista.caja()) {
-                pase_a(&mut codificador, &l.vistas_de_capa[*capa], &self.grupo_sin_capas, std::slice::from_ref(tramo));
+        // First the groups with opacity, each one to its layer…
+        let mut main: Vec<Range<u32>> = Vec::new();
+        let mut from = 0u32;
+        for (span, layer) in &d.offscreen_groups {
+            if l.open && l.layers as usize > *layer && d.touches_view(span, l.view.bounds()) {
+                pass_to(&mut encoder, &l.layer_views[*layer], &self.no_layers_group, std::slice::from_ref(span));
             }
-            principal.push(desde..tramo.start);
-            desde = tramo.end;
+            main.push(from..span.start);
+            from = span.end;
         }
-        principal.push(desde..d.n_elementos() as u32);
-        // Cerrada, se vacía: transparente y nada encima. No vale pintar lo que
-        // haya en el dibujo, porque se cierra en mitad de un frame —el dibujo se
-        // compuso cuando aún estaba abierta— y ese frame se quedaba para
-        // siempre: en Marea, un trozo de bolita a punto de salir por el borde.
-        if !l.abierta {
-            principal.clear();
+        main.push(from..d.element_count() as u32);
+        // Closed, it is cleared: transparent and nothing on top. Painting what
+        // is in the draw list will not do, because it closes in the middle of
+        // a frame —the draw list was composed while it was still open— and
+        // that frame stayed forever: in Marea, a piece of the little ball about
+        // to come out through the edge.
+        if !l.open {
+            main.clear();
         }
-        // …y luego todo lo demás, con las capas ya hechas entre medias. Con
-        // lente, en su lienzo, que después se copia a la pantalla: hay que saber
-        // exactamente qué se pintó para despejar lo de detrás.
-        match &l.lente {
-            Some(lente) => pase_a(&mut codificador, lente.lienzo(), &l.grupo_capas, &principal),
-            None => pase_a(&mut codificador, &vista, &l.grupo_capas, &principal),
+        // …and then everything else, with the layers already done in between.
+        // With a lens, on its canvas, which is then copied to the screen: one
+        // has to know exactly what was painted to unmix what is behind.
+        match &l.lens {
+            Some(lens) => pass_to(&mut encoder, lens.canvas(), &l.layer_group, &main),
+            None => pass_to(&mut encoder, &view, &l.layer_group, &main),
         }
-        if let Some(lente) = &mut l.lente {
-            lente.copiar_a(&mut codificador, &marco.texture);
+        if let Some(lens) = &mut l.lens {
+            lens.copy_to(&mut encoder, &frame.texture);
         }
-        let t1 = crono.then(std::time::Instant::now);
-        let orden = codificador.finish();
-        let t2 = crono.then(std::time::Instant::now);
-        self.cola.submit(Some(orden));
-        let t3 = crono.then(std::time::Instant::now);
-        if pedir_frame {
-            l.ventana.pedir_frame();
+        let t1 = timing.then(std::time::Instant::now);
+        let commands = encoder.finish();
+        let t2 = timing.then(std::time::Instant::now);
+        self.queue.submit(Some(commands));
+        let t3 = timing.then(std::time::Instant::now);
+        if request_frame {
+            l.window.request_frame();
         }
-        self.cola.present(marco);
+        self.queue.present(frame);
         if let (Some(t0), Some(t1), Some(t2), Some(t3)) = (t0, t1, t2, t3) {
             let ms = |a: std::time::Instant, b: std::time::Instant| b.duration_since(a).as_secs_f32() * 1000.0;
-            CRONO.with(|c| {
+            TIMING.with(|c| {
                 let mut v = c.get();
                 v.0 += ms(t0, t1);
                 v.1 += ms(t1, t2);
@@ -1437,10 +1444,10 @@ impl Gpu {
                 v.3 += t3.elapsed().as_secs_f32() * 1000.0;
                 v.4 += 1.0;
                 if v.4 >= 300.0 {
-                    println!("crono  · hueco {:.2} · apuntar {:.2} · cerrar {:.2} · mandar+presentar {:.2} ms", v.0 / v.4, v.1 / v.4, v.2 / v.4, v.3 / v.4);
-                    // Lo que ocupa en la tarjeta: lo pedido de verdad, no los bloques que reserva el asignador.
-                    if let Some(r) = self.dispositivo.generate_allocator_report() {
-                        println!("crono  · memoria de la tarjeta: {:.1} MB en uso ({:.1} MB reservados)", r.total_allocated_bytes as f64 / 1e6, r.total_reserved_bytes as f64 / 1e6);
+                    println!("timing · acquire {:.2} · record {:.2} · finish {:.2} · submit+present {:.2} ms", v.0 / v.4, v.1 / v.4, v.2 / v.4, v.3 / v.4);
+                    // What it takes up on the card: what is really requested, not the blocks the allocator reserves.
+                    if let Some(r) = self.device.generate_allocator_report() {
+                        println!("timing · card memory: {:.1} MB in use ({:.1} MB reserved)", r.total_allocated_bytes as f64 / 1e6, r.total_reserved_bytes as f64 / 1e6);
                     }
                     v = (0.0, 0.0, 0.0, 0.0, 0.0);
                 }
@@ -1451,93 +1458,94 @@ impl Gpu {
     }
 }
 
-/// `PLEAMAR_CRONO=1`: leído una vez, no en cada frame de cada lámina.
-pub fn crono() -> bool {
-    static CRONO: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CRONO.get_or_init(|| std::env::var_os("PLEAMAR_CRONO").is_some())
+/// `PLEAMAR_TIMING=1`: read once, not on every frame of every sheet.
+pub fn timing_enabled() -> bool {
+    static TIMING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TIMING.get_or_init(|| std::env::var_os("PLEAMAR_TIMING").is_some())
 }
 
 thread_local! {
-    static CRONO: std::cell::Cell<(f32, f32, f32, f32, f32)> = const { std::cell::Cell::new((0.0, 0.0, 0.0, 0.0, 0.0)) };
+    static TIMING: std::cell::Cell<(f32, f32, f32, f32, f32)> = const { std::cell::Cell::new((0.0, 0.0, 0.0, 0.0, 0.0)) };
 }
 
-impl Lamina {
-    /// Por dónde entra el ratón. El resto de la superficie, aunque sea suya,
-    /// deja pasar el clic a lo de debajo.
-    pub fn region_de_entrada(&self, cajas: &[[i32; 4]]) {
-        self.ventana.region_de_entrada(cajas);
+impl Sheet {
+    /// Where the mouse gets in. The rest of the surface, even if it is its
+    /// own, lets the click through to what is underneath.
+    pub fn update_input_region(&self, rects: &[[i32; 4]]) {
+        self.window.update_input_region(rects);
     }
 
     pub fn cursor(&self, c: Cursor) {
-        self.ventana.cursor(c);
+        self.window.cursor(c);
     }
 
-    /// Pedir la foto de lo de detrás: tras presentar, la de la próxima vez que
-    /// el compositor pinte; si no, la de cuando algo cambie detrás.
-    pub fn pedir_detras(&mut self, al_cambiar: bool) {
-        let Some(caja) = self.caja_cristal else { return };
-        if self.ventana.capturar_detras(caja, al_cambiar) {
-            self.caja_pedida = caja;
-            self.foto = if al_cambiar { FotoDetras::Vigilando } else { FotoDetras::TrasPresentar };
-            self.foto_pedida = std::time::Instant::now();
-            if !al_cambiar {
-                self.foto_hecha = self.foto_pedida;
+    /// Request the capture of what is behind: after presenting, the one from
+    /// the next time the compositor paints; otherwise, the one from when
+    /// something changes behind.
+    pub fn request_backdrop(&mut self, on_change: bool) {
+        let Some(bounds) = self.glass_box else { return };
+        if self.window.capture_backdrop(bounds, on_change) {
+            self.asked_box = bounds;
+            self.capture = if on_change { BackdropCapture::Watching } else { BackdropCapture::AfterPresent };
+            self.capture_asked = std::time::Instant::now();
+            if !on_change {
+                self.capture_taken = self.capture_asked;
             }
         }
     }
 
-    pub fn cancelar_detras(&mut self) {
-        self.ventana.cancelar_detras();
-        self.foto = FotoDetras::Nada;
+    pub fn cancel_backdrop(&mut self) {
+        self.window.cancel_backdrop();
+        self.capture = BackdropCapture::Idle;
     }
 
-    pub fn region_de_desenfoque(&self, cajas: &[[i32; 4]]) {
-        self.ventana.region_de_desenfoque(cajas);
+    pub fn update_blur_region(&self, rects: &[[i32; 4]]) {
+        self.window.update_blur_region(rects);
     }
 
-    pub fn teclado(&self, t: Teclado) {
-        self.ventana.teclado(t);
+    pub fn keyboard(&self, t: Keyboard) {
+        self.window.keyboard(t);
     }
 }
 
-/// Cabecera, historial de frames y, al final, la lente: si hay fondo que enseñar.
-pub const N_UNIFORMES: usize = 8 + 120 + 4;
+/// Header, frame history and, at the end, the lens: whether there is a background to show.
+pub const N_UNIFORMS: usize = 8 + 120 + 4;
 
 #[cfg(test)]
-mod pruebas {
+mod tests {
     use super::*;
-    use crate::formas::{Afin, Plana};
+    use crate::shapes::{Affine, FlatShape};
 
     fn area(f: &[[f32; 4]]) -> f32 {
         f.iter().map(|r| (r[2] - r[0]) * (r[3] - r[1])).sum()
     }
 
-    fn forma(tipo: u8, mx: f32, my: f32, radio: f32, ex: f32, ey: f32, escala: f32) -> Plana {
-        Plana { tipo, cx: 0.0, cy: 0.0, mx, my, radio, giro: 0.0, ex, ey, trazo: 0.0, afin: Afin { m: [escala, 0.0, 0.0, escala], t: [0.0, 0.0] } }
+    fn flat(kind: u8, mx: f32, my: f32, radius: f32, ex: f32, ey: f32, scale: f32) -> FlatShape {
+        FlatShape { kind, cx: 0.0, cy: 0.0, mx, my, radius, rotation: 0.0, ex, ey, stroke: 0.0, affine: Affine { m: [scale, 0.0, 0.0, scale], t: [0.0, 0.0] } }
     }
 
     #[test]
-    fn la_formula_de_las_franjas_da_lo_mismo_que_buscarlas() {
-        for p in [forma(1, 210.0, 110.0, 36.0, 1.0, 1.0, 1.0), forma(0, 0.0, 0.0, 46.0, 1.0, 1.0, 1.0), forma(0, 0.0, 0.0, 30.0, 1.0, 0.4, 1.5), forma(1, 60.0, 20.0, 20.0, 1.0, 1.0, 2.0)] {
-            let exacta = franjas_de(&p, &[]);
-            // Un giro que no gira: obliga a buscar el borde por bisección.
-            let mut girada = p;
-            girada.giro = 1e-7;
-            let buscada = franjas_de(&girada, &[]);
-            // Contra el área de verdad: la fórmula se queda un pelo por dentro (el
-            // más estrecho de cada franja) y la búsqueda un pelo por fuera.
-            let s = p.afin.m[0] * p.afin.m[3];
-            let real = s * if p.tipo == 1 {
-                4.0 * p.mx * p.my - (4.0 - std::f32::consts::PI) * p.radio * p.radio
+    fn strip_formula_matches_search() {
+        for p in [flat(1, 210.0, 110.0, 36.0, 1.0, 1.0, 1.0), flat(0, 0.0, 0.0, 46.0, 1.0, 1.0, 1.0), flat(0, 0.0, 0.0, 30.0, 1.0, 0.4, 1.5), flat(1, 60.0, 20.0, 20.0, 1.0, 1.0, 2.0)] {
+            let exact = strips_of(&p, &[]);
+            // A rotation that does not rotate: forces searching for the edge by bisection.
+            let mut rotated = p;
+            rotated.rotation = 1e-7;
+            let searched = strips_of(&rotated, &[]);
+            // Against the real area: the formula falls a hair inside (the
+            // narrowest of each strip) and the search a hair outside.
+            let s = p.affine.m[0] * p.affine.m[3];
+            let real = s * if p.kind == 1 {
+                4.0 * p.mx * p.my - (4.0 - std::f32::consts::PI) * p.radius * p.radius
             } else {
-                std::f32::consts::PI * p.radio * p.radio * p.ex * p.ey
+                std::f32::consts::PI * p.radius * p.radius * p.ex * p.ey
             };
-            for (cual, a) in [("fórmula", area(&exacta)), ("búsqueda", area(&buscada))] {
-                assert!((a - real).abs() / real < 0.04, "tipo {}, {cual}: {a} frente a {real}", p.tipo);
+            for (which, a) in [("formula", area(&exact)), ("search", area(&searched))] {
+                assert!((a - real).abs() / real < 0.04, "kind {}, {which}: {a} versus {real}", p.kind);
             }
-            // Y los lados rectos se juntan: una caja no son cien franjas.
-            if p.tipo == 1 {
-                assert!(exacta.len() < buscada.len() + 4, "{} frente a {}", exacta.len(), buscada.len());
+            // And the straight sides merge: a box is not a hundred strips.
+            if p.kind == 1 {
+                assert!(exact.len() < searched.len() + 4, "{} versus {}", exact.len(), searched.len());
             }
         }
     }

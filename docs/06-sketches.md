@@ -5,7 +5,7 @@
 
 All three describe the same piece of Marea —the body with its water neck, the
 eyes, the button that lights up and open/close— and all three compile to the
-same thing: the `Escena` of `src/escena.rs`. What changes is where each thing
+same thing: the `Escena` of `src/scene.rs`. What changes is where each thing
 lives and how much the renderer can do without the logic.
 
 The keywords are in Spanish because the project is; if this ever leaves home,

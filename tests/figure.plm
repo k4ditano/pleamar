@@ -1,0 +1,17 @@
+// expect: ok
+// An SVG as geometry: whole, by layers, tinted and blended into a body.
+scene Figure {
+    surface { size: 200, 120; anchor: center }
+    figure piece = file "common/piece.svg"
+
+    prop turn = 0 ~quick
+
+    figure piece { at: 40, 60; size: 40, 40 }
+    figure piece.background { at: 100, 60; size: 40, 40; pivot: -8, 4; rotate: turn * 12deg }
+    figure piece.dot { at: 100, 60; size: 40, 40; color: #9ed6bd }
+    body {
+        color: #151616
+        ellipse { at: 160, 60; radius: 16 }
+        figure piece.background { at: 160, 46; size: 30, 30; blend: 6 }
+    }
+}

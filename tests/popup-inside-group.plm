@@ -1,0 +1,8 @@
+// expect: error «a `popup` goes at the scene level»
+scene PopupInGroup {
+    surface { size: 300, 60 }
+    fact open = false
+    group { move: 10, 10
+        popup menu { at: 0, 0; size: 10, 10; open: open }
+    }
+}

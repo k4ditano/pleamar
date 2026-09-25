@@ -1,0 +1,7 @@
+// expect: ok
+// This used to be an error: the same name in two enums with a different number. Now each is compared with its own.
+scene X {
+    surface { size: 10, 10 }
+    fact mode: low | normal | critical = normal
+    fact speed: normal | fast = fast
+}

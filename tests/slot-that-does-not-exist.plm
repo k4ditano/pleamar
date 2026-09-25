@@ -1,0 +1,6 @@
+// expect: error «'Panel' has no slot called 'heder': it has header, footer. Did you mean 'header'?»
+scene X {
+    surface { size: 100, 100 }
+    component Panel { size: 100, 40; row { at: 0, 0; children header }; row { at: 0, 20; children footer } }
+    column { at: 0, 0; Panel { heder { box { size: 4, 4; color: #fff } } } }
+}

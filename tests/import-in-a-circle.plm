@@ -1,0 +1,3 @@
+// expect: error «ends up importing itself: import-in-a-circle.plm → a.plm → b.plm → a.plm»
+import "common/a.plm"
+scene X { surface { size: 10, 10 } }

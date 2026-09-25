@@ -1,7 +1,7 @@
 # pleamar in an editor
 
 Two things, and both come out of the **compiler's vocabulary**, not out of a
-list written apart: if the language changes and this does not, `./probar.sh` says so.
+list written apart: if the language changes and this does not, `./run-tests.sh` says so.
 
 ## The errors while typing
 
@@ -62,5 +62,5 @@ any of the generic LSP ones pointing at `pleamar --lsp`.
 - **VS Code**: `plm.tmLanguage.json` is the TextMate grammar of an extension
   with `"scopeName": "source.plm"` and `"language": "plm"`.
 
-Both are regenerated with `pleamar --resaltado vim` and `pleamar --resaltado vscode`.
+Both are regenerated with `pleamar --highlight vim` and `pleamar --highlight vscode`.
 They are kept here so pleamar does not have to be compiled just to edit a file.

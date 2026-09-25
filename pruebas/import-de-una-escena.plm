@@ -1,3 +1,0 @@
-// espera: fallo «what you import is a library»
-import "popup.plm"
-scene X { surface { size: 10, 10 } }

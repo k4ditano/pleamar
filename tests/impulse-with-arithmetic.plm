@@ -1,0 +1,15 @@
+// expect: ok
+language 0.1
+// `impulse` with an expression: the push is evaluated when it fires, so the
+// bounce of a countdown can shrink with the number that is left.
+scene Countdown {
+    surface { size: 120, 120; anchor: top }
+    fact left = 3
+    prop pop = 0 ~lively
+
+    every 1s while left > 0 { left = left - 1 }
+    on change left while left > 0 { impulse pop left * 5 }
+
+    ellipse { at: 60, 60; radius: 23 + pop; color: #f5f7f5 }
+    text number(left, 0) { at: 60, 60; anchor: center; size: 25; weight: 300; color: #151616 }
+}

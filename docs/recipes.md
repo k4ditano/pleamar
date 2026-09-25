@@ -1,7 +1,7 @@
 # Recipes
 
 Patterns that already work, taken from scenes that run. Every block here is a
-whole scene and compiles: `./probar.sh` checks them.
+whole scene and compiles: `./run-tests.sh` checks them.
 
 - [A list of thousands](#a-list-of-thousands)
 - [Dragging a list](#dragging-a-list)
@@ -357,7 +357,7 @@ scene Bars {
 }
 ```
 
-`--pantalla A,B` hands out the copies between those monitors, which is how two
+`--screen A,B` hands out the copies between those monitors, which is how two
 screens get rehearsed without having two.
 
 ## A popup

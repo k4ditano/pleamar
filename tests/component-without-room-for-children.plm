@@ -1,0 +1,6 @@
+// expect: error «has nowhere to put what goes inside it: its component is missing a `children`»
+scene X {
+    surface { size: 100, 100 }
+    component Dot { size: 10, 10; ellipse { at: 5, 5; radius: 5; color: #fff } }
+    row { at: 0, 0; Dot { box { size: 4, 4; color: #000 } } }
+}

@@ -1,0 +1,7 @@
+// expect: error «tuk»
+scene X {
+    surface { size: 100, 100 }
+    prop tuck = 0 ~quick
+    surface other { size: 50, 50; anchor: top_right; open: tuk > 0.01
+        box { from: 0, 0; size: 50, 50; color: #151616 } }
+}

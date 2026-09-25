@@ -1,0 +1,87 @@
+// A launcher: a field to type in and a list that filters as you
+// type. It opens from outside —a Hyprland shortcut that runs
+// `pleamar --decir launcher "emit toggle"`— and it closes with Escape, on launching
+// something, or on pressing anywhere else.
+
+import "common/palette.plm"
+
+scene Launcher {
+    surface {
+        size: 600, 440
+        anchor: center
+        level: overlay
+        screens: "HDMI-A-1"
+        //  The keyboard, whole, but only while it is open: closed it does not exist.
+        keyboard: exclusive while open
+    }
+
+    //  What `launcher.luau` may touch: knowing which applications there are, and launching one of them.
+    permissions { services: "apps", "apps.launch" }
+
+
+    // ── the boundary ─────────────────────────────────────────────
+    fact open  = false
+    //  The results, as the `apps` service reports them: the logic filters and hands them over.
+    model hits max 7 { name: text; icon: image 24, 24 }
+    fact sel   = 0                        // which one is chosen
+    text query = ""
+    event toggle                          // comes from outside
+    event launch ->                       // `emit launch(2)`: launch the third
+
+    // ── opening and closing ──────────────────────────────────────
+    prop seen  = 0 ~quick
+    prop scale = 0.96 ~lively
+    //  The panel's height chases whatever the list takes up, declared further down.
+    prop tall = 84 ~quick
+    follow tall = 84 + list.height
+    layer panel ~quick {
+        shown while open { seen: 1 ~quick;  scale: 1 ~lively }
+        gone             { seen: 0 ~quick;  scale: 0.96 ~quick }
+    }
+
+    //  Closed, not one zone: the click goes through to what is underneath.
+    zone box whole { at: 300, 220; size: 560, 400; active: open }
+
+    group {
+        pivot: 300, 60
+        scale: scale
+        opacity: seen
+
+        body {
+            color: coal; rim: 4%; shadow: 0, 18, 50, 45%
+            box { from: 20, 20; size: 560, tall; corner: 22 }
+        }
+
+        input query { at: 48, 44; width: 504; size: 20; color: ink; placeholder: "Search for an application…"; selection: #2f5f52 }
+        box { from: 40, 86; size: 520, 1; color: ink; opacity: 10% }
+
+        column list ~quick {
+            at: 32, 94
+            gap: 2
+            for h in hits { Row(h) }
+        }
+    }
+
+    component Row(h: record) {
+        size: 536, 40
+        prop on = 0 ~quick
+        follow on = if(sel == h.index, 1, 0)
+
+        box hit { from: 0, 0; size: 536, 40; corner: 12; color: mint; opacity: on * 16%; cursor: pointer }
+        box { from: 0, 10; size: 3, 20; corner: 1.5; color: mint; opacity: on }
+        image h.icon { at: 14, 8; size: 24, 24 }
+        text h.name { at: 50, 20; anchor: left center; size: 15.5; width: 468; lines: 1; color: ink; opacity: 62% + on * 38% }
+
+        on enter hit { sel = h.index }
+        on press hit { emit launch(h.index) }
+    }
+
+    // ── keys ─────────────────────────────────────────────────────
+    //  The field keeps whatever counts as typing; the rest arrives here.
+    on toggle          { toggle open; focus query }
+    on key Escape      { open = false }
+    on blur            { open = false }              // pressed somewhere else
+    on key Down        { sel = min(sel + 1, max(hits.count - 1, 0)) }
+    on key Up          { sel = max(sel - 1, 0) }
+    on submit query    { emit launch(sel) }
+}

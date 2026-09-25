@@ -1,0 +1,13 @@
+// expect: ok
+language 0.1
+// `right center` means the same in a layout as in a text: by the right and at
+// half height. `middle` still works.
+scene Anchors {
+    surface { size: 300, 100 }
+    row one { at: 280, 30; anchor: right center; gap: 4
+        box { size: 20, 20; color: #9ed6bd }
+        box { size: 20, 20; color: #9ed6bd } }
+    row two { at: 280, 70; anchor: right middle; gap: 4
+        box { size: 20, 20; color: #e8c9a8 } }
+    text "to the right" { at: 280, 50; anchor: right center; size: 11; color: #ffffff }
+}

@@ -1,0 +1,25 @@
+// expect: ok
+language 0.1
+// A list longer than its slot: `view:` says what is shown, the wheel scrolls it, and
+// `list.content` and `list.scroll` are enough to paint the little bar beside it.
+scene Scrolling {
+    surface { size: 300, 240; anchor: top; margin: 60; screens: "HDMI-A-1" }
+    let ink = #f5f7f5
+    model rows max 20 { label: text }
+
+    box { from: 0, 0; size: 300, 240; corner: 14; color: #151616 }
+    column list {
+        at: 16, 16
+        view: 250, 208
+        step: 40          // how far it moves per notch
+        gap: 6
+        for r in rows { Row(r) }
+    }
+    component Row(r: record) {
+        size: 250, 34
+        box hit { from: 0, 0; size: 250, 34; corner: 8; color: #2b2d2d; cursor: pointer }
+        text r.label { at: 12, 17; anchor: left center; size: 13; color: ink }
+    }
+    //  The little bar: what is shown, over what there is.
+    box { from: 276, 16 + list.scroll / max(list.content, 1) * 208; size: 4, 208 * 208 / max(list.content, 208); corner: 2; color: ink; opacity: 35% }
+}

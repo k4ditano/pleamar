@@ -1,0 +1,23 @@
+// expect: ok
+// Slots with a live text, with an expression and its decimals, with uppercase,
+// an optional stretch, real braces, and a template that goes into a component.
+scene Templates {
+    surface { size: 460, 190; anchor: top; margin: 60; screens: "HDMI-A-1" }
+    let ink = #f5f7f5
+    fact volume = 0.537
+    text who = "Lucía"
+    text note = ""
+    model notes max 2 { app: text; title: text; body: text }
+
+    box { at: 230, 95; size: 440, 170; corner: 16; color: #151616 }
+    text "Hello, {who}: the volume is at {volume * 100} % ({volume, 2})" { at: 24, 30; anchor: left center; size: 14; color: ink }
+    text "{upper(who)} · {lower(who)} · {{braces}} for real" { at: 24, 56; anchor: left center; size: 14; color: ink }
+    text "with note{?: «{note}»} and without it" { at: 24, 82; anchor: left center; size: 14; color: ink }
+    column list { at: 24, 100; gap: 4
+        for n in notes { Line("{upper(n.app)}  {n.title}{? · {n.body}}") }
+    }
+    component Line(what) {
+        size: 400, 22
+        text what { at: 0, 11; anchor: left center; size: 13.5; color: ink; opacity: 80% }
+    }
+}

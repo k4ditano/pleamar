@@ -1,0 +1,43 @@
+// expect: ok
+language 0.1
+// `grow:`: a child of a layout asks for the room left over along it, and the
+// layout gives it. And if it is a text, or has texts inside, that room is its
+// width: what does not fit is cut instead of slipping under the neighbour.
+scene Grows {
+    surface { size: 320, 200; anchor: top }
+    let ink = #f5f7f5
+    fact switched_on = true
+
+    box { from: 0, 0; size: 320, 200; color: #151616 }
+    //  A card: icon, what is read, and switch. Nobody writes widths.
+    row card {
+        at: 16, 20
+        gap: 10
+        padding: 10
+        size: 288, 66
+        fill: #1b1b1c
+        corner: 14
+        //  And centred vertically WITHIN those 66: without `size` it would centre
+        //  on the tallest child and the block would sit at the top.
+        align: center
+        group { size: 22, 22; ellipse { at: 11, 11; radius: 11; color: #6fb1e6 } }
+        column { grow: 1; gap: 2
+            text "Wi-Fi" { size: 13; color: ink }
+            text "a very long network name that does not fit in any way at all" { size: 11.5; lines: 1; color: #8b8f95 }
+        }
+        group {
+            size: 40, 23
+            box { from: 0, 0; size: 40, 23; corner: 11.5; color: mix(#2a2b2c, #9ed6bd, switched_on) }
+            ellipse { at: if(switched_on, 28.5, 11.5), 11.5; radius: 8.5; color: #ffffff }
+        }
+    }
+    //  With weights: the second asks for double, so its SLOT is double. What a
+    //  `group` draws inside is still its own —that does not stretch—; what
+    //  changes is the room it takes, and so where the next one starts. For it
+    //  to really stretch, the one that grows is a text.
+    row weights { at: 16, 110; gap: 8; size: 288, 40
+        group { grow: 1; size: 10, 30; box { from: 0, 0; size: 10, 30; corner: 5; color: #9ed6bd } }
+        group { grow: 2; size: 10, 30; box { from: 0, 0; size: 10, 30; corner: 5; color: #e8c07a } }
+    }
+    text "{card.width, 0} wide" { at: 160, 176; anchor: center; size: 11; color: #8b8f95 }
+}

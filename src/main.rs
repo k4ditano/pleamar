@@ -1,87 +1,87 @@
-//! pleamar — prototipo de una shell donde animar no depende de la lógica.
+//! pleamar — prototype of a shell where animating does not depend on the logic.
 //!
-//! Tres hilos: este, que se lo queda la plataforma (las ventanas de cada
-//! monitor, su escala y el ratón); el de lógica, que decide; y el de render, que es el
-//! único que anima.
+//! Three threads: this one, which the platform keeps (the windows of each
+//! monitor, their scale and the mouse); the logic one, which decides; and the render one, which is the
+//! only one that animates.
 
-mod escena;
-mod escenas;
-mod formas;
+mod scene;
+mod scenes;
+mod shapes;
 mod lsp;
 mod gpu;
-mod lente;
-mod lenguaje;
-mod logica;
+mod lens;
+mod language;
+mod logic;
 #[cfg(feature = "luau")]
-mod logica_luau;
-mod permisos;
-mod plataforma;
+mod logic_luau;
+mod permissions;
+mod platform;
 mod render;
-mod texto;
+mod text;
 
-use escena::*;
+use scene::*;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const AYUDA: &str = "pleamar [options]
-  --escena FILE       the scene to open (.plm); it reloads itself when you save it. The test
-                      benches written in Rust also work: marea, isla, cara, muestrario, enjambre
-  --comprobar FILE    reads a scene, says whether it is fine, and exits
-  --aprobar SCENE     shows what the plugins of a scene ask for, and asks whether to approve them
-                      (with --si after it, it does not ask). Unapproved, a plugin runs touching nothing
-  --gramatica         the words the language accepts, exactly as the compiler consults them
+const HELP: &str = "pleamar [options]
+  --scene FILE        the scene to open (.plm); it reloads itself when you save it. The test
+                      benches written in Rust also work: marea, island, face, showcase, swarm
+  --check FILE        reads a scene, says whether it is fine, and exits
+  --approve SCENE     shows what the plugins of a scene ask for, and asks whether to approve them
+                      (with --yes after it, it does not ask). Unapproved, a plugin runs touching nothing
+  --grammar           the words the language accepts, exactly as the compiler consults them
   --lsp               a language server on stdio: mistakes as you type, what fits here, and what
                       each word means. For any editor that speaks LSP
-  --resaltado EDITOR  writes the syntax file for 'vim' or 'vscode', made from the vocabulary
+  --highlight EDITOR  writes the syntax file for 'vim' or 'vscode', made from the vocabulary
   --version           the version of the program and of the language it understands
-  --decir [SCENE] CMD says something to a running scene and exits. Commands:
+  --say [SCENE] CMD   says something to a running scene and exits. Commands:
                       «emit event [n]», «fact name value», «text name whatever it says», «focus input», «get name» (answers), «quit»
-  --pantalla NAMES    «todas», or monitors separated by commas (by default, whatever the scene asks for).
+  --screen NAMES      «all», or monitors separated by commas (by default, whatever the scene asks for).
                       A repeated name gives two surfaces on the same monitor.
-  --bloqueo MS        how long the logic blocks after every decision (600)
-  --ingenuo           the logic blocks the painting thread, as in QtQuick
+  --stall MS          how long the logic blocks after every decision (600)
+  --naive             the logic blocks the painting thread, as in QtQuick
   --demo              opens and closes by itself, with no mouse
-  --raton SCRIPT      fake mouse: «360,90@1000 pulsa@2500 baja@… sube@… rueda+@… fuera@4000» (ms)
-  --segundos N        exits by itself after N seconds
-  --margen PX         top margin, instead of the scene\u{2019}s
-  --sin-hud           without the frame graph
-  --registrar NAMES   prints what those properties, facts or texts are worth on every
+  --mouse SCRIPT      fake mouse: «360,90@1000 click@2500 down@… up@… wheel+@… out@4000» (ms)
+  --seconds N         exits by itself after N seconds
+  --margin PX         top margin, instead of the scene\u{2019}s
+  --no-hud            without the frame graph
+  --record NAMES      prints what those properties, facts or texts are worth on every
                       frame, as «ms<tab>value…», to check an animation against its
-                      contract: «--registrar lid,body.y --segundos 20 > log.tsv»
-  --sin-vsync         paint without waiting for the screen, to measure what a frame costs
-  --movimiento-reducido  springs settle at once and gestures show their still face
+                      contract: «--record lid,body.y --seconds 20 > log.tsv»
+  --no-vsync          paint without waiting for the screen, to measure what a frame costs
+  --reduced-motion    springs settle at once and gestures show their still face
 Right-click closes it, unless the scene has something under the pointer that uses it.";
 
 struct Args {
-    escena: String,
-    pantalla: Option<String>,
-    bloqueo: u64,
-    ingenuo: bool,
+    scene: String,
+    screen: Option<String>,
+    stall: u64,
+    naive: bool,
     demo: bool,
-    raton: Option<String>,
-    segundos: Option<u64>,
-    margen: Option<i32>,
+    mouse: Option<String>,
+    seconds: Option<u64>,
+    margin: Option<i32>,
     hud: bool,
-    reducido: bool,
-    sin_vsync: bool,
-    /// Qué propiedades, hechos o textos apuntar en cada frame.
-    registrar: Vec<String>,
+    reduced: bool,
+    no_vsync: bool,
+    /// Which properties, facts or texts to record on every frame.
+    record: Vec<String>,
 }
 
 fn args() -> Args {
-    let mut a = Args { escena: String::new(), pantalla: None, bloqueo: 600, ingenuo: false, demo: false, raton: None, segundos: None, margen: None, hud: true, reducido: false, sin_vsync: false, registrar: Vec::new() };
+    let mut a = Args { scene: String::new(), screen: None, stall: 600, naive: false, demo: false, mouse: None, seconds: None, margin: None, hud: true, reduced: false, no_vsync: false, record: Vec::new() };
     let mut it = std::env::args().skip(1);
     while let Some(op) = it.next() {
-        let mut valor = || it.next().unwrap_or_else(|| { eprintln!("{AYUDA}"); std::process::exit(2) });
+        let mut value = || it.next().unwrap_or_else(|| { eprintln!("{HELP}"); std::process::exit(2) });
         match op.as_str() {
-            "--escena" => a.escena = valor(),
-            "--decir" => {
-                let (a1, a2) = (valor(), it.next());
+            "--scene" => a.scene = value(),
+            "--say" => {
+                let (a1, a2) = (value(), it.next());
                 let r = match &a2 {
-                    Some(orden) => plataforma::decir(Some(&a1), orden),
-                    None => plataforma::decir(None, &a1),
+                    Some(command) => platform::send(Some(&a1), command),
+                    None => platform::send(None, &a1),
                 };
                 std::process::exit(match r {
                     Ok(()) => 0,
@@ -92,29 +92,29 @@ fn args() -> Args {
                 });
             }
             "--version" => {
-                println!("pleamar {} · language {}.{}", env!("CARGO_PKG_VERSION"), lenguaje::VERSION.0, lenguaje::VERSION.1);
+                println!("pleamar {} · language {}.{}", env!("CARGO_PKG_VERSION"), language::VERSION.0, language::VERSION.1);
                 std::process::exit(0);
             }
-            "--aprobar" => {
-                let escena = valor();
-                let si_a_todo = std::env::args().any(|a| a == "--si");
-                std::process::exit(permisos::preguntar(&escena, si_a_todo));
+            "--approve" => {
+                let scene = value();
+                let yes_to_all = std::env::args().any(|a| a == "--yes");
+                std::process::exit(permissions::ask(&scene, yes_to_all));
             }
-            "--gramatica" => {
-                print!("{}", lenguaje::vocabulario::como_texto());
+            "--grammar" => {
+                print!("{}", language::vocabulary::to_text());
                 std::process::exit(0);
             }
-            // El editor: los fallos mientras se escribe, y el resaltado.
+            // The editor: mistakes while you type, and the highlighting.
             "--lsp" => {
-                lsp::servir();
+                lsp::serve();
                 std::process::exit(0);
             }
-            "--resaltado" => std::process::exit(lsp::resaltado(&valor())),
-            "--comprobar" => {
-                let ruta = valor();
-                std::process::exit(match escenas::de_fichero::leer(&ruta) {
+            "--highlight" => std::process::exit(lsp::highlighting(&value())),
+            "--check" => {
+                let path = value();
+                std::process::exit(match scenes::from_file::read(&path) {
                     Ok(e) => {
-                        println!("{ruta}: ok · {} properties, {} instructions, {} layers, {} rules, {} zones, {} gestures", e.props.len(), e.instrs.len(), e.capas.len(), e.reglas.len(), e.zonas.len(), e.gestos.len());
+                        println!("{path}: ok · {} properties, {} instructions, {} layers, {} rules, {} zones, {} gestures", e.props.len(), e.instrs.len(), e.layers.len(), e.rules.len(), e.zones.len(), e.gestures.len());
                         0
                     }
                     Err(m) => {
@@ -123,227 +123,227 @@ fn args() -> Args {
                     }
                 });
             }
-            "--pantalla" => a.pantalla = Some(valor()),
-            "--bloqueo" => a.bloqueo = valor().parse().expect("--bloqueo quiere milisegundos"),
-            "--raton" => a.raton = Some(valor()),
-            "--segundos" => a.segundos = Some(valor().parse().expect("--segundos wants a number")),
-            "--margen" => a.margen = Some(valor().parse().expect("--margen wants pixels")),
-            "--ingenuo" => a.ingenuo = true,
+            "--screen" => a.screen = Some(value()),
+            "--stall" => a.stall = value().parse().expect("--stall wants milliseconds"),
+            "--mouse" => a.mouse = Some(value()),
+            "--seconds" => a.seconds = Some(value().parse().expect("--seconds wants a number")),
+            "--margin" => a.margin = Some(value().parse().expect("--margin wants pixels")),
+            "--naive" => a.naive = true,
             "--demo" => a.demo = true,
-            "--sin-hud" => a.hud = false,
-            "--movimiento-reducido" => a.reducido = true,
-            "--sin-vsync" => a.sin_vsync = true,
-            "--registrar" => a.registrar = valor().split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect(),
-            _ => { eprintln!("{AYUDA}"); std::process::exit(2) }
+            "--no-hud" => a.hud = false,
+            "--reduced-motion" => a.reduced = true,
+            "--no-vsync" => a.no_vsync = true,
+            "--record" => a.record = value().split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect(),
+            _ => { eprintln!("{HELP}"); std::process::exit(2) }
         }
     }
-    if a.escena.is_empty() {
-        eprintln!("{AYUDA}");
+    if a.scene.is_empty() {
+        eprintln!("{HELP}");
         std::process::exit(2);
     }
     a
 }
 
 fn main() {
-    let arranque = std::time::Instant::now();
+    let start_time = std::time::Instant::now();
     let a = args();
-    let bloqueada = Arc::new(AtomicBool::new(false));
-    let (a_render, de_render) = channel();
-    let (a_logica, de_logica) = channel();
-    let mut guion: Box<dyn logica::Guion> = match a.escena.as_str() {
-        "marea" => Box::<escenas::marea::Marea>::default(),
-        "isla" => Box::<escenas::isla::Isla>::default(),
-        "cara" => Box::<escenas::cara::Cara>::default(),
-        "muestrario" => Box::<escenas::muestrario::Muestrario>::default(),
-        "enjambre" => Box::<escenas::enjambre::Enjambre>::default(),
-        ruta if std::path::Path::new(ruta).is_file() => escenas::de_fichero::guion_para(ruta, a_render.clone(), a_logica.clone(), bloqueada.clone()),
-        otra => {
-            eprintln!("I don't know the scene '{otra}', and it is not a file\n{AYUDA}");
+    let blocked = Arc::new(AtomicBool::new(false));
+    let (to_render, from_render) = channel();
+    let (to_logic, from_logic) = channel();
+    let mut script: Box<dyn logic::Script> = match a.scene.as_str() {
+        "marea" => Box::<scenes::marea::Marea>::default(),
+        "island" => Box::<scenes::island::Island>::default(),
+        "face" => Box::<scenes::face::Face>::default(),
+        "showcase" => Box::<scenes::showcase::Showcase>::default(),
+        "swarm" => Box::<scenes::swarm::Swarm>::default(),
+        path if std::path::Path::new(path).is_file() => scenes::from_file::script_for(path, to_render.clone(), to_logic.clone(), blocked.clone()),
+        other => {
+            eprintln!("I don't know the scene '{other}', and it is not a file\n{HELP}");
             std::process::exit(2)
         }
     };
-    // La escena dice qué superficie quiere; la línea de órdenes puede llevarle
-    // la contraria.
-    let mut escena = guion.escena();
-    if let Some(p) = &a.pantalla {
-        let cuales: Vec<String> = p.split(',').map(str::to_owned).collect();
-        let por_monitor = matches!(escena.superficie().pantallas, Pantallas::Numero(_));
-        // A una superficie por monitor (`screens: each`) se le reparte la lista: la
-        // primera copia al primer nombre, y así. Es como se ensayan dos monitores.
-        for s in &mut escena.superficies {
-            if let Pantallas::Numero(k) = s.pantallas {
-                s.pantallas = match cuales.get(k) {
-                    _ if p == "todas" => Pantallas::Numero(k),
-                    Some(nombre) => Pantallas::Estas(vec![nombre.clone()]),
-                    // Más copias que monitores pedidos: esa no sale.
-                    None => Pantallas::Estas(Vec::new()),
+    // The scene says which surface it wants; the command line can overrule
+    // it.
+    let mut scene = script.scene();
+    if let Some(p) = &a.screen {
+        let which: Vec<String> = p.split(',').map(str::to_owned).collect();
+        let per_monitor = matches!(scene.surface().screens, Screens::Number(_));
+        // A surface per monitor (`screens: each`) gets the list handed out: the
+        // first copy to the first name, and so on. It is how two monitors are rehearsed.
+        for s in &mut scene.surfaces {
+            if let Screens::Number(k) = s.screens {
+                s.screens = match which.get(k) {
+                    _ if p == "all" => Screens::Number(k),
+                    Some(name) => Screens::Named(vec![name.clone()]),
+                    // More copies than monitors asked for: that one does not appear.
+                    None => Screens::Named(Vec::new()),
                 };
             }
         }
-        // La principal, salvo que sea ya una de las copias por monitor: esa ya se ha repartido.
-        if !por_monitor || p == "todas" {
-            escena.superficie_mut().pantallas = if p == "todas" { Pantallas::Todas } else { Pantallas::Estas(cuales) };
+        // The main one, unless it is already one of the per-monitor copies: that one has already been handed out.
+        if !per_monitor || p == "all" {
+            scene.surface_mut().screens = if p == "all" { Screens::All } else { Screens::Named(which) };
         }
     }
-    if let Some(m) = a.margen {
-        escena.superficie_mut().margen[0] = m;
+    if let Some(m) = a.margin {
+        scene.surface_mut().margin[0] = m;
     }
 
-    // El taller de texto e imágenes. Lo primero que hace es leer las fuentes del
-    // sistema, que es lo más lento del arranque: que vaya yendo.
-    let letras = texto::Textos::abrir(a_render.clone());
-    // Sin las comprobaciones de wgpu: en una barra que repinta 60 veces por segundo,
-    // lo que se ahorra por frame se nota en el consumo. Para depurar, `PLEAMAR_VALIDAR=1`.
+    // The text and image workshop. The first thing it does is read the system's
+    // fonts, which is the slowest part of the startup: let it get going.
+    let letters = text::Texts::open(to_render.clone());
+    // Without wgpu's checks: in a bar that repaints 60 times a second, what is
+    // saved per frame shows in the power draw. To debug, `PLEAMAR_VALIDATE=1`.
     let mut flags = wgpu::InstanceFlags::empty();
-    if std::env::var_os("PLEAMAR_VALIDAR").is_some() {
+    if std::env::var_os("PLEAMAR_VALIDATE").is_some() {
         flags = wgpu::InstanceFlags::VALIDATION | wgpu::InstanceFlags::DEBUG;
     }
-    let instancia = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, flags, ..wgpu::InstanceDescriptor::new_without_display_handle() });
-    let pide = escena.superficies.clone();
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, flags, ..wgpu::InstanceDescriptor::new_without_display_handle() });
+    let wanted = scene.surfaces.clone();
 
     println!(
         "pleamar · {} mode · the logic blocks {} ms after every decision",
-        if a.ingenuo { "NAIVE (single thread)" } else { "separado (render independiente)" },
-        a.bloqueo
+        if a.naive { "NAIVE (single thread)" } else { "decoupled (independent render)" },
+        a.stall
     );
-    let _ = a_render.send(ARender::Escena(escena));
-    if std::path::Path::new(&a.escena).is_file() {
-        escenas::de_fichero::vigilar(a.escena.clone(), a_render.clone(), a_logica.clone());
+    let _ = to_render.send(ToRender::Scene(scene));
+    if std::path::Path::new(&a.scene).is_file() {
+        scenes::from_file::watch(a.scene.clone(), to_render.clone(), to_logic.clone());
     }
-    let a_logica_para_ordenes = a_logica.clone();
+    let to_logic_for_commands = to_logic.clone();
     let render = {
-        let bloqueada = bloqueada.clone();
-        let op = render::Opciones { hud: a.hud, ingenuo: a.ingenuo, reducido: a.reducido, sin_vsync: a.sin_vsync, registrar: a.registrar.clone(), arranque };
-        let instancia = instancia.clone();
+        let blocked = blocked.clone();
+        let op = render::Options { hud: a.hud, naive: a.naive, reduced_motion: a.reduced, no_vsync: a.no_vsync, trace: a.record.clone(), start_time };
+        let instance = instance.clone();
         std::thread::Builder::new()
             .name("render".into())
-            .spawn(move || render::hilo(instancia, de_render, letras, a_logica, bloqueada, op))
+            .spawn(move || render::run(instance, from_render, letters, to_logic, blocked, op))
             .unwrap()
     };
     {
-        let op = logica::Opciones { bloqueo: Duration::from_millis(a.bloqueo), demo: a.demo, ingenuo: a.ingenuo, eco: a.raton.is_some() };
-        let tx = a_render.clone();
+        let op = logic::Options { block_for: Duration::from_millis(a.stall), demo: a.demo, naive: a.naive, echo: a.mouse.is_some() };
+        let tx = to_render.clone();
         std::thread::Builder::new()
-            .name("logica".into())
-            .spawn(move || logica::hilo(guion, de_logica, tx, bloqueada, op))
+            .name("logic".into())
+            .spawn(move || logic::run(script, from_logic, tx, blocked, op))
             .unwrap();
     }
 
-    // Lo que se le diga desde fuera —`pleamar --decir "emit toggle"`, que es lo que
-    // ejecuta un atajo global del compositor— entra como si lo dijera la lógica.
+    // What is said from outside —`pleamar --say "emit toggle"`, which is what
+    // a global compositor shortcut runs— comes in as if the logic had said it.
     {
-        let nombre = std::path::Path::new(&a.escena).file_stem().map_or(a.escena.clone(), |n| n.to_string_lossy().into_owned());
-        let tx = Mutex::new((a_render.clone(), a_logica_para_ordenes));
-        plataforma::escuchar_ordenes(&nombre, Box::new(move |linea| {
-            let guardia = tx.lock().unwrap();
-            let (tx, a_logica) = &*guardia;
-            let mut p = linea.trim().splitn(3, ' ');
-            let (que, quien, resto) = (p.next().unwrap_or(""), p.next().unwrap_or(""), p.next().unwrap_or(""));
-            if que == "get" {
-                let (pregunta, respuesta) = std::sync::mpsc::channel();
-                let _ = tx.send(ARender::Pregunta(escena::internar(quien), pregunta));
-                return Some(respuesta.recv_timeout(std::time::Duration::from_secs(1)).unwrap_or_else(|_| "? the render does not answer".into()));
+        let name = std::path::Path::new(&a.scene).file_stem().map_or(a.scene.clone(), |n| n.to_string_lossy().into_owned());
+        let tx = Mutex::new((to_render.clone(), to_logic_for_commands));
+        platform::listen_for_commands(&name, Box::new(move |line| {
+            let guard = tx.lock().unwrap();
+            let (tx, to_logic) = &*guard;
+            let mut p = line.trim().splitn(3, ' ');
+            let (what, who, rest) = (p.next().unwrap_or(""), p.next().unwrap_or(""), p.next().unwrap_or(""));
+            if what == "get" {
+                let (question, answer) = std::sync::mpsc::channel();
+                let _ = tx.send(ToRender::Query(scene::intern(who), question));
+                return Some(answer.recv_timeout(std::time::Duration::from_secs(1)).unwrap_or_else(|_| "? the render does not answer".into()));
             }
-            let _ = match que {
-                "emit" => tx.send(ARender::SucesoDeFuera(escena::internar(quien), resto.parse().ok())),
-                // Lo que se pone desde fuera, la lógica tiene que saberlo: no lo ha puesto ella.
-                // Lo escrito se entiende según lo que sea ese hecho: `true`, `critical`, `3`.
-                "fact" => tx.send(ARender::HechoDeFuera(escena::internar(quien), resto.to_owned())),
+            let _ = match what {
+                "emit" => tx.send(ToRender::ExternalSignal(scene::intern(who), rest.parse().ok())),
+                // What is set from outside, the logic has to know: it did not set it itself.
+                // What is written is understood according to what that fact is: `true`, `critical`, `3`.
+                "fact" => tx.send(ToRender::ExternalFact(scene::intern(who), rest.to_owned())),
                 "text" => {
-                    let _ = a_logica.send(Evento::Texto(escena::internar(quien), resto.to_owned()));
-                    tx.send(ARender::Texto(escena::internar(quien), resto.to_owned()))
+                    let _ = to_logic.send(Event::Text(scene::intern(who), rest.to_owned()));
+                    tx.send(ToRender::Text(scene::intern(who), rest.to_owned()))
                 }
-                "focus" => tx.send(ARender::Enfocar(Some(escena::internar(quien)))),
-                "quit" => salir(),
+                "focus" => tx.send(ToRender::FocusField(Some(scene::intern(who)))),
+                "quit" => quit(),
                 _ => {
-                    eprintln!("orders · I don't understand '{linea}'");
-                    return Some(format!("? I don't understand '{}': emit, fact, text, focus, get, quit", linea.trim()));
+                    eprintln!("orders · I don't understand '{line}'");
+                    return Some(format!("? I don't understand '{}': emit, fact, text, focus, get, quit", line.trim()));
                 }
             };
             None
         }));
     }
-    if let Some(guion) = a.raton.clone() {
-        // Para ensayar las zonas sin quitarle el ratón a nadie.
-        let tx = a_render.clone();
+    if let Some(steps) = a.mouse.clone() {
+        // To rehearse the zones without taking the mouse away from anyone.
+        let tx = to_render.clone();
         std::thread::spawn(move || {
-            let inicio = std::time::Instant::now();
-            for paso in guion.split_whitespace() {
-                let (que, cuando) = paso.split_once('@').expect("--raton: @ms is missing");
-                let cuando = Duration::from_millis(cuando.parse().expect("--raton: ms"));
-                std::thread::sleep(cuando.saturating_sub(inicio.elapsed()));
-                // Cada paso se dice, para saber a qué responde lo que venga detrás.
-                println!("mouse  · {que}");
-                let _ = match que {
-                    // Un clic entero: bajar y subir.
-                    "pulsa" => tx.send(ARender::Boton(0, true)).and_then(|_| tx.send(ARender::Boton(0, false))),
-                    "baja" => tx.send(ARender::Boton(0, true)),
-                    "sube" => tx.send(ARender::Boton(0, false)),
-                    "derecho" => tx.send(ARender::Boton(1, true)).and_then(|_| tx.send(ARender::Boton(1, false))),
-                    // `tecla:Escape`, `tecla:Ctrl+a`: bajar y subir.
-                    t if t.starts_with("tecla:") => {
+            let start = std::time::Instant::now();
+            for step in steps.split_whitespace() {
+                let (what, when) = step.split_once('@').expect("--mouse: @ms is missing");
+                let when = Duration::from_millis(when.parse().expect("--mouse: ms"));
+                std::thread::sleep(when.saturating_sub(start.elapsed()));
+                // Each step is announced, to know what whatever comes after is responding to.
+                println!("mouse  · {what}");
+                let _ = match what {
+                    // A whole click: down and up.
+                    "click" => tx.send(ToRender::Button(0, true)).and_then(|_| tx.send(ToRender::Button(0, false))),
+                    "down" => tx.send(ToRender::Button(0, true)),
+                    "up" => tx.send(ToRender::Button(0, false)),
+                    "right" => tx.send(ToRender::Button(1, true)).and_then(|_| tx.send(ToRender::Button(1, false))),
+                    // `key:Escape`, `key:Ctrl+a`: down and up.
+                    t if t.starts_with("key:") => {
                         let mut m = Mods::default();
-                        let mut nombre = &t[6..];
-                        for (prefijo, pone) in [("Ctrl+", 0), ("Alt+", 1), ("Shift+", 2), ("Super+", 3)] {
-                            if let Some(resto) = nombre.strip_prefix(prefijo) {
-                                nombre = resto;
-                                match pone {
+                        let mut name = &t[4..];
+                        for (prefix, sets) in [("Ctrl+", 0), ("Alt+", 1), ("Shift+", 2), ("Super+", 3)] {
+                            if let Some(rest) = name.strip_prefix(prefix) {
+                                name = rest;
+                                match sets {
                                     0 => m.ctrl = true,
                                     1 => m.alt = true,
-                                    2 => m.mayus = true,
+                                    2 => m.shift = true,
                                     _ => m.logo = true,
                                 }
                             }
                         }
-                        tx.send(ARender::Tecla(nombre.to_owned(), None, m)).and_then(|_| tx.send(ARender::TeclaSuelta(nombre.to_owned())))
+                        tx.send(ToRender::Key(name.to_owned(), None, m)).and_then(|_| tx.send(ToRender::KeyReleased(name.to_owned())))
                     }
-                    // `escribe:hola`: letra a letra, como un teclado. Un `_` es un espacio.
-                    t if t.starts_with("escribe:") => {
-                        for ch in t[8..].chars() {
+                    // `type:hello`: letter by letter, like a keyboard. A `_` is a space.
+                    t if t.starts_with("type:") => {
+                        for ch in t[5..].chars() {
                             let ch = if ch == '_' { ' ' } else { ch };
-                            let _ = tx.send(ARender::Tecla(ch.to_string(), Some(ch.to_string()), Mods::default()));
-                            let _ = tx.send(ARender::TeclaSuelta(ch.to_string()));
+                            let _ = tx.send(ToRender::Key(ch.to_string(), Some(ch.to_string()), Mods::default()));
+                            let _ = tx.send(ToRender::KeyReleased(ch.to_string()));
                         }
                         Ok(())
                     }
-                    "foco+" => tx.send(ARender::FocoTeclado(true)),
-                    "foco-" => tx.send(ARender::FocoTeclado(false)),
-                    t if t.starts_with("suelta:") => tx.send(ARender::Soltado("text/plain".into(), t[7..].to_owned())),
-                    "rueda+" => tx.send(ARender::Rueda(1.0)),
-                    "rueda-" => tx.send(ARender::Rueda(-1.0)),
-                    "fuera" => tx.send(ARender::Puntero(None)),
+                    "focus+" => tx.send(ToRender::KeyboardFocus(true)),
+                    "focus-" => tx.send(ToRender::KeyboardFocus(false)),
+                    t if t.starts_with("drop:") => tx.send(ToRender::Dropped("text/plain".into(), t[5..].to_owned())),
+                    "wheel+" => tx.send(ToRender::Wheel(1.0)),
+                    "wheel-" => tx.send(ToRender::Wheel(-1.0)),
+                    "out" => tx.send(ToRender::Pointer(None)),
                     xy => {
-                        let (x, y) = xy.split_once(',').expect("--raton: x,y");
-                        tx.send(ARender::Puntero(Some((x.parse().unwrap(), y.parse().unwrap()))))
+                        let (x, y) = xy.split_once(',').expect("--mouse: x,y");
+                        tx.send(ToRender::Pointer(Some((x.parse().unwrap(), y.parse().unwrap()))))
                     }
                 };
             }
         });
     }
-    if let Some(s) = a.segundos {
-        let tx = a_render.clone();
+    if let Some(s) = a.seconds {
+        let tx = to_render.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(s));
-            // Salir pasa por el render para que cierre su último ciclo de medidas.
-            let _ = tx.send(ARender::Salir);
+            // Quitting goes through the render so that it closes its last measurement cycle.
+            let _ = tx.send(ToRender::Quit);
             std::thread::sleep(Duration::from_millis(400));
-            salir();
+            quit();
         });
     }
 
-    // A partir de aquí este hilo es de la plataforma: pone las ventanas y atiende
-    // al sistema hasta que alguien cierre.
-    let alto_extra = if a.hud { gpu::ALTO_INSTRUMENTOS as u32 } else { 0 };
-    plataforma::atender(pide, alto_extra, instancia, a_render.clone());
-    let _ = a_render.send(ARender::Salir);
+    // From here on this thread belongs to the platform: it puts up the windows and attends
+    // to the system until someone closes.
+    let extra_height = if a.hud { gpu::HUD_HEIGHT as u32 } else { 0 };
+    platform::run_event_loop(wanted, extra_height, instance, to_render.clone());
+    let _ = to_render.send(ToRender::Quit);
     let _ = render.join();
-    salir();
+    quit();
 }
 
-/// El proceso se va entero —el orden de destrucción no merece código en un
-/// prototipo—, pero no sin parar antes lo que la lógica dejó corriendo.
-fn salir() -> ! {
+/// The process goes away whole —the destruction order does not deserve code in a
+/// prototype—, but not without first stopping what the logic left running.
+fn quit() -> ! {
     #[cfg(feature = "luau")]
-    logica_luau::parar_hijos();
+    logic_luau::stop_children();
     std::process::exit(0)
 }

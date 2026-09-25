@@ -1,0 +1,11 @@
+// expect: error «is a number, and `upper` is for texts»
+scene BadHole {
+    surface { size: 300, 100 }
+    fact volume = 0.5
+    text who = "Lucía"
+    text "Hello, {who}: {volumn * 100} %" { at: 10, 20; size: 13; color: #fff }
+    text "unclosed {who" { at: 10, 40; size: 13; color: #fff }
+    text "a loose }" { at: 10, 60; size: 13; color: #fff }
+    text "{upper(volume)}" { at: 10, 80; size: 13; color: #fff }
+    text "{}" { at: 10, 90; size: 13; color: #fff }
+}

@@ -1,0 +1,30 @@
+// expect: ok
+language 0.1
+// `show:` is «there or not there»: it turns off the shape AND its zone, because being able to press
+// what cannot be seen is worse than not being able to press it. It works on everything that is drawn.
+scene Show {
+    surface { size: 300, 120; anchor: top }
+    fact playing = false
+    permissions { services: "media", "audio" }
+    service media as player { playing: bool; title: text }
+    //  And the input, which a sound panel shows next to the output.
+    service audio as sound { input: number; input_muted: bool }
+
+    box { from: 0, 0; size: 300, 120; color: #151616 }
+    box { from: 8, 8; size: 60 * sound.input, 4; corner: 2; color: #9ed6bd; show: not sound.input_muted }
+    //  Two texts in the same place, and only one is there.
+    text player.title { at: 150, 30; anchor: center; size: 12; color: #f5f7f5; show: player.playing }
+    text "Nothing playing" { at: 150, 30; anchor: center; size: 12; color: #8b8f95; show: not player.playing }
+    //  A row of things where each one shows its own.
+    repeat k in 0..3 {
+        let bx = 60 + k * 90
+        box { at: bx, 80; size: 70, 30; corner: 8; color: #9ed6bd; show: k == 0 }
+        ellipse { at: bx, 80; radius: 15; color: #e8c07a; show: k == 1 }
+        arc { at: bx, 80; radius: 15; span: 200deg; width: 3; color: #6fb1e6; show: k == 2 }
+    }
+    //  And a zone that is not there when its shape is not there.
+    zone box tap { at: 60, 80; size: 70, 30; corner: 8; cursor: pointer; show: playing }
+    on press tap { toggle playing }
+    group { show: playing; opacity: 60%
+        box { at: 150, 110; size: 280, 6; corner: 3; color: #9ed6bd } }
+}

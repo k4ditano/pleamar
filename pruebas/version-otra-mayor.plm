@@ -1,3 +1,0 @@
-// espera: fallo «this file asks for language 1.0»
-language 1.0
-scene X { surface { size: 10, 10 } }

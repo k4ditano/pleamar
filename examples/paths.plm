@@ -1,0 +1,77 @@
+// Paths: what fits neither in a circle nor in a box. A path is a broken
+// or curved line, filled when closed; inside it is the same signed distance
+// as every other shape, so it blends, and it has shadow, rim and light.
+
+import "common/palette.plm"
+
+scene Paths {
+    surface { size: 460, 300; anchor: center }
+
+    prop breath = 0
+    prop turn = 0
+    wave breath = 1 at 1.1
+    spin turn by 0.5
+
+    box { from: 0, 0; size: 460, 300; corner: 18; color: coal }
+
+    // ── a chart that breathes ────────────────────────────────────
+    text "a line that breathes" { at: 26, 24; size: 10.5; color: ink; opacity: 40% }
+    path {
+        at: 26, 40
+        stroke: 2.5
+        color: mint
+        move 0, 56
+        line 26, 36 + breath * 5
+        line 52, 44
+        line 78, 12 - breath * 6
+        line 104, 22
+        line 130, 4 + breath * 3
+        line 156, 16
+    }
+
+    // ── a filled arrow, with its shadow ──────────────────────────
+    text "filled, with a shadow" { at: 250, 24; size: 10.5; color: ink; opacity: 40% }
+    body {
+        color: sand; shadow: 0, 6, 16, 36%; rim: 6%
+        path {
+            at: 258, 46
+            move 0, 22
+            line 60, 22
+            line 60, 8
+            line 92, 32
+            line 60, 56
+            line 60, 42
+            line 0, 42
+            close
+        }
+    }
+
+    // ── a hexagon that spins, blended with a dot ─────────────────
+    body {
+        color: mint; light: 4%, 150, 90
+        path {
+            at: 60, 150
+            rotate: turn
+            blend: 10
+            move 34, 0
+            line 68, 20
+            line 68, 58
+            line 34, 78
+            line 0, 58
+            line 0, 20
+            close
+        }
+        ellipse { at: 94 + breath * 16, 189; radius: 13; blend: 10 }
+    }
+
+    // ── a stroked curve ──────────────────────────────────────────
+    path {
+        at: 240, 150
+        stroke: 3.5
+        color: #e86a9a
+        move 0, 70
+        curve 90, 40 via 40, -30
+        curve 180, 62 via 140, 96
+    }
+    text "curves" { at: 300, 246; size: 10.5; color: ink; opacity: 40% }
+}

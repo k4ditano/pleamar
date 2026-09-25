@@ -1,7 +1,0 @@
-// espera: fallo «'low' is not»
-scene X {
-    surface { size: 100, 100 }
-    fact mode: low | normal | critical = normal
-    surface otra { size: 50, 50; anchor: mode
-        box { from: 0, 0; size: 50, 50; color: #151616 } }
-}

@@ -1,0 +1,6 @@
+// expect: error «a window says how wide it is»
+language 0.1
+scene FullWin {
+    surface { size: full, 100; kind: window; title: "panel width" }
+    box { from: 0, 0; size: 200, 100; color: #151616 }
+}

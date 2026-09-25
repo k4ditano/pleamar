@@ -1,0 +1,6 @@
+// expect: error «for»
+scene X {
+    surface { size: 100, 100 }
+    fact a = 0
+    on still a { a = 1 }
+}

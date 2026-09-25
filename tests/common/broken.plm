@@ -1,0 +1,6 @@
+library Broken {
+    component Badge(n) {
+        size: 20, 20
+        text "{n} of {totl}" { at: 0, 10; size: 12; color: #fff }
+    }
+}

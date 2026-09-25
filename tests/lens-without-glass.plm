@@ -1,0 +1,11 @@
+// expect: error «there is no `glass`»
+language 0.1
+// `lens` says whether a glass bends light: without glass, there is nothing to bend.
+scene LensWithoutGlass {
+    surface { size: 200, 100 }
+    body {
+        color: #1b2127
+        lens: true
+        box { at: 100, 50; size: 160, 60; corner: 16 }
+    }
+}

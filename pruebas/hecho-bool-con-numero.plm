@@ -1,5 +1,0 @@
-// espera: fallo «a `bool` fact is true or false»
-scene X {
-    surface { size: 10, 10 }
-    fact open: bool = 3
-}

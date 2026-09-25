@@ -1,6 +1,0 @@
-// espera: fallo «'tone', of 'Row', is a colour, and this is not»
-scene X {
-    surface { size: 100, 100 }
-    component Row(tone: color) { size: 10, 10; box { size: 10, 10; color: tone } }
-    row { at: 0, 0; Row(12) }
-}

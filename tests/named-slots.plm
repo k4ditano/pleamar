@@ -1,0 +1,39 @@
+// expect: ok
+language 0.1
+// A component with several slots —header, body and footer—, a layout that puts a
+// line between every two children that are there, and that knows how many there are (`inside.count`).
+scene NamedSlots {
+    surface { size: 320, 300 }
+    let ink = #f5f7f5
+    model notes max 4 { title: text }
+    fact extra = true
+
+    component Panel(tone: color = #1b1c1c) {
+        size: 300, 58 + inside.height + foot.height
+        body { color: tone; box { from: 0, 0; size: 300, 58 + inside.height + foot.height; corner: 14 } }
+        row head { at: 14, 12; gap: 8; align: center
+            children header
+            text "· {inside.count}" { size: 12; color: ink; opacity: 50% }
+        }
+        column inside { at: 14, 40; gap: 5
+            children
+            between { box { size: 272, 1; color: ink; opacity: 12% } }
+        }
+        row foot { at: 14, 48 + inside.height; gap: 6;  children footer }
+    }
+
+    column { at: 10, 10; gap: 10
+        Panel {
+            header { text "Notices" { size: 15; weight: 600; color: ink } }
+            for n in notes { text n.title { size: 13.5; color: ink } }
+            text "and a fixed one" { size: 13.5; color: ink; show: extra }
+            footer {
+                box ok { size: 60, 22; corner: 11; color: #9ed6bd }
+                box no { size: 60, 22; corner: 11; color: #3a3b3b }
+            }
+        }
+        Panel(#26302c) { header { text "Empty" { size: 15; weight: 600; color: ink } } }
+    }
+    on press ok { extra = false }
+    on press no { extra = true }
+}

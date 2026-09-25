@@ -1,11 +1,11 @@
 # Language reference — version 0.1
 
-**What this note is.** The complete, exact description of what the language accepts. [[pleamar · 09 El lenguaje v0]] is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/lenguaje/`), not from memory, and **it cannot fall behind without `./probar.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
+**What this note is.** The complete, exact description of what the language accepts. [[pleamar · 09 El lenguaje v0]] is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
 ```sh
 pleamar --version                  # pleamar 0.1.0 · language 0.1
-pleamar --comprobar scene.plm      # reads it, with whatever it imports; says whether it is fine, exits
-./probar.sh                        # pruebas/*.plm, escenas/*.plm and the examples in this note
+pleamar --check scene.plm      # reads it, with whatever it imports; says whether it is fine, exits
+./run-tests.sh                        # tests/*.plm, examples/*.plm and the examples in this note
 ```
 
 ## 1. Version
@@ -177,7 +177,7 @@ library Clock strict {
 
 Asking for permissions without a `.luau` next to it is an error: there is nobody to use them.
 
-**A plugin's permissions are approved by whoever uses it.** Declaring them is not having them: `pleamar --aprobar scene.plm` shows what each plugin of that scene asks for, and asks. What is approved is stored outside the plugin, with the fingerprint of its logic and of what it asked for: if either of the two changes, it goes back to unapproved. **Unapproved, a plugin runs with no permissions at all**, and its errors say why and how to approve it. An interpreter (`sh`, `python`…) comes out flagged: it is asking for everything. The scene one opens does not go through this: opening it is already deciding.
+**A plugin's permissions are approved by whoever uses it.** Declaring them is not having them: `pleamar --approve scene.plm` shows what each plugin of that scene asks for, and asks. What is approved is stored outside the plugin, with the fingerprint of its logic and of what it asked for: if either of the two changes, it goes back to unapproved. **Unapproved, a plugin runs with no permissions at all**, and its errors say why and how to approve it. An interpreter (`sh`, `python`…) comes out flagged: it is asking for everything. The scene one opens does not go through this: opening it is already deciding.
 
 A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `posture`, `layer`— and **images and figures** (`image logo = file "logo.png", 16, 16`, `figure hat = file "hat.svg"`: the path is relative to the file that writes it, so the piece travels with it). All under its name, like its boundary. What it cannot do is draw outside a component, or hold loose rules: that belongs to the scene.
 
@@ -241,7 +241,7 @@ alone— and never of an edge the surface is anchored to, where there is no room
 to ask for. It waits until it has been cut for three seconds, or until nothing
 is moving: crossing an edge on the way somewhere is not a layout mistake.
 
-**Types.** For the renderer everything is numbers; types are for whoever writes and for whoever talks to the scene from outside. A fact is a number, a yes or no (`bool`; with no type, that is what one born `true` or `false` is) or an **enum**: `fact mode: low | normal | critical = normal`. The names of its values are valid in any expression (`mode == critical`, `mode = low` in a rule) and they are their position: `low` is 0. **An enum is compared against its own values, and the compiler checks it**: `mode == fast`, if `fast` belongs to another one, is an error that says which ones are valid; and arithmetic is not done with an enum (`mode + 1` means nothing; with a yes or no it does: `r.separator * 21`). The same name can be in two enums: compared against its fact, each one is its own; on its own, if it means different numbers, it is an error that asks for the long form, `mode.normal`, which is always valid. In a slot of a text, an enum is shown by its name: `"mode: {mode}"` → `mode: critical`. The logic reads and writes them as what they are —`fact.open` is `true`, `fact.mode` is `"critical"`—, and so does `--decir`.
+**Types.** For the renderer everything is numbers; types are for whoever writes and for whoever talks to the scene from outside. A fact is a number, a yes or no (`bool`; with no type, that is what one born `true` or `false` is) or an **enum**: `fact mode: low | normal | critical = normal`. The names of its values are valid in any expression (`mode == critical`, `mode = low` in a rule) and they are their position: `low` is 0. **An enum is compared against its own values, and the compiler checks it**: `mode == fast`, if `fast` belongs to another one, is an error that says which ones are valid; and arithmetic is not done with an enum (`mode + 1` means nothing; with a yes or no it does: `r.separator * 21`). The same name can be in two enums: compared against its fact, each one is its own; on its own, if it means different numbers, it is an error that asks for the long form, `mode.normal`, which is always valid. In a slot of a text, an enum is shown by its name: `"mode: {mode}"` → `mode: critical`. The logic reads and writes them as what they are —`fact.open` is `true`, `fact.mode` is `"critical"`—, and so does `--say`.
 
 The fields of a model have those types and two more: **`image w, h`** —an icon name or a path, and the image that says: `image r.icon { … }` without declaring anything else— and **`list`**, records inside the record:
 
@@ -330,7 +330,7 @@ A plugin has its own, under its name: what it saves the scene does not see, nor 
 | `screen.width` · `screen.height` | what **its** monitor measures |
 | `screens.count` | how many monitors are showing something |
 
-With the scene's surface (the one with no name), what is repeated is the loose drawing. `--pantalla A,B` spreads the copies across those monitors, which is how two are rehearsed without having two.
+With the scene's surface (the one with no name), what is repeated is the loose drawing. `--screen A,B` spreads the copies across those monitors, which is how two are rehearsed without having two.
 
 ```
 surface { size: full, 44; anchor: top; screens: each }
@@ -530,7 +530,7 @@ row card { size: 164, 66; gap: 10; padding: 12; fill: #1b1b1c; corner: 14
 
 **`wrap: 5`** turns a layout into a **grid**: five per line and on to the next. The cell is as big as the largest child, and **what is not seen leaves no gap**, so the rest move up, with the layout's spring if it has one. It is what a `Flow` is in Quickshell.
 
-`escenas/lista-larga` is five thousand rows in sixteen copies: 0.49 ms per frame, and the same sixteen groups and nineteen zones however many there are.
+`examples/lista-larga` is five thousand rows in sixteen copies: 0.49 ms per frame, and the same sixteen groups and nineteen zones however many there are.
 
 `clip [inset n] shape` clips everything that comes after, to the end of its `group` —or, loose in the scene, up to the next named `surface`—. Up to four nested ones clip by their shape; the outer ones, by their box.
 
@@ -681,7 +681,7 @@ The names of a slot are resolved where the string is written, not where it is us
 | `follow chip.w = label.width + 32` | chases the expression, with its spring |
 | `look gx, gy at cx, cy reach 5, 3.2 within 140 rest rx, ry` | two properties that pull towards the mouse |
 
-With reduced motion (`--movimiento-reducido`) the first three go quiet: `blink`
+With reduced motion (`--reduced-motion`) the first three go quiet: `blink`
 stays open, `wave` rests at the middle of its travel and `spin` stops where it
 was. What carries itself is exactly what must not be left going round on its
 own. `follow` and `look` are not loops —they chase something— so they stay,
@@ -706,7 +706,7 @@ regular one landing on top of it.
 
 ## 16. Checked examples
 
-These compile with `./probar.sh`.
+These compile with `./run-tests.sh`.
 
 A list that comes from data, with a component, text with slots, and one rule per row:
 
@@ -814,9 +814,9 @@ scene Reference3 {
 
 ## 17. The vocabulary, just as the compiler consults it
 
-This is the output of `pleamar --gramatica`, copied. It is not a second list: these are the same tables (`src/lenguaje/vocabulario.rs`) the compiler consults to accept or reject a word. `./probar.sh` compares this block with what the program prints —if somebody adds a word and does not write it down here, it fails— and it also checks that **every word appears in some test**.
+This is the output of `pleamar --grammar`, copied. It is not a second list: these are the same tables (`src/language/vocabulary.rs`) the compiler consults to accept or reject a word. `./run-tests.sh` compares this block with what the program prints —if somebody adds a word and does not write it down here, it fails— and it also checks that **every word appears in some test**.
 
-```vocabulario
+```vocabulary
 language: 0.1
 statements: surface permissions model service spring prop pose fact event text image figure measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
 library: let spring component permissions fact text model service event image figure prop pose gesture posture layer
@@ -874,7 +874,7 @@ layout.align: start center end
 
 ## 17.1. In the editor
 
-`pleamar --lsp` is a language server over the input and the output, with **this same compiler** behind it: the errors with their place while it is being written, which words are valid here, and what the one under the cursor means. `pleamar --resaltado vim` and `--resaltado vscode` write the syntax file, taken from the vocabulary above. Both, and how they are installed, are in `editor/`.
+`pleamar --lsp` is a language server over the input and the output, with **this same compiler** behind it: the errors with their place while it is being written, which words are valid here, and what the one under the cursor means. `pleamar --highlight vim` and `--highlight vscode` write the syntax file, taken from the vocabulary above. Both, and how they are installed, are in `editor/`.
 
 ## 18. What this version does not have
 

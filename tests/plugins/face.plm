@@ -1,0 +1,29 @@
+// A library that brings what moves inside it: a pose, a gesture that drives it,
+// a layer that decides, and an image that goes with it (the path is relative to this file).
+library Face strict {
+    pose tilt = 0
+    prop glow = 0 ~quick
+    fact happy = false
+    event poked ->                        // goes out to the plugin's logic
+    event cheer ->                        // and this one the scene emits: that is how it talks to it
+    image logo = file "logo.png", 16, 16
+
+    gesture nod reflex {
+        120ms out_quad { tilt: 0.25 }
+        160ms out_back
+    }
+    layer mood ~quick {
+        glad while happy { glow: 1 ~lively }
+        calm             { glow: 0 ~slow }
+    }
+
+    component Face(tone: color = #9ed6bd) {
+        size: 44, 44
+        group { pivot: 22, 22; rotate: tilt
+            box hit { from: 0, 0; size: 44, 44; corner: 12; color: mix(#2e2f2f, tone, max(glow, mood.glad * 0.5)); cursor: pointer }
+            image logo { at: 14, 14; size: 16, 16 }
+        }
+        on press hit { play nod; emit poked }
+        on cheer     { happy = true; play nod }
+    }
+}

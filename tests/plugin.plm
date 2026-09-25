@@ -1,0 +1,15 @@
+// expect: ok
+language 0.1
+// A plugin: a library with its `.luau` next to it, its boundary under its name and its
+// permissions. The scene reads that boundary by its full name, and has its own apart.
+import "plugins/counter.plm"
+scene UsesPlugin {
+    surface { size: 200, 120 }
+    fact count = 5                        // not the plugin's: that one is `Counter.count`
+    column { at: 10, 10; gap: 6
+        Counter
+        text "mine: {count} · theirs: {Counter.count} · {Counter.mode}" { size: 11; color: #fff
+             opacity: if(Counter.mode == busy or Counter.steps.count > 0, 1, 0.5) }
+    }
+    on Counter.bumped { count = count + 1 }
+}

@@ -1,0 +1,26 @@
+// expect: ok
+language 0.1
+// `on change`: react to an expression changing, wherever the change comes from.
+scene Change {
+    surface { size: 240, 120 }
+    let ink = #f5f7f5
+    let step = 20
+    fact total = 40
+    event slid ->
+    event stepped ->
+    prop level = 0 ~calm
+
+    column list {
+        at: 10, 10
+        view: 220, 80
+        step: step
+        content: total * step
+        repeat i in 1..5 {
+            group { size: 220, step; box { from: 0, 0; size: 220, 18; corner: 6; color: ink; opacity: 20% } }
+        }
+    }
+    //  It moved to another row: no matter if by wheel, by dragging or in one jump.
+    on change floor(list.scroll / step) { emit slid(list.scroll) }
+    //  And with `while`, only while something is true.
+    on change level while total > 0 { emit stepped }
+}

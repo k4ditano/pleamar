@@ -1,5 +1,0 @@
-// espera: fallo «'urgent' is not valid here: a value of this fact is low, normal or critical»
-scene X {
-    surface { size: 10, 10 }
-    fact mode: low | normal | critical = urgent
-}

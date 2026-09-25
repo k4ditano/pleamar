@@ -2,14 +2,14 @@
 
 > **This is the guide**: it reads straight through and tells the why. The exact description —grammar, every element with what it accepts, version— is in [[pleamar · 11 Referencia del lenguaje 0.1]].
 
-**Status:** implemented (`src/lenguaje/`). A `.plm` file goes in and out comes the same `Escena` that used to be written in Rust. [[pleamar · 03 El lenguaje - borrador 0]] was the sketch in Spanish; **this is what there really is, with the keywords in English**. Still with no name of its own.
+**Status:** implemented (`src/language/`). A `.plm` file goes in and out comes the same `Escena` that used to be written in Rust. [[pleamar · 03 El lenguaje - borrador 0]] was the sketch in Spanish; **this is what there really is, with the keywords in English**. Still with no name of its own.
 
 ```sh
-pleamar --escena escenas/marea.plm      # reloads itself when the file is saved
-pleamar --comprobar escenas/marea.plm   # reads it, says whether it is right, and exits
+pleamar --scene examples/marea.plm      # reloads itself when the file is saved
+pleamar --check examples/marea.plm   # reads it, says whether it is right, and exits
 ```
 
-Full examples: **`escenas/barra.plm` (a real bar: workspaces, window, clock and volume)**, `escenas/marea.plm` (the ball and its card, 150 lines), `escenas/cara.plm` (layers and gestures, no logic at all) and `escenas/bandeja.plm` (components, `repeat` and layout: a notice list that grows and shrinks).
+Full examples: **`examples/barra.plm` (a real bar: workspaces, window, clock and volume)**, `examples/marea.plm` (the ball and its card, 150 lines), `examples/cara.plm` (layers and gestures, no logic at all) and `examples/bandeja.plm` (components, `repeat` and layout: a notice list that grows and shrinks).
 
 ## The idea in one sentence
 
@@ -18,7 +18,7 @@ Full examples: **`escenas/barra.plm` (a real bar: workspaces, window, clock and 
 ## Several files: `import` and `library`
 
 ```
-// escenas/comun/paleta.plm
+// examples/common/paleta.plm
 library Palette {
     let ink  = #f5f7f5
     let mint = #9ed6bd
@@ -27,7 +27,7 @@ library Palette {
 }
 ```
 ```
-// escenas/iconos.plm
+// examples/iconos.plm
 import "comun/paleta.plm"
 import "comun/menu.plm"              // which in turn imports the palette: it is read once
 
@@ -52,7 +52,7 @@ library Clock strict {
 }
 ```
 
-From the scene its boundary is called `Clock.now`, `Clock.tapped`; its logic only sees its own and only has its own permissions. `escenas/con-plugin.plm` is a scene with no logic of its own that puts a clock in like this.
+From the scene its boundary is called `Clock.now`, `Clock.tapped`; its logic only sees its own and only has its own permissions. `examples/con-plugin.plm` is a scene with no logic of its own that puts a clock in like this.
 
 A scene can ask for **several windows**: `surface { … }` is its own, and `surface panel { …; …what it draws… }` one of several, with its `open:` to appear and disappear. They all share properties, facts and rules.
 
@@ -219,7 +219,7 @@ box { from: 180, 66 + list.height + 10; size: head.width, 2 }   // with a name, 
 - What a copy declares inside (`prop`, named shapes, measures) **is its own**: two copies do not tread on each other, and the rules inside talk about their own.
 - **There is no layout engine.** Each child's place is an expression —what the previous ones take up—: if one grows, the rest shift; with `~spring`, they shift animated. `show:` decides whether a child is there: it takes room and is seen, or neither one nor the other, and with a spring that too is a journey.
 - Inside a layout a child does not say where it goes. The ones that know how much room they take are `box`, `ellipse`, `image`, `text` (it measures itself), another `row`/`column`, and a `group` or a component with `size:`.
-- A list of variable length is today one of fixed capacity with `show:`. See `escenas/bandeja.plm`.
+- A list of variable length is today one of fixed capacity with `show:`. See `examples/bandeja.plm`.
 
 **A slot for children.** Whatever a copy brings inside its block goes where its component says `children`, and it is read with the names of whoever wrote it:
 
@@ -344,15 +344,15 @@ When the text changes, the workshop looks for the new image on its own thread an
 ## Orders from outside
 
 ```
-pleamar --decir lanzador "emit toggle"
+pleamar --say lanzador "emit toggle"
 ```
 
-Every running scene listens on a socket with its name (the file's). `emit event` or `emit event 3` fires its rules as if the logic had emitted it. Also `fact name value`, `text name whatever it should say` (the logic hears about it, as if someone had typed it), `focus field`, `quit`, and **`get name`, which answers** with whatever that fact, text or property is worth: `pleamar --decir lanzador "get open"` → `1`.
+Every running scene listens on a socket with its name (the file's). `emit event` or `emit event 3` fires its rules as if the logic had emitted it. Also `fact name value`, `text name whatever it should say` (the logic hears about it, as if someone had typed it), `focus field`, `quit`, and **`get name`, which answers** with whatever that fact, text or property is worth: `pleamar --say lanzador "get open"` → `1`.
 
 **A global shortcut is this**: a compositor bind that runs that order. In Hyprland:
 
 ```lua
-hl.bind("SUPER + space", hl.dsp.exec_cmd('pleamar --decir lanzador "emit toggle"'))
+hl.bind("SUPER + space", hl.dsp.exec_cmd('pleamar --say lanzador "emit toggle"'))
 ```
 
 ## What it runs on its own

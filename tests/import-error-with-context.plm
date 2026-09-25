@@ -1,0 +1,7 @@
+// expect: error «(inside 'Badge', used at import-error-with-context.plm:6)»
+import "common/broken.plm"
+scene X {
+    surface { size: 100, 40 }
+    fact total = 3
+    row { at: 0, 0; Badge(1) }
+}

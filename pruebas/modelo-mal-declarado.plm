@@ -1,7 +1,0 @@
-// espera: fallo «'string' is not valid here: the type of a field is text, number, bool or image. Or an enum»
-scene Bad2 {
-    surface { size: 300, 200 }
-    model rows { label: string; index: number }
-    model empty max 3 { }
-    model big max 9000 { a: text }
-}

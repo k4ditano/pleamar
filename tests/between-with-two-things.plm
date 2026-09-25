@@ -1,0 +1,5 @@
+// expect: error «a `between` with several things has to say how much room it takes»
+scene X {
+    surface { size: 100, 100 }
+    row { at: 0, 0; box { size: 4, 4; color: #fff }; between { box { size: 1, 4; color: #fff }; box { size: 1, 4; color: #fff } } }
+}

@@ -19,17 +19,17 @@ is no `Rectangle`, no `anchors.fill`, no `Behavior`, no JavaScript in the scene.
 **Never guess a keyword or a property. Check it.**
 
 ```sh
-pleamar --gramatica        # every word the compiler accepts, by category
-pleamar --comprobar x.plm  # reads the scene, says whether it is fine, exits
+pleamar --grammar        # every word the compiler accepts, by category
+pleamar --check x.plm  # reads the scene, says whether it is fine, exits
 ```
 
-`--gramatica` prints the real vocabulary: statements, the properties of each
+`--grammar` prints the real vocabulary: statements, the properties of each
 element, functions, triggers, effects, springs, units, services and what each
 service reports. If a word is not in that list, it does not exist. The compiler
-suggests the closest one ("did you mean…?"), so a failed `--comprobar` usually
+suggests the closest one ("did you mean…?"), so a failed `--check` usually
 tells you the right word.
 
-After writing or editing any scene, run `--comprobar` on it. Always. It is
+After writing or editing any scene, run `--check` on it. Always. It is
 instant and it catches everything: unknown names, wrong types, a property that
 belongs to another element, a service asked for something it does not report.
 
@@ -41,8 +41,8 @@ belongs to another element, a service asked for something it does not report.
 | `docs/guide.md` | From zero to a bar, six steps |
 | `docs/recipes.md` | Whole scenes that work: long lists, grids, melting shapes, gradients, paths, saved settings, normal windows, popups |
 | `docs/10-luau-logic.md` | What the `.luau` logic can and cannot do |
-| `escenas/*.plm` | Real scenes that run: `barra.plm` (a bar), `lista-larga.plm` (5000 rows), `iconos.plm` (tray with menus), `lanzador.plm` (launcher), `caminos.plm` (paths and gradients) |
-| `pruebas/*.plm` | One file per language feature, each with the expected result on its first line |
+| `examples/*.plm` | Real scenes that run: `barra.plm` (a bar), `lista-larga.plm` (5000 rows), `iconos.plm` (tray with menus), `lanzador.plm` (launcher), `caminos.plm` (paths and gradients) |
+| `tests/*.plm` | One file per language feature, each with the expected result on its first line |
 
 ## The shape of a scene
 
@@ -85,7 +85,7 @@ scene Name {
   **The spring is the property's**: `prop lid = 0 ~150ms` is what `lid: 1` uses,
   and a rule only travels differently if it says so (`lid: 1 ~40ms`).
 - **A property belongs to its element.** `corner` is a `box` thing, `radius` an
-  `ellipse` thing, `width`/`lines` are `text` things. `--comprobar` lists the
+  `ellipse` thing, `width`/`lines` are `text` things. `--check` lists the
   valid ones when you miss.
 - **Inside a layout (`row`/`column`) a child must say how much room it takes.**
   Wrap loose shapes in `group { size: w, h; … }`.
@@ -100,7 +100,7 @@ scene Name {
   ("a shadow is cut: it needs 30 px below…") and for the drawing itself ("a
   drawing is cut: it needs 36 px below…"), once it has been cut for three
   seconds and never against an edge the surface is glued to. Only while it
-  runs, though, never in `--comprobar`: where a card ends is a sum that exists
+  runs, though, never in `--check`: where a card ends is a sum that exists
   only while the scene is alive.
 - **Zones are what catch the mouse.** A named shape only becomes a zone if a rule
   names it, if it carries `active`, or if it is declared with `zone`.
@@ -164,26 +164,26 @@ and does not know about coordinates.
 ## How to try a scene without bothering anyone
 
 ```sh
-pleamar --comprobar x.plm                    # no window: just says if it is fine
-pleamar --escena x.plm --segundos 8          # closes itself after 8 seconds
-pleamar --escena x.plm --pantalla HDMI-A-1   # on a chosen monitor
-pleamar --escena x.plm --raton "160,20@800 pulsa@1400 sube@1500"  # a pretend mouse
-pleamar --decir x "fact open true"           # talk to a running scene
-pleamar --decir x "emit arrives"             # …or fire one of its events
-pleamar --escena x.plm --bloqueo 2000        # stall the logic on purpose
-pleamar --escena x.plm --registrar open,card # what those are worth on every frame
-pleamar --escena x.plm --movimiento-reducido # springs settle, nothing loops
+pleamar --check x.plm                    # no window: just says if it is fine
+pleamar --scene x.plm --seconds 8          # closes itself after 8 seconds
+pleamar --scene x.plm --screen HDMI-A-1   # on a chosen monitor
+pleamar --scene x.plm --mouse "160,20@800 click@1400 up@1500"  # a pretend mouse
+pleamar --say x "fact open true"           # talk to a running scene
+pleamar --say x "emit arrives"             # …or fire one of its events
+pleamar --scene x.plm --stall 2000        # stall the logic on purpose
+pleamar --scene x.plm --record open,card # what those are worth on every frame
+pleamar --scene x.plm --reduced-motion # springs settle, nothing loops
 ```
 
 **Do not say an animation lasts what it was asked to last without measuring
-it.** `--registrar name,other > log.tsv` prints `ms<tab>value…` once per frame,
+it.** `--record name,other > log.tsv` prints `ms<tab>value…` once per frame,
 and that is how a duration is checked against its contract. It says at the start
 which names it could not find, with the ones that look like them: inside a
 component's copy they carry their mark (`px#Hat2`). How to read those logs, in
 `measuring.md`.
 
-Never drive the real mouse or keyboard to test a scene: `--raton` exists for
-that, and `--decir` reaches anything the logic can hear.
+Never drive the real mouse or keyboard to test a scene: `--mouse` exists for
+that, and `--say` reaches anything the logic can hear.
 
 ## Measuring it against Quickshell
 
@@ -195,10 +195,10 @@ comparison worthless.
 ## Before saying it is done
 
 ```sh
-./probar.sh      # every test scene, plus the examples inside the documentation
+./run-tests.sh      # every test scene, plus the examples inside the documentation
 ./portable.sh    # still builds for Windows and macOS
 ```
 
-If the language changed, `probar.sh` also checks that the reference's vocabulary
-still matches `--gramatica` and that the highlighters in `editor/` are the
-current ones. Regenerate them with `pleamar --resaltado vim|vscode`.
+If the language changed, `run-tests.sh` also checks that the reference's vocabulary
+still matches `--grammar` and that the highlighters in `editor/` are the
+current ones. Regenerate them with `pleamar --highlight vim|vscode`.

@@ -1,0 +1,6 @@
+// expect: error «only a window has a title»
+language 0.1
+scene NoWin {
+    surface { size: 200, 100; title: "this is not a window" }
+    box { from: 0, 0; size: 200, 100; color: #151616 }
+}

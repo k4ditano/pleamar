@@ -1,0 +1,13 @@
+// expect: ok
+language 0.1
+// A normal window: `kind: window`, with its title. What it draws is measured against
+// its own size, which changes when someone stretches it.
+scene Win {
+    surface { size: 420, 280; kind: window; title: "pleamar · test" }
+    let ink = #f5f7f5
+    let w = screen.width
+    let h = screen.height
+    box { from: 0, 0; size: w, h; color: #151616 }
+    text "a window" { at: 20, 24; size: 15; color: ink }
+    box { at: w - 60, h - 30; size: 100, 34; corner: 10; color: #232727 }
+}

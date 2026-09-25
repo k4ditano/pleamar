@@ -1,0 +1,9 @@
+// expect: ok
+// A library gives colors, springs and components; the scene can override a color.
+import "common/palette.plm"
+scene Imports {
+    surface { size: 200, 60 }
+    let ink = #ffeecc
+    prop x = 20 ~snappy
+    row { at: x, 20; gap: 6; Dot(ink); Dot(#9ed6bd) }
+}

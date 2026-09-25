@@ -1,7 +1,0 @@
-// espera: fallo «has to say when it locks»
-language 0.1
-scene Siempre {
-    surface { size: 200, 60; anchor: top }
-    surface cerrojo { kind: lock; size: 600, 300
-        box { from: 0, 0; size: 600, 300; color: #101214 } }
-}

@@ -1,0 +1,47 @@
+// expect: ok
+language 0.1
+// `service`: what the system tells, put into facts and texts without a line of
+// logic. Here are all there are, with everything they bring.
+scene Services {
+    surface { size: 300, 160 }
+    permissions { services: "clock", "audio", "battery", "network", "media", "window" }
+
+    //  With `as`, its fields go after the name you choose: `now.time`.
+    service clock as now {
+        hour: number
+        minute: number
+        second: number
+        day: number
+        month: number
+        year: number
+        weekday: number
+        time: text = "--:--"
+        date: text
+    }
+    //  The same one, but every second.
+    service clock.seconds as tick { second: number }
+    //  Without `as`, each field is prefixed with the service name: `audio.volume`.
+    service audio { volume: number; muted: bool }
+    service battery as bat { present: bool; percent: number; charging: bool }
+    service network as net {
+        online: bool
+        kind: none | wired | wifi
+        name: text
+        strength: number
+    }
+    service media as song { playing: bool; title: text; artist: text; album: text; player: text }
+    service window as win { title: text; class: text }
+
+    column { at: 12, 12; gap: 6
+        text "{now.time} · {now.date}" { size: 16; color: #f5f7f5 }
+        text "{tick.second}" { size: 11; color: #9ed6bd }
+        text "{win.title} ({win.class})" { size: 11; color: #f5f7f5 }
+        text "{song.title} — {song.artist} · {song.album} · {song.player}" { size: 11; color: #e8c07a; show: song.playing }
+        text "{net.name}" { size: 11; color: #f5f7f5; show: net.online and net.kind == wifi }
+        row { gap: 6
+            box { size: 40 * audio.volume, 4; color: #9ed6bd; show: not audio.muted }
+            box { size: 40 * bat.percent, 4; color: #e8c07a; show: bat.present and not bat.charging }
+            box { size: 4, 4; color: #f5f7f5; show: net.strength > 50 }
+        }
+    }
+}

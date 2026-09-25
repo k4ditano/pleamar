@@ -1,0 +1,9 @@
+// expect: ok
+language 0.1
+// `{secs, time}`: some seconds written like a clock, `1:07`.
+scene Stopwatch {
+    surface { size: 120, 40; anchor: top }
+    fact secs = 67
+    every 1s { secs = secs + 1 }
+    text "{secs, time}" { at: 60, 20; anchor: center; size: 13; color: #f5f7f5 }
+}

@@ -1,0 +1,21 @@
+// expect: ok
+language 0.1
+// `open:` takes an expression, not just a fact: the surface stays there while what
+// it holds finishes leaving. And a loose `clip` of the scene ends where
+// a named surface begins: it is another window, and it starts clean.
+scene Corner {
+    surface { size: 200, 60; anchor: top }
+    fact tucked = false
+    prop tuck = 0 ~lively
+    follow tuck = if(tucked, 1, 0)
+
+    box { from: 0, 0; size: 200, 60; color: #151616 }
+    clip box { from: 0, 0; size: 10, 10 }
+    box { from: 0, 0; size: 200, 60; color: #9ed6bd }
+
+    surface corner {
+        size: 120, 120; anchor: top_right; level: overlay
+        open: tuck > 0.01
+        ellipse { at: 105 + (1 - tuck) * 44, 15 - (1 - tuck) * 44; radius: 23; color: #151616 }
+    }
+}

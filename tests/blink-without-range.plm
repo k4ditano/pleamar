@@ -1,0 +1,9 @@
+// expect: ok
+language 0.1
+// `blink` with a single period, no `..`: always the same while.
+scene Blink {
+    surface { size: 120, 80 }
+    pose lid = 1
+    blink lid every 5.2s for 120ms
+    box { at: 60, 40; size: 8, 16 * lid; corner: 4; color: #f5f7f5 }
+}

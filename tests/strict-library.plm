@@ -1,0 +1,10 @@
+// expect: ok
+language 0.1
+// A `strict` library component that only uses what it asks for, what it declares,
+// what its library has (and what that imports) and the names that always exist.
+import "common/strict.plm"
+scene StrictOk {
+    surface { size: 200, 60 }
+    event picked ->
+    row { at: 10, 10; gap: 4; Good(picked); Good(picked, tone: #9ed6bd); Good(tone: #e8c07a, chosen: picked) }
+}

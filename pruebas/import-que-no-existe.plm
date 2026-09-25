@@ -1,3 +1,0 @@
-// espera: fallo «cannot find 'comun/no-existe.plm'»
-import "comun/no-existe.plm"
-scene X { surface { size: 10, 10 } }

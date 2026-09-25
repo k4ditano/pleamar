@@ -1,3 +1,0 @@
-// espera: fallo «a library only declares»
-import "comun/pinta.plm"
-scene X { surface { size: 10, 10 } }

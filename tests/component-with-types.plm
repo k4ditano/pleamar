@@ -1,0 +1,27 @@
+// expect: ok
+language 0.1
+// A component that says what it needs: types, default values, named
+// arguments, and an event passed to it instead of taken for granted.
+scene TypedComponents {
+    surface { size: 300, 200 }
+    let mint = #9ed6bd
+    model rows max 3 { label: text; enabled: bool = true }
+    text caption = "footer"
+    image fox = icon "firefox", 24, 24
+    event choose ->
+    event other ->
+
+    component Row(r: record, chosen: event, tone: color = mint, height: number = 30, note: text = "", badge: image = fox) {
+        size: 220, height
+        box hit { from: 0, 0; size: 220, height; corner: 7; color: tone; opacity: 20%; active: r.enabled }
+        image badge { at: 4, 4; size: 16, 16 }
+        text "{r.label}{? · {note}}" { at: 28, height / 2; anchor: left center; size: 13; color: #fff }
+        on press hit { emit chosen(r.index) }
+    }
+
+    column list { at: 10, 10; gap: 2
+        for r in rows { Row(r, choose) }
+        Row(rows.0, chosen: other, tone: #e86a9a, note: caption)
+        Row(rows.1, other, height: 40, note: "fixed")
+    }
+}

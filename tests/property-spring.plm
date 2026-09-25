@@ -1,0 +1,14 @@
+// expect: ok
+language 0.1
+// The spring belongs to the property: a rule that sends it somewhere without saying
+// with which one goes with its own, and only travels another way if it says so.
+scene OwnSpring {
+    surface { size: 200, 80 }
+    fact go = false
+    prop x = 0 ~620ms
+    on change go while go { x: 100 }
+    on change go while not go { x: 0 ~90ms }
+    box { at: 40 + x, 40; size: 20, 20; corner: 6; color: #9ed6bd }
+    zone box hit { at: 40 + x, 40; size: 20, 20 }
+    on press hit { toggle go }
+}

@@ -1,0 +1,6 @@
+// expect: error «there is already a component 'Dot', at palette.plm:4»
+import "common/palette.plm"
+scene X {
+    surface { size: 10, 10 }
+    component Dot(t) { size: 1, 1 }
+}

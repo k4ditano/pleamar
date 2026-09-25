@@ -1,9 +1,0 @@
-// espera: bien
-language 0.1
-// `{secs, time}`: unos segundos escritos como un reloj, `1:07`.
-scene Crono {
-    surface { size: 120, 40; anchor: top }
-    fact secs = 67
-    every 1s { secs = secs + 1 }
-    text "{secs, time}" { at: 60, 20; anchor: center; size: 13; color: #f5f7f5 }
-}

@@ -1,0 +1,13 @@
+// expect: ok
+// A popup as tall as its list, which is declared inside it and further down.
+scene Popup {
+    surface { size: 300, 60 }
+    fact open = false
+    box button { at: 150, 30; size: 100, 30; corner: 15; color: #333 }
+    on press button { toggle open }
+    popup menu { at: 100, 56; size: 200, 16 + items.height; open: open
+        column items { at: 8, 8
+            repeat i in 0..3 { box { size: 184, 30; corner: 6; color: #444 } }
+        }
+    }
+}

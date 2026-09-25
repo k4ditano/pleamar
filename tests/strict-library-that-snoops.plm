@@ -1,0 +1,9 @@
+// expect: error «belongs to a `strict` library and reads 'secret', which is the scene's, without asking»
+import "common/strict.plm"
+scene StrictNosy {
+    surface { size: 200, 60 }
+    let accent = #e86a9a
+    fact secret = 1
+    event leaked
+    row { at: 10, 10; Nosy }
+}

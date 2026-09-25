@@ -1,7 +1,0 @@
-// espera: bien
-// Antes era un fallo: el mismo nombre en dos enumerados con otro número. Ahora cada uno se compara con los suyos.
-scene X {
-    surface { size: 10, 10 }
-    fact mode: low | normal | critical = normal
-    fact speed: normal | fast = fast
-}

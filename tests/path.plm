@@ -1,0 +1,48 @@
+// expect: ok
+language 0.1
+// A path: broken, with curves, closed and filled, stroked, rotated and blended.
+scene Path {
+    surface { size: 300, 220 }
+    let ink = #f5f7f5
+    prop wobble = 0
+    wave wobble = 1 at 1.2
+
+    //  Open: a line with thickness.
+    path { at: 20, 20; stroke: 2; color: ink
+        move 0, 40
+        line 30, 20 + wobble * 4
+        curve 90, 30 via 60, 0
+        line 120, 10
+    }
+
+    //  Closed: it is filled, and blends with what is next to it.
+    body {
+        color: #9ed6bd; shadow: 0, 4, 10, 30%
+        path lid { at: 20, 110; blend: 8; rotate: 0.2
+            move 30, 0
+            line 60, 18
+            line 60, 52
+            line 30, 70
+            line 0, 52
+            line 0, 18
+            close
+        }
+        ellipse { at: 110, 145; radius: 14; blend: 8 }
+    }
+
+    //  In a layout it has to say how much room it takes.
+    row { at: 170, 120; gap: 8
+        path { size: 40, 40; color: #e8c07a
+            move 0, 40
+            line 20, 0
+            line 40, 40
+            close
+        }
+        path { size: 40, 40; stroke: 2; color: ink
+            move 0, 0
+            curve 40, 40 via 40, 0
+        }
+    }
+
+    on press lid { wobble: 1 }
+}

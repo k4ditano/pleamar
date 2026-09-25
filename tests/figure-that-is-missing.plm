@@ -1,0 +1,6 @@
+// expect: error «that svg cannot be read»
+scene Figure {
+    surface { size: 200, 120; anchor: center }
+    figure piece = file "common/does-not-exist.svg"
+    figure piece { at: 40, 60; size: 40, 40 }
+}

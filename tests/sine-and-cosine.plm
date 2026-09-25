@@ -1,0 +1,15 @@
+// expect: ok
+language 0.1
+// `sin` and `cos`, in degrees: what it takes to put something on an arc. Here
+// four drops go down the side of a ball, and the place of each one travels ALONG
+// THE ARC because what is animated is the angle, not the x and the y.
+scene Arc {
+    surface { size: 120, 120; anchor: top }
+    ellipse { at: 60, 60; radius: 23; color: #151616 }
+    repeat k in 0..4 {
+        prop spot.$k = 0 ~calm
+        follow spot.$k = k
+        let ang.$k = -24 + 26 * spot.$k
+        ellipse { at: 60 + 31.7 * cos(ang.$k), 60 + 31.7 * sin(ang.$k); radius: 7; color: #6fb1e6 }
+    }
+}

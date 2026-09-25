@@ -1,9 +1,0 @@
-// espera: bien
-// Una biblioteca da colores, muelles y componentes; la escena puede pisar un color.
-import "comun/paleta.plm"
-scene Imports {
-    surface { size: 200, 60 }
-    let ink = #ffeecc
-    prop x = 20 ~snappy
-    row { at: x, 20; gap: 6; Dot(ink); Dot(#9ed6bd) }
-}

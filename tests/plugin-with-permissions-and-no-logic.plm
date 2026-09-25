@@ -1,0 +1,3 @@
+// expect: error «library 'NoLogic' asks for permissions, but has no logic to use them»
+import "plugins/no-logic.plm"
+scene X { surface { size: 10, 10 } }

@@ -1,0 +1,51 @@
+// Figures: an SVG that comes in as geometry, not as a stamp.
+//
+// An image is rasterised into an atlas: it shows, but it is a sticker. It does
+// not melt into anything, it cannot be tinted by parts, it cannot be animated
+// by layers, and scaling it is pixels. A figure is the same file read as
+// **paths**, so each layer is a shape like any other: it blends, it takes rim,
+// light and shadow, and it turns around its own pivot.
+//
+// The name of a layer is the `id` of its group in the file.
+
+language 0.1
+import "common/palette.plm"
+
+scene Figures {
+    surface { size: 560, 260; anchor: center }
+    figure hat = file "pieces/hat.svg"
+
+    prop tip = 0
+    wave tip = 1 at 1.6
+    prop hot = 0 ~lively
+
+    box { from: 0, 0; size: 560, 260; corner: 18; color: coal }
+    text "the whole piece" { at: 92, 214; anchor: center; size: 10.5; color: ink; opacity: 45% }
+    text "by layers, each with its pivot" { at: 250, 214; anchor: center; size: 10.5; color: ink; opacity: 45% }
+    text "melted into a body" { at: 440, 214; anchor: center; size: 10.5; color: ink; opacity: 45% }
+
+    // ── whole, at the size you ask for ───────────────────────────
+    figure hat { at: 92, 120; size: 104, 80 }
+
+    // ── by layers: the brim turns where it rests, not at its centre ──
+    figure hat.brim   { at: 250, 120; size: 104, 80; pivot: -26, 6; rotate: tip * 7deg }
+    figure hat.crown  { at: 250, 120; size: 104, 80 }
+    figure hat.pompom { at: 250, 120; size: 104, 80; color: mint; scale: 1 }
+
+    // ── and inside a body it is one silhouette with it ───────────
+    body {
+        color: sand
+        rim: 7%
+        shadow: 0, 6, 16, 34%
+        ellipse { at: 440, 146; radius: 36 }
+        figure hat.crown { at: 440, 104; size: 78, 60; blend: 5 }
+    }
+    ellipse { at: 429, 146; radius: 4.5; color: coal }
+    ellipse { at: 451, 146; radius: 4.5; color: coal }
+
+    // ── it answers the mouse like anything else ──────────────────
+    zone box touch { at: 92, 120; size: 110, 86; cursor: pointer }
+    on enter touch { hot: 1 }
+    on leave touch { hot: 0 }
+    figure hat { at: 92, 120; size: 104 + hot * 14, 80 + hot * 11; opacity: hot }
+}

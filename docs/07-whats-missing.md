@@ -37,7 +37,7 @@ Instantiated types, with the number of times they appear across the two configur
 | `PanelWindow` | 10 | ✅ several per scene (`surface panel { … }`), each with its `open:` |
 | `Variants` | 7 | ✅ `screens: each`: one surface per monitor, each with its own state |
 | `ShellRoot` · `Scope` | 7 · 4 | ✅ `scene` |
-| `IpcHandler` | 4 | ✅ `pleamar --decir`, with `emit`, `fact`, `text`, `get` |
+| `IpcHandler` | 4 | ✅ `pleamar --say`, with `emit`, `fact`, `text`, `get` |
 | `IconImage` | 3 | ✅ `image x = icon "…"` |
 | `SystemClock` | 2 | ✅ `clock` service, and `service clock as now { … }` with no logic at all |
 | `ScreencopyView` | 2 | ⬜ seeing what is on a screen or in a window |
@@ -45,7 +45,7 @@ Instantiated types, with the number of times they appear across the two configur
 | `FloatingWindow` | 2 | ✅ `kind: window`, with its title; and what it draws is measured against the window's own size |
 | `WlSessionLock` | 1 | ⬜ session lock |
 | `LazyLoader` | 1 | ⬜ · §2 |
-| `GlobalShortcut` | 1 | 🟡 a compositor bind that calls `--decir` |
+| `GlobalShortcut` | 1 | 🟡 a compositor bind that calls `--say` |
 | `PwObjectTracker` | 1 | ✅ `audio` service (through `wpctl`, though, not native) |
 | `ClippingRectangle` | 1 | ✅ `clip` |
 
@@ -76,13 +76,13 @@ Kept in sight here, because it is the reason this exists:
 - **The renderer animates on its own.** With the logic blocked for 600 ms, 38 frames at ~17 ms; QtQuick, in the same test, a 600 ms gap. The logic cannot make the screen stutter, however badly written it is.
 - **Everything is checked at load time.** A misspelled name is an error with file, line, caret and "did you mean…?", not an `undefined` at runtime.
 - **A language that cannot hang:** no free loops, no recursion. What is declared always terminates.
-- **Plugins with a contract:** a boundary of their own under their own name, a thread of their own, and permissions **approved by whoever uses them** (`pleamar --aprobar`). In Quickshell, somebody else's piece of configuration is JavaScript with every permission the person running it has.
+- **Plugins with a contract:** a boundary of their own under their own name, a thread of their own, and permissions **approved by whoever uses them** (`pleamar --approve`). In Quickshell, somebody else's piece of configuration is JavaScript with every permission the person running it has.
 - **Shapes that blend**, with shadow, rim and light, no layers and no tricks: it is SDF.
-- **Cross-platform by design:** everything system-related behind `src/plataforma/`, and `./portable.sh` checks that it compiles for Windows and macOS. Workspaces and the active window go through standard protocols, not through one compositor.
+- **Cross-platform by design:** everything system-related behind `src/platform/`, and `./portable.sh` checks that it compiles for Windows and macOS. Workspaces and the active window go through standard protocols, not through one compositor.
 
 ## 3.1. What else came out of this
 
-**The editor knows the language**: `pleamar --lsp` reports errors while typing, with the same compiler that reads the scene, and `--resaltado` writes the syntax file from the vocabulary. Quickshell has QML's tooling, which is far older and far more complete; this is small, but it cannot fall out of date.
+**The editor knows the language**: `pleamar --lsp` reports errors while typing, with the same compiler that reads the scene, and `--highlight` writes the syntax file from the vocabulary. Quickshell has QML's tooling, which is far older and far more complete; this is small, but it cannot fall out of date.
 
 **A list of five thousand rows costs what sixteen cost**, and it is written in the scene: `content:` states its real size, `for … from` numbers the copies from the right place, and the scroll offset is a property a rule can take wherever it wants. In Quickshell that is `ListView`, which virtualizes on its own but brings its whole instantiation thread along with it.
 

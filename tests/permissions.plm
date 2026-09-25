@@ -1,0 +1,5 @@
+// expect: error «Did you mean 'services'?»
+scene Perms {
+    surface { size: 300, 60 }
+    permissions { run: "date"; service: "audio" }
+}

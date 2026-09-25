@@ -1,3 +1,0 @@
-// espera: fallo «library 'NoLogic' asks for permissions, but has no logic to use them»
-import "plugins/sin-logica.plm"
-scene X { surface { size: 10, 10 } }

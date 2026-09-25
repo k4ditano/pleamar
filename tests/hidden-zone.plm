@@ -1,0 +1,15 @@
+// expect: ok
+language 0.1
+// What is hidden does not catch the mouse: the zone of the list on the other page
+// cannot steal the click from what is actually shown.
+scene Hidden {
+    surface { size: 200, 120 }
+    fact open = false
+    box card { at: 100, 40; size: 160, 40; corner: 10; color: #202021 }
+    group {
+        show: open
+        box cover { at: 100, 40; size: 160, 40; corner: 10; color: #9ed6bd }
+        on press cover { open = false }
+    }
+    on press card { open = true }
+}

@@ -1,0 +1,7 @@
+// expect: error «does not report 'hours'»
+language 0.1
+scene Wrong {
+    surface { size: 100, 40 }
+    service clock as now { hours: number }
+    text "{now.hours}" { at: 4, 4; size: 12; color: #f5f7f5 }
+}

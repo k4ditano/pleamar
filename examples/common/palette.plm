@@ -1,0 +1,9 @@
+// The house colors. A scene that wants another tone declares it itself, with the
+// same name, after importing: its own wins.
+
+library Palette {
+    let ink  = #f5f7f5        // what is read
+    let mint = #9ed6bd        // the accent
+    let sand = #e8c07a        // the second accent: notices, the «there is more» chip
+    let coal = #151616        // the background of pills and panels
+}
