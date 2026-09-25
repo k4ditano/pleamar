@@ -58,6 +58,9 @@ pub struct DrawList {
     pub particle_marks: Vec<(u32, u32)>,
     /// Some particle is still alive: the scene must not rest.
     pub particles_alive: bool,
+    /// When an image that moves changes frame next, in the render's seconds:
+    /// the render wakes up then, and not every frame for a GIF at 10 per second.
+    pub wake_at: Option<f32>,
     /// A cut shadow and a cut shape, waiting to be reported.
     shadow: Pending,
     clipping: Pending,
@@ -636,6 +639,7 @@ impl DrawList {
         self.offscreen_groups.clear();
         self.particle_marks.clear();
         self.particles_alive = false;
+        self.wake_at = None;
         self.glass_regions.clear();
         let mut clips: Vec<(usize, [f32; 4])> = Vec::new();
         // Each entry is already the product of all those above it.
@@ -951,9 +955,14 @@ impl DrawList {
                 }
                 Instr::Image { image, target, alpha, tint } => {
                     let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
-                    let Some(slot) = tip.image(image.0 as usize, texts) else { continue };
+                    // What is not seen does not move either: no frame, no waking up.
                     if a <= 0.001 {
                         continue;
+                    }
+                    let (slot, next) = tip.frame(image.0 as usize, texts, self.clock, self.reduced_motion);
+                    let Some(slot) = slot else { continue };
+                    if let Some(t) = next {
+                        self.wake_at = Some(self.wake_at.map_or(t, |w| w.min(t)));
                     }
                     let d = [target.0.eval(c), target.1.eval(c), target.2.eval(c), target.3.eval(c)];
                     let rgb = tint.as_ref().map(&color);

@@ -1297,6 +1297,10 @@ pub fn run(
         draw.compose(to_paint, c, &texts, &mut letters, view, size, op.hud);
         // Particles carry themselves: while one is alive, the scene does not rest.
         alive |= draw.particles_alive;
+        // An image that moves: wake up when it changes frame.
+        if let Some(t) = draw.wake_at {
+            appointments.push(start + Duration::from_secs_f32(t.max(t_total + 0.001)));
+        }
         cycle.compose_ms += reading.elapsed().as_secs_f32() * 1000.0;
         let Some(g) = &mut gpu else {
             // Nowhere yet: time runs all the same, but unhurried.

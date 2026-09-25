@@ -14,7 +14,7 @@ cosmic-text = { version = "0.19.0", default-features = false, features = ["std",
 # The scenes' own shaders are read and checked with the same compiler wgpu
 # uses, already in the tree: a mistake is reported with its line, never a crash.
 naga = { version = "30", features = ["wgsl-in"] }
-image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 mlua = { version = "0.12", features = ["luau", "send"], optional = true }
 pollster = "1.0.1"
 resvg = { version = "0.48.1", default-features = false }

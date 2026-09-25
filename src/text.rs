@@ -227,8 +227,9 @@ impl Typesetter {
 
     /// A scene's images, at the logical size they ask for times the scale. An
     /// SVG is painted at that exact size; a PNG is scaled down if it is too big.
-    fn load_images(&mut self, images: &[(ImageSource, (u32, u32))]) -> Vec<Option<AtlasSlot>> {
-        images
+    fn load_images(&mut self, images: &[(ImageSource, (u32, u32))]) -> (Vec<Option<AtlasSlot>>, Vec<Option<Animation>>) {
+        let mut animations = Vec::with_capacity(images.len());
+        let slots = images
             .iter()
             .map(|(source, (w, h))| {
                 let px = (((*w as f32) * self.scale).round().max(1.0) as u32, ((*h as f32) * self.scale).round().max(1.0) as u32);
@@ -238,6 +239,24 @@ impl Typesetter {
                     // It is requested once it is known what the text says: `live_image`.
                     ImageSource::Live(_) => return None,
                 };
+                // A file that moves —a GIF, an animated PNG or WebP—: each frame to
+                // the atlas, with the moment it ends.
+                if let Some(frames) = path.as_ref().and_then(|r| animation_frames(r, px)) {
+                    let mut slots = Vec::new();
+                    let mut ends = Vec::new();
+                    let mut t = 0.0;
+                    for (rgba, delay) in frames {
+                        let Some(slot) = self.shelves.request(px.0, px.1) else { break };
+                        self.pending_upload.push((slot, rgba));
+                        t += delay;
+                        slots.push(slot);
+                        ends.push(t);
+                    }
+                    let first = slots.first().copied();
+                    animations.push((slots.len() > 1).then_some(Animation { frames: slots, ends }));
+                    return first;
+                }
+                animations.push(None);
                 let slot = path.as_ref().and_then(|r| rasterize_image(r, px)).and_then(|rgba| {
                     let slot = self.shelves.request(px.0, px.1)?;
                     self.pending_upload.push((slot, rgba));
@@ -248,7 +267,8 @@ impl Typesetter {
                 }
                 slot
             })
-            .collect()
+            .collect();
+        (slots, animations)
     }
 
     /// An image some data has asked for: an icon by its name, or a path.
@@ -275,7 +295,7 @@ enum Job {
 /// What the workshop hands back, with whatever it painted along the way.
 pub enum Delivery {
     Layout { key: LayoutKey, layout: Arc<Layout>, generation: u32 },
-    Images { slots: Vec<Option<AtlasSlot>>, generation: u32 },
+    Images { slots: Vec<Option<AtlasSlot>>, animations: Vec<Option<Animation>>, generation: u32 },
     Live { name: String, size: (u32, u32), slot: Option<AtlasSlot>, generation: u32 },
 }
 
@@ -293,6 +313,8 @@ pub struct Texts {
     /// seen while the new one arrives, instead of a gap.
     last: HashMap<usize, Arc<Layout>>,
     images: Vec<Option<AtlasSlot>>,
+    /// The ones that move: their frames and when each one ends.
+    animations: Vec<Option<Animation>>,
     /// Where each image of the scene comes from, to know which ones depend on a text.
     sources: Vec<(ImageSource, (u32, u32))>,
     /// The ones the data have asked for, by name and size. `None`: it was looked for and does not exist.
@@ -324,7 +346,10 @@ impl Texts {
                             let layout = Arc::new(t.lay_out(&key));
                             Delivery::Layout { key, layout, generation }
                         }
-                        Job::Images(list, generation) => Delivery::Images { slots: t.load_images(&list), generation },
+                        Job::Images(list, generation) => {
+                            let (slots, animations) = t.load_images(&list);
+                            Delivery::Images { slots, animations, generation }
+                        }
                         Job::Live(name, size, generation) => {
                             let slot = t.load_live(&name, size);
                             Delivery::Live { name, size, slot, generation }
@@ -338,7 +363,7 @@ impl Texts {
                 }
             })
             .unwrap();
-        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), last_live: HashMap::new(), pending_upload: Vec::new(), generation: 0, scale: 1.0 }
+        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), last_live: HashMap::new(), pending_upload: Vec::new(), generation: 0, scale: 1.0 }
     }
 
     pub fn scale(&self) -> f32 {
@@ -354,6 +379,7 @@ impl Texts {
         self.requested.clear();
         self.last.clear();
         self.images.clear();
+        self.animations.clear();
         self.sources = images.to_vec();
         self.live.clear();
         self.live_requested.clear();
@@ -381,7 +407,7 @@ impl Texts {
                 }
                 self.layouts.insert(key, layout);
             }
-            Delivery::Images { slots, .. } => self.images = slots,
+            Delivery::Images { slots, animations, .. } => (self.images, self.animations) = (slots, animations),
             Delivery::Live { name, size, slot, .. } => {
                 self.live_requested.remove(&(name.clone(), size));
                 self.live.insert((name, size), slot);
@@ -400,6 +426,21 @@ impl Texts {
             let _ = self.to_workshop.send(Job::Layout(key, self.generation));
         }
         self.last.get(&place).cloned()
+    }
+
+    /// Image number `k` at `clock` seconds: if it moves, the frame of that
+    /// moment, and when it changes to the next one (to wake up then, and not
+    /// before). Looping forever; with `still`, the first frame and no change.
+    pub fn frame(&mut self, k: usize, texts: &[String], clock: f32, still: bool) -> (Option<AtlasSlot>, Option<f32>) {
+        let Some(Some(a)) = self.animations.get(k) else { return (self.image(k, texts), None) };
+        if still {
+            return (a.frames.first().copied(), None);
+        }
+        let total = *a.ends.last().unwrap_or(&1.0);
+        let lap = (clock / total).floor();
+        let t = clock - lap * total;
+        let i = a.ends.iter().position(|e| t < *e).unwrap_or(a.ends.len() - 1);
+        (Some(a.frames[i]), Some(lap * total + a.ends[i]))
     }
 
     /// Image number `k` of the scene. If it comes from a live text, the one that
@@ -426,6 +467,80 @@ impl Texts {
     }
 }
 
+/// An image that moves: its frames in the atlas, and the moment (seconds
+/// into a lap) each one ends.
+#[derive(Clone)]
+pub struct Animation {
+    frames: Vec<AtlasSlot>,
+    ends: Vec<f32>,
+}
+
+/// How much of the atlas one animation can take, in pixels: a quarter of it.
+/// One that asks for more keeps every other frame —or one in three…—, each
+/// lasting what the ones it stands for lasted, so it runs at the same pace.
+const ANIMATION_BUDGET: u64 = (ATLAS_SIZE as u64 * ATLAS_SIZE as u64) / 4;
+
+/// A GIF, an animated PNG or an animated WebP, frame by frame, fitted like
+/// `rasterize_image` and premultiplied, each with how long it lasts. `None`
+/// for anything else, or for one with a single frame.
+fn animation_frames(path: &std::path::Path, px: (u32, u32)) -> Option<Vec<(Vec<u8>, f32)>> {
+    use image::AnimationDecoder;
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    let data = std::fs::read(path).ok()?;
+    let reader = std::io::Cursor::new(&data);
+    let frames: Vec<image::Frame> = match ext.as_str() {
+        "gif" => image::codecs::gif::GifDecoder::new(reader).ok()?.into_frames().collect_frames().ok()?,
+        "webp" => {
+            let d = image::codecs::webp::WebPDecoder::new(reader).ok()?;
+            if !d.has_animation() {
+                return None;
+            }
+            d.into_frames().collect_frames().ok()?
+        }
+        "png" | "apng" => {
+            let d = image::codecs::png::PngDecoder::new(reader).ok()?;
+            if !d.is_apng().ok()? {
+                return None;
+            }
+            d.apng().ok()?.into_frames().collect_frames().ok()?
+        }
+        _ => return None,
+    };
+    if frames.len() < 2 {
+        return None;
+    }
+    let per_frame = px.0 as u64 * px.1 as u64;
+    let step = ((per_frame * frames.len() as u64).div_ceil(ANIMATION_BUDGET)).max(1) as usize;
+    if step > 1 {
+        eprintln!("image  · {}: {} frames do not fit at {}×{}: one in {step} is kept", path.display(), frames.len(), px.0, px.1);
+    }
+    let mut out = Vec::new();
+    for chunk in frames.chunks(step) {
+        // The chunk's first frame, lasting what the whole chunk lasted.
+        let delay: f32 = chunk.iter().map(|f| {
+            let (n, d) = f.delay().numer_denom_ms();
+            let ms = n as f32 / d.max(1) as f32;
+            // Browsers take 0 and 10 ms as «as fast as possible», which means 100 ms.
+            if ms <= 10.0 { 0.1 } else { ms / 1000.0 }
+        }).sum();
+        out.push((fit(chunk[0].buffer().clone(), px), delay));
+    }
+    Some(out)
+}
+
+/// An RGBA image fitted into `px` without distorting, centred, premultiplied.
+fn fit(img: image::RgbaImage, px: (u32, u32)) -> Vec<u8> {
+    let k = (px.0 as f32 / img.width() as f32).min(px.1 as f32 / img.height() as f32);
+    let (w, h) = (((img.width() as f32 * k).round() as u32).clamp(1, px.0), ((img.height() as f32 * k).round() as u32).clamp(1, px.1));
+    let reduced = image::imageops::resize(&img, w, h, image::imageops::FilterType::Triangle);
+    let mut canvas = image::RgbaImage::new(px.0, px.1);
+    image::imageops::overlay(&mut canvas, &reduced, ((px.0 - w) / 2) as i64, ((px.1 - h) / 2) as i64);
+    canvas.pixels().flat_map(|p| {
+        let a = p[3] as u16;
+        [(p[0] as u16 * a / 255) as u8, (p[1] as u16 * a / 255) as u8, (p[2] as u16 * a / 255) as u8, p[3]]
+    }).collect()
+}
+
 /// Premultiplied RGBA, at exactly `px`, fitted without distorting.
 fn rasterize_image(path: &std::path::Path, px: (u32, u32)) -> Option<Vec<u8>> {
     let data = std::fs::read(path).ok()?;
@@ -439,14 +554,5 @@ fn rasterize_image(path: &std::path::Path, px: (u32, u32)) -> Option<Vec<u8>> {
         resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(k, k).post_translate(dx, dy), &mut canvas.as_mut());
         return Some(canvas.take()); // tiny-skia already premultiplies
     }
-    let img = image::load_from_memory(&data).ok()?.to_rgba8();
-    let k = (px.0 as f32 / img.width() as f32).min(px.1 as f32 / img.height() as f32);
-    let (w, h) = (((img.width() as f32 * k).round() as u32).clamp(1, px.0), ((img.height() as f32 * k).round() as u32).clamp(1, px.1));
-    let reduced = image::imageops::resize(&img, w, h, image::imageops::FilterType::Triangle);
-    let mut img = image::RgbaImage::new(px.0, px.1);
-    image::imageops::overlay(&mut img, &reduced, ((px.0 - w) / 2) as i64, ((px.1 - h) / 2) as i64);
-    Some(img.pixels().flat_map(|p| {
-        let a = p[3] as u16;
-        [(p[0] as u16 * a / 255) as u8, (p[1] as u16 * a / 255) as u8, (p[2] as u16 * a / 255) as u8, p[3]]
-    }).collect())
+    Some(fit(image::load_from_memory(&data).ok()?.to_rgba8(), px))
 }

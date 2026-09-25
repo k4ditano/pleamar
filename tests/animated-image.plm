@@ -1,0 +1,8 @@
+// expect: ok
+// An image that moves: a GIF plays by itself, looping, waking the render only
+// when it changes frame.
+scene AnimatedImage {
+    surface { size: 200, 120; anchor: top }
+    image spin = file "../examples/pieces/spin.gif", 100, 100
+    image spin { at: 50, 10; size: 100, 100 }
+}
