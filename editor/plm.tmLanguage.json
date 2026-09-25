@@ -33,7 +33,7 @@
       "name": "entity.other.attribute-name.plm"
     },
     {
-      "match": "\\b(surface|permissions|model|service|spring|prop|pose|fact|event|text|image|figure|measure|let|zone|body|ellipse|box|arc|line|path|input|clip|group|popup|component|children|repeat|for|row|column|space|between|layer|on|every|blink|wave|spin|follow|look|gesture|posture|translations|scene|library|import|language)\\b",
+      "match": "\\b(surface|permissions|model|service|spring|prop|pose|fact|event|text|image|figure|shader|measure|let|zone|body|ellipse|box|arc|line|path|input|clip|group|popup|component|children|repeat|for|row|column|space|between|layer|on|every|blink|wave|spin|follow|look|gesture|posture|translations|scene|library|import|language)\\b",
       "name": "keyword.control.plm"
     },
     {
@@ -41,7 +41,7 @@
       "name": "keyword.other.plm"
     },
     {
-      "match": "\\b(min|max|abs|floor|ceil|sin|cos|clamp|smooth|mix|if|vel|upper|lower)\\b",
+      "match": "\\b(min|max|abs|floor|ceil|sin|cos|clamp|smooth|mix|if|vel|sqrt|pow|fract|mod|sign|round|exp|log|tan|atan2|length|noise|random|upper|lower)\\b",
       "name": "support.function.plm"
     },
     {
@@ -57,7 +57,7 @@
       "name": "storage.type.plm"
     },
     {
-      "match": "\\b(true|false|lively|calm|quick|slow|gentle|pose|linear|in_quad|out_quad|in_cubic|out_cubic|in_out_sine|out_back)\\b",
+      "match": "\\b(true|false|lively|calm|quick|slow|gentle|pose|linear|in_quad|out_quad|in_cubic|out_cubic|in_out_sine|out_back|bezier)\\b",
       "name": "constant.language.plm"
     },
     {

@@ -1,0 +1,5 @@
+// expect: error «it is missing `fn shade(s: Shader) -> vec4<f32>`»
+scene X {
+    surface { size: 100, 100 }
+    shader bad = file "shaders/no-shade.wgsl"
+}

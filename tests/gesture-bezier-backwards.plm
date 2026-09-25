@@ -1,0 +1,8 @@
+// expect: error «time does not go back»
+scene X {
+    surface { size: 100, 100 }
+    pose y = 0
+    gesture hop reflex {
+        200ms bezier(1.4, 0, 0.6, 1) { y: -20 }
+    }
+}

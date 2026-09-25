@@ -1,0 +1,24 @@
+// Three of a scene's own shaders: an aurora that never stops, rings that follow
+// the pointer, and a haze that bends whatever is behind the surface.
+// `pleamar --scene examples/effects.plm`
+scene Effects {
+    surface { size: 760, 260; anchor: top; margin: 40 }
+    shader aurora = file "shaders/aurora.wgsl"
+    shader ripple = file "shaders/ripple.wgsl"
+    shader haze = file "shaders/haze.wgsl"
+
+    let ink = #f5f7f5
+    prop bright = 0 ~slow
+    follow bright = 1
+
+    body {
+        color: #0b0f14
+        box { at: 270, 130; size: 520, 240; corner: 28 }
+    }
+    shader aurora { at: 30, 30; size: 300, 200; corner: 20; values: bright; colors: #5ef2b0, #7a6cff }
+    text "aurora" { at: 180, 215; anchor: center; size: 12; color: ink; opacity: 70% }
+    shader ripple { at: 350, 30; size: 180, 200; corner: 20; colors: #1d6fa5 }
+    text "ripple" { at: 440, 215; anchor: center; size: 12; color: ink; opacity: 70% }
+    shader haze { at: 550, 30; size: 180, 200; corner: 20; values: 1; colors: #202830 }
+    text "haze" { at: 640, 215; anchor: center; size: 12; color: ink; opacity: 70% }
+}

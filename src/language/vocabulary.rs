@@ -6,7 +6,7 @@
 
 /// What a statement can start with (besides the name of a component).
 pub const STATEMENTS: &[&str] = &[
-    "surface", "permissions", "model", "service", "spring", "prop", "pose", "fact", "event", "text", "image", "figure", "measure", "let", "zone",
+    "surface", "permissions", "model", "service", "spring", "prop", "pose", "fact", "event", "text", "image", "figure", "shader", "measure", "let", "zone",
     "body", "ellipse", "box", "arc", "line", "path", "input", "clip", "group", "popup",
     "component", "children", "repeat", "for", "row", "column", "space", "between",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
@@ -14,7 +14,7 @@ pub const STATEMENTS: &[&str] = &[
 ];
 
 /// What a library can declare.
-pub const LIBRARY_STATEMENTS: &[&str] = &["let", "spring", "component", "permissions", "fact", "text", "model", "service", "event", "image", "figure", "prop", "pose", "gesture", "posture", "layer", "translations"];
+pub const LIBRARY_STATEMENTS: &[&str] = &["let", "spring", "component", "permissions", "fact", "text", "model", "service", "event", "image", "figure", "shader", "prop", "pose", "gesture", "posture", "layer", "translations"];
 
 /// Which properties each element accepts. `shape` are the ones common to all shapes.
 pub const PROPERTIES: &[(&str, &[&str])] = &[
@@ -30,6 +30,7 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("text", &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show", "grow"]),
     ("image", &["at", "size", "opacity", "tint", "show", "grow"]),
     ("figure", &["at", "size", "scale", "rotate", "pivot", "color", "opacity", "blend", "stroke", "show", "grow"]),
+    ("shader", &["at", "size", "corner", "opacity", "show", "values", "colors", "grow"]),
     ("input", &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "secret", "show"]),
     ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show", "grow"]),
     ("popup", &["at", "size", "open"]),
@@ -37,14 +38,14 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "glass", "lens", "corner", "show", "opacity", "cursor", "view", "step", "content", "wrap", "size", "grow"]),
 ];
 
-pub const FUNCTIONS: &[&str] = &["min", "max", "abs", "floor", "ceil", "sin", "cos", "clamp", "smooth", "mix", "if", "vel"];
+pub const FUNCTIONS: &[&str] = &["min", "max", "abs", "floor", "ceil", "sin", "cos", "clamp", "smooth", "mix", "if", "vel", "sqrt", "pow", "fract", "mod", "sign", "round", "exp", "log", "tan", "atan2", "length", "noise", "random"];
 /// Inside a hole of a text.
 pub const TEXT_FUNCTIONS: &[&str] = &["upper", "lower"];
 /// What can go after `on`. Any other word is the name of an event.
 pub const TRIGGERS: &[&str] = &["press", "release", "scroll", "drag", "hold", "enter", "leave", "hover", "away", "idle", "key", "submit", "focus", "blur", "drop", "change", "still"];
 /// The effects with a word of their own. Also: `prop: value ~spring` and `fact = expr`.
 pub const EFFECTS: &[&str] = &["toggle", "emit", "impulse", "play", "focus", "blur"];
-pub const CURVES: &[&str] = &["linear", "in_quad", "out_quad", "in_cubic", "out_cubic", "in_out_sine", "out_back"];
+pub const CURVES: &[&str] = &["linear", "in_quad", "out_quad", "in_cubic", "out_cubic", "in_out_sine", "out_back", "bezier"];
 /// What a keyframe can carry besides a curve.
 pub const KEYFRAME_OPTIONS: &[&str] = &["hold", "emit"];
 pub const CLASSES: &[&str] = &["ambient", "reflex", "asked", "state"];
@@ -68,6 +69,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("text", "Declares a live text (`text title = \"…\"`) or paints one (`text title { size: 14 }`). In a painted one, `\"{a} · {b}\"` has holes."),
     ("image", "`image fox = icon \"firefox\", 48, 48` — an image by icon name, by file, or from a text that says which."),
     ("figure", "`figure hat = file \"hat.svg\"` — an svg as geometry: its layers are paths, by the `id` of each one."),
+    ("shader", "Declares one of the scene's own shaders (`shader aurora = file \"aurora.wgsl\"`, with `fn shade(s: Shader) -> vec4<f32>`) or paints a box with it (`shader aurora { at: 360, 60; size: 400, 120; values: glow; colors: mint }`)."),
     ("measure", "`measure label` — creates `label.width` and `label.height`, filled by the text that carries `measure: label`."),
     ("let", "`let panel.x = orb.x + 62` — a name for an expression, or for a colour. It has to come before whoever uses it."),
     ("zone", "`zone box whole { at: …; size: … }` — a shape that is not painted: it only catches the mouse."),

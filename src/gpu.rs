@@ -751,6 +751,44 @@ impl DrawList {
                     let rgb = tint.as_ref().map(&color);
                     self.sprite(d, slot.uv(), a, rgb, false, affine, &clips);
                 }
+                Instr::Shader { shader, target, corner, alpha, values, colors, time, pointer, behind } => {
+                    let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
+                    if a <= 0.001 {
+                        continue;
+                    }
+                    let d = [target.0.eval(c), target.1.eval(c), target.2.eval(c).max(0.0), target.3.eval(c).max(0.0)];
+                    let b = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
+                    // What is behind it is captured like a lens's: its box.
+                    if *behind {
+                        self.glass_regions.push((b, true));
+                    }
+                    let mut v = [0f32; 8];
+                    for (slot, e) in v.iter_mut().zip(values) {
+                        *slot = e.eval(c);
+                    }
+                    let tones: Vec<[f32; 3]> = colors.iter().map(&color).collect();
+                    let t = time.as_ref().map_or(0.0, |e| e.eval(c));
+                    let (px, py) = pointer.as_ref().map_or((-1e6, -1e6), |(x, y)| (x.eval(c), y.eval(c)));
+                    let over = (px >= d[0] && px <= d[0] + d[2] && py >= d[1] && py <= d[1] + d[3]) as u8 as f32;
+                    let corner = corner.eval(c).max(0.0);
+                    self.element(3.0, [b[0] - 1.0, b[1] - 1.0, b[2] + 1.0, b[3] + 1.0], &clips, |e| {
+                        affine.encode(&mut e[44..52]);
+                        e[1] = *shader as f32;
+                        e[3] = a;
+                        if let Some(k) = tones.first() {
+                            e[8..11].copy_from_slice(k);
+                            e[11] = 1.0;
+                        }
+                        if let Some(k) = tones.get(1) {
+                            e[12..15].copy_from_slice(k);
+                            e[15] = 1.0;
+                        }
+                        e[16..24].copy_from_slice(&v);
+                        e[24..28].copy_from_slice(&[t, px, py, over]);
+                        e[36..40].copy_from_slice(&d);
+                        e[40] = corner;
+                    });
+                }
                 Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret } => {
                     let k = text.0 as usize;
                     let real = texts.get(k).map_or("", String::as_str);
@@ -991,6 +1029,15 @@ pub struct Sheet {
     pub painted: Option<([f32; 4], f32)>,
 }
 
+/// A moment far enough back that «the last capture» never counts against the
+/// first one. Starting at «now», a sheet that painted once and then stayed still
+/// —a glass or a shader that does not move— skipped its first capture for being
+/// too soon after the last, and never saw what was behind it.
+fn long_ago() -> std::time::Instant {
+    let now = std::time::Instant::now();
+    now.checked_sub(std::time::Duration::from_secs(10)).unwrap_or(now)
+}
+
 pub struct Gpu {
     /// What unmixes and frosts what is behind the glass.
     lens: crate::lens::Pipelines,
@@ -1005,6 +1052,9 @@ pub struct Gpu {
     alpha: wgpu::CompositeAlphaMode,
     non_blocking: Option<wgpu::PresentMode>,
     pipeline: wgpu::RenderPipeline,
+    pipeline_layout: wgpu::PipelineLayout,
+    /// The scene's own shaders, as they went into `pipeline`.
+    user_code: String,
     shapes_buffer: wgpu::Buffer,
     points_buffer: wgpu::Buffer,
     stops_buffer: wgpu::Buffer,
@@ -1071,30 +1121,12 @@ impl Gpu {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shape"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shape.wgsl").into()),
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("elements"),
-            layout: None,
-            vertex: wgpu::VertexState { module: &module, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        // The layout is written out, not taken from the shader: that way a
+        // scene that brings its own shaders gets a new pipeline with the same
+        // layout, and every bind group already made keeps being valid for it.
+        let pipeline_layout = Self::pipeline_layout(&device);
+        let base = crate::shaders::generate(&[]);
+        let pipeline = Self::build_pipeline(&device, &pipeline_layout, format, &base).expect("pleamar's own shader does not compile");
         // A single atlas for glyphs and images. 2048² in RGBA is 16 MB.
         let atlas = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("atlas"),
@@ -1123,7 +1155,85 @@ impl Gpu {
             view_formats: &[],
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
-        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
+        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
+    }
+
+    /// The four groups the shapes shader reads, written out. See `shape.wgsl`.
+    fn pipeline_layout(d: &wgpu::Device) -> wgpu::PipelineLayout {
+        let both = wgpu::ShaderStages::VERTEX_FRAGMENT;
+        let storage = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: both,
+            ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+            count: None,
+        };
+        let texture = |binding, view_dimension| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: both,
+            ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension, multisampled: false },
+            count: None,
+        };
+        let sampler = |binding| wgpu::BindGroupLayoutEntry { binding, visibility: both, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None };
+        let group = |label, entries: &[wgpu::BindGroupLayoutEntry]| d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries });
+        let scene = group("scene", &[storage(0), storage(1), texture(2, wgpu::TextureViewDimension::D2), sampler(3), storage(4), storage(5)]);
+        let layers = group("layers", &[texture(0, wgpu::TextureViewDimension::D2Array)]);
+        let uniforms = group("surface", &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: both,
+            ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+            count: None,
+        }]);
+        let backdrop = group("backdrop", &[texture(0, wgpu::TextureViewDimension::D2), texture(1, wgpu::TextureViewDimension::D2), sampler(2)]);
+        d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("elements"), bind_group_layouts: &[Some(&scene), Some(&layers), Some(&uniforms), Some(&backdrop)], immediate_size: 0 })
+    }
+
+    /// pleamar's shader with the scene's own ones added. An error comes back as
+    /// text instead of bringing the program down: they were checked when the
+    /// scene was read, but a driver can still say no.
+    fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str) -> Result<wgpu::RenderPipeline, String> {
+        let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
+        let source = format!("{}{extra}", include_str!("shape.wgsl"));
+        let module = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape"), source: wgpu::ShaderSource::Wgsl(source.into()) });
+        let pipeline = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("elements"),
+            layout: Some(layout),
+            vertex: wgpu::VertexState { module: &module, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        match pollster::block_on(scope.pop()) {
+            None => Ok(pipeline),
+            Some(e) => Err(e.to_string()),
+        }
+    }
+
+    /// The scene's own shaders: the pipeline is only remade if they changed.
+    /// If the driver refuses them, pleamar's own goes on and the scene's shaders
+    /// paint nothing, which is said once.
+    pub fn set_shaders(&mut self, shaders: &[crate::shaders::UserShader]) {
+        let code = crate::shaders::generate(shaders);
+        if code == self.user_code {
+            return;
+        }
+        match Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &code) {
+            Ok(p) => self.pipeline = p,
+            Err(e) => {
+                eprintln!("shader · the scene's own shaders could not be built, and they are not painted: {e}");
+                if let Ok(p) = Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &crate::shaders::generate(&[])) {
+                    self.pipeline = p;
+                }
+            }
+        }
+        self.user_code = code;
     }
 
     fn build_backdrop_group(d: &wgpu::Device, pipeline: &wgpu::RenderPipeline, sharp: &wgpu::TextureView, blurred: &wgpu::TextureView, sampler: &wgpu::Sampler) -> wgpu::BindGroup {
@@ -1226,7 +1336,7 @@ impl Gpu {
         let (layer_views, layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
         let mut l = Sheet {
             id: n.id, name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, cleared: false, view: n.view,
-            surface: n.surface, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: std::time::Instant::now(), painted_now: false, painted: None,
+            surface: n.surface, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: long_ago(), painted_now: false, painted: None,
         };
         self.reconfigure(&mut l, size);
         l

@@ -51,7 +51,7 @@ inner        = property | gesture | layer ;                                     
 statement    = declaration | drawing | structure | layer | rule | behaviour | gesture ;
 
 declaration  = surface | permissions | model | spring | property | fact | event
-             | live_text | image_decl | figure_decl | measure | let | zone | translations ;
+             | live_text | image_decl | figure_decl | shader_decl | measure | let | zone | translations ;
 translations = "translations" name "{" { text "=" text end } "}" ;            (* name: a language code, `es`, `pt_br` *)
 surface      = "surface" [ name ] "{" { element_prop | statement } "}" ;   (* named: one of several, with its own things inside *)
 permissions  = "permissions" "{" { ( "run" | "services" ) ":" text { "," text } end } "}" ;
@@ -69,12 +69,13 @@ event        = "event" name [ "->" ] ;
 live_text    = "text" name "=" text ;
 image_decl   = "image" name "=" ( "icon" text | "file" text | "from" name ) "," number "," number ;
 figure_decl  = "figure" name "=" "file" text ;                                  (* an svg, by its layers *)
+shader_decl  = "shader" name "=" "file" text ;                                  (* WGSL with `fn shade(s: Shader) -> vec4<f32>`: §8.1 *)
 measure      = "measure" name ;
 let          = "let" name "=" ( expr | color ) ;
 zone         = "zone" shape ;
 spring_ref   = name | "spring" "(" number "," number ")" | duration ;   (* ~620ms: gets there in that long *)
 
-drawing      = body | shape | text | image | figure | field | clip | group | popup ;
+drawing      = body | shape | text | image | figure | shader | field | clip | group | popup ;
 body         = "body" "{" { element_prop | shape } "}" ;
 shape        = ( "ellipse" | "box" | "arc" | "line" ) [ name ] "{" { element_prop } "}"
              | "path" [ name ] "{" { element_prop | step } "}" ;
@@ -82,6 +83,7 @@ step         = "move" point | "line" point | "curve" point "via" point | "close"
 text         = "text" ( text | name | "number" "(" expr [ "," number [ "," text ] ] ")" ) "{" { element_prop } "}" ;
 image        = "image" name "{" { element_prop } "}" ;
 figure       = "figure" name [ "." name ] "{" { element_prop } "}" ;            (* whole, or one layer *)
+shader       = "shader" name "{" { element_prop } "}" ;
 field        = "input" name "{" { element_prop } "}" ;
 clip         = "clip" [ "inset" number ] shape ;
 group        = "group" "{" { element_prop | statement } "}" ;
@@ -132,7 +134,8 @@ behaviour    = "blink" name "every" duration [ ".." duration ] "for" duration
 gesture      = "gesture" name ( "ambient" | "reflex" | "asked" | "state" ) "{" { frame } "}"
              | "posture" name "while" expr "{" { frame } "}" ;
 frame        = duration { curve | "hold" duration | "emit" name } [ "{" { name ":" expr end } "}" ] ;
-curve        = "linear" | "in_quad" | "out_quad" | "in_cubic" | "out_cubic" | "in_out_sine" | "out_back" ;
+curve        = "linear" | "in_quad" | "out_quad" | "in_cubic" | "out_cubic" | "in_out_sine" | "out_back"
+             | "bezier" "(" number "," number "," number "," number ")" ;   (* CSS's cubic-bezier *)
 
 element_prop = name ":" value { "," value } end ;       (* which ones are valid, depending on the element: §8 *)
 point        = expr "," expr ;
@@ -205,6 +208,7 @@ A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `po
 | `text notice.title = "Meeting"` | A live text: the logic changes it, or an `input` |
 | `image fox = icon "firefox", 48, 48` | An image, and the largest logical size it is painted at. `icon "name"`, `file "path"`, or `from some_text`: whichever that text says (an icon name, or a path if it starts with `/`) |
 | `figure hat = file "hat.svg"` | An svg **as geometry**: its layers become paths, each one named by the `id` of its group in the file. The path is relative to the file that writes it, so a library takes its pieces with it |
+| `shader aurora = file "aurora.wgsl"` | One of the scene's **own shaders**: a function in WGSL that paints a box, point by point. It is read and checked when the scene is read, and touching the file reloads it, like an svg. How it is written, in §8.1 |
 | `measure label` | Creates `label.width` and `label.height`, filled by the text that carries `measure: label` |
 | `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | A name for an expression, or for a color. A small one is substituted where it is named; **a big one is computed once a frame** and what is named is that, so a chain of them —each naming the one before— costs a sum and not a product |
 | `spring bouncy = 170, 12` | A spring of one's own: stiffness, damping. From the house: `lively`, `calm`, `quick`, `slow`, `gentle`, `pose`. Inline: `~spring(170, 12)`, or **`~620ms`**: the spring that gets there in that long without overshooting |
@@ -387,6 +391,15 @@ From weakest to strongest: `or` · `and` · `not` · `< > <= >= == !=` (they do 
 | `mix(a, b, t)` | between a and b. Also between two colors |
 | `if(cond, a, b)` | a if the condition holds, b if not: only that side is evaluated. With a spring as the condition (`if(hot, a, b)`), it goes between the two, like `mix(b, a, hot)` |
 | `vel(prop)` | the velocity of a spring, which only the renderer knows |
+| `sqrt(x)` `pow(a, b)` `exp(x)` `log(x)` | square root (of 0 or more), power, e to the x, natural logarithm. A power that would not be a number (`pow(-8, 0.5)`) is 0 |
+| `tan(deg)` `atan2(y, x)` | tangent, and the angle of the point (x, y): **in degrees**, like `sin` and `cos`. `atan2(pointer.y - cy, pointer.x - cx)` is where the mouse is, seen from (cx, cy) |
+| `length(x, y)` | how long the vector (x, y) is: `length(pointer.x - cx, pointer.y - cy)` is how far the mouse is |
+| `fract(x)` `mod(a, b)` | the part after the point, and the remainder **always positive**: `mod(-1, 3)` is 2, which is what something going round in a circle needs |
+| `round(x)` `sign(x)` | to the nearest integer; −1, 0 or 1 |
+| `noise(x)` `noise(x, y)` | smooth noise from −1 to 1: the same input, the same value, and it never jumps. `noise(time)` is a wobble that never repeats; `noise(k * 0.3, time)` a different one for each `k` |
+| `random(seed)` | a number from 0 to 1 that looks random and is always the same for the same seed: in a `repeat`, `random(k)` scatters without anything moving |
+
+**`time`** is the seconds since the scene started. It exists if the scene names it —and has not declared a `time` of its own—, and while it does, the scene never rests: that is its point. With reduced motion (`--reduced-motion`) it stops, like `spin`.
 
 Valid as a name: a `let`, a `prop`, a `fact`, a measure (`label.width`), how much a named layout takes up and how many children it has in view (`list.width`, `list.height`, `list.count`: they can also be read before the point where it is declared), the numeric field of a record (`r.depth`, `r.index`, `rows.count`), and the presence of a claim (`shape.rec`: 1 while it wins).
 
@@ -405,6 +418,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `glass` · `lens` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` |
 | `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `show` |
+| `shader` | `at` (its top left corner) · `size: w, h` · `corner` · `opacity` · `show` · `values: a, b, …` (up to eight numbers, any expression) · `colors: c1, c2` (up to two). What it is and how it is written: §8.1 |
 | `figure` | `at` (where the piece's centre goes) · `size: w, h` or `scale:` (without either, one unit of the svg is one pixel) · `pivot: x, y` (in the svg's units, from its centre: the point it **turns** around, which does not move it) · `rotate` · `color` (instead of the one in the file) · `opacity` · `blend` · `stroke` · `show` |
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `secret` · `show` |
 | `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` |
@@ -544,6 +558,54 @@ gradient: radial 100, 160 radius 60, ink, mint 40%, coal // from a center outwar
 ```
 
 **A named shape is a zone** if some rule names it, if it carries `active`, or if it was declared with `zone`. A name put there only to read better does not stop a click. A zone inherits the transforms of the groups it is in, and **what is not there —a false `show:`, an `opacity:` that has reached zero, a record that does not exist— is not a zone**: what cannot be seen cannot be pressed. A `row` or `column` with a name is one too: its whole box, underneath those of its children.
+
+### 8.1. The scene's own shaders
+
+What the language did not foresee can still be drawn: a scene can bring its own
+shaders, in WGSL —the language wgpu speaks, on Linux, Windows and macOS alike—.
+Whoever writes one writes **one function**: a colour for each point of its box.
+Everything else is pleamar's: where the box goes, its rounded corners, its
+opacity, the clips it is under, and painting it only when something changed.
+
+```
+shader aurora = file "shaders/aurora.wgsl"
+…
+shader aurora { at: 30, 30; size: 300, 200; corner: 20; values: glow, open; colors: mint, #7a6cff }
+```
+
+```wgsl
+fn shade(s: Shader) -> vec4<f32> {
+    let band = exp(-pow((s.uv.y - 0.4 - 0.1 * sin(s.uv.x * 6.0 + s.time)) * 6.0, 2.0));
+    return vec4<f32>(mix(s.color.rgb, s.color2.rgb, s.uv.x), band * s.a.x);
+}
+```
+
+It returns **the colour and how much of it covers** (straight, not premultiplied).
+What it receives, in `s`:
+
+| | |
+| --- | --- |
+| `s.pos` · `s.size` · `s.uv` | the point inside its box, in logical pixels from the top left corner; the size of the box; and the two divided (0 to 1) |
+| `s.time` | seconds since the scene started. **Only if it reads it** does the scene keep painting it: a shader that does not read `time` costs nothing while nothing changes |
+| `s.pointer` · `s.hovered` | where the mouse is, in the same coordinates as `s.pos`, and 1 while it is over the box. Only if it reads them is it painted again when the mouse moves |
+| `s.a` · `s.b` | the eight `values:`, four and four (`s.a.x` is the first) |
+| `s.color` · `s.color2` | the two `colors:` |
+| `s.scale` | real pixels per logical pixel: for lines one real pixel wide |
+| `behind(s, at)` · `behind_frosted(s, at)` | **what is behind the surface** at a point (in `s.pos` coordinates), sharp or frosted: the colour, and in its alpha how much of it is known. Calling it is what asks the surface to capture it, like a `lens:` glass |
+
+Three rules, checked when the scene is read, with the file and the line of the
+mistake: it has `fn shade(s: Shader) -> vec4<f32>` exactly; it declares no
+bindings, no entry points and no variables outside its functions —all it can
+read is `s` and `behind`—; and it is valid WGSL. Its names are its own: two
+shaders can each have their own `fn wave`. A loop that never ends is still the
+author's business; the card's driver will cut it, the scene with it.
+
+What `behind` sees is what is behind the whole surface, so under the box there
+must be nothing of ours that covers it: where something of the scene is solid,
+it comes back unknown. And the box itself should not cover it all either —an
+alpha of 0.88, like the lens— or the next frame does not know what is behind
+it. It is read with the same capture as the glass, so the same thing applies:
+on a compositor that does not let the screen be captured, it is always unknown.
 
 ## 9. Layouts
 
@@ -723,7 +785,7 @@ with their springs settling at once like every other one.
 
 ## 15. Gestures
 
-A gesture is a timeline over the properties of the pose (`pose`). `gesture name class { frames }`; classes, from weakest to strongest: `ambient` < postures < `reflex` < `asked` < `state`. **A gesture only cuts off another of its own class or lower.** A frame is a duration, and if it likes a curve, `hold 60ms` (holds there) and `emit event` —which fires when the frame **begins**: to say "done", give it a short frame of its own at the end—; its block says where each property goes, and whatever it does not name returns to its base. With no block, it is the return to the base. `posture name while expr { … }` repeats on its own while that is true.
+A gesture is a timeline over the properties of the pose (`pose`). `gesture name class { frames }`; classes, from weakest to strongest: `ambient` < postures < `reflex` < `asked` < `state`. **A gesture only cuts off another of its own class or lower.** A frame is a duration, and if it likes a curve —one of the named ones, or `bezier(x1, y1, x2, y2)` with the same two control points as CSS's `cubic-bezier`, so a curve from any design tool is copied as is; the x of both go from 0 to 1, the y can overshoot—, `hold 60ms` (holds there) and `emit event` —which fires when the frame **begins**: to say "done", give it a short frame of its own at the end—; its block says where each property goes, and whatever it does not name returns to its base. With no block, it is the return to the base. `posture name while expr { … }` repeats on its own while that is true.
 
 **A spring can be said in time.** `~620ms` is the spring that arrives in 620 ms
 and does not bounce: critically damped, worked out from the time asked for.
@@ -852,8 +914,8 @@ This is the output of `pleamar --grammar`, copied. It is not a second list: thes
 
 ```vocabulary
 language: 0.1
-statements: surface permissions model service spring prop pose fact event text image figure measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture translations
-library: let spring component permissions fact text model service event image figure prop pose gesture posture layer translations
+statements: surface permissions model service spring prop pose fact event text image figure shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture translations
+library: let spring component permissions fact text model service event image figure shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate
 properties.permissions: run services
 properties.shape: rotate stroke color opacity blend glass lens active show cursor grow
@@ -866,23 +928,24 @@ properties.body: color gradient rim light shadow border glass lens opacity show
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow
 properties.image: at size opacity tint show grow
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow
+properties.shader: at size corner opacity show values colors grow
 properties.input: at width size weight color opacity family placeholder selection secret show
 properties.group: pivot rotate scale move opacity size show grow
 properties.popup: at size open
 properties.children: move
 properties.layout: at anchor gap padding align fill glass lens corner show opacity cursor view step content wrap size grow
-functions: min max abs floor ceil sin cos clamp smooth mix if vel
+functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change still
 effects: toggle emit impulse play focus blur
-curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back
+curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
 classes: ambient reflex asked state
 field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: translations surface permissions model service spring prop pose fact event text image figure measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture import scene library language
+documented: translations surface permissions model service spring prop pose fact event text image figure shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture import scene library language
 services: clock clock.seconds audio battery brightness network media window
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date

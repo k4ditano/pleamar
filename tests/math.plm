@@ -1,0 +1,14 @@
+// expect: ok
+// The functions beyond arithmetic, and `time`.
+scene Math {
+    surface { size: 300, 100; anchor: top }
+    prop wobble = 0 ~quick
+    follow wobble = noise(time * 2) * 10 + noise(3, time) * 4
+    repeat k in 1..6 {
+        let spread = random(k) * 280
+        ellipse { at: 10 + spread, 50 + wobble * sign(k - 3); radius: 2 + sqrt(k) + pow(1.1, k) * 0; color: #9ed6bd; opacity: fract(k * 0.37) }
+    }
+    let angle = atan2(pointer.y - 50, pointer.x - 150)
+    let far = length(pointer.x - 150, pointer.y - 50)
+    box { at: 150, 50; size: 40, 4; rotate: angle; color: #ffffff; opacity: clamp(far / 100, 0, 1) * exp(0) * (1 + log(1)) + tan(0) + round(mod(-1, 3)) * 0 }
+}

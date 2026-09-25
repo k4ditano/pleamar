@@ -258,6 +258,8 @@ struct Compiler<'a> {
     images: HashMap<String, ImageId>,
     /// The figures: an SVG read as geometry, by layers.
     figures: HashMap<String, super::figure::Figure>,
+    /// The scene's own shaders, by name: their number in `Scene::shaders`.
+    shaders: HashMap<String, u16>,
     models: HashMap<String, usize>,
     measurements: HashMap<String, (PropId, PropId)>,
     gestures: HashMap<String, GestureId>,
@@ -318,7 +320,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     let mut o = Compiler {
         e: Scene::default(),
         translations: Vec::new(), untranslated: Default::default(),
-        props: HashMap::new(), facts: HashMap::new(), signals: HashMap::new(), texts: HashMap::new(), images: HashMap::new(), figures: HashMap::new(), models: HashMap::new(),
+        props: HashMap::new(), facts: HashMap::new(), signals: HashMap::new(), texts: HashMap::new(), images: HashMap::new(), figures: HashMap::new(), shaders: HashMap::new(), models: HashMap::new(),
         measurements: HashMap::new(), gestures: HashMap::new(), zones: HashMap::new(), lets: HashMap::new(), let_lines: HashMap::new(), colors: HashMap::new(),
         springs: vocab::SPRINGS.iter().map(|n| ((*n).to_owned(), match *n {
             "lively" => Spring::LIVELY,
@@ -346,6 +348,14 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         return (Err(vec![CompileError::at(scene.line, scene.col, "this scene is missing its `{ … }` block")]), Vec::new());
     };
     o.declare_measures_early(body);
+    // `time`: the seconds since the scene started, for whoever wants something
+    // that never stops —a shader's aurora, a `noise(time)` wobble—. Only if the
+    // scene names it and has not declared a `time` of its own: a hand that goes
+    // round keeps the frames coming, and a scene that does not ask for it must
+    // be able to sleep. Like `spin`, it stops with reduced motion.
+    if mentions(body, "time") && !declares(body, "time") {
+        o.time_prop();
+    }
     // The translations first of all: the texts are read already knowing them,
     // wherever the block is —at the end, or in an imported library—.
     o.read_translations(body);
@@ -536,6 +546,26 @@ fn system_language() -> String {
     "en".into()
 }
 
+/// Whether a word appears anywhere in the scene, as a name.
+fn mentions(entries: &[Entry], word: &str) -> bool {
+    let named = |t: &[crate::language::tokens::Token]| t.iter().any(|t| matches!(&t.kind, TokenKind::Id(w) if w == word || w.split('.').next() == Some(word)));
+    entries.iter().any(|e| match e {
+        Entry::Prop { value, .. } => named(value),
+        Entry::Node(n) => named(&n.head) || n.body.as_ref().is_some_and(|b| mentions(b, word)),
+    })
+}
+
+/// Whether the scene declares that name itself: `prop time`, `let time`…
+fn declares(entries: &[Entry], word: &str) -> bool {
+    entries.iter().any(|e| match e {
+        Entry::Node(n) => {
+            matches!((n.head.first().map(|t| &t.kind), n.head.get(1).map(|t| &t.kind)), (Some(TokenKind::Id(k)), Some(TokenKind::Id(w))) if w == word && ["prop", "pose", "let", "fact"].contains(&k.as_str()))
+                || n.body.as_ref().is_some_and(|b| declares(b, word))
+        }
+        _ => false,
+    })
+}
+
 fn pass_of(e: &Entry) -> u8 {
     let Entry::Node(n) = e else { return 2 };
     let is_assignment = matches!(n.head.get(2).map(|x| &x.kind), Some(TokenKind::Sym("=")));
@@ -543,7 +573,7 @@ fn pass_of(e: &Entry) -> u8 {
         Some(TokenKind::Id(p)) => match p.as_str() {
             "surface" | "permissions" | "model" | "service" | "spring" | "prop" | "pose" | "fact" | "event" | "measure" | "component" => 0,
             // An image or a figure is read once: they belong to the scene, not to each copy.
-            "text" | "image" | "figure" if is_assignment => 0,
+            "text" | "image" | "figure" | "shader" if is_assignment => 0,
             "let" | "layer" => 1,
             _ => 2,
         },
@@ -1087,6 +1117,26 @@ impl<'a> Compiler<'a> {
                 let (cond, x, y) = (take()?, take()?, take()?);
                 y.mix(x, cond)
             }
+            "sqrt" => take()?.un(Un::Sqrt),
+            "fract" => take()?.un(Un::Fract),
+            "sign" => take()?.un(Un::Sign),
+            "round" => take()?.un(Un::Round),
+            "exp" => take()?.un(Un::Exp),
+            "log" => take()?.un(Un::Ln),
+            "tan" => take()?.un(Un::Tan),
+            "random" => take()?.un(Un::Random),
+            "pow" => take()?.bin(Bin::Pow, take()?),
+            "atan2" => take()?.bin(Bin::Atan2, take()?),
+            "mod" => take()?.bin(Bin::Mod, take()?),
+            "length" => take()?.bin(Bin::Length, take()?),
+            // One argument or two: a wobble in time, or a field to move over.
+            "noise" => {
+                let x = take()?;
+                match a.next() {
+                    Some(y) => x.bin(Bin::Noise2, y),
+                    None => x.un(Un::Noise),
+                }
+            }
             other => unreachable!("'{other}' is in the vocabulary, but `function` cannot compute it"),
         })
     }
@@ -1496,6 +1546,29 @@ impl<'a> Compiler<'a> {
                     self.e.attachments.push(path);
                     self.figures.insert(name, fig);
                 }
+                // `shader aurora = file "aurora.wgsl"`: a function of its own in
+                // WGSL that paints a box. Read and checked now, like an svg.
+                "shader" if matches!(c.tokens.get(2).map(|x| &x.kind), Some(TokenKind::Sym("="))) => {
+                    let name = self.declare(&c.id("a name for the shader")?);
+                    c.expect_sym("=")?;
+                    if !c.word("file") {
+                        return c.error("a shader comes from a file: `shader aurora = file \"aurora.wgsl\"`");
+                    }
+                    let shown = c.string()?;
+                    let written = std::path::PathBuf::from(&shown);
+                    let dir = self.dirs.get(n.line / super::PER_FILE);
+                    let path = match dir {
+                        Some(k) if written.is_relative() => k.join(written),
+                        _ => written,
+                    };
+                    if self.e.shaders.len() >= 64 {
+                        return c.error("more than 64 shaders in one scene: one that takes parameters goes further than 64 files");
+                    }
+                    let shader = crate::shaders::load(&path, &shown, self.e.shaders.len()).map_err(|m| CompileError::at(n.line, n.col, m))?;
+                    self.e.attachments.push(path);
+                    self.shaders.insert(name, self.e.shaders.len() as u16);
+                    self.e.shaders.push(shader);
+                }
                 "measure" => {
                     let local = c.id("a name for the measure")?;
                     let name = self.declare(&local);
@@ -1618,6 +1691,7 @@ impl<'a> Compiler<'a> {
                 "text" => self.text(n)?,
                 "image" => self.image(n)?,
                 "figure" => self.figure(n)?,
+                "shader" => self.shader(n)?,
                 "input" => self.input_field(n)?,
                 "clip" => {
                     let margin = if c.word("inset") { c.num()? } else { 0.0 };
@@ -2662,6 +2736,81 @@ impl<'a> Compiler<'a> {
         };
         self.e.paint(Instr::Image { image, target: (x, y, w, h), alpha, tint });
         Ok(())
+    }
+
+    /// `shader aurora { at: 360, 60; size: 400, 120; corner: 20; values: open, glow; colors: mint, deep }`
+    fn shader(&mut self, n: &Node) -> R<()> {
+        let mut c = Cur::new(&n.head[1..], n.line, n.col);
+        let name = self.global(&c.id("the name of a shader")?);
+        let Some(k) = self.shaders.get(&name).copied() else {
+            return self.unknown(&c, "no shader", &name, self.shaders.keys().collect());
+        };
+        let mut p = self.properties(n, vocab::properties("shader"))?;
+        let in_slot = std::mem::take(&mut self.in_slot);
+        let missing = |q: &str| CompileError::at(n.line, n.col, format!("this shader is missing '{q}'"));
+        let (x, y) = match p.get_mut("at") {
+            Some(c) => self.point(c)?,
+            None if in_slot => (0.0.into(), 0.0.into()),
+            None => return Err(missing("at")),
+        };
+        let (w, h) = self.point(p.get_mut("size").ok_or_else(|| missing("size"))?)?;
+        self.last_size = Some((w.clone(), h.clone()));
+        let corner = match p.get_mut("corner") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(0.0),
+        };
+        let alpha = match p.get_mut("opacity") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(1.0),
+        };
+        let alpha = match p.get_mut("show") {
+            Some(c) => alpha * self.expr(c)?.clamp(0.0, 1.0),
+            None => alpha,
+        };
+        // Up to eight numbers and two colours: what the scene tells it.
+        let mut values = Vec::new();
+        if let Some(c) = p.get_mut("values") {
+            loop {
+                values.push(self.expr(c)?);
+                if !c.sym(",") {
+                    break;
+                }
+            }
+            if values.len() > 8 {
+                return c.error("a shader takes up to eight numbers: `s.a` and `s.b`, four each");
+            }
+        }
+        let mut colors = Vec::new();
+        if let Some(c) = p.get_mut("colors") {
+            loop {
+                colors.push(self.color(c)?);
+                if !c.sym(",") {
+                    break;
+                }
+            }
+            if colors.len() > 2 {
+                return c.error("a shader takes up to two colours: `s.color` and `s.color2`");
+            }
+        }
+        let u = self.e.shaders[k as usize].clone();
+        // The time only if it reads it: a shader that does not move must let the
+        // surface rest. It is the scene's `time`, created now if nobody named it.
+        let time = u.animated.then(|| self.time_prop().e());
+        let pointer = u.pointer.then(|| (self.facts["pointer.x"].e(), self.facts["pointer.y"].e()));
+        self.e.paint(Instr::Shader { shader: k, target: (x, y, w, h), corner, alpha, values, colors, time, pointer, behind: u.behind });
+        Ok(())
+    }
+
+    /// `time`: the seconds since the scene started. Created the first time
+    /// something needs it, with the hand that keeps it going.
+    fn time_prop(&mut self) -> PropId {
+        if let Some(p) = self.props.get("time") {
+            return *p;
+        }
+        let p = self.e.prop("time", 0.0);
+        self.props.insert("time".into(), p);
+        self.e.behaviors.push(Behavior::Advance { prop: p, per_second: Expr::K(1.0) });
+        p
     }
 
     /// `surface { … }` is the scene's window; `surface bar { …; …drawing… }`, one of
@@ -4575,6 +4724,24 @@ impl<'a> Compiler<'a> {
                     "out_cubic" => frame.curve = Curve::OutCubic,
                     "in_out_sine" => frame.curve = Curve::InOutSine,
                     "out_back" => frame.curve = Curve::OutBack,
+                    // `bezier(0.2, 0.9, 0.3, 1.2)`: CSS's control points. The x of
+                    // both have to stay between 0 and 1 —it is time, and time does
+                    // not go back—; the y can overshoot, which is what a bounce is.
+                    "bezier" => {
+                        c.expect_sym("(")?;
+                        let mut k = [0f32; 4];
+                        for (i, v) in k.iter_mut().enumerate() {
+                            if i > 0 {
+                                c.expect_sym(",")?;
+                            }
+                            *v = c.num()?;
+                        }
+                        c.expect_sym(")")?;
+                        if !(0.0..=1.0).contains(&k[0]) || !(0.0..=1.0).contains(&k[2]) {
+                            return c.error("in `bezier(x1, y1, x2, y2)` the x of both points go from 0 to 1: they are time, and time does not go back");
+                        }
+                        frame.curve = Curve::Bezier(k[0], k[1], k[2], k[3]);
+                    }
                     _ => unreachable!(),
                 }
             }

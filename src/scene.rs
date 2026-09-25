@@ -228,6 +228,112 @@ pub enum Expr {
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
+    /// The rest of the functions of one argument: `sqrt`, `fract`, `noise`…
+    Un(Un, Box<Expr>),
+    /// …and of two: `pow`, `atan2`, `mod`, `noise(x, y)`, `length`.
+    Bin(Bin, Box<Expr>, Box<Expr>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Un {
+    Sqrt,
+    Fract,
+    Sign,
+    Round,
+    Exp,
+    Ln,
+    /// In degrees, like `sin` and `cos`.
+    Tan,
+    /// Smooth noise in one dimension, from −1 to 1: the same `x`, the same value.
+    Noise,
+    /// A number from 0 to 1 that looks random and is always the same for the same seed.
+    Random,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Bin {
+    Pow,
+    /// The angle of the point (x, y), in degrees: `atan2(y, x)`.
+    Atan2,
+    /// The remainder, always positive: `mod(-1, 3)` is 2, which is what a
+    /// thing going round in a circle needs.
+    Mod,
+    /// Smooth noise in two dimensions, from −1 to 1.
+    Noise2,
+    /// How long the vector (x, y) is.
+    Length,
+}
+
+/// A hash of an integer to [0, 1): the same for the same number, on every
+/// machine and in every version.
+fn hash01(n: i32) -> f32 {
+    let mut x = n as u32;
+    x = (x ^ 61) ^ (x >> 16);
+    x = x.wrapping_add(x << 3);
+    x ^= x >> 4;
+    x = x.wrapping_mul(0x27d4eb2d);
+    x ^= x >> 15;
+    (x >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// Gradient noise: a slope at each integer, eased between them. It passes
+/// through 0 at the integers and never jumps.
+pub fn noise1(x: f32) -> f32 {
+    let i = x.floor();
+    let f = x - i;
+    let g = |k: f32| hash01(k as i32) * 2.0 - 1.0;
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = g(i) * f;
+    let b = g(i + 1.0) * (f - 1.0);
+    (a + (b - a) * u) * 2.0
+}
+
+pub fn noise2(x: f32, y: f32) -> f32 {
+    let (ix, iy) = (x.floor(), y.floor());
+    let (fx, fy) = (x - ix, y - iy);
+    let grad = |cx: f32, cy: f32, dx: f32, dy: f32| {
+        let a = hash01((cx as i32).wrapping_mul(73856093) ^ (cy as i32).wrapping_mul(19349663)) * std::f32::consts::TAU;
+        a.cos() * dx + a.sin() * dy
+    };
+    let (ux, uy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
+    let n00 = grad(ix, iy, fx, fy);
+    let n10 = grad(ix + 1.0, iy, fx - 1.0, fy);
+    let n01 = grad(ix, iy + 1.0, fx, fy - 1.0);
+    let n11 = grad(ix + 1.0, iy + 1.0, fx - 1.0, fy - 1.0);
+    let a = n00 + (n10 - n00) * ux;
+    let b = n01 + (n11 - n01) * ux;
+    ((a + (b - a) * uy) * std::f32::consts::SQRT_2).clamp(-1.0, 1.0)
+}
+
+impl Un {
+    pub fn apply(self, x: f32) -> f32 {
+        match self {
+            Un::Sqrt => x.max(0.0).sqrt(),
+            Un::Fract => x - x.floor(),
+            Un::Sign => if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 },
+            Un::Round => x.round(),
+            Un::Exp => x.exp(),
+            Un::Ln => x.max(f32::MIN_POSITIVE).ln(),
+            Un::Tan => x.to_radians().tan(),
+            Un::Noise => noise1(x),
+            Un::Random => hash01(x.floor() as i32),
+        }
+    }
+}
+
+impl Bin {
+    pub fn apply(self, a: f32, b: f32) -> f32 {
+        match self {
+            Bin::Pow => {
+                let v = a.powf(b);
+                if v.is_finite() { v } else { 0.0 }
+            }
+            Bin::Atan2 => a.atan2(b).to_degrees(),
+            Bin::Mod => if b == 0.0 { 0.0 } else { a.rem_euclid(b) },
+            Bin::Noise2 => noise2(a, b),
+            Bin::Length => a.hypot(b),
+        }
+    }
 }
 
 impl Expr {
@@ -265,6 +371,8 @@ impl Expr {
             And(a, b) => (a.eval(c) > 0.5 && b.eval(c) > 0.5) as u8 as f32,
             Or(a, b) => (a.eval(c) > 0.5 || b.eval(c) > 0.5) as u8 as f32,
             Not(a) => (a.eval(c) <= 0.5) as u8 as f32,
+            Un(f, a) => f.apply(a.eval(c)),
+            Bin(f, a, b) => f.apply(a.eval(c), b.eval(c)),
         }
     }
     pub fn is_true(&self, c: Ctx) -> bool {
@@ -279,8 +387,8 @@ impl Expr {
         match self {
             K(_) | P(_) | Vel(_) => false,
             H(h) => f(*h),
-            Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) => a.reads(f),
-            Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) => a.reads(f) || b.reads(f),
+            Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => a.reads(f),
+            Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) | Bin(_, a, b) => a.reads(f) || b.reads(f),
             Mix(a, b, t) => a.reads(f) || b.reads(f) || t.reads(f),
         }
     }
@@ -288,8 +396,8 @@ impl Expr {
         use Expr::*;
         match self {
             K(_) | P(_) | H(_) | Vel(_) => 1,
-            Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) => 1 + a.node_count(),
-            Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) => 1 + a.node_count() + b.node_count(),
+            Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => 1 + a.node_count(),
+            Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) | Bin(_, a, b) => 1 + a.node_count() + b.node_count(),
             Mix(a, b, t) => 1 + a.node_count() + b.node_count() + t.node_count(),
         }
     }
@@ -308,8 +416,8 @@ impl Expr {
         let k = |e: &Expr| e.constant();
         let constant_children = match &self {
             K(_) | P(_) | H(_) | Vel(_) => return self,
-            Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) => k(a).is_some(),
-            Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) => k(a).is_some() && k(b).is_some(),
+            Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => k(a).is_some(),
+            Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) | Bin(_, a, b) => k(a).is_some() && k(b).is_some(),
             Mix(a, b, t) => k(a).is_some() && k(b).is_some() && k(t).is_some(),
         };
         if constant_children {
@@ -371,6 +479,12 @@ impl Expr {
     }
     pub fn smoothstep(self, a: f32, b: f32) -> Expr {
         Expr::Smoothstep(a, b, Box::new(self)).folded()
+    }
+    pub fn un(self, f: Un) -> Expr {
+        Expr::Un(f, Box::new(self)).folded()
+    }
+    pub fn bin(self, f: Bin, o: impl Into<Expr>) -> Expr {
+        Expr::Bin(f, Box::new(self), Box::new(o.into())).folded()
     }
 }
 
@@ -708,6 +822,12 @@ pub enum Instr {
     Opacity(Option<Expr>),
     /// A loose shape, of a solid color.
     Solid { shape: Shape, color: Color, alpha: Expr, glass_spec: Option<Glass> },
+    /// A box painted by one of the scene's own shaders: `target` is where
+    /// (x, y, width, height), with `corner` rounding it. `values` are up to eight
+    /// numbers and `colors` up to two, which the shader reads as `s.a`, `s.b`,
+    /// `s.color` and `s.color2`. `time` and `pointer` only if the shader reads
+    /// them: otherwise nothing changes and it is not painted again.
+    Shader { shader: u16, target: (Expr, Expr, Expr, Expr), corner: Expr, alpha: Expr, values: Vec<Expr>, colors: Vec<Color>, time: Option<Expr>, pointer: Option<(Expr, Expr)>, behind: bool },
     /// Text. `at` is the reference point and `anchor` which part of the text falls
     /// on it: (0, 0) the top left corner, (0.5, 0.5) the
     /// center. With `width` it is broken into lines; without it, it is a single one.
@@ -888,6 +1008,40 @@ pub enum Curve {
     OutCubic,
     InOutSine,
     OutBack,
+    /// `bezier(x1, y1, x2, y2)`: the same two control points as CSS's
+    /// `cubic-bezier`, so a curve from any design tool can be copied as is.
+    Bezier(f32, f32, f32, f32),
+}
+
+/// The CSS cubic bezier: find the t whose x is the time asked for, and
+/// give its y. Newton first —it converges in three or four steps—, and bisection
+/// if the slope is flat, which is where Newton gets lost.
+fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, x: f32) -> f32 {
+    let bez = |a: f32, b: f32, t: f32| {
+        let u = 1.0 - t;
+        3.0 * u * u * t * a + 3.0 * u * t * t * b + t * t * t
+    };
+    let slope = |a: f32, b: f32, t: f32| {
+        let u = 1.0 - t;
+        3.0 * u * u * a + 6.0 * u * t * (b - a) + 3.0 * t * t * (1.0 - b)
+    };
+    let mut t = x;
+    for _ in 0..6 {
+        let d = slope(x1, x2, t);
+        if d.abs() < 1e-5 {
+            break;
+        }
+        t -= (bez(x1, x2, t) - x) / d;
+    }
+    if (bez(x1, x2, t) - x).abs() > 1e-4 || !(0.0..=1.0).contains(&t) {
+        let (mut lo, mut hi) = (0.0f32, 1.0f32);
+        t = x;
+        for _ in 0..30 {
+            if bez(x1, x2, t) < x { lo = t } else { hi = t }
+            t = (lo + hi) * 0.5;
+        }
+    }
+    bez(y1, y2, t)
 }
 
 impl Curve {
@@ -904,6 +1058,7 @@ impl Curve {
                 let (c1, u) = (1.70158, t - 1.0);
                 1.0 + (c1 + 1.0) * u * u * u + c1 * u * u
             }
+            Curve::Bezier(x1, y1, x2, y2) => cubic_bezier(x1, y1, x2, y2, t),
         }
     }
 }
@@ -1059,8 +1214,11 @@ pub struct Scene {
     /// The windows it asks for. The first is the main one: the one that rules if something belongs to just one.
     pub surfaces: Vec<Surface>,
     /// Files that are not `.plm` and that it is also made of —the SVGs of
-    /// its figures—: touching them also reloads it.
+    /// its figures, its shaders—: touching them also reloads it.
     pub attachments: Vec<std::path::PathBuf>,
+    /// Its own shaders, already checked: `shader aurora = file "aurora.wgsl"`.
+    /// Their number is their place here.
+    pub shaders: Vec<crate::shaders::UserShader>,
     /// `keyboard: exclusive while open`: when it wants the keyboard.
     pub keyboard_while: Option<Expr>,
     pub permissions: Permissions,
@@ -1506,6 +1664,36 @@ mod tests {
             let t = props[p].x;
             assert_eq!(a.clone().mix(b.clone() + PropId(2), PropId(p as u16)).eval(c), 10.0 + 10.0 * t);
         }
+    }
+
+    #[test]
+    fn bezier_matches_css() {
+        // CSS's `ease` is cubic-bezier(0.25, 0.1, 0.25, 1): at half the time it is at 80.24 %.
+        let ease = Curve::Bezier(0.25, 0.1, 0.25, 1.0);
+        assert!((ease.apply(0.5) - 0.8024).abs() < 0.002, "{}", ease.apply(0.5));
+        assert_eq!(ease.apply(0.0), 0.0);
+        assert!((ease.apply(1.0) - 1.0).abs() < 1e-5);
+        // The one that overshoots, from any design tool.
+        let back = Curve::Bezier(0.34, 1.56, 0.64, 1.0);
+        assert!((0..=100).map(|k| back.apply(k as f32 / 100.0)).any(|v| v > 1.05));
+    }
+
+    #[test]
+    fn noise_is_smooth_and_bounded() {
+        let mut last = noise1(0.0);
+        for k in 1..4000 {
+            let x = k as f32 * 0.01;
+            let v = noise1(x);
+            assert!((-1.0..=1.0).contains(&v));
+            assert!((v - last).abs() < 0.08, "a jump at {x}: {last} → {v}");
+            last = v;
+            let w = noise2(x, x * 0.7);
+            assert!((-1.0..=1.0).contains(&w));
+        }
+        assert_eq!(noise1(12.34), noise1(12.34));
+        assert!(Un::Random.apply(3.0) >= 0.0 && Un::Random.apply(3.0) < 1.0);
+        assert_eq!(Bin::Mod.apply(-1.0, 3.0), 2.0);
+        assert!((Bin::Atan2.apply(1.0, 1.0) - 45.0).abs() < 1e-4);
     }
 
     #[test]

@@ -75,6 +75,16 @@ fn texture(d: &wgpu::Device, label: &str, (w, h): (u32, u32), format: wgpu::Text
 /// What a surface with glass has: where each frame is painted before
 /// presenting it, the last capture, and the unmixed background —sharp and
 /// frosted—.
+/// How long a new lens keeps capturing back to back before it relies on
+/// «only when something changes», and at least how many captures. The compositor
+/// fades a layer in when it appears —a few hundred milliseconds in which its real
+/// opacity is less than 1—, and what is unmixed from those captures is wrong:
+/// by a little under something dark, by everything under something bright.
+/// Something that keeps moving replaces it at once; a glass or a shader that
+/// stays still from its first frame kept it for ever.
+pub const WARM_UP: u32 = 3;
+pub const WARM_UP_TIME: std::time::Duration = std::time::Duration::from_millis(1500);
+
 pub struct Lens {
     pub px: (u32, u32),
     /// Two canvases: one gets painted, the other is the one the compositor has.
@@ -100,6 +110,9 @@ pub struct Lens {
     pending: Option<(usize, (u32, u32, u32, u32))>,
     /// There is already a background to show.
     pub ready: bool,
+    /// How many captures it has taken in, and since when it exists: see `WARM_UP`.
+    pub received: u32,
+    born: std::time::Instant,
     /// What the shapes shader reads: the sharp background and the frosted one.
     pub group: Option<wgpu::BindGroup>,
 }
@@ -127,6 +140,8 @@ impl Lens {
             bounds: [0; 4],
             bounds_uniforms: d.create_buffer(&wgpu::BufferDescriptor { label: Some("bounds"), size: 32, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }),
             ready: false,
+            received: 0,
+            born: std::time::Instant::now(),
             group: None,
         }
     }
@@ -156,13 +171,18 @@ impl Lens {
         // A capture without data is one that failed.
         let Some(data) = d.data else { return false };
         let data: &[u8] = (*data).as_ref();
+        // Counted even if it brings nothing new: a still background must not
+        // keep the warm-up going for ever. During the warm-up none is skipped
+        // for looking like the last one: the first ones are the ones not to
+        // trust, and with a still scene the next ones look exactly like them.
+        self.received += 1;
         // The same as the previous one —or almost: the rounding of going back
         // and forth gives the odd stray level—, and there is nothing new
         // behind. Without this, painting the lens changes the capture, which
         // changes the lens, and so on without end. One byte in thirteen is
         // looked at, which is enough to know whether something has moved.
         let sample: Vec<u8> = data.iter().copied().step_by(13).collect();
-        if self.ready && bounds == self.bounds && sample.len() == self.sample.len() && sample.iter().zip(&self.sample).all(|(a, b)| a.abs_diff(*b) <= 3) {
+        if self.ready && !self.warming() && bounds == self.bounds && sample.len() == self.sample.len() && sample.iter().zip(&self.sample).all(|(a, b)| a.abs_diff(*b) <= 3) {
             return false;
         }
         self.sample = sample;
@@ -199,6 +219,11 @@ impl Lens {
         self.group = Some(g.backdrop_group(&self.backgrounds[new].1, &self.blurred.1));
         self.ready = true;
         true
+    }
+
+    /// Still in its first moments: see `WARM_UP`.
+    pub fn warming(&self) -> bool {
+        self.received < WARM_UP || self.born.elapsed() < WARM_UP_TIME
     }
 
     /// Unmixes and frosts what the last capture left, in the frame's

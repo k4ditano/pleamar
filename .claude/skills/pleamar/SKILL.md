@@ -141,6 +141,24 @@ scene Name {
   `services: "audio"` lets the logic know the volume; changing it needs
   `"audio.volume"` or `"audio.*"`.
 
+## When the language falls short: your own shader
+
+Before faking an effect with a hundred shapes, write it. `shader aurora = file
+"aurora.wgsl"` declares one, `shader aurora { at: …; size: …; values: …; colors: … }`
+paints a box with it. The file has ONE function, `fn shade(s: Shader) ->
+vec4<f32>` —straight colour and coverage for each point—, and reads `s.pos`,
+`s.size`, `s.uv`, `s.time`, `s.pointer`, `s.hovered`, `s.a`/`s.b` (the eight
+`values:`), `s.color`/`s.color2`, and `behind(s, at)` / `behind_frosted(s, at)`
+for what is behind the surface. Only what it reads costs: without `s.time` it
+does not keep the scene painting. `--check` validates the WGSL with its line.
+Contract and rules: §8.1 of the reference; working examples in
+`examples/effects.plm` and `examples/shaders/`.
+
+For smaller things there is maths: `noise(x)`, `noise(x, y)`, `random(k)`,
+`sqrt`, `pow`, `fract`, `mod`, `atan2`, `length`… and `time`, the seconds since
+the scene started (naming it keeps the scene painting). Gesture frames take
+`bezier(x1, y1, x2, y2)`, CSS's cubic-bezier.
+
 ## The logic, if there is any
 
 `scene.luau` next to `scene.plm`. Sandboxed Luau, own thread, cut off if a

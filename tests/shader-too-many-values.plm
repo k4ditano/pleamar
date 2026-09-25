@@ -1,0 +1,6 @@
+// expect: error «up to eight numbers»
+scene X {
+    surface { size: 100, 100 }
+    shader glow = file "shaders/glow.wgsl"
+    shader glow { at: 0, 0; size: 10, 10; values: 1, 2, 3, 4, 5, 6, 7, 8, 9 }
+}

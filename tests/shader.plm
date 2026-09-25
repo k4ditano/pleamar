@@ -1,0 +1,12 @@
+// expect: ok
+// A scene's own shaders: one that breathes with `time` and reacts to the
+// pointer, the same one twice, and one that reads what is behind.
+scene Shaders {
+    surface { size: 400, 200; anchor: top }
+    shader glow = file "shaders/glow.wgsl"
+    shader haze = file "shaders/behind.wgsl"
+    prop open = 0 ~calm
+    shader glow { at: 10, 10; size: 120, 120; corner: 16; opacity: 90%; values: open, 2; colors: #9ed6bd, #ffffff }
+    shader glow { at: 140, 10; size: 60, 60; show: open > 0.5; values: 1 }
+    shader haze { at: 220, 10; size: 160, 160; corner: 24 }
+}

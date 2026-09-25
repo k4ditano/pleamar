@@ -6,6 +6,7 @@
 
 mod scene;
 mod scenes;
+mod shaders;
 mod shapes;
 mod lsp;
 mod gpu;

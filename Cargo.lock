@@ -1404,6 +1404,7 @@ dependencies = [
  "image",
  "libc",
  "mlua",
+ "naga",
  "pollster",
  "raw-window-handle",
  "resvg",

@@ -277,9 +277,14 @@ pub fn run(
                         fresh.gestures.len(), fresh.rules.len(), fresh.zones.len()
                     );
                     scene = fresh;
+                    // Its own shaders: the pipeline is only remade if they changed.
+                    if let Some(g) = gpu.as_mut() {
+                        g.set_shaders(&scene.shaders);
+                    }
                 }
                 ToRender::Sheet(n) => {
                     let g = gpu.get_or_insert_with(|| Gpu::new(&instance, &n.surface));
+                    g.set_shaders(&scene.shaders);
                     // A scene that asks for "the full width" measures whatever its monitor measures, and it
                     // can know it: `screen.width`.
                     // A window measures whatever the compositor has given it, and that can change.
@@ -1535,7 +1540,17 @@ pub fn run(
             // What it shows is already up to date: nothing of what has changed falls on its piece of the plane.
             let where_ = (l.view.bounds(), l.scale);
             let v = where_.0;
-            let its_turn = !l.open || all_changed || l.painted != Some(where_) || changed.iter().any(|b| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]);
+            // A lens still warming up (see `lens::WARM_UP`) whose capture has been
+            // lost: the compositor answers a capture the next time it paints the
+            // monitor, and with nothing moving there it does not paint. Presenting
+            // again is what makes it paint. Without this, a glass or a shader
+            // that stays still from its first frame never saw its background.
+            let unseen = l.lens.as_ref().is_some_and(|x| x.warming()) && l.capture == crate::gpu::BackdropCapture::AfterPresent;
+            if unseen && l.capture_asked.elapsed() < Duration::from_millis(100) {
+                appointments.push(l.capture_asked + Duration::from_millis(101));
+            }
+            let nudge = unseen && l.capture_asked.elapsed() >= Duration::from_millis(100);
+            let its_turn = !l.open || all_changed || nudge || l.painted != Some(where_) || changed.iter().any(|b| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]);
             if !its_turn {
                 up_to_date += 1;
                 continue;
@@ -1564,7 +1579,8 @@ pub fn run(
             // back from the card, and at 60 per second that was 14 points of a core.
             // One every `CAPTURE_INTERVAL` at most while painting; and when it
             // stops painting, it watches (see further down).
-            if was_painted && l.lens.is_some() && l.capture_taken.elapsed() >= crate::lens::CAPTURE_INTERVAL {
+            let warming = l.lens.as_ref().is_some_and(|x| x.warming());
+            if was_painted && l.lens.is_some() && (warming || l.capture_taken.elapsed() >= crate::lens::CAPTURE_INTERVAL) {
                 l.request_backdrop(false);
             }
             l.painted_now = was_painted;

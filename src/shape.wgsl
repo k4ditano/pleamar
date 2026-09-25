@@ -51,6 +51,8 @@ const PATH: u32 = 4u;
 const BODY: u32 = 0u;
 const TEXTURE: u32 = 1u;
 const LAYER: u32 = 2u;
+// One of the scene's own shaders: `user_shader`, added after this file (see shaders.rs).
+const SHADER: u32 = 3u;
 const HUD: u32 = 9u;
 
 const FAR: f32 = 1e6;
@@ -274,6 +276,9 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
     var c = vec4<f32>(0.0);
     if (kind == LAYER) {
         return textureLoad(layers, vec2<i32>(e.pos.xy), i32(el.header.y), 0) * alpha;
+    }
+    if (kind == SHADER) {
+        return user_shader(el, p) * alpha;
     }
     let local = to_local(p, el.t0, el.t1);
     if (kind == TEXTURE) {

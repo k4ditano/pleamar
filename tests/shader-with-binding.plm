@@ -1,0 +1,5 @@
+// expect: error «declares no variables outside its functions, nor bindings»
+scene X {
+    surface { size: 100, 100 }
+    shader bad = file "shaders/binding.wgsl"
+}

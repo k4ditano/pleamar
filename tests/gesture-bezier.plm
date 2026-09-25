@@ -1,0 +1,12 @@
+// expect: ok
+// A curve copied from a design tool: CSS's cubic-bezier, overshooting.
+scene Bezier {
+    surface { size: 100, 100 }
+    pose y = 0
+    gesture hop reflex {
+        200ms bezier(0.34, 1.56, 0.64, 1) { y: -20 }
+        160ms bezier(0.5, 0, 0.75, 0)
+    }
+    ellipse { at: 50, 60 + y; radius: 10; color: #fff }
+    every 2s { play hop }
+}
