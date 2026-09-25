@@ -644,7 +644,7 @@ scene Effects {
 | `hue: angle` | turns every colour round the colour wheel: `hue: 120deg` makes red green |
 | `mask: x1, y1 to x2, y2` | whole at the first point, gone at the second, along that line |
 | `mask: radial x, y radius r` · `… radius r1 to r2` | whole at the centre (or up to `r1`), gone at `r` (or `r2`) |
-| `mode: add` | it **adds light** instead of covering: what it holds brightens whatever is under it, also the desktop behind the surface. `mode: normal` is the default |
+| `mode: add` · `mode: screen` · `mode: multiply` | how it blends with what is under it, as one thing. `add` **adds light**: what it holds brightens whatever is under it, also the desktop behind the surface. `screen` lightens —never past white, never darker—; over nothing it is simply itself. `multiply` darkens what **the scene** painted under it, tinting it; the desktop behind the surface is not in pleamar's hands, so over nothing it paints nothing (rather than black). `mode: normal` is the default |
 
 All of them are expressions, so they animate like anything else: `blur: 8 * (1
 - open)` brings something into focus as it opens. The mask moves with the group
@@ -1092,7 +1092,7 @@ surface.kind: panel window lock
 surface.keyboard: none on_demand exclusive
 text.align: left center right
 layout.align: start center end
-group.mode: normal add
+group.mode: normal add screen multiply
 particles.shape: dot square spark
 ```
 

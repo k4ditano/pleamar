@@ -1,0 +1,10 @@
+// expect: ok
+// The four ways a group blends with what is under it.
+scene GroupModes {
+    surface { size: 400, 120; anchor: top }
+    box { at: 200, 60; size: 400, 120; color: #d2476b }
+    group { mode: normal; ellipse { at: 50, 60; radius: 30; color: #9ed6bd } }
+    group { mode: add; ellipse { at: 150, 60; radius: 30; color: #3a5a3a } }
+    group { mode: screen; ellipse { at: 250, 60; radius: 30; color: #9ed6bd } }
+    group { mode: multiply; opacity: 80%; ellipse { at: 350, 60; radius: 30; color: #7a6cff } }
+}

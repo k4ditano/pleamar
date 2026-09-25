@@ -678,8 +678,9 @@ pub struct Effects {
     pub contrast: Option<Expr>,
     pub hue: Option<Expr>,
     pub mask: Option<Mask>,
-    /// `mode: add`: it adds light instead of covering.
-    pub add: bool,
+    /// How it blends with what is under it: 0 covering, 1 `add` (adds light),
+    /// 2 `screen` (lightens), 3 `multiply` (darkens what the scene painted under it).
+    pub mode: u8,
 }
 
 /// Where a group can be seen: whole at the start, nothing at the end.

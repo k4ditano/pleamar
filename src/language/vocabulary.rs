@@ -142,7 +142,7 @@ pub const KEYBOARD_MODES: &[&str] = &["none", "on_demand", "exclusive"];
 pub const TEXT_ALIGNS: &[&str] = &["left", "center", "right"];
 pub const STACK_ALIGNS: &[&str] = &["start", "center", "end"];
 /// How a group with effects blends: covering, or adding light.
-pub const GROUP_MODES: &[&str] = &["normal", "add"];
+pub const GROUP_MODES: &[&str] = &["normal", "add", "screen", "multiply"];
 /// What each particle looks like.
 pub const PARTICLE_SHAPES: &[&str] = &["dot", "square", "spark"];
 

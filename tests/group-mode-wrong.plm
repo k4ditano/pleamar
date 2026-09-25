@@ -1,8 +1,8 @@
-// expect: error «multiply»
+// expect: error «normal, add, screen or multiply»
 scene X {
     surface { size: 100, 100 }
     group {
-        mode: multiply
+        mode: overlay
         ellipse { at: 50, 50; radius: 10; color: #fff }
     }
 }

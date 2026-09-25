@@ -501,7 +501,8 @@ fn layer_with_effects(el: Element, at: vec2<f32>, p: vec2<f32>, alpha: f32) -> v
     c = c * m * alpha;
     // Added: light that adds up instead of covering. Premultiplied with no alpha
     // is exactly that, here and in the compositor.
-    if (el.light.w > 0.5) { return vec4<f32>(c.rgb, 0.0); }
+    if (el.light.w > 0.5 && el.light.w < 1.5) { return vec4<f32>(c.rgb, 0.0); }
+    // `screen` and `multiply` are blended by their own pipelines: see `BLENDS` in gpu.rs.
     return c;
 }
 

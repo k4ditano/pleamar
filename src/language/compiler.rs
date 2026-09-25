@@ -1894,12 +1894,15 @@ impl<'a> Compiler<'a> {
             }
             None => None,
         };
-        let add = match p.get_mut("mode") {
-            Some(c) => c.one_of(vocab::GROUP_MODES, "how a group blends")? == "add",
-            None => false,
+        let mode = match p.get_mut("mode") {
+            Some(c) => {
+                let word = c.one_of(vocab::GROUP_MODES, "how a group blends")?;
+                vocab::GROUP_MODES.iter().position(|m| *m == word).unwrap_or(0) as u8
+            }
+            None => 0,
         };
         let _ = n;
-        Ok(Some(Effects { alpha: opacity.clone().unwrap_or(Expr::K(1.0)), blur, glow, saturation, brightness, contrast, hue, mask, add }))
+        Ok(Some(Effects { alpha: opacity.clone().unwrap_or(Expr::K(1.0)), blur, glow, saturation, brightness, contrast, hue, mask, mode }))
     }
 
     /// How much room a named stack takes is known when it finishes drawing, but it

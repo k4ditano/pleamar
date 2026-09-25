@@ -56,6 +56,8 @@ pub struct DrawList {
     emitters: std::collections::HashMap<usize, Emitter>,
     /// Where the particles go among the elements: after which element, and how many.
     pub particle_marks: Vec<(u32, u32)>,
+    /// The elements that blend another way: which one, and how (2 screen, 3 multiply).
+    pub blend_marks: Vec<(u32, u8)>,
     /// Some particle is still alive: the scene must not rest.
     pub particles_alive: bool,
     /// When an image that moves changes frame next, in the render's seconds:
@@ -202,6 +204,23 @@ struct Emitter {
     seen: f32,
 }
 
+/// How `mode: screen` and `mode: multiply` blend, with premultiplied colour.
+/// Screen: what is under it plus what it brings, minus their product —it only
+/// lightens—; over nothing it is simply itself. Multiply: what is under it
+/// times what it brings, where it covers —it only darkens—; the alpha of what
+/// is under it stays, so over nothing (the desktop behind the surface, which
+/// pleamar cannot see) it paints nothing instead of black.
+const BLENDS: [wgpu::BlendState; 2] = [
+    wgpu::BlendState {
+        color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::OneMinusDst, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
+        alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
+    },
+    wgpu::BlendState {
+        color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Dst, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
+        alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
+    },
+];
+
 /// How many instances an emitter can have: the instance number carries the
 /// emitter's element as well, `element * PARTICLE_SLOTS + particle`.
 pub const PARTICLE_SLOTS: u32 = 4096;
@@ -214,7 +233,7 @@ struct Fx {
     glow: (f32, f32, Option<[f32; 3]>),
     tone: [f32; 4],
     mask: (f32, [f32; 4]),
-    add: bool,
+    mode: u8,
     affine: Affine,
 }
 
@@ -638,6 +657,7 @@ impl DrawList {
         let mut text_fx: Option<&TextFx> = None;
         self.offscreen_groups.clear();
         self.particle_marks.clear();
+        self.blend_marks.clear();
         self.particles_alive = false;
         self.wake_at = None;
         self.glass_regions.clear();
@@ -716,7 +736,7 @@ impl DrawList {
                             glow,
                             tone: [v(&fx.saturation, 1.0), v(&fx.brightness, 1.0), v(&fx.contrast, 1.0), v(&fx.hue, 0.0)],
                             mask,
-                            add: fx.add,
+                            mode: fx.mode,
                             affine,
                         };
                         OpacityGroup::Layer { alpha: a, index: self.offscreen_groups.len(), first_element: self.element_count(), fx: Some(fx) }
@@ -821,6 +841,10 @@ impl DrawList {
                             // A blur and a glow spill out of what is inside: the box grows with them.
                             let spill = fx.map_or(0.0, |f| f.blur.max(f.glow.0) * 1.5 + 2.0);
                             let bounds = [bounds[0] - spill, bounds[1] - spill, bounds[2] + spill, bounds[3] + spill];
+                            let before = self.element_count();
+                            if let Some(f) = fx.filter(|f| f.mode >= 2) {
+                                self.blend_marks.push((before as u32, f.mode));
+                            }
                             self.element(2.0, bounds, &[], |e| {
                                 e[1] = 0.0;
                                 e[3] = alpha * mult;
@@ -831,7 +855,7 @@ impl DrawList {
                                     e[11] = f.glow.1;
                                     e[12..16].copy_from_slice(&f.tone);
                                     e[16..20].copy_from_slice(&f.mask.1);
-                                    e[20..24].copy_from_slice(&[f.blur, f.glow.0, f.mask.0, f.add as u8 as f32]);
+                                    e[20..24].copy_from_slice(&[f.blur, f.glow.0, f.mask.0, f.mode as f32]);
                                     e[24..28].copy_from_slice(&[f.glow.2.is_some() as u8 as f32, 1.0, 0.0, 0.0]);
                                     f.affine.encode(&mut e[44..52]);
                                 }
@@ -1315,6 +1339,10 @@ pub struct Gpu {
     /// The particles: the same shader and layout, other entry points, one
     /// instance per particle.
     particles: wgpu::RenderPipeline,
+    /// The same elements pipeline with another blend: a group with `mode:
+    /// screen` or `mode: multiply` is drawn with one of these. See `BLENDS`.
+    screen: wgpu::RenderPipeline,
+    multiply: wgpu::RenderPipeline,
     pipeline_layout: wgpu::PipelineLayout,
     /// The scene's own shaders, as they went into `pipeline`.
     user_code: String,
@@ -1389,7 +1417,7 @@ impl Gpu {
         // layout, and every bind group already made keeps being valid for it.
         let pipeline_layout = Self::pipeline_layout(&device);
         let base = crate::shaders::generate(&[]);
-        let (pipeline, particles) = Self::build_pipeline(&device, &pipeline_layout, format, &base).expect("pleamar's own shader does not compile");
+        let [pipeline, particles, screen, multiply] = Self::build_pipeline(&device, &pipeline_layout, format, &base).expect("pleamar's own shader does not compile");
         // A single atlas for glyphs and images. 2048² in RGBA is 16 MB.
         let atlas = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("atlas"),
@@ -1418,7 +1446,7 @@ impl Gpu {
             view_formats: &[],
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
-        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
+        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
     }
 
     /// The four groups the shapes shader reads, written out. See `shape.wgsl`.
@@ -1453,11 +1481,11 @@ impl Gpu {
     /// pleamar's shader with the scene's own ones added. An error comes back as
     /// text instead of bringing the program down: they were checked when the
     /// scene was read, but a driver can still say no.
-    fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str) -> Result<(wgpu::RenderPipeline, wgpu::RenderPipeline), String> {
+    fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str) -> Result<[wgpu::RenderPipeline; 4], String> {
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         let source = format!("{}{extra}", include_str!("shape.wgsl"));
         let module = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape"), source: wgpu::ShaderSource::Wgsl(source.into()) });
-        let make = |label, vs, fs| {
+        let make = |label, vs, fs, blend: wgpu::BlendState| {
             d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
@@ -1469,13 +1497,19 @@ impl Gpu {
                     module: &module,
                     entry_point: Some(fs),
                     compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
+                    targets: &[Some(wgpu::ColorTargetState { format, blend: Some(blend), write_mask: wgpu::ColorWrites::ALL })],
                 }),
                 multiview_mask: None,
                 cache: None,
             })
         };
-        let pipelines = (make("elements", "vs", "fs"), make("particles", "vs_particle", "fs_particle"));
+        let over = wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING;
+        let pipelines = [
+            make("elements", "vs", "fs", over),
+            make("particles", "vs_particle", "fs_particle", over),
+            make("screen", "vs", "fs", BLENDS[0]),
+            make("multiply", "vs", "fs", BLENDS[1]),
+        ];
         match pollster::block_on(scope.pop()) {
             None => Ok(pipelines),
             Some(e) => Err(e.to_string()),
@@ -1491,11 +1525,11 @@ impl Gpu {
             return;
         }
         match Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &code) {
-            Ok((p, q)) => (self.pipeline, self.particles) = (p, q),
+            Ok([p, q, sc, mu]) => (self.pipeline, self.particles, self.screen, self.multiply) = (p, q, sc, mu),
             Err(e) => {
                 eprintln!("shader · the scene's own shaders could not be built, and they are not painted: {e}");
-                if let Ok((p, q)) = Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &crate::shaders::generate(&[])) {
-                    (self.pipeline, self.particles) = (p, q);
+                if let Ok([p, q, sc, mu]) = Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &crate::shaders::generate(&[])) {
+                    (self.pipeline, self.particles, self.screen, self.multiply) = (p, q, sc, mu);
                 }
             }
         }
@@ -1780,13 +1814,25 @@ impl Gpu {
             for t in spans.iter().map(|t| t.start.min(uploaded)..t.end.min(uploaded)).filter(|t| !t.is_empty()) {
                 // The particles go where their emitter is among the elements: the
                 // stretch is cut there, and they are drawn with their own pipeline.
+                // And the groups that blend another way, with their own pipeline.
                 let mut from = t.start;
-                for &(at, count) in d.particle_marks.iter().filter(|(at, _)| t.contains(at)) {
+                let mut special: Vec<(u32, u32, u8)> = d.particle_marks.iter().filter(|(at, _)| t.contains(at)).map(|&(at, n)| (at, n, 0)).collect();
+                special.extend(d.blend_marks.iter().filter(|(at, _)| t.contains(at)).map(|&(at, m)| (at, 1, m)));
+                special.sort_by_key(|s| s.0);
+                for (at, count, how) in special {
                     if at > from {
                         pass.draw(0..6, from..at);
                     }
-                    pass.set_pipeline(&self.particles);
-                    pass.draw(0..6, at * PARTICLE_SLOTS..at * PARTICLE_SLOTS + count);
+                    match how {
+                        0 => {
+                            pass.set_pipeline(&self.particles);
+                            pass.draw(0..6, at * PARTICLE_SLOTS..at * PARTICLE_SLOTS + count);
+                        }
+                        m => {
+                            pass.set_pipeline(if m == 2 { &self.screen } else { &self.multiply });
+                            pass.draw(0..6, at..at + 1);
+                        }
+                    }
                     pass.set_pipeline(&self.pipeline);
                     from = at + 1;
                 }
