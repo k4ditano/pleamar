@@ -34,6 +34,8 @@ struct Registry {
 enum Update {
     Rescan,
     Registered(String),
+    /// A new listener: tell it everything.
+    Listener,
 }
 
 struct Watcher(Arc<Mutex<Registry>>);
@@ -72,6 +74,11 @@ impl Watcher {
 }
 
 static CONNECTION: OnceLock<Connection> = OnceLock::new();
+/// Who hears the icons, and how to ask for a fresh look: the service is one per
+/// process and outlives the logic, so a reloaded logic takes the listener's place
+/// here instead of opening another connection that finds the watcher's name taken.
+static LISTENER: Mutex<Option<Box<dyn Fn(SysValue) + Send>>> = Mutex::new(None);
+static RESCAN: OnceLock<Mutex<std::sync::mpsc::Sender<Update>>> = OnceLock::new();
 
 fn split(full: &str) -> (&str, String) {
     match full.find('/') {
@@ -158,6 +165,11 @@ fn report(c: &Connection, own: Option<&Mutex<Registry>>) -> SysValue {
 }
 
 pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
+    *LISTENER.lock().unwrap() = Some(dispatch);
+    if let Some(tx) = RESCAN.get() {
+        let _ = tx.lock().unwrap().send(Update::Listener);
+        return true;
+    }
     let registry = Arc::new(Mutex::new(Registry::default()));
     let Ok(c) = zbus::blocking::connection::Builder::session().and_then(|b| b.serve_at(WATCHER_PATH, Watcher(registry.clone()))).and_then(|b| b.build()) else { return false };
     // Is there a watcher already? If not, us. Without queueing: either you are or you are not.
@@ -177,6 +189,7 @@ pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
     let _ = CONNECTION.set(c.clone());
     let (tx, updates) = channel();
     registry.lock().unwrap().updates = Some(tx.clone());
+    let _ = RESCAN.set(Mutex::new(tx.clone()));
 
     // Three things mean we have to look again: an icon changing, the
     // watcher (if it is someone else) registering or removing someone, and someone leaving the bus.
@@ -196,17 +209,23 @@ pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
 
     std::thread::Builder::new().name("tray".into()).spawn(move || {
         let own = we_are.then_some(&*registry);
-        let mut last = String::new();
-        let mut rescan = |c: &Connection| {
+        let last = std::cell::RefCell::new(String::new());
+        let rescan = |c: &Connection| {
             let v = report(c, own);
             let fingerprint = format!("{v:?}");
-            if fingerprint != last {
-                last = fingerprint;
-                dispatch(v);
+            if fingerprint != *last.borrow() {
+                *last.borrow_mut() = fingerprint;
+                if let Some(f) = LISTENER.lock().unwrap().as_ref() {
+                    f(v);
+                }
             }
         };
         rescan(&c);
         while let Ok(n) = updates.recv() {
+            // Someone new is listening: everything, even if nothing changed.
+            if matches!(n, Update::Listener) {
+                last.borrow_mut().clear();
+            }
             if let Update::Registered(full) = &n {
                 let _ = c.emit_signal(None::<&str>, WATCHER_PATH, WATCHER, "StatusNotifierItemRegistered", &(full.as_str(),));
             }

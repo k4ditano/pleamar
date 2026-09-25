@@ -62,7 +62,7 @@ struct Args {
     naive: bool,
     demo: bool,
     mouse: Option<String>,
-    seconds: Option<u64>,
+    seconds: Option<f64>,
     margin: Option<i32>,
     hud: bool,
     reduced: bool,
@@ -127,7 +127,7 @@ fn args() -> Args {
             "--screen" => a.screen = Some(value()),
             "--stall" => a.stall = value().parse().expect("--stall wants milliseconds"),
             "--mouse" => a.mouse = Some(value()),
-            "--seconds" => a.seconds = Some(value().parse().expect("--seconds wants a number")),
+            "--seconds" => a.seconds = Some(value().parse::<f64>().ok().filter(|s| *s > 0.0).expect("--seconds wants a number of seconds, like 8 or 2.5")),
             "--margin" => a.margin = Some(value().parse().expect("--margin wants pixels")),
             "--naive" => a.naive = true,
             "--demo" => a.demo = true,
@@ -324,7 +324,7 @@ fn main() {
     if let Some(s) = a.seconds {
         let tx = to_render.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs(s));
+            std::thread::sleep(Duration::from_secs_f64(s));
             // Quitting goes through the render so that it closes its last measurement cycle.
             let _ = tx.send(ToRender::Quit);
             std::thread::sleep(Duration::from_millis(400));

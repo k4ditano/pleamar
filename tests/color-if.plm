@@ -1,0 +1,12 @@
+// expect: ok
+// Choosing a colour with `if`, as with numbers.
+scene ColorIf {
+    surface { size: 100, 100 }
+    fact urgent = false
+    let amber = #e3a35c
+    ellipse { at: 50, 50; radius: 10; color: if(urgent, amber, #9ed6bd) }
+    body {
+        color: if(urgent and 1 > 0, #ff0000, mix(#000000, #ffffff, 0.5))
+        box { at: 50, 80; size: 40, 10 }
+    }
+}

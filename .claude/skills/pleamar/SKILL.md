@@ -89,8 +89,8 @@ scene Name {
   valid ones when you miss.
 - **Inside a layout (`row`/`column`) a child must say how much room it takes.**
   Wrap loose shapes in `group { size: w, h; … }`.
-- **`if()` returns numbers, not colours.** For colours use `mix(a, b, t)`, and a
-  comparison works as `t`: `mix(ink, mint, open)`.
+- **`if()` and `mix()` work with colours too**: `if(urgent, amber, mint)`,
+  `mix(ink, mint, open)` —a comparison works as `t`—.
 - **Text with holes** is `text "{a} · {b}"`, where `a` and `b` are live texts or
   facts. For a number with decimals, `text number(expr, 2, " %")`.
 - **A surface does not grow with what it holds, and a shadow needs room.**

@@ -149,7 +149,7 @@ sum          = product { ( "+" | "-" ) product } ;
 product      = unary { ( "*" | "/" ) unary } ;
 unary        = "-" unary | "(" expr ")" | number | duration | "true" | "false"
              | name | function "(" [ expr { "," expr } ] ")" ;
-color        = "#" hex | name | "mix" "(" color "," color "," expr ")" ;
+color        = "#" hex | name | "mix" "(" color "," color "," expr ")" | "if" "(" expr "," color "," color ")" ;
 ```
 
 `Name` in `copy` is that of an already declared component: by convention capitalised, which is what tells it apart at a glance from a statement of the language.
@@ -386,11 +386,11 @@ From weakest to strongest: `or` · `and` · `not` · `< > <= >= == !=` (they do 
 | --- | --- |
 | `min(a, b)` `max(a, b)` `abs(x)` | |
 | `floor(x)` `ceil(x)` | to the integer below or the one above |
-| `sin(deg)` `cos(deg)` | sine and cosine, **in degrees**: what it takes to put something on an arc. Animate the angle and not the x and the y, and the thing travels along the arc instead of cutting across it |
+| `sin(deg)` `cos(deg)` | sine and cosine, **in degrees, as a plain number**: what it takes to put something on an arc. Animate the angle and not the x and the y, and the thing travels along the arc instead of cutting across it. `sin(30deg)` is an error: `deg` turns a number into radians, which is what `rotate` and `span` want —and so `atan2(…) * 1deg` is how an angle worked out here turns something— |
 | `clamp(x, a, b)` | x, between a and b |
 | `smooth(a, b, x)` | from 0 to 1 while x goes from a to b, easing in and out |
 | `mix(a, b, t)` | between a and b. Also between two colors |
-| `if(cond, a, b)` | a if the condition holds, b if not: only that side is evaluated. With a spring as the condition (`if(hot, a, b)`), it goes between the two, like `mix(b, a, hot)` |
+| `if(cond, a, b)` | a if the condition holds, b if not: only that side is evaluated. With a spring as the condition (`if(hot, a, b)`), it goes between the two, like `mix(b, a, hot)`. Also with two colors: `if(urgent, amber, mint)` |
 | `vel(prop)` | the velocity of a spring, which only the renderer knows |
 | `sqrt(x)` `pow(a, b)` `exp(x)` `log(x)` | square root (of 0 or more), power, e to the x, natural logarithm. A power that would not be a number (`pow(-8, 0.5)`) is 0 |
 | `tan(deg)` `atan2(y, x)` | tangent, and the angle of the point (x, y): **in degrees**, like `sin` and `cos`. `atan2(pointer.y - cy, pointer.x - cx)` is where the mouse is, seen from (cx, cy) |

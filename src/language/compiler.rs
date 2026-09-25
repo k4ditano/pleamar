@@ -84,7 +84,7 @@ impl<'a> Cur<'a> {
     fn num(&mut self) -> R<f32> {
         let negative = self.sym("-");
         match self.peek() {
-            Some(TokenKind::Num(n)) => {
+            Some(TokenKind::Num(n) | TokenKind::Angle(n)) => {
                 self.i += 1;
                 Ok(if negative { -n } else { *n })
             }
@@ -528,6 +528,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     let mut seen_places = std::collections::HashSet::new();
     symbols.extend(o.used.take().into_iter().filter(|s| seen_places.insert((s.local.clone(), s.line, s.col))));
     crate::scene::settle_effects(&mut o.e.instrs);
+    o.note_loose_clips(body);
     (if o.errors.is_empty() { Ok(o.e) } else { Err(o.errors) }, symbols)
 }
 
@@ -1005,7 +1006,7 @@ impl<'a> Compiler<'a> {
             return Ok(e);
         }
         match c.peek() {
-            Some(TokenKind::Num(n)) => {
+            Some(TokenKind::Num(n) | TokenKind::Angle(n)) => {
                 c.i += 1;
                 Ok(Expr::K(*n))
             }
@@ -1080,6 +1081,7 @@ impl<'a> Compiler<'a> {
             return Ok(p.vel());
         }
         let mut a = Vec::new();
+        let first = c.i;
         if !c.sym(")") {
             loop {
                 a.push(self.expr(c)?);
@@ -1087,6 +1089,13 @@ impl<'a> Compiler<'a> {
                     break;
                 }
                 c.expect_sym(",")?;
+            }
+        }
+        // `sin(30deg)`: `deg` turns the 30 into radians —which is what `rotate`
+        // wants— and `sin` takes degrees. The sine of half a degree, silently.
+        if ["sin", "cos", "tan"].contains(&name) {
+            if let Some(t) = c.tokens[first..c.i].iter().find(|t| matches!(t.kind, TokenKind::Angle(_))) {
+                return Err(CompileError::at(t.line, t.col, format!("`{name}` takes the angle in degrees as a plain number: `{name}(30)`, not `{name}(30deg)` —`deg` turns it into radians, which is what `rotate` wants—")));
             }
         }
         let constant = |e: &Expr| match e {
@@ -1177,7 +1186,21 @@ impl<'a> Compiler<'a> {
                 let [b0, b1, b2] = b;
                 Ok([a0.mix(b0, t.clone()), a1.mix(b1, t.clone()), a2.mix(b2, t)])
             }
-            _ => c.error("expected a colour here: #151616, the name of one, or mix(#a, #b, how much)"),
+            // `if(cond, #a, #b)`: choosing a colour is mixing with 0 or 1, as with numbers.
+            Some(TokenKind::Id(m)) if m == "if" => {
+                c.i += 1;
+                c.expect_sym("(")?;
+                let cond = self.expr(c)?;
+                c.expect_sym(",")?;
+                let a = self.color(c)?;
+                c.expect_sym(",")?;
+                let b = self.color(c)?;
+                c.expect_sym(")")?;
+                let [a0, a1, a2] = a;
+                let [b0, b1, b2] = b;
+                Ok([b0.mix(a0, cond.clone()), b1.mix(a1, cond.clone()), b2.mix(a2, cond)])
+            }
+            _ => c.error("expected a colour here: #151616, the name of one, mix(#a, #b, how much) or if(condition, #a, #b)"),
         }
     }
 
@@ -2963,6 +2986,45 @@ impl<'a> Compiler<'a> {
         };
         self.e.paint(Instr::Particles(Box::new(Particles { at, area, count, life, speed, direction, spread, gravity, drag, size, colors, opacity, shape, emit, burst, alpha })));
         Ok(())
+    }
+
+    /// A `clip` loose in the scene clips everything after it, up to the next
+    /// named `surface` —not to the end of what it seems to belong to—. When that
+    /// is meant (Marea's card), fine; when it is not, whatever was written below
+    /// it came out clipped to a shape that may be closed, that is, not at all,
+    /// and nothing said so. Now something does, once, when the scene is read.
+    fn note_loose_clips(&self, body: &[Entry]) {
+        let head = |e: &Entry| match e {
+            Entry::Node(n) => n.head.first().and_then(|t| if let TokenKind::Id(w) = &t.kind { Some(w.clone()) } else { None }),
+            _ => None,
+        };
+        for (k, e) in body.iter().enumerate() {
+            let Entry::Node(n) = e else { continue };
+            if head(e).as_deref() != Some("clip") {
+                continue;
+            }
+            let mut reached = 0;
+            let mut until = None;
+            for later in &body[k + 1..] {
+                match (head(later).as_deref(), later) {
+                    (Some("surface"), Entry::Node(m)) if m.head.len() > 1 => {
+                        until = Some(m);
+                        break;
+                    }
+                    (Some(w), _) if vocab::STATEMENTS.contains(&w) && !matches!(w, "clip" | "let" | "prop" | "fact" | "event" | "text" | "on" | "follow" | "spin" | "wave" | "blink" | "look" | "gesture" | "posture" | "layer" | "spring" | "pose" | "measure" | "model" | "service" | "permissions" | "every" | "image" | "figure" | "component" | "translations") => reached += 1,
+                    // A copy of a component, or a text being painted, also draws.
+                    (Some(_), Entry::Node(m)) if m.body.is_some() => reached += 1,
+                    _ => {}
+                }
+            }
+            if reached == 0 {
+                continue;
+            }
+            let file = self.files.get(n.line / super::PER_FILE).map_or("", String::as_str);
+            let line = n.line % super::PER_FILE;
+            let limit = until.map_or("the end of the scene".to_owned(), |m| format!("`surface` on line {}", m.line % super::PER_FILE));
+            eprintln!("note   · {file}:{line}: this `clip` is loose in the scene: it also clips the {reached} drawings after it, up to {limit}. To clip only some, put it inside a `group` with them");
+        }
     }
 
     /// `time`: the seconds since the scene started. Created the first time

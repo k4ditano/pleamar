@@ -35,6 +35,8 @@ struct Notification {
 /// What has to be told to the bus, or done, outside the call that caused it.
 enum Event {
     Change,
+    /// Someone new is listening: tell them everything, even if nothing changed.
+    Listener,
     Closed(u32, u32),
     Action(u32, String),
 }
@@ -57,6 +59,12 @@ struct Hub {
 }
 
 static HUB: OnceLock<Arc<Hub>> = OnceLock::new();
+/// Whoever hears the list: the logic that asked last. The server is one per
+/// process and outlives the logic: when the logic is reloaded, the new one
+/// takes the name's place in here instead of asking D-Bus for the name again,
+/// which the old one still held —and the new logic, finding it taken, fell
+/// back to made-up notices—.
+static LISTENER: Mutex<Option<Box<dyn Fn(SysValue) + Send>>> = Mutex::new(None);
 
 impl Hub {
     fn send(&self, c: Event) {
@@ -163,6 +171,12 @@ impl Server {
 }
 
 pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
+    *LISTENER.lock().unwrap() = Some(dispatch);
+    // Already serving, in this process: the new listener gets the list, and that is all.
+    if let Some(hub) = HUB.get() {
+        hub.send(Event::Listener);
+        return true;
+    }
     let (tx, events) = channel();
     let hub = Arc::new(Hub { state: Mutex::default(), events: Mutex::new(tx) });
     // Without queueing or taking it from anybody: if the name has an owner, there is no service here.
@@ -185,7 +199,9 @@ pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
             let fingerprint = format!("{v:?}");
             if *last.borrow() != fingerprint {
                 *last.borrow_mut() = fingerprint;
-                dispatch(v);
+                if let Some(f) = LISTENER.lock().unwrap().as_ref() {
+                    f(v);
+                }
             }
         };
         dispatch(hub.report());
@@ -199,6 +215,10 @@ pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
             };
             match event {
                 Ok(Event::Change) => dispatch(hub.report()),
+                Ok(Event::Listener) => {
+                    last.borrow_mut().clear();
+                    dispatch(hub.report());
+                }
                 Ok(Event::Closed(id, reason)) => {
                     let _ = connection.emit_signal(None::<&str>, PATH, NAME, "NotificationClosed", &(id, reason));
                 }

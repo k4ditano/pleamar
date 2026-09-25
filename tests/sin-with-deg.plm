@@ -1,0 +1,5 @@
+// expect: error «takes the angle in degrees as a plain number»
+scene X {
+    surface { size: 100, 100 }
+    ellipse { at: 50 + 20 * cos(30deg), 50; radius: 4; color: #fff }
+}

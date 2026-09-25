@@ -6,6 +6,9 @@ use super::CompileError;
 pub enum TokenKind {
     Id(String),
     Num(f32),
+    /// An angle written with `deg`, already in radians: `45deg`. A number
+    /// everywhere; apart only so that `sin(30deg)` can be told apart.
+    Angle(f32),
     /// A duration, already in seconds: `320ms`, `14s`.
     Dur(f32),
     Color([f32; 3]),
@@ -63,7 +66,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
                 let kind = match unit.as_str() {
                     "" | "px" => TokenKind::Num(number),
                     "%" => TokenKind::Num(number / 100.0),
-                    "deg" => TokenKind::Num(number.to_radians()),
+                    "deg" => TokenKind::Angle(number.to_radians()),
                     "ms" => TokenKind::Dur(number / 1000.0),
                     "s" => TokenKind::Dur(number),
                     other if super::vocabulary::UNITS.contains(&other) => unreachable!("'{other}' is in the vocabulary, but the tokenizer cannot convert it"),
