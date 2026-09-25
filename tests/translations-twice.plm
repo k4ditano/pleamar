@@ -1,0 +1,10 @@
+// expect: error «is translated into `es` twice»
+language 0.1
+scene TranslatedTwice {
+    surface { size: 200, 60 }
+    text "Hello" { at: 10, 20; size: 12; color: #ffffff }
+    translations es {
+        "Hello" = "Hola"
+        "Hello" = "Buenas"
+    }
+}

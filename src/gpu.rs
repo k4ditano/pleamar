@@ -184,6 +184,27 @@ struct OpenBody {
     flats: Vec<crate::shapes::FlatShape>,
 }
 
+/// What a text says right now. Without copying anything when it does not have to: a
+/// literal or a live text are borrowed; only what has to be assembled is.
+pub fn content_text<'t>(content: &'t Content, c: Ctx, texts: &'t [String]) -> std::borrow::Cow<'t, str> {
+    use std::borrow::Cow;
+    match content {
+        Content::Literal(t) => Cow::Borrowed(t.as_str()),
+        Content::Live(id) => Cow::Borrowed(texts.get(id.0 as usize).map_or("", String::as_str)),
+        Content::Number(e, decimals, after) => Cow::Owned(format!("{:.*}{after}", *decimals as usize, e.eval(c))),
+        Content::Template(pieces) => {
+            let mut assembled = String::new();
+            Piece::write_into(pieces, c, texts, &mut assembled);
+            Cow::Owned(assembled)
+        }
+        // The version of the language the `locale` fact says.
+        Content::Translated { locale, versions } => {
+            let k = (c.facts[locale.0 as usize].round().max(0.0) as usize).min(versions.len().saturating_sub(1));
+            content_text(&versions[k], c, texts)
+        }
+    }
+}
+
 /// The width of a glass's bevel: a third of its short side, not going over 30 px.
 fn bevel_for(bounds: [f32; 4]) -> f32 {
     ((bounds[2] - bounds[0]).min(bounds[3] - bounds[1]) * 0.33).clamp(4.0, 30.0)
@@ -738,7 +759,8 @@ impl DrawList {
                     let dots = if *secret { MASK_DOT.repeat(real.chars().count()) } else { String::new() };
                     let value = if *secret { dots.as_str() } else { real };
                     // When empty, it shows what is expected of it, fainter.
-                    let m = tip.layout(idx, LayoutKey::new(if empty { placeholder } else { value }, style, None));
+                    let placeholder = content_text(placeholder, c, texts);
+                    let m = tip.layout(idx, LayoutKey::new(if empty { &placeholder } else { value }, style, None));
                     let (x0, y0, w) = (at.0.eval(c), at.1.eval(c), width.eval(c));
                     let h = style.px * style.line_height;
                     let mine = field.filter(|v| v.text == k);
@@ -797,21 +819,8 @@ impl DrawList {
                     clips.pop();
                 }
                 Instr::Text { content, at, anchor, width, style, alpha, measure } => {
-                    let number;
-                    let text = match content {
-                        Content::Literal(t) => t.as_str(),
-                        Content::Live(id) => texts.get(id.0 as usize).map_or("", String::as_str),
-                        Content::Number(e, decimals, after) => {
-                            number = format!("{:.*}{after}", *decimals as usize, e.eval(c));
-                            number.as_str()
-                        }
-                        Content::Template(pieces) => {
-                            let mut assembled = String::new();
-                            Piece::write_into(pieces, c, texts, &mut assembled);
-                            number = assembled;
-                            number.as_str()
-                        }
-                    };
+                    let text = content_text(content, c, texts);
+                    let text: &str = &text;
                     // It is ordered even if not visible: so that when it appears, it is already there.
                     let key = LayoutKey::new(text, style, width.as_ref().map(|w| w.eval(c)));
                     let Some(m) = tip.layout(idx, key) else { continue };

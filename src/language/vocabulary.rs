@@ -10,10 +10,11 @@ pub const STATEMENTS: &[&str] = &[
     "body", "ellipse", "box", "arc", "line", "path", "input", "clip", "group", "popup",
     "component", "children", "repeat", "for", "row", "column", "space", "between",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
+    "translations",
 ];
 
 /// What a library can declare.
-pub const LIBRARY_STATEMENTS: &[&str] = &["let", "spring", "component", "permissions", "fact", "text", "model", "service", "event", "image", "figure", "prop", "pose", "gesture", "posture", "layer"];
+pub const LIBRARY_STATEMENTS: &[&str] = &["let", "spring", "component", "permissions", "fact", "text", "model", "service", "event", "image", "figure", "prop", "pose", "gesture", "posture", "layer", "translations"];
 
 /// Which properties each element accepts. `shape` are the ones common to all shapes.
 pub const PROPERTIES: &[(&str, &[&str])] = &[
@@ -54,6 +55,7 @@ pub const FACT_TYPES: &[&str] = &["number", "bool"];
 /// One line per word, for the language server: what the editor shows when
 /// hovering over it. `run-tests.sh` checks that no statement is missing.
 pub const HELP: &[(&str, &str)] = &[
+    ("translations", "`translations es { \"Control center\" = \"Centro de control\" }` — the scene's texts in another language. With them comes the fact `locale` (`en | es`), which starts as the system's language and switches every text at once."),
     ("surface", "`surface { size: full, 44; anchor: top }` — a window this scene asks the system for. Several, with a name, share everything."),
     ("permissions", "`permissions { run: \"date\"; services: \"audio\", \"audio.*\" }` — what the logic may touch. Undeclared, nothing. Listening is not commanding."),
     ("model", "`model rows max 14 { label: text }` — a list of records the logic fills. Creates `rows.count`, `rows.total` and `rows.K.field`."),

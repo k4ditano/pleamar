@@ -68,6 +68,8 @@ struct Shared {
     /// Of the facts that are not plain numbers, what they are: the logic sees them as `true` or as `"critical"`.
     types: HashMap<String, crate::scene::FactType>,
     signals: std::collections::HashSet<String>,
+    /// The scene's `translations`, for `tr`.
+    translations: crate::scene::Translations,
     /// The services the scene asked for by name, and which fields it wants from each one.
     services: Vec<crate::scene::Service>,
     /// Which ones already got a thread: reloading the scene does not start them twice.
@@ -416,6 +418,7 @@ impl LuauScript {
         c.types = e.types.iter().cloned().collect();
         c.signals = e.signals.iter().map(|s| s.0.to_owned()).collect();
         c.services = e.services.clone();
+        c.translations = e.translations.clone();
     }
 
     /// The services the scene asked for with `service`: one per thread, and whatever they report
@@ -894,6 +897,17 @@ impl LuauScript {
             loaded.raw_set(name, slot)?;
             Ok(value)
         })?)?;
+        // tr("Control center"): the scene's text in the language `locale` says, for what
+        // the logic writes itself. Without a translation, as written.
+        let c = self.c.clone();
+        g.set("tr", lua.create_function(move |_, s: String| {
+            let c = c.lock().unwrap();
+            let k = c.facts.get("locale").map_or(0, |v| v.round().max(0.0) as usize);
+            Ok(match k.checked_sub(1).and_then(|k| c.translations.get(k)).and_then(|(_, table)| table.get(&s)) {
+                Some(t) => t.clone(),
+                None => s,
+            })
+        })?)?;
         let who = self.prefix.as_ref().map_or(String::new(), |p| format!("[{p}] "));
         g.set("log", lua.create_function(move |_, v: MultiValue| {
             let pieces: Vec<String> = v.iter().map(|x| x.to_string().unwrap_or_else(|_| format!("{x:?}"))).collect();
@@ -1019,7 +1033,7 @@ impl Script for LuauScript {
             }
             // The scene was reloaded: whatever it has that is new can now be named; whatever
             // was already known, is still known.
-            Event::NewScene(facts, texts, permissions, models, types, plugins, signals, services) => {
+            Event::NewScene(facts, texts, permissions, models, types, plugins, signals, services, translations) => {
                 // A plugin receives the new scene with its own definition: that is where it gets its permissions.
                 if let (Some(_), Some(def)) = (&self.prefix, plugins.first()) {
                     let mut c = self.c.lock().unwrap();
@@ -1030,7 +1044,7 @@ impl Script for LuauScript {
                 if self.prefix.is_none() {
                     let mut staying: Vec<LivePlugin> = Vec::new();
                     for (k, p) in plugins.iter().enumerate() {
-                        let fresh = Event::NewScene(facts.clone(), texts.clone(), crate::permissions::effective(p), models.clone(), types.clone(), vec![p.clone()], signals.clone(), services.clone());
+                        let fresh = Event::NewScene(facts.clone(), texts.clone(), crate::permissions::effective(p), models.clone(), types.clone(), vec![p.clone()], signals.clone(), services.clone(), translations.clone());
                         let live = match self.plugins.iter().position(|x| x.definition.name == p.name && x.definition.logic == p.logic) {
                             Some(i) => {
                                 let mut v = self.plugins.remove(i);
@@ -1058,6 +1072,7 @@ impl Script for LuauScript {
                 c.models = models;
                 c.types = types.into_iter().collect();
                 c.signals = signals.iter().map(|s| (*s).to_owned()).collect();
+                c.translations = translations;
                 // Permissions are indeed replaced: removing one from the scene removes it right away.
                 if c.permissions != permissions {
                     println!("logic  · permissions now: {}", describe(&permissions));

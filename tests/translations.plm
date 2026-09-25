@@ -1,0 +1,17 @@
+// expect: ok
+language 0.1
+// A scene written in English with a Spanish version: `locale` comes with the
+// translations, starts as the system's language, and a rule can switch it.
+scene Translations {
+    surface { size: 300, 80 }
+    text title = "Settings"
+    text title { at: 20, 20; size: 14; color: #f5f7f5 }
+    text "{title} · language" { at: 20, 44; size: 11; color: #c2c7cc }
+    box switch { at: 260, 40; size: 50, 26; corner: 13; color: #2e2f2f }
+    on press switch while locale == en { locale = es }
+    on press switch while locale == es { locale = en }
+    translations es {
+        "Settings" = "Ajustes"
+        "{title} · language" = "{title} · idioma"
+    }
+}

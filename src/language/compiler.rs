@@ -247,6 +247,10 @@ struct Compiler<'a> {
     /// What a `strict` component has read from the scene without asking for it: (component, name).
     unrequested: std::cell::RefCell<Vec<(String, String, (usize, usize))>>,
     unwatched: std::cell::Cell<bool>,
+    /// `translations`: each language with its table, original → translated. And, per
+    /// language, the texts found without a translation, to say so once at the end.
+    translations: Vec<(String, HashMap<String, String>)>,
+    untranslated: std::cell::RefCell<Vec<std::collections::BTreeSet<String>>>,
     props: HashMap<String, PropId>,
     facts: HashMap<String, FactId>,
     signals: HashMap<String, SignalId>,
@@ -313,6 +317,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     };
     let mut o = Compiler {
         e: Scene::default(),
+        translations: Vec::new(), untranslated: Default::default(),
         props: HashMap::new(), facts: HashMap::new(), signals: HashMap::new(), texts: HashMap::new(), images: HashMap::new(), figures: HashMap::new(), models: HashMap::new(),
         measurements: HashMap::new(), gestures: HashMap::new(), zones: HashMap::new(), lets: HashMap::new(), let_lines: HashMap::new(), colors: HashMap::new(),
         springs: vocab::SPRINGS.iter().map(|n| ((*n).to_owned(), match *n {
@@ -341,6 +346,9 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         return (Err(vec![CompileError::at(scene.line, scene.col, "this scene is missing its `{ … }` block")]), Vec::new());
     };
     o.declare_measures_early(body);
+    // The translations first of all: the texts are read already knowing them,
+    // wherever the block is —at the end, or in an imported library—.
+    o.read_translations(body);
     // Four passes: declarations; names and layers; drawing; rules.
     for pass in 0..3 {
         o.pass = pass;
@@ -489,6 +497,17 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         o.scopes.clear();
         o.push_error(CompileError::at(pos.0, pos.1, format!("'{component}' belongs to a `strict` library and reads '{name}', which is the scene\'s, without asking for it. Take it as a parameter, or declare it in the library")));
     }
+    // What has no translation into some language: it is shown in the original there.
+    // Said, not failed: a scene grows a text before someone translates it.
+    if o.errors.is_empty() {
+        for ((code, _), missing) in o.translations.iter().zip(o.untranslated.borrow().iter()) {
+            if !missing.is_empty() {
+                let list: Vec<String> = missing.iter().take(6).map(|t| format!("«{t}»")).collect();
+                let more = if missing.len() > 6 { format!(" and {} more", missing.len() - 6) } else { String::new() };
+                eprintln!("translations · {code}: {} text{} without a translation, shown as written: {}{more}", missing.len(), if missing.len() == 1 { "" } else { "s" }, list.join(", "));
+            }
+        }
+    }
     // The names that were declared, one per name: the four passes and the copies
     // of a `repeat` declare the same one many times, and the first location is enough for the editor.
     let mut seen = std::collections::HashSet::new();
@@ -505,6 +524,18 @@ fn is_surface(e: &Entry) -> bool {
 }
 
 /// In which pass each statement at the scene level is read.
+/// The system's language, as the locale variables say it: `es_ES.UTF-8` is `es_es`.
+fn system_language() -> String {
+    for v in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Ok(s) = std::env::var(v) {
+            if !s.is_empty() && s != "C" && s != "POSIX" {
+                return s.split(['.', '@']).next().unwrap_or("").to_lowercase();
+            }
+        }
+    }
+    "en".into()
+}
+
 fn pass_of(e: &Entry) -> u8 {
     let Entry::Node(n) = e else { return 2 };
     let is_assignment = matches!(n.head.get(2).map(|x| &x.kind), Some(TokenKind::Sym("=")));
@@ -1261,6 +1292,8 @@ impl<'a> Compiler<'a> {
             }
             self.current_class = word.clone();
             match word.as_str() {
+                // Already read, before everything (see `read_translations`).
+                "translations" => {}
                 "surface" => {
                     // A surface with a name is another window: it starts clean. A loose
                     // `clip` of the scene reached the end of its group
@@ -1326,6 +1359,9 @@ impl<'a> Compiler<'a> {
                 "fact" => {
                     // fact open = false · fact count: number = 0 · fact mode: low | normal | critical = normal
                     let name = self.declare(&c.id("a name for the fact")?);
+                    if name == "locale" && self.e.locale.is_some() {
+                        return c.error("`locale` already exists: it comes with `translations`, and says which language the texts are shown in. Give this fact another name");
+                    }
                     let declared = if c.sym(":") { Some(self.fact_type(&mut c)?) } else { None };
                     c.expect_sym("=")?;
                     let (v, kind) = match declared {
@@ -1365,9 +1401,18 @@ impl<'a> Compiler<'a> {
                     let name = self.declare(&c.id("a name for the text")?);
                     c.expect_sym("=")?;
                     let value = c.string()?;
+                    let versions = self.versions_of(&value);
                     let t = match self.texts.get(&name) {
                         Some(existing) => *existing,
-                        None => self.e.live_text(interned(&name), &value),
+                        None => {
+                            // Born in the language the scene is shown in.
+                            let start = self.e.locale.map_or(0, |l| self.e.facts[l.0 as usize].1 as usize);
+                            let t = self.e.live_text(interned(&name), versions.as_ref().map_or(&value, |v| &v[start]));
+                            if let Some(v) = versions {
+                                self.e.text_versions.push((t, v));
+                            }
+                            t
+                        }
                     };
                     self.texts.insert(name, t);
                 }
@@ -1914,6 +1959,141 @@ impl<'a> Compiler<'a> {
 
     /// `"Dismiss"` is a literal text; `"{r.title} · {volume * 100, 1} %"`, a template.
     fn content_of(&self, s: &str, token: &Token) -> R<Content> {
+        let original = self.content_of_one(s, token)?;
+        let (Some(locale), true) = (self.e.locale, self.translatable(s)) else { return Ok(original) };
+        let mut versions = vec![original.clone()];
+        let mut any = false;
+        for (k, (_, table)) in self.translations.iter().enumerate() {
+            match table.get(s) {
+                Some(t) => {
+                    versions.push(self.content_of_one(t, token)?);
+                    any = true;
+                }
+                None => {
+                    self.untranslated.borrow_mut()[k].insert(s.to_owned());
+                    versions.push(original.clone());
+                }
+            }
+        }
+        Ok(if any { Content::Translated { locale, versions } } else { original })
+    }
+
+    /// Whether a text is worth translating: one with no letters (`·`, `{n} %`) is the
+    /// same in every language, and not worth warning about.
+    fn translatable(&self, s: &str) -> bool {
+        let mut in_hole = 0;
+        s.chars().any(|ch| {
+            match ch {
+                '{' => in_hole += 1,
+                '}' => in_hole -= 1,
+                _ => {}
+            }
+            in_hole == 0 && ch.is_alphabetic()
+        })
+    }
+
+    /// Each language's version of a literal with no placeholders —a declared text, a
+    /// component's string—, the original first; `None` if nobody translates it.
+    fn versions_of(&self, s: &str) -> Option<Vec<String>> {
+        self.e.locale?;
+        if !self.translatable(s) {
+            return None;
+        }
+        let mut any = false;
+        let mut versions = vec![s.to_owned()];
+        for (k, (_, table)) in self.translations.iter().enumerate() {
+            match table.get(s) {
+                Some(t) => {
+                    versions.push(t.clone());
+                    any = true;
+                }
+                None => {
+                    self.untranslated.borrow_mut()[k].insert(s.to_owned());
+                    versions.push(s.to_owned());
+                }
+            }
+        }
+        any.then_some(versions)
+    }
+
+    /// `translations es { "Control center" = "Centro de control" }`, read before
+    /// everything else. With at least one, the fact `locale` exists: `en` —the
+    /// language the scene is written in—, then each translation in order. It starts
+    /// as the system's language (`LC_ALL`, `LC_MESSAGES`, `LANG`), and the scene or the
+    /// logic can change it while it runs: every text changes with it.
+    fn read_translations(&mut self, entries: &'a [Entry]) {
+        for e in entries {
+            let Entry::Node(n) = e else { continue };
+            if !matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "translations") {
+                continue;
+            }
+            if let Err(f) = self.translations_block(n) {
+                self.push_error(f);
+            }
+        }
+        if self.translations.is_empty() {
+            return;
+        }
+        *self.untranslated.borrow_mut() = vec![Default::default(); self.translations.len()];
+        let mut names = vec!["en".to_owned()];
+        names.extend(self.translations.iter().map(|(code, _)| code.clone()));
+        let system = system_language();
+        let start = names.iter().position(|n| *n == system).or_else(|| names.iter().position(|n| system.split('_').next() == Some(n.as_str()))).unwrap_or(0);
+        for (k, n) in names.iter().enumerate() {
+            match self.values.get(n) {
+                Some(v) if *v != k as f32 => {
+                    self.values.remove(n);
+                    self.ambiguous.insert(n.clone());
+                }
+                _ if self.ambiguous.contains(n) => {}
+                _ => {
+                    self.values.insert(n.clone(), k as f32);
+                }
+            }
+        }
+        self.e.types.push(("locale".into(), FactType::Enum(names)));
+        let h = self.e.fact("locale", start as f32);
+        self.facts.insert("locale".into(), h);
+        self.e.locale = Some(h);
+        self.e.translations = self.translations.clone();
+    }
+
+    fn translations_block(&mut self, n: &Node) -> R<()> {
+        let mut c = Cur::new(&n.head[1..], n.line, n.col);
+        let code = c.id("the code of a language: `translations es { … }`")?;
+        c.expect_end()?;
+        if code.len() < 2 || !code.chars().all(|ch| ch.is_ascii_lowercase() || ch == '_') {
+            return Err(CompileError::at(n.line, n.col, format!("'{code}' does not look like a language: it is its code in lower case, `es`, `pt_br`")));
+        }
+        if code == "en" {
+            return Err(CompileError::at(n.line, n.col, "`en` is the language the scene is written in: translations go into another one"));
+        }
+        let k = match self.translations.iter().position(|(c, _)| *c == code) {
+            Some(k) => k,
+            None => {
+                self.translations.push((code.clone(), HashMap::new()));
+                self.translations.len() - 1
+            }
+        };
+        for entry in n.body.as_deref().unwrap_or(&[]) {
+            let (line, col, pair) = match entry {
+                Entry::Node(m) => (m.line, m.col, match m.head.as_slice() {
+                    [Token { kind: TokenKind::Str(a), .. }, Token { kind: TokenKind::Sym("="), .. }, Token { kind: TokenKind::Str(b), .. }] => Some((a.clone(), b.clone())),
+                    _ => None,
+                }),
+                Entry::Prop { line, col, .. } => (*line, *col, None),
+            };
+            let Some((a, b)) = pair else {
+                return Err(CompileError::at(line, col, "a translation is the original and what it becomes: `\"Control center\" = \"Centro de control\"`"));
+            };
+            if self.translations[k].1.insert(a.clone(), b).is_some() {
+                return Err(CompileError::at(line, col, format!("«{a}» is translated into `{code}` twice, and only the last one would count")));
+            }
+        }
+        Ok(())
+    }
+
+    fn content_of_one(&self, s: &str, token: &Token) -> R<Content> {
         if !s.contains('{') && !s.contains('}') {
             return Ok(Content::Literal(s.to_owned()));
         }
@@ -2083,7 +2263,11 @@ impl<'a> Compiler<'a> {
                 self.scopes.iter().rev().find_map(|e| e.contents.get(name)).unwrap().clone()
             }
             Some(TokenKind::Id(name)) if self.scopes.iter().any(|e| e.strings.contains_key(name)) => {
-                Content::Literal(self.scopes.iter().rev().find_map(|e| e.strings.get(name)).unwrap().clone())
+                let s = self.scopes.iter().rev().find_map(|e| e.strings.get(name)).unwrap().clone();
+                match (self.e.locale, self.versions_of(&s)) {
+                    (Some(locale), Some(v)) => Content::Translated { locale, versions: v.into_iter().map(Content::Literal).collect() },
+                    _ => Content::Literal(s),
+                }
             }
             Some(TokenKind::Id(name)) => match self.texts.get(&{ c.mark_name(); self.global(name) }) {
                 Some(t) => Content::Live(*t),
@@ -2212,9 +2396,16 @@ impl<'a> Compiler<'a> {
         if let Some(c) = p.get_mut("color") {
             style.color = self.color(c)?;
         }
+        // What it says while empty: translated like any other text.
         let placeholder = match p.get_mut("placeholder") {
-            Some(c) => c.string()?,
-            None => String::new(),
+            Some(c) => {
+                let s = c.string()?;
+                match (self.e.locale, self.versions_of(&s)) {
+                    (Some(locale), Some(v)) => Content::Translated { locale, versions: v.into_iter().map(Content::Literal).collect() },
+                    _ => Content::Literal(s),
+                }
+            }
+            None => Content::Literal(String::new()),
         };
         // `secret: true`: a password. It is typed the same and painted as dots.
         let secret = match p.get_mut("secret") {

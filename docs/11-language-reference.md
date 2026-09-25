@@ -44,14 +44,15 @@ In EBNF: `[ x ]` is optional, `{ x }` zero or more times, `|` alternatives, `"x"
 ```
 file         = [ "language" number end ] { "import" text end } ( scene | library ) ;
 scene        = "scene" name "{" { statement } "}" ;
-library      = "library" name [ "strict" ] "{" { let | spring | component | boundary | inner } "}" ;
+library      = "library" name [ "strict" ] "{" { let | spring | component | boundary | inner | translations } "}" ;
 boundary     = permissions | fact | event | live_text | model | image_decl ;    (* lives under the library's name: `Clock.now` *)
 inner        = property | gesture | layer ;                                     (* what moves inside; also under its name *)
 
 statement    = declaration | drawing | structure | layer | rule | behaviour | gesture ;
 
 declaration  = surface | permissions | model | spring | property | fact | event
-             | live_text | image_decl | figure_decl | measure | let | zone ;
+             | live_text | image_decl | figure_decl | measure | let | zone | translations ;
+translations = "translations" name "{" { text "=" text end } "}" ;            (* name: a language code, `es`, `pt_br` *)
 surface      = "surface" [ name ] "{" { element_prop | statement } "}" ;   (* named: one of several, with its own things inside *)
 permissions  = "permissions" "{" { ( "run" | "services" ) ":" text { "," text } end } "}" ;
 model        = "model" name [ "max" number ] "{" { field | list } "}" ;
@@ -633,6 +634,39 @@ Inside a text in quotes that is the content of a `text` or the argument of a com
 
 The names of a slot are resolved where the string is written, not where it is used.
 
+### 11.1. Translations
+
+A scene is written in one language —`en`— and **`translations`** give it others. Each
+block is a language and, inside, each text as written and what it becomes; slots
+included, and they may move:
+
+```
+translations es {
+    "Control center" = "Centro de control"
+    "{n} notices"    = "{n} avisos"
+}
+```
+
+With at least one block, the fact **`locale`** exists by itself: an enum with `en`
+and each translated language, in order (`locale == es`). It starts as the system's
+language —`LC_ALL`, `LC_MESSAGES`, `LANG`; `es_ES.UTF-8` is `es`— or `en` if it is not
+one of them, and **it can change while the scene runs**: a rule (`locale = es`) or the
+logic (`fact.locale = "es"`) switch **every text at once**, without reloading anything.
+That is how a Settings page offers a language.
+
+What is translated: the text of a `text "…"`, with its slots; the value of a declared
+`text name = "…"` (while the logic has not written something else into it); a
+component's string argument; an `input`'s `placeholder`. What the logic writes itself
+goes through **`tr("…")`**, which returns it in the language `locale` says, from the same
+tables. A text with no letters (`·`, `{n} %`) is not asked for.
+
+The tables can live anywhere in the scene, or in a library that only has them
+(`import "lang/es.plm"`): they are read before anything else. A text some language
+lacks is shown as written there, and loading the scene says so, once:
+`translations · es: 2 texts without a translation, shown as written: «Wi-Fi», «Search»`.
+The same text translated twice into a language, a translation into `en`, or a scene
+fact of its own called `locale`, are errors.
+
 ## 12. Layers
 
 `layer name [~spring] { claims }`. **The first claim that holds wins**, from top to bottom; when it stops holding, the next one is seen, on its own. A claim is a `name` followed by when —`while expr`, `for 700ms after event, other`, `from event until event`, or nothing (the default)— and, if it likes, a block with its choreography: where each property goes, with which spring and with which delay. The destination is an expression evaluated when its turn comes. `layer.claim` is 1 while it wins, and it can be read in any expression.
@@ -818,8 +852,8 @@ This is the output of `pleamar --grammar`, copied. It is not a second list: thes
 
 ```vocabulary
 language: 0.1
-statements: surface permissions model service spring prop pose fact event text image figure measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture
-library: let spring component permissions fact text model service event image figure prop pose gesture posture layer
+statements: surface permissions model service spring prop pose fact event text image figure measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture translations
+library: let spring component permissions fact text model service event image figure prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate
 properties.permissions: run services
 properties.shape: rotate stroke color opacity blend glass lens active show cursor grow
@@ -848,7 +882,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: surface permissions model service spring prop pose fact event text image figure measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture import scene library language
+documented: translations surface permissions model service spring prop pose fact event text image figure measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture import scene library language
 services: clock clock.seconds audio battery brightness network media window
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date

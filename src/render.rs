@@ -110,6 +110,8 @@ pub fn run(
     let mut atlas_stale = false;
     let mut first_frame = true;
     let mut texts: Vec<String> = Vec::new();
+    // The language the texts are shown in right now (`locale`, with `translations`).
+    let mut shown_locale: Option<usize> = None;
     let mut key_repeat: Option<(u32, u32)> = Some((400, 33));
     // Each popup of the scene: whether it is open, where, and at what size.
     let mut popups: Vec<Option<[i32; 4]>> = Vec::new();
@@ -267,6 +269,7 @@ pub fn run(
                     pending.clear();
                     size = (fresh.surface().width as f32, fresh.surface().height as f32 + if op.hud { HUD_HEIGHT } else { 0.0 });
                     texts = fresh.texts.iter().map(|(n, initial)| scene.texts.iter().position(|t| t.0 == *n).map_or_else(|| initial.clone(), |k| texts[k].clone())).collect();
+                    shown_locale = None;
                     atlas_stale = true;
                     println!(
                         "render · scene: {} properties, {} instructions, {} facts, {} layers, {} gestures, {} rules, {} zones",
@@ -1225,6 +1228,23 @@ pub fn run(
             }
             if let Some(g) = popups[k] {
                 draw.views.push([em.origin.0, em.origin.1, em.origin.0 + g[2] as f32, em.origin.1 + g[3] as f32]);
+            }
+        }
+
+        // The language changed (`locale`): the declared texts that still say one of their
+        // versions say the new one. One the logic has written something else into is its own.
+        if let Some(l) = scene.locale {
+            let now = facts[l.0 as usize].round().max(0.0) as usize;
+            if shown_locale != Some(now) {
+                for (t, versions) in &scene.text_versions {
+                    let k = t.0 as usize;
+                    let Some(v) = versions.get(now) else { continue };
+                    if texts.get(k).is_some_and(|x| versions.contains(x)) && texts[k] != *v {
+                        texts[k] = v.clone();
+                        let _ = to_logic.send(Event::Text(scene.texts[k].0, v.clone()));
+                    }
+                }
+                shown_locale = Some(now);
             }
         }
 

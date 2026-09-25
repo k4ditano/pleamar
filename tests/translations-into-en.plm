@@ -1,0 +1,7 @@
+// expect: error «`en` is the language the scene is written in»
+language 0.1
+scene IntoEnglish {
+    surface { size: 200, 60 }
+    text "Hola" { at: 10, 20; size: 12; color: #ffffff }
+    translations en { "Hola" = "Hello" }
+}

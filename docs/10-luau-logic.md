@@ -41,6 +41,7 @@ sys.watch("workspaces", function(w) … end)   -- a system service; returns whet
 sys.call("workspaces.focus", 3)               -- ask a service for something
 local menu = sys.ask("tray.menu", key)        -- ask it something and wait for the answer (the logic may wait)
 log("whatever", 42)
+tr("Good morning")                   -- the scene's `translations`, in the language `locale` says
 busy(600)                                 -- fake work, to see that the renderer does not care
 ```
 

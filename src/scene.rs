@@ -463,6 +463,9 @@ pub struct Shadow {
     pub color: Option<Color>,
 }
 
+/// `translations`: each language with its table, original → translated.
+pub type Translations = Vec<(String, std::collections::HashMap<String, String>)>;
+
 /// A glass: how much (`glass`, from 0 to 1) and whether it bends what is behind like a
 /// lens (`lens`, true or not) or only lets it be seen blurred.
 #[derive(Clone, Debug)]
@@ -543,6 +546,9 @@ pub enum Content {
     /// A text with placeholders: `"{r.title} · {volume * 100} %"`. It is assembled in the render,
     /// every time any of its parts changes.
     Template(Vec<Piece>),
+    /// A text with one version per language (`translations`): the one the
+    /// `locale` fact says. The first is the one the scene is written in.
+    Translated { locale: FactId, versions: Vec<Content> },
 }
 
 #[derive(Clone, Debug)]
@@ -713,7 +719,7 @@ pub enum Instr {
     /// the name of the zone that focuses it when pressed.
     /// `secret`: what is typed is shown as dots, one per letter. The real
     /// text is still the live text; what changes is what gets painted.
-    Field { text: TextId, zone: &'static str, at: Point, width: Expr, style: Style, alpha: Expr, placeholder: String, selection: Color, secret: bool },
+    Field { text: TextId, zone: &'static str, at: Point, width: Expr, style: Style, alpha: Expr, placeholder: Content, selection: Color, secret: bool },
     /// An image or an icon. With `tint`, its shape is painted in that color: what
     /// a symbolic icon wants.
     Image { image: ImageId, target: (Expr, Expr, Expr, Expr), alpha: Expr, tint: Option<Color> },
@@ -1062,6 +1068,12 @@ pub struct Scene {
     pub models: Vec<Model>,
     /// Of the facts that are not plain numbers, what they are. By name.
     pub types: Vec<(String, FactType)>,
+    /// With `translations`: the fact that says which language (`en`, then each
+    /// translation in order), the tables themselves —for the logic's `tr`—, and
+    /// the declared texts (`text x = "…"`) that have a version per language.
+    pub locale: Option<FactId>,
+    pub translations: Translations,
+    pub text_versions: Vec<(TextId, Vec<String>)>,
     pub plugins: Vec<Plugin>,
     /// The services the scene asks for by name, and which fields it wants from each one.
     pub services: Vec<Service>,
@@ -1415,7 +1427,7 @@ pub enum Event {
     /// The logic file has changed.
     ReloadLogic,
     /// The scene has been reloaded: these are now its facts and its texts.
-    NewScene(Vec<(&'static str, f32)>, Vec<(&'static str, String)>, Permissions, Vec<Model>, Vec<(String, FactType)>, Vec<Plugin>, Vec<&'static str>, Vec<Service>),
+    NewScene(Vec<(&'static str, f32)>, Vec<(&'static str, String)>, Permissions, Vec<Model>, Vec<(String, FactType)>, Vec<Plugin>, Vec<&'static str>, Vec<Service>, Translations),
     /// A layer has changed hands: (layer, who wins now).
     Layer(&'static str, &'static str),
     /// A gesture was asked for and there was one of a higher class in place.
