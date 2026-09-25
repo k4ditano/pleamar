@@ -404,6 +404,9 @@ pub struct Detras {
     pub ancho: u32,
     pub alto: u32,
     pub zancada: u32,
+    /// Con qué opacidad mezcló el compositor lo nuestro: 1 salvo en una
+    /// ventana a la que se la baje (Hyprland: `decoration:active_opacity`).
+    pub opacidad: f32,
     /// Los píxeles, donde los dejó el compositor, sin copiarlos. `None` si la foto falló.
     pub datos: Option<std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>>,
 }

@@ -106,7 +106,8 @@ impl Lente {
         use wgpu::TextureUsages as U;
         let lienzo = || textura(d, "lienzo", px, formato, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING | U::COPY_SRC);
         let fondo = || textura(d, "fondo", px, wgpu::TextureFormat::Rgba8Unorm, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING | U::COPY_SRC | U::COPY_DST);
-        let uniformes = || d.create_buffer(&wgpu::BufferDescriptor { label: Some("borrar"), size: 16, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let mitad = (px.0.div_ceil(2), px.1.div_ceil(2));
+        let uniformes = || d.create_buffer(&wgpu::BufferDescriptor { label: Some("borrar"), size: 32, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         Lente {
             px,
             lienzos: [lienzo(), lienzo()],
@@ -115,13 +116,13 @@ impl Lente {
             foto: None,
             fondos: [fondo(), fondo()],
             actual: 0,
-            medio: fondo(),
-            borroso: fondo(),
+            medio: textura(d, "medio", mitad, wgpu::TextureFormat::Rgba8Unorm, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING),
+            borroso: textura(d, "borroso", mitad, wgpu::TextureFormat::Rgba8Unorm, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING),
             uniformes_borrar: [uniformes(), uniformes()],
             muestra: Vec::new(),
             pendiente: None,
             caja: [0; 4],
-            uniformes_caja: d.create_buffer(&wgpu::BufferDescriptor { label: Some("caja"), size: 16, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }),
+            uniformes_caja: d.create_buffer(&wgpu::BufferDescriptor { label: Some("caja"), size: 32, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }),
             listo: false,
             grupo: None,
         }
@@ -185,7 +186,7 @@ impl Lente {
             return false;
         }
         let tijera = (x0, y0, x1 - x0, y1 - y0);
-        g.cola.write_buffer(&self.uniformes_caja, 0, bytemuck::cast_slice(&[caja[0] as f32 * escala, caja[1] as f32 * escala, caja[2] as f32 * escala, caja[3] as f32 * escala]));
+        g.cola.write_buffer(&self.uniformes_caja, 0, bytemuck::cast_slice(&[caja[0] as f32 * escala, caja[1] as f32 * escala, caja[2] as f32 * escala, caja[3] as f32 * escala, d.opacidad, 0.0, 0.0, 0.0]));
         // Los pases van en el mismo encargo que el frame que se pinta ahora
         // —hay que volver a pintar—: uno aparte costaba un `submit` más, un
         // tercio de milisegundo por foto.
@@ -206,7 +207,7 @@ impl Lente {
         // siendo una copia del actual, y solo se escribe dentro.
         let nuevo = self.actual ^ 1;
         cod.copy_texture_to_texture(self.fondos[self.actual].0.as_image_copy(), self.fondos[nuevo].0.as_image_copy(), wgpu::Extent3d { width: lw, height: lh, depth_or_array_layers: 1 });
-        let pase = |cod: &mut wgpu::CommandEncoder, tuberia: &wgpu::RenderPipeline, destino: &wgpu::TextureView, grupo: &wgpu::BindGroup| {
+        let pase = |cod: &mut wgpu::CommandEncoder, tuberia: &wgpu::RenderPipeline, destino: &wgpu::TextureView, grupo: &wgpu::BindGroup, tijera: (u32, u32, u32, u32)| {
             let mut p = cod.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -236,21 +237,33 @@ impl Lente {
                 wgpu::BindGroupEntry { binding: 4, resource: self.uniformes_caja.as_entire_binding() },
             ],
         });
-        pase(cod, &t.despejar, &self.fondos[nuevo].1, &grupo_despejar);
-        // Esmerilar: horizontal a `medio`, vertical a `borroso`.
-        let sigma = ESMERILADO * escala;
+        pase(cod, &t.despejar, &self.fondos[nuevo].1, &grupo_despejar, tijera);
+        // Esmerilar, a media resolución: horizontal a `medio`, vertical a `borroso`.
+        let (mw, mh) = (self.medio.0.width(), self.medio.0.height());
+        let sigma = ESMERILADO * escala * 0.5;
         for (k, paso) in [[1.0f32, 0.0], [0.0, 1.0]].iter().enumerate() {
-            g.cola.write_buffer(&self.uniformes_borrar[k], 0, bytemuck::cast_slice(&[paso[0], paso[1], sigma, 0.0]));
+            g.cola.write_buffer(&self.uniformes_borrar[k], 0, bytemuck::cast_slice(&[paso[0], paso[1], sigma, 0.0, mw as f32, mh as f32, 0.0, 0.0]));
         }
         let borrar = |origen: &wgpu::TextureView, u: &wgpu::Buffer| {
             dev.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &t.borrar.get_bind_group_layout(0),
-                entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(origen) }, wgpu::BindGroupEntry { binding: 1, resource: u.as_entire_binding() }],
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(origen) },
+                    wgpu::BindGroupEntry { binding: 1, resource: u.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&t.lineal) },
+                ],
             })
         };
-        pase(cod, &t.borrar, &self.medio.1, &borrar(&self.fondos[nuevo].1, &self.uniformes_borrar[0]));
-        pase(cod, &t.borrar, &self.borroso.1, &borrar(&self.medio.1, &self.uniformes_borrar[1]));
+        // El recorte, a la mitad, y con el margen que alcanza la gaussiana.
+        let m = (sigma * 2.5).ceil() as u32 + 1;
+        let x0 = (tijera.0 / 2).saturating_sub(m);
+        let y0 = (tijera.1 / 2).saturating_sub(m);
+        let x1 = ((tijera.0 + tijera.2).div_ceil(2) + m).min(mw);
+        let y1 = ((tijera.1 + tijera.3).div_ceil(2) + m).min(mh);
+        let medio_recorte = (x0, y0, x1.saturating_sub(x0).max(1), y1.saturating_sub(y0).max(1));
+        pase(cod, &t.borrar, &self.medio.1, &borrar(&self.fondos[nuevo].1, &self.uniformes_borrar[0]), medio_recorte);
+        pase(cod, &t.borrar, &self.borroso.1, &borrar(&self.medio.1, &self.uniformes_borrar[1]), medio_recorte);
         self.actual = nuevo;
     }
 }

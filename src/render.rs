@@ -99,6 +99,7 @@ pub fn hilo(
     let mut anterior = crate::gpu::Anterior::default();
     let mut cambiado: Vec<[f32; 4]> = Vec::new();
     let mut cuenta_de_laminas = (0u32, 0u32, 0u32);
+    let sin_lente = std::env::var_os("PLEAMAR_SIN_LENTE").is_some();
     // El aviso del compositor de que quiere otro frame: de qué lámina se
     // espera, si ya ha llegado, cuántas veces seguidas no llegó, y lo que llegó
     // del resto del mundo mientras se esperaba (se atiende en la vuelta siguiente).
@@ -1284,7 +1285,8 @@ pub fn hilo(
                 .collect();
             // Con cristal, la lente; mientras no tenga fondo que enseñar —o donde no
             // se pueda ver lo de detrás—, el desenfoque lo pone el compositor.
-            l.quiere_lente = !suyas.is_empty() && l.vista.emergente.is_none();
+            // `PLEAMAR_SIN_LENTE=1`: el cristal sin lente, con el desenfoque del compositor.
+            l.quiere_lente = !suyas.is_empty() && !sin_lente;
             // Solo se fotografía lo que hace falta: la caja del cristal, con
             // margen para esmerilar, redondeada a 16 px para no rehacer
             // texturas por un píxel. En Marea, la bolita y no los 820 × 680.

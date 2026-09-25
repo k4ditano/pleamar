@@ -443,8 +443,10 @@ compositor has them: it asks for a screenshot of what is under the surface
 works the background out, because it knows exactly what it painted itself:
 screenshot = ours + (1 − our alpha) · background. It takes one after presenting,
 at most every 50 ms while something moves, and when nothing moves it waits for
-something behind to change: still, it costs nothing. Where that cannot be done
-(another system, a compositor without screencopy, a normal window or a popup),
+something behind to change: still, it costs nothing. It works on layers, normal
+windows and popups; where each one is on its monitor is asked of Hyprland,
+and worked out from the anchor elsewhere. Where it cannot be done (another
+system, a compositor without screencopy),
 **the compositor is asked to blur what is
 behind the silhouette** instead, following its shape in 2 px strips —a round thing
 gets round blur, not a square—, through the standard `ext-background-effect`

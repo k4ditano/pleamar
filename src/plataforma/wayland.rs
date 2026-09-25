@@ -62,12 +62,76 @@ static CAPTURAS: std::sync::OnceLock<(ZwlrScreencopyManagerV1, WlShm)> = std::sy
 /// captura en camino. El sitio lo pone el hilo de Wayland al configurarla.
 struct Detras {
     id: u32,
-    salida: wl_output::WlOutput,
+    /// En qué monitor está, y cómo se llama. Una ventana lo sabe al entrar en él.
+    salida: Mutex<Option<(wl_output::WlOutput, String)>>,
+    /// Dónde está en su monitor, y lo que mide, en píxeles lógicos.
     sitio: Mutex<Option<(i32, i32)>>,
+    tam: Mutex<(u32, u32)>,
+    clase: ClaseDeDetras,
+    /// Cuándo se preguntó al compositor dónde está, por última vez.
+    preguntado: Mutex<Option<std::time::Instant>>,
+    /// Con qué opacidad mezcla el compositor lo suyo: una ventana puede no ser opaca del todo.
+    opacidad: Mutex<f32>,
     en_vuelo: std::sync::atomic::AtomicBool,
     /// La foto en camino, para poder olvidarla.
     marco: Mutex<Option<ZwlrScreencopyFrameV1>>,
 }
+
+/// Cómo se sabe dónde está una superficie en su monitor.
+enum ClaseDeDetras {
+    /// Una capa: por las reglas de layer-shell, y si es Hyprland, preguntándole.
+    Capa,
+    /// Una ventana normal: solo preguntando, que la mueve quien quiera.
+    Ventana,
+    /// Una emergente: donde esté su madre, más donde la puso el compositor.
+    Emergente { madre: Arc<Detras>, respecto: Mutex<(i32, i32)> },
+}
+
+impl Detras {
+    fn nuevo(id: u32, salida: Option<(wl_output::WlOutput, String)>, clase: ClaseDeDetras) -> Arc<Detras> {
+        Arc::new(Detras { id, salida: Mutex::new(salida), sitio: Mutex::new(None), tam: Mutex::new((0, 0)), clase, preguntado: Mutex::new(None), opacidad: Mutex::new(1.0), en_vuelo: std::sync::atomic::AtomicBool::new(false), marco: Mutex::new(None) })
+    }
+
+    /// En qué monitor y dónde, ahora. Con Hyprland se le pregunta, como mucho
+    /// una vez por segundo: una ventana se mueve sin que nadie la reconfigure,
+    /// y una capa la aparta una barra que llega después.
+    fn donde(&self) -> Option<(wl_output::WlOutput, (i32, i32))> {
+        if let ClaseDeDetras::Emergente { madre, respecto } = &self.clase {
+            let (salida, (x, y)) = madre.donde()?;
+            let r = *respecto.lock().unwrap();
+            return Some((salida, (x + r.0, y + r.1)));
+        }
+        let toca = self.preguntado.lock().unwrap().is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(1));
+        if toca && super::hyprland::esta() {
+            *self.preguntado.lock().unwrap() = Some(std::time::Instant::now());
+            let tam = *self.tam.lock().unwrap();
+            match self.clase {
+                ClaseDeDetras::Capa => {
+                    let nombre = self.salida.lock().unwrap().as_ref().map(|s| s.1.clone());
+                    if let Some(sitio) = nombre.and_then(|n| super::hyprland::sitio_de_capa(&n, tam)) {
+                        *self.sitio.lock().unwrap() = Some(sitio);
+                    }
+                }
+                ClaseDeDetras::Ventana => {
+                    if let Some((monitor, sitio, opacidad)) = super::hyprland::sitio_de_ventana(tam) {
+                        *self.opacidad.lock().unwrap() = opacidad;
+                        if let Some(o) = SALIDAS.lock().unwrap().get(&monitor) {
+                            *self.salida.lock().unwrap() = Some((o.clone(), monitor));
+                        }
+                        *self.sitio.lock().unwrap() = Some(sitio);
+                    }
+                }
+                ClaseDeDetras::Emergente { .. } => {}
+            }
+        }
+        let salida = self.salida.lock().unwrap().as_ref()?.0.clone();
+        Some((salida, (*self.sitio.lock().unwrap())?))
+    }
+}
+
+/// Los monitores por su nombre: una ventana que se mueve de uno a otro se
+/// fotografía en el que diga el compositor.
+static SALIDAS: std::sync::LazyLock<Mutex<std::collections::HashMap<String, wl_output::WlOutput>>> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
 /// Dónde cae una capa dentro de su monitor, por las reglas de layer-shell: el
 /// margen solo cuenta del lado al que está pegada, y lo que no está pegado a
@@ -173,13 +237,14 @@ impl Dispatch2<ZwlrScreencopyFrameV1, Estado> for CapturaDe {
                 let id = self.detras.id;
                 if let Some(f) = e.fotos.get(&id) {
                     let datos: Arc<dyn AsRef<[u8]> + Send + Sync> = f.mapa.clone();
-                    let _ = e.a_render.send(ARender::Detras(Box::new(super::Detras { lamina: id, ancho: f.tam.0, alto: f.tam.1, zancada: f.tam.2, datos: Some(datos) })));
+                    let opacidad = *self.detras.opacidad.lock().unwrap();
+                    let _ = e.a_render.send(ARender::Detras(Box::new(super::Detras { lamina: id, ancho: f.tam.0, alto: f.tam.1, zancada: f.tam.2, opacidad, datos: Some(datos) })));
                 }
                 acabar(marco);
             }
             // Que el render no se quede esperándola.
             E::Failed => {
-                let _ = e.a_render.send(ARender::Detras(Box::new(super::Detras { lamina: self.detras.id, ancho: 0, alto: 0, zancada: 0, datos: None })));
+                let _ = e.a_render.send(ARender::Detras(Box::new(super::Detras { lamina: self.detras.id, ancho: 0, alto: 0, zancada: 0, opacidad: 1.0, datos: None })));
                 acabar(marco)
             }
             _ => {}
@@ -258,12 +323,15 @@ impl Ventana for VentanaWayland {
 
     fn capturar_detras(&self, caja: [i32; 4], al_cambiar: bool) -> bool {
         let (Some(d), Some((gestor, _))) = (&self.detras, CAPTURAS.get()) else { return false };
-        let Some((x, y)) = *d.sitio.lock().unwrap() else { return false };
+        if d.en_vuelo.load(Ordering::Relaxed) {
+            return false;
+        }
+        let Some((salida, (x, y))) = d.donde() else { return false };
         if d.en_vuelo.swap(true, Ordering::Relaxed) {
             return false;
         }
         // Sin el cursor: el cristal no lo refracta, va encima.
-        let marco = gestor.capture_output_region(0, &d.salida, x + caja[0], y + caja[1], caja[2], caja[3], &self.qh, CapturaDe { detras: d.clone(), al_cambiar, formato: Mutex::new(None) });
+        let marco = gestor.capture_output_region(0, &salida, x + caja[0], y + caja[1], caja[2], caja[3], &self.qh, CapturaDe { detras: d.clone(), al_cambiar, formato: Mutex::new(None) });
         *d.marco.lock().unwrap() = Some(marco);
         true
     }
@@ -444,6 +512,7 @@ impl Estado {
     fn poner_en(&mut self, salida: &wl_output::WlOutput, qh: &QueueHandle<Estado>) {
         let Some(info) = self.salidas.info(salida) else { return };
         let nombre = info.name.clone().unwrap_or_default();
+        SALIDAS.lock().unwrap().insert(nombre.clone(), salida.clone());
         // Qué número de monitor es: el orden en que el compositor los cuenta.
         let numero = self.salidas.outputs().position(|o| &o == salida).unwrap_or(0);
         let mhz = info.modes.iter().find(|m| m.current).map_or(0, |m| m.refresh_rate);
@@ -488,7 +557,9 @@ impl Estado {
                 let ventanilla = self.ventanillas.as_ref().map(|v| v.get_viewport(concha.wl(), qh, Mudo));
                 let escala = self.escalas.as_ref().map(|m| m.get_fractional_scale(concha.wl(), qh, EscalaDe(id)));
                 let superficie = self.superficie_de(concha.wl());
-                self.puestas.push(Puesta { id, cual, concha, salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, tam: (0, 0), pendiente: Some((superficie, nombre.clone(), mhz)), capa_sitio: None, detras: None });
+                let nombre_salida = self.salidas.info(salida).and_then(|i| i.name).unwrap_or_default();
+                let detras = Some(Detras::nuevo(id, Some((salida.clone(), nombre_salida)), ClaseDeDetras::Ventana));
+                self.puestas.push(Puesta { id, cual, concha, salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, tam: (0, 0), pendiente: Some((superficie, nombre.clone(), mhz)), capa_sitio: None, detras });
                 continue;
             }
             let capa = self.capas.create_layer_surface(qh, wl, nivel, Some("pleamar"), Some(salida));
@@ -516,7 +587,8 @@ impl Estado {
             let escala = self.escalas.as_ref().map(|m| m.get_fractional_scale(capa.wl_surface(), qh, EscalaDe(id)));
             capa.commit();
             let superficie = self.superficie_de(capa.wl_surface());
-            let detras = Some(Arc::new(Detras { id, salida: salida.clone(), sitio: Mutex::new(None), en_vuelo: std::sync::atomic::AtomicBool::new(false), marco: Mutex::new(None) }));
+            let nombre_salida = self.salidas.info(salida).and_then(|i| i.name).unwrap_or_default();
+            let detras = Some(Detras::nuevo(id, Some((salida.clone(), nombre_salida)), ClaseDeDetras::Capa));
             let capa_sitio = Some((bordes(p.ancla, p.ancho == 0), margen));
             self.puestas.push(Puesta { id, cual, concha: Concha::Capa(capa), salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, tam: (0, 0), pendiente: Some((superficie, nombre.clone(), mhz)), capa_sitio, detras });
             }
@@ -564,6 +636,8 @@ struct Emergentes {
 #[derive(Clone)]
 struct Madre {
     capa: LayerSurface,
+    /// Dónde está ella: una emergente está donde su madre, más lo que diga el compositor.
+    detras: Option<Arc<Detras>>,
     escala: f32,
     nombre: String,
     mhz: i32,
@@ -572,6 +646,7 @@ struct Madre {
 struct Abierta {
     k: usize,
     id: u32,
+    detras: Option<Arc<Detras>>,
     origen: (f32, f32),
     tam: (u32, u32),
     // Por orden: primero se suelta lo que pinta, luego la superficie.
@@ -774,7 +849,12 @@ pub fn emergente(k: usize, que: Option<([i32; 4], (f32, f32))>) {
                 })
                 .ok()?
         };
-        Some(Abierta { k, id, origen, tam: (w as u32, h as u32), pendiente: Some(superficie), ventanilla, _escala: escala, madre: madre.clone(), popup })
+        let detras = madre.detras.clone().map(|m| {
+            let d = Detras::nuevo(id, None, ClaseDeDetras::Emergente { madre: m, respecto: Mutex::new((0, 0)) });
+            *d.tam.lock().unwrap() = (w as u32, h as u32);
+            d
+        });
+        Some(Abierta { k, id, detras, origen, tam: (w as u32, h as u32), pendiente: Some(superficie), ventanilla, _escala: escala, madre: madre.clone(), popup })
     };
     match abrir() {
         Some(a) => e.abiertas.lock().unwrap().push(a),
@@ -800,10 +880,15 @@ impl WindowHandler for Estado {
 }
 
 impl PopupHandler for Estado {
-    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, popup: &Popup, _: PopupConfigure) {
+    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, popup: &Popup, conf: PopupConfigure) {
         let Some(e) = EMERGENTES.get() else { return };
         let mut abiertas = e.abiertas.lock().unwrap();
         let Some(a) = abiertas.iter_mut().find(|a| a.popup.wl_surface() == popup.wl_surface()) else { return };
+        // Dónde la ha puesto el compositor respecto a su madre: puede haberla
+        // dado la vuelta para que quepa.
+        if let Some(ClaseDeDetras::Emergente { respecto, .. }) = a.detras.as_ref().map(|d| &d.clase) {
+            *respecto.lock().unwrap() = conf.position;
+        }
         if let Some(v) = &a.ventanilla {
             v.set_destination(a.tam.0 as i32, a.tam.1 as i32);
         }
@@ -811,7 +896,7 @@ impl PopupHandler for Estado {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: a.id,
                 superficie,
-                ventana: Box::new(VentanaWayland { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursores: e.cursores.clone(), serie: e.serie.clone(), capa: None, qh: e.qh.clone(), id: a.id, efecto: Mutex::new(None), detras: None }),
+                ventana: Box::new(VentanaWayland { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursores: e.cursores.clone(), serie: e.serie.clone(), capa: None, qh: e.qh.clone(), id: a.id, efecto: Mutex::new(None), detras: a.detras.clone() }),
                 escala: a.madre.escala,
                 tam: a.tam,
                 mhz: a.madre.mhz,
@@ -953,9 +1038,15 @@ impl Estado {
             v.set_destination(tam.0 as i32, tam.1 as i32);
         }
         // Dónde cae dentro de su monitor: lo que hace falta para fotografiar lo de detrás.
+        if let Some(d) = &p.detras {
+            *d.tam.lock().unwrap() = tam;
+            *d.preguntado.lock().unwrap() = None;
+        }
         if let (Some((ancla, margen)), Some(d)) = (p.capa_sitio, &p.detras) {
             if let Some((w, h)) = self.salidas.info(&p.salida).and_then(|i| i.logical_size) {
                 *d.sitio.lock().unwrap() = Some(sitio_en_la_salida(ancla, margen, tam, (w, h)));
+                // Y que la próxima foto le pregunte al compositor si es verdad.
+                *d.preguntado.lock().unwrap() = None;
             }
         }
         // Ya estaba entregada y ha cambiado de tamaño: alguien ha estirado la ventana.
@@ -966,7 +1057,7 @@ impl Estado {
         if let Some((superficie, nombre, mhz)) = p.pendiente.take() {
             if let (Some(em), Some(capa)) = (EMERGENTES.get(), p.concha.capa()) {
                 // Mientras no se vea el ratón en ninguna, las emergentes cuelgan de la primera.
-                em.madre.lock().unwrap().get_or_insert_with(|| Madre { capa: capa.clone(), escala: p.escala, nombre: nombre.clone(), mhz });
+                em.madre.lock().unwrap().get_or_insert_with(|| Madre { capa: capa.clone(), detras: p.detras.clone(), escala: p.escala, nombre: nombre.clone(), mhz });
             }
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: p.id,
@@ -1057,6 +1148,7 @@ impl PointerHandler for Estado {
                     if let Some(capa) = p.concha.capa() {
                         *em.madre.lock().unwrap() = Some(Madre {
                             capa: capa.clone(),
+                            detras: p.detras.clone(),
                             escala: p.escala,
                             nombre: info.as_ref().and_then(|i| i.name.clone()).unwrap_or_default(),
                             mhz: info.as_ref().and_then(|i| i.modes.iter().find(|m| m.current).map(|m| m.refresh_rate)).unwrap_or(0),

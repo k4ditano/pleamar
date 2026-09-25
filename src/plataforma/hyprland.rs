@@ -29,6 +29,51 @@ fn json(orden: &str) -> Option<serde_json::Value> {
     serde_json::from_str(&pedir(orden).ok()?).ok()
 }
 
+/// Dónde empieza cada monitor en el plano de Hyprland, por su nombre.
+fn monitores() -> Vec<(String, i64, i64, i64)> {
+    json("j/monitors")
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|m| Some((m["name"].as_str()?.to_owned(), m["x"].as_i64()?, m["y"].as_i64()?, m["id"].as_i64()?)))
+        .collect()
+}
+
+/// Dónde está de verdad una capa de este proceso en su monitor, en píxeles
+/// lógicos: la busca por el monitor, el nombre (`pleamar`) y el tamaño. Es lo
+/// que no sabe el protocolo de capas cuando otra barra aparta a las demás.
+pub fn sitio_de_capa(monitor: &str, tam: (u32, u32)) -> Option<(i32, i32)> {
+    let yo = std::process::id() as i64;
+    let (_, mx, my, _) = monitores().into_iter().find(|m| m.0 == monitor)?;
+    let capas = json("j/layers")?;
+    let niveles = capas.get(monitor)?.get("levels")?.as_object()?.clone();
+    niveles.values().filter_map(|n| n.as_array()).flatten().find_map(|c| {
+        let es = c["pid"].as_i64() == Some(yo) && c["namespace"].as_str() == Some("pleamar") && c["w"].as_i64() == Some(tam.0 as i64) && c["h"].as_i64() == Some(tam.1 as i64);
+        es.then(|| Some(((c["x"].as_i64()? - mx) as i32, (c["y"].as_i64()? - my) as i32)))?
+    })
+}
+
+/// Y una ventana de este proceso: en qué monitor, dónde dentro de él, y con
+/// qué opacidad la pinta Hyprland (`decoration:active_opacity` o la inactiva,
+/// según tenga el foco): lo que multiplica a lo suyo al mezclarlo.
+pub fn sitio_de_ventana(tam: (u32, u32)) -> Option<(String, (i32, i32), f32)> {
+    let opcion = |n: &str| json(&format!("j/getoption {n}")).and_then(|v| v["float"].as_f64()).unwrap_or(1.0) as f32;
+    let yo = std::process::id() as i64;
+    let monitores = monitores();
+    json("j/clients")?.as_array()?.iter().find_map(|c| {
+        let tam_de = c["size"].as_array()?;
+        if c["pid"].as_i64() != Some(yo) || tam_de.first()?.as_i64()? != tam.0 as i64 || tam_de.get(1)?.as_i64()? != tam.1 as i64 {
+            return None;
+        }
+        let en = c["at"].as_array()?;
+        let (x, y) = (en.first()?.as_i64()?, en.get(1)?.as_i64()?);
+        let m = monitores.iter().find(|m| Some(m.3) == c["monitor"].as_i64())?;
+        let activa = c["focusHistoryID"].as_i64() == Some(0);
+        let opacidad = opcion(if activa { "decoration:active_opacity" } else { "decoration:inactive_opacity" });
+        Some((m.0.clone(), ((x - m.1) as i32, (y - m.2) as i32), opacidad))
+    })
+}
+
 fn escritorios() -> Valor {
     let activo = json("j/activeworkspace").and_then(|v| v["id"].as_f64()).unwrap_or(0.0);
     // Cada monitor tiene el suyo: es lo que necesita una barra por pantalla.

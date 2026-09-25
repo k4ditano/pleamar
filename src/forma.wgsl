@@ -331,19 +331,20 @@ fn fs(e: Salida) -> @location(0) vec4<f32> {
         let tam = u.cab.xy * u.cab.w;
         let q = e.pos.xy - normal * corre;
         let tq = normal * corre * 0.06;
-        let esmerilado = vec3<f32>(
-            textureSampleLevel(detras_borroso, detras_muestreo, (q - tq) / tam, 0.0).r,
-            textureSampleLevel(detras_borroso, detras_muestreo, q / tam, 0.0).g,
-            textureSampleLevel(detras_borroso, detras_muestreo, (q + tq) / tam, 0.0).b,
-        );
-        let nitido = vec3<f32>(
-            textureSampleLevel(detras_nitido, detras_muestreo, (q - tq) / tam, 0.0).r,
-            textureSampleLevel(detras_nitido, detras_muestreo, q / tam, 0.0).g,
-            textureSampleLevel(detras_nitido, detras_muestreo, (q + tq) / tam, 0.0).b,
-        );
+        // Lo esmerilado viene con alfa premultiplicado —lo desconocido, bajo un
+        // texto, no pesaba—: se divide. Lo nítido, donde es desconocido, no vale.
+        let br = textureSampleLevel(detras_borroso, detras_muestreo, (q - tq) / tam, 0.0);
+        let bg = textureSampleLevel(detras_borroso, detras_muestreo, q / tam, 0.0);
+        let bb = textureSampleLevel(detras_borroso, detras_muestreo, (q + tq) / tam, 0.0);
+        let esmerilado = vec3<f32>(br.r / max(br.a, 0.001), bg.g / max(bg.a, 0.001), bb.b / max(bb.a, 0.001));
+        let nr = textureSampleLevel(detras_nitido, detras_muestreo, (q - tq) / tam, 0.0);
+        let ng = textureSampleLevel(detras_nitido, detras_muestreo, q / tam, 0.0);
+        let nb = textureSampleLevel(detras_nitido, detras_muestreo, (q + tq) / tam, 0.0);
+        let nitido = vec3<f32>(nr.r, ng.g, nb.b);
+        let se_sabe = min(nr.a, min(ng.a, nb.a));
         // En el bisel lo doblado se ve bastante nítido; hacia dentro, esmerilado.
         let en_bisel = 1.0 - clamp(dentro / bisel, 0.0, 1.0);
-        let fondo = mix(esmerilado, nitido, smoothstep(0.0, 0.6, en_bisel) * 0.85);
+        let fondo = mix(esmerilado, nitido, smoothstep(0.0, 0.6, en_bisel) * 0.85 * se_sabe);
         // Un cristal aviva un poco lo que deja ver.
         let gris = dot(fondo, vec3<f32>(0.299, 0.587, 0.114));
         let vivo = clamp(mix(vec3<f32>(gris), fondo, 1.18), vec3<f32>(0.0), vec3<f32>(1.0));
