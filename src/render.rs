@@ -611,6 +611,10 @@ pub fn run(
         }
         // The topmost one is the last declared.
         let hovered = inside.iter().rposition(|d| *d);
+        if std::env::var_os("PLEAMAR_DEBUG_ZONES").is_some() && !edges.is_empty() {
+            let names: Vec<&str> = inside.iter().enumerate().filter(|(_, d)| **d).map(|(k, _)| scene.zones[k].id).collect();
+            eprintln!("zones  · under the pointer: {names:?}");
+        }
         let (mut pressed, mut pressed_with, mut released) = (None, None, None);
         for (button, down) in &buttons {
             match (*button, *down) {

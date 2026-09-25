@@ -206,3 +206,41 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
         })
         .unwrap();
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::scene::{Rule, Trigger};
+
+    /// A zone made in a `repeat` of a scene with one copy per monitor: each copy
+    /// has its own, and each copy's rule presses its own. Both used to be one
+    /// name, the second copy's, and the first monitor's zone was deaf.
+    #[test]
+    fn repeated_zones_belong_to_their_screen_copy() {
+        let dir = std::env::temp_dir().join(format!("pleamar-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("copies.plm");
+        std::fs::write(&path, "scene Copies {
+    surface { size: 200, 40; anchor: top; screens: each max 2 }
+    fact hit = 0
+    repeat k in 1..3 {
+        prop glow.$k = 0 ~140ms
+        zone box glow.$k { at: 40 * k, 20; size: 30, 30 }
+        on press glow.$k { hit = k; glow.$k: 1 }
+    }
+}
+").unwrap();
+        let scene = super::read(path.to_str().unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let ids: Vec<&str> = scene.zones.iter().map(|z| z.id).collect();
+        for name in ["glow.1#screen0", "glow.1#screen1", "glow.2#screen0", "glow.2#screen1"] {
+            assert!(ids.contains(&name), "no zone {name} in {ids:?}");
+        }
+        let pressed: Vec<&str> = scene.rules.iter().filter_map(|r: &Rule| match r.when {
+            Trigger::Press(z) => Some(scene.zones[z.0 as usize].id),
+            _ => None,
+        }).collect();
+        for name in ["glow.1#screen0", "glow.1#screen1"] {
+            assert!(pressed.contains(&name), "no rule presses {name}: {pressed:?}");
+        }
+    }
+}

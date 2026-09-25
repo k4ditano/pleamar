@@ -173,6 +173,7 @@ pleamar --say x "emit arrives"             # …or fire one of its events
 pleamar --scene x.plm --stall 2000        # stall the logic on purpose
 pleamar --scene x.plm --record open,card # what those are worth on every frame
 pleamar --scene x.plm --reduced-motion # springs settle, nothing loops
+PLEAMAR_DEBUG_ZONES=1 pleamar --scene x.plm --mouse "…"  # which zones are under the pointer, as it moves
 ```
 
 **Do not say an animation lasts what it was asked to last without measuring
@@ -181,6 +182,11 @@ and that is how a duration is checked against its contract. It says at the start
 which names it could not find, with the ones that look like them: inside a
 component's copy they carry their mark (`px#Hat2`). How to read those logs, in
 `measuring.md`.
+
+A press that does nothing is almost always a zone that is not the one on top,
+or a rule that names another zone than the one under the pointer:
+`PLEAMAR_DEBUG_ZONES=1` prints the zones under the pointer every time that
+changes, with their real names (`drop.4#screen0` in a copy per monitor).
 
 Never drive the real mouse or keyboard to test a scene: `--mouse` exists for
 that, and `--say` reaches anything the logic can hear.

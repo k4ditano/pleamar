@@ -662,6 +662,36 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// The name of a shape that may become a zone. A name made in a `repeat`
+    /// (`drop.$k`) takes no suffix from the `repeat` —the `$k` already tells
+    /// the turns apart, and so it can be named from outside it—, but in a
+    /// screen copy it does take the copy's mark. The whole scene is written
+    /// once per monitor, and two copies declaring the zone `drop.4` left one
+    /// name for two zones —the map keeps the last one—, so every rule pointed at
+    /// the last copy's, and on the other monitor the zone caught the pointer and
+    /// nobody heard it. Only zones: a `fact n.$k` or a `prop glow.$k` are the
+    /// scene's, one for all the copies, and so they stay.
+    /// It is not an alias —a `prop glow.$k` may share the zone's name, and must
+    /// keep meaning the prop—: whoever looks for a zone tries the marked name
+    /// first (`zone_named`).
+    fn declare_zone(&mut self, local: &str) -> String {
+        let g = self.declare(local);
+        match self.screen_mark() {
+            Some(mark) if local.contains('$') => format!("{g}{mark}"),
+            _ => g,
+        }
+    }
+
+    /// The mark of the screen copy being read, if any: `#screen1`.
+    fn screen_mark(&self) -> Option<String> {
+        self.scopes.iter().rev().find(|e| e.suffix.starts_with("#screen")).map(|e| e.suffix.clone())
+    }
+
+    /// A zone by the name a rule gives it: this copy's own, if it has one.
+    fn zone_named(&self, n: &str) -> Option<ZoneId> {
+        self.screen_mark().and_then(|m| self.zones.get(&format!("{n}{m}"))).or_else(|| self.zones.get(n)).copied()
+    }
+
     /// The name with which something is declared from in here.
     fn declare(&mut self, local: &str) -> String {
         let interpolated = self.interpolate(local);
@@ -781,8 +811,8 @@ impl<'a> Compiler<'a> {
     }
     fn zone(&self, c: &mut Cur) -> R<ZoneId> {
         let n = self.global(&c.id("the name of a shape or a zone")?);
-        match self.zones.get(&n) {
-            Some(z) => Ok(*z),
+        match self.zone_named(&n) {
+            Some(z) => Ok(z),
             None => self.unknown(c, "no named shape or zone", &n, self.zones.keys().collect()),
         }
     }
@@ -1257,7 +1287,7 @@ impl<'a> Compiler<'a> {
         // A shape with a name can be a zone, with the transforms under
         // which it is painted. Whether it is or not is decided at the end: see `materialize_zones`.
         if let Some(name) = &name {
-            let name = &self.declare(name);
+            let name = &self.declare_zone(name);
             self.candidates.push(Candidate { name: name.clone(), shape: shape.clone(), active, visible: None, under: self.under.clone(), forced: false, cursor });
         }
         Ok(ParsedShape { shape, color, opacity, blend, size: extent, glass_spec })
@@ -2443,7 +2473,7 @@ impl<'a> Compiler<'a> {
         let height = style.px * style.line_height;
         // Its zone: pressing it focuses it, and over it the cursor is the typing one.
         // It is named like the text: `on drop query`, `on enter query`.
-        let zone = self.declare(&local);
+        let zone = self.declare_zone(&local);
         self.candidates.push(Candidate {
             name: zone.clone(),
             shape: Shape::Rect { center: (at.0.clone() + width.clone() * 0.5, at.1.clone() + height * 0.5), half_size: (width.clone() * 0.5, (height * 0.5 + 3.0).into()), radius: 0.0.into() },
@@ -4257,7 +4287,11 @@ impl<'a> Compiler<'a> {
             self.scopes = scopes.clone();
             for f in &n.head {
                 if let TokenKind::Id(s) = &f.kind {
-                    named.insert(self.global(s));
+                    let g = self.global(s);
+                    if let Some(m) = self.screen_mark() {
+                        named.insert(format!("{g}{m}"));
+                    }
+                    named.insert(g);
                 }
             }
         }
