@@ -27,7 +27,7 @@ impl Guion for Enjambre {
                 Forma::circulo((cx.into(), cy.into()), r + late * fase)
             };
             let t = k as f32 / n as f32;
-            e.pintar(Instr::Plano { forma, color: color(0.35 + 0.5 * t, 0.85 - 0.3 * t, 0.75), alfa: 0.9.into() });
+            e.pintar(Instr::Plano { forma, color: color(0.35 + 0.5 * t, 0.85 - 0.3 * t, 0.75), alfa: 0.9.into(), vidrio: None });
         }
         e.comportamientos = vec![Comportamiento::Onda { prop: late, frecuencia: 3.0, amplitud: 2.0.into() }];
         println!("enjambre · {n} formas");

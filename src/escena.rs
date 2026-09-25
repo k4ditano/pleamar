@@ -693,7 +693,7 @@ pub enum Instr {
     /// `None` cierra el grupo.
     Opacidad(Option<Expr>),
     /// Una forma suelta, de color plano.
-    Plano { forma: Forma, color: Color, alfa: Expr },
+    Plano { forma: Forma, color: Color, alfa: Expr, vidrio: Option<Expr> },
     /// Texto. `en` es el punto de referencia y `ancla` qué parte del texto cae
     /// sobre él: (0, 0) la esquina de arriba a la izquierda, (0.5, 0.5) el
     /// centro. Con `ancho` se parte en líneas; sin él, es una sola.

@@ -43,7 +43,7 @@ impl Guion for Isla {
         e.pintar(Instr::Plano {
             forma: Forma::circulo((gota_x, gota_y.into()), 4.5 + late),
             color: color(0.95, 0.36, 0.32),
-            alfa: gota.e().suave(0.6, 1.0),
+            alfa: gota.e().suave(0.6, 1.0), vidrio: None,
         });
 
         e.pintar(Instr::Recorte(Some((isla.clone(), 1.0))));
@@ -69,7 +69,7 @@ impl Guion for Isla {
         e.pintar(Instr::Plano {
             forma: Forma::Caja { centro: ((CX - 60.0).into(), (ARRIBA + 76.0).into()), mitad: (130.0.into(), 1.5.into()), radio: 1.5.into() },
             color: color(0.62, 0.84, 0.74),
-            alfa: t,
+            alfa: t, vidrio: None,
         });
         e.pintar(Instr::Recorte(None));
 

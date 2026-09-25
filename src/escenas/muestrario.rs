@@ -48,24 +48,24 @@ impl Guion for Muestrario {
         let centro = (255.0, 108.0);
         let aqui = || -> Punto { (centro.0.into(), centro.1.into()) };
         e.pintar(Instr::Transformar(Some(Transformacion::en(aqui()).escala(1.0 + pulso, 1.0 + pulso))));
-        e.pintar(Instr::Plano { forma: Forma::aro(aqui(), 52.0, 3.0), color: blanco.clone(), alfa: 1.0.into() });
+        e.pintar(Instr::Plano { forma: Forma::aro(aqui(), 52.0, 3.0), color: blanco.clone(), alfa: 1.0.into(), vidrio: None });
         for k in 0..12 {
             e.pintar(Instr::Transformar(Some(Transformacion::en(aqui()).giro(k as f32 * PI / 6.0))));
             e.pintar(Instr::Plano {
                 forma: Forma::Segmento { de: (centro.0.into(), (centro.1 - 45.0).into()), a: (centro.0.into(), (centro.1 - 39.0).into()), grosor: 2.0.into() },
                 color: blanco.clone(),
-                alfa: 0.55.into(),
+                alfa: 0.55.into(), vidrio: None,
             });
             e.pintar(Instr::Transformar(None));
         }
         e.pintar(Instr::Transformar(Some(Transformacion::en(aqui()).giro(angulo / 12.0))));
-        e.pintar(Instr::Plano { forma: Forma::Segmento { de: aqui(), a: (centro.0.into(), (centro.1 - 22.0).into()), grosor: 4.0.into() }, color: blanco.clone(), alfa: 1.0.into() });
+        e.pintar(Instr::Plano { forma: Forma::Segmento { de: aqui(), a: (centro.0.into(), (centro.1 - 22.0).into()), grosor: 4.0.into() }, color: blanco.clone(), alfa: 1.0.into(), vidrio: None });
         e.pintar(Instr::Transformar(None));
         e.pintar(Instr::Transformar(Some(Transformacion::en(aqui()).giro(angulo.e()))));
-        e.pintar(Instr::Plano { forma: Forma::Segmento { de: aqui(), a: (centro.0.into(), (centro.1 - 36.0).into()), grosor: 2.6.into() }, color: color(0.62, 0.84, 0.74), alfa: 1.0.into() });
+        e.pintar(Instr::Plano { forma: Forma::Segmento { de: aqui(), a: (centro.0.into(), (centro.1 - 36.0).into()), grosor: 2.6.into() }, color: color(0.62, 0.84, 0.74), alfa: 1.0.into(), vidrio: None });
         let punta: Punto = (centro.0.into(), (centro.1 - 36.0).into());
         e.pintar(Instr::Transformar(Some(Transformacion::en(punta.clone()).giro(angulo * -3.0))));
-        e.pintar(Instr::Plano { forma: Forma::Caja { centro: punta, mitad: (5.0.into(), 5.0.into()), radio: 1.5.into() }, color: color(0.98, 0.76, 0.32), alfa: 1.0.into() });
+        e.pintar(Instr::Plano { forma: Forma::Caja { centro: punta, mitad: (5.0.into(), 5.0.into()), radio: 1.5.into() }, color: color(0.98, 0.76, 0.32), alfa: 1.0.into(), vidrio: None });
         e.pintar(Instr::Transformar(None));
         e.pintar(Instr::Transformar(None));
         e.pintar(Instr::Transformar(None));
@@ -78,7 +78,7 @@ impl Guion for Muestrario {
         e.pintar(Instr::Plano {
             forma: Forma::Caja { centro: (rotulo.0.into(), rotulo.1.into()), mitad: (64.0.into(), 20.0.into()), radio: 8.0.into() }.trazo(1.5),
             color: blanco.clone(),
-            alfa: 0.5.into(),
+            alfa: 0.5.into(), vidrio: None,
         });
         e.pintar(Instr::Transformar(None));
 
@@ -86,12 +86,12 @@ impl Guion for Muestrario {
         //     rayas para que se vea a través.
         for k in 0..9 {
             let x = 560.0 + k as f32 * 13.0;
-            e.pintar(Instr::Plano { forma: Forma::Segmento { de: (x.into(), 30.0.into()), a: (x.into(), 186.0.into()), grosor: 3.0.into() }, color: color(0.62, 0.84, 0.74), alfa: 0.8.into() });
+            e.pintar(Instr::Plano { forma: Forma::Segmento { de: (x.into(), 30.0.into()), a: (x.into(), 186.0.into()), grosor: 3.0.into() }, color: color(0.62, 0.84, 0.74), alfa: 0.8.into(), vidrio: None });
         }
         let medio = 0.5 + vaiven;
         let pareja = |e: &mut Escena, y: f32, alfa: Expr| {
-            e.pintar(Instr::Plano { forma: Forma::circulo((595.0.into(), y.into()), 26.0), color: color(0.96, 0.97, 0.96), alfa: alfa.clone() });
-            e.pintar(Instr::Plano { forma: Forma::circulo((627.0.into(), y.into()), 26.0), color: color(0.93, 0.23, 0.2), alfa });
+            e.pintar(Instr::Plano { forma: Forma::circulo((595.0.into(), y.into()), 26.0), color: color(0.96, 0.97, 0.96), alfa: alfa.clone(), vidrio: None });
+            e.pintar(Instr::Plano { forma: Forma::circulo((627.0.into(), y.into()), 26.0), color: color(0.93, 0.23, 0.2), alfa, vidrio: None });
         };
         pareja(&mut e, 68.0, medio.clone());
         e.pintar(Instr::Opacidad(Some(medio)));
@@ -116,7 +116,7 @@ impl Guion for Muestrario {
         for (k, (a, t)) in [(Alineado::Izquierda, "a la izquierda"), (Alineado::Centro, "al centro"), (Alineado::Derecha, "a la derecha")].into_iter().enumerate() {
             e.pintar(Instr::Texto { contenido: Contenido::Fijo(t.into()), en: (390.0.into(), (222.0 + k as f32 * 20.0).into()), ancla: (0.0, 0.0), ancho: Some(150.0.into()), estilo: Estilo::de(13.0, gris.clone()).alineado(a), alfa: 1.0.into(), mide: None });
         }
-        e.pintar(Instr::Plano { forma: Forma::Caja { centro: (465.0.into(), 252.0.into()), mitad: (77.0.into(), 32.0.into()), radio: 6.0.into() }.trazo(1.0), color: gris.clone(), alfa: 0.35.into() });
+        e.pintar(Instr::Plano { forma: Forma::Caja { centro: (465.0.into(), 252.0.into()), mitad: (77.0.into(), 32.0.into()), radio: 6.0.into() }.trazo(1.0), color: gris.clone(), alfa: 0.35.into(), vidrio: None });
 
         // 6 · imágenes: un SVG, un PNG, y un icono simbólico teñido.
         let svg = e.imagen(Fuente::Icono("firefox".into()), 48, 48);

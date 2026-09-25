@@ -1115,6 +1115,7 @@ impl<'a> Obra<'a> {
             }
         };
         let (rotate, stroke, opacity, blend, active) = (una(self, "rotate")?, una(self, "stroke")?, una(self, "opacity")?, una(self, "blend")?, una(self, "active")?);
+        let vidrio = una(self, "glass")?.map(|v| v.acotar(0.0, 1.0));
         // `show:` es «está o no está»: se apaga entera, y con ella su zona. Pulsar
         // lo que no se ve es peor que no poder pulsarlo.
         let visible = una(self, "show")?;
@@ -1225,7 +1226,7 @@ impl<'a> Obra<'a> {
             let nombre = &self.declarar(nombre);
             self.candidatas.push(Candidata { nombre: nombre.clone(), forma: forma.clone(), activa: active, visible: None, bajo: self.bajo.clone(), forzada: false, cursor });
         }
-        Ok(FormaLeida { forma, color, opacidad: opacity, fusion: blend, tam })
+        Ok(FormaLeida { forma, color, opacidad: opacity, fusion: blend, tam, vidrio })
     }
 
     // ── lo que se pinta ─────────────────────────────────────────
@@ -1520,7 +1521,7 @@ impl<'a> Obra<'a> {
                 "ellipse" | "box" | "arc" | "line" | "path" => {
                     let f = self.forma(n, 0)?;
                     self.ultimo_tam = f.tam;
-                    self.e.pintar(Instr::Plano { forma: f.forma, color: f.color.unwrap_or_else(|| color(1.0, 1.0, 1.0)), alfa: f.opacidad.unwrap_or(Expr::K(1.0)) });
+                    self.e.pintar(Instr::Plano { forma: f.forma, color: f.color.unwrap_or_else(|| color(1.0, 1.0, 1.0)), alfa: f.opacidad.unwrap_or(Expr::K(1.0)), vidrio: f.vidrio });
                 }
                 "text" => self.texto(n)?,
                 "image" => self.imagen(n)?,
@@ -2359,7 +2360,7 @@ impl<'a> Obra<'a> {
         let (afin, trazos, _) = self.figura_puesta(n)?;
         self.e.pintar(Instr::Transformar(Some(afin)));
         for (forma, color, alfa) in trazos {
-            self.e.pintar(Instr::Plano { forma, color, alfa });
+            self.e.pintar(Instr::Plano { forma, color, alfa, vidrio: None });
         }
         self.e.pintar(Instr::Transformar(None));
         Ok(())
@@ -3162,6 +3163,11 @@ impl<'a> Obra<'a> {
             Some(c) => Some(self.color(c)?),
             None => None,
         };
+        // Y su fondo puede ser cristal, como una forma suelta.
+        let fondo_vidrio = match p.get_mut("glass") {
+            Some(c) => Some(self.expr(c)?.acotar(0.0, 1.0)),
+            None => None,
+        };
         // `size: 164, 66`: lo que mide el reparto. Hace falta para que un hijo
         // pueda pedir «lo que sobre»: sin decir de cuánto se reparte, no hay resto.
         let tam_dicho = match p.get_mut("size") {
@@ -3557,6 +3563,7 @@ impl<'a> Obra<'a> {
                 forma: Forma::Caja { centro: (tam.0.clone() * 0.5, tam.1.clone() * 0.5), mitad: (tam.0.clone() * 0.5, tam.1.clone() * 0.5), radio: esquina },
                 color,
                 alfa: Expr::K(1.0),
+                vidrio: fondo_vidrio,
             };
         }
         if ancla != (0.0, 0.0) {
@@ -4373,4 +4380,6 @@ struct FormaLeida {
     color: Option<Color>,
     opacidad: Option<Expr>,
     fusion: Option<Expr>,
+    /// Suelta, una forma también puede ser cristal. Dentro de un `body`, lo dice el cuerpo.
+    vidrio: Option<Expr>,
 }

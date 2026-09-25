@@ -19,7 +19,7 @@ pub const DE_BIBLIOTECA: &[&str] = &["let", "spring", "component", "permissions"
 pub const PROPIEDADES: &[(&str, &[&str])] = &[
     ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title", "rate"]),
     ("permissions", &["run", "services"]),
-    ("shape", &["rotate", "stroke", "color", "opacity", "blend", "active", "show", "cursor", "grow"]),
+    ("shape", &["rotate", "stroke", "color", "opacity", "blend", "glass", "active", "show", "cursor", "grow"]),
     ("ellipse", &["at", "radius", "scale"]),
     ("box", &["at", "from", "size", "corner"]),
     ("arc", &["at", "radius", "span", "width"]),
@@ -33,7 +33,7 @@ pub const PROPIEDADES: &[(&str, &[&str])] = &[
     ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show", "grow"]),
     ("popup", &["at", "size", "open"]),
     ("children", &["move"]),
-    ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "corner", "show", "opacity", "cursor", "view", "step", "content", "wrap", "size", "grow"]),
+    ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "glass", "corner", "show", "opacity", "cursor", "view", "step", "content", "wrap", "size", "grow"]),
 ];
 
 pub const FUNCIONES: &[&str] = &["min", "max", "abs", "floor", "ceil", "sin", "cos", "clamp", "smooth", "mix", "if", "vel"];

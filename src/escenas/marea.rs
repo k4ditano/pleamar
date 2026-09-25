@@ -82,13 +82,13 @@ impl Guion for Marea {
         e.pintar(Instr::Plano {
             forma: caja_en(110.0, 151.0, 84.0.into(), 23.0.into()),
             color: color(0.18, 0.184, 0.184),
-            alfa: visible.clone(),
+            alfa: visible.clone(), vidrio: None,
         });
         let ver = caja_en(296.0, 151.0, 84.0 + boton * 2.0, 23.0 + boton * 1.5);
         e.pintar(Instr::Plano {
             forma: ver.clone(),
             color: [mezcla(0.62, 0.74, boton), mezcla(0.84, 0.93, boton), mezcla(0.74, 0.84, boton)],
-            alfa: visible.clone(),
+            alfa: visible.clone(), vidrio: None,
         });
         // El texto es texto: lo cambia la lógica cuando llega otro aviso, y se
         // pinta nítido a la escala de cada monitor.
@@ -119,7 +119,7 @@ impl Guion for Marea {
         e.pintar(Instr::Recorte(None));
         e.pintar(Instr::Recorte(Some((orbe.clone(), 3.0))));
         for lado in [-8.6, 8.6] {
-            e.pintar(Instr::Plano { forma: ojo(lado), color: color(0.96, 0.97, 0.96), alfa: 1.0.into() });
+            e.pintar(Instr::Plano { forma: ojo(lado), color: color(0.96, 0.97, 0.96), alfa: 1.0.into(), vidrio: None });
         }
         e.pintar(Instr::Recorte(None));
 

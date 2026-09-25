@@ -200,6 +200,40 @@ const FRANJA: f32 = 2.0;
 fn franjas_de(p: &crate::formas::Plana, puntos: &[f32]) -> Vec<[f32; 4]> {
     let mut franjas: Vec<[f32; 4]> = Vec::new();
     let Some(caja) = p.caja() else { return franjas };
+    // Una caja redondeada o una elipse, rellenas, sin girar ni torcer: el ancho
+    // de cada fila tiene fórmula, y no hace falta buscarlo. Es lo que hace que
+    // una tarjeta que crece al abrirse no cueste un milisegundo por frame.
+    let m = p.afin.m;
+    if (p.tipo == 0 || p.tipo == 1) && p.giro == 0.0 && p.trazo == 0.0 && m[1] == 0.0 && m[2] == 0.0 && m[0] > 0.0 && m[3] > 0.0 {
+        let (sx, sy) = (m[0], m[3]);
+        // Media altura y, para cada altura desde el centro, medio ancho: en local.
+        let (alto, ancho): (f32, Box<dyn Fn(f32) -> f32>) = if p.tipo == 1 {
+            let r = p.radio.clamp(0.0, p.mx.min(p.my));
+            let (mx, my) = (p.mx, p.my);
+            (my, Box::new(move |y: f32| {
+                let dy = y.abs() - (my - r);
+                if dy <= 0.0 { mx } else { mx - r + (r * r - dy * dy).max(0.0).sqrt() }
+            }))
+        } else {
+            let (a, b) = (p.radio * p.ex, p.radio * p.ey);
+            (b, Box::new(move |y: f32| a * (1.0 - (y / b).powi(2)).max(0.0).sqrt()))
+        };
+        let (y0, y1) = (-alto * sy, alto * sy);
+        let mut y = (y0 / FRANJA).floor() * FRANJA;
+        while y < y1 {
+            // El ancho a media franja, como cuando se busca.
+            let medio = ancho(((y + FRANJA * 0.5) / sy).clamp(-alto, alto)) * sx;
+            if medio > 0.25 {
+                let (a, b) = ((-medio).floor(), medio.ceil());
+                match franjas.last_mut() {
+                    Some(f) if f[0] == a && f[2] == b && f[3] == y => f[3] = y + FRANJA,
+                    _ => franjas.push([a, y, b, y + FRANJA]),
+                }
+            }
+            y += FRANJA;
+        }
+        return franjas;
+    }
     let dentro = |x: f32, y: f32| p.distancia_con(x, y, puntos) < 0.0;
     // Dónde cambia de fuera a dentro entre a y b: por bisección, a un cuarto de píxel.
     let borde = |mut a: f32, mut b: f32, y: f32, entra: bool| {
@@ -438,6 +472,31 @@ impl Dibujo {
         }
     }
 
+    /// Que el compositor desenfoque lo que hay detrás de estas formas: sus
+    /// franjas, cada una por separado —la unión de sus siluetas es la del
+    /// cuerpo, menos el cuello donde dos se funden, que es poco— y recortadas.
+    fn pedir_cristal(&mut self, planas: &[crate::formas::Plana], recortes: &[(usize, [f32; 4])]) {
+        let mut corte = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
+        for (_, r) in recortes {
+            corte = [corte[0].max(r[0]), corte[1].max(r[1]), corte[2].min(r[2]), corte[3].min(r[3])];
+        }
+        for p in planas {
+            let (ox, oy) = p.afin.aplicar(p.cx, p.cy);
+            let mut en_origen = *p;
+            (en_origen.cx, en_origen.cy, en_origen.afin.t) = (0.0, 0.0, [0.0, 0.0]);
+            // Un camino es sus puntos, que la clave no ve: ese se mide siempre.
+            let franjas = if p.tipo == 4 {
+                franjas_de(&en_origen, &self.puntos)
+            } else {
+                let clave = [en_origen.tipo as f32, en_origen.mx, en_origen.my, en_origen.radio, en_origen.giro, en_origen.ex, en_origen.ey, en_origen.trazo, en_origen.afin.m[0], en_origen.afin.m[1], en_origen.afin.m[2], en_origen.afin.m[3]].map(f32::to_bits);
+                let puesta = self.cache_de_cristales.entry(clave).or_insert_with(|| (franjas_de(&en_origen, &[]), false));
+                puesta.1 = true;
+                puesta.0.clone()
+            };
+            self.cristales.extend(franjas.into_iter().map(|f| [(f[0] + ox).max(corte[0]), (f[1] + oy).max(corte[1]), (f[2] + ox).min(corte[2]), (f[3] + oy).min(corte[3])]).filter(|f| f[2] > f[0] && f[3] > f[1]));
+        }
+    }
+
     /// Un elemento solo existe si su caja, recortada, toca la pantalla.
     fn elemento(&mut self, tipo: f32, caja: [f32; 4], recortes: &[(usize, [f32; 4])], rellenar: impl FnOnce(&mut [f32])) {
         // Lo que no cae en la superficie ni en ninguna emergente abierta, no existe.
@@ -582,27 +641,7 @@ impl Dibujo {
                     // Un cristal que se ve pide que se desenfoque lo de detrás, por su silueta.
                     let v = vidrio.as_ref().map_or(0.0, |v| v.evaluar(c));
                     if v * a > CRISTAL_VISIBLE {
-                        // Cada forma por separado: la unión de sus siluetas es la del
-                        // cuerpo, menos el cuello donde dos se funden, que es poco.
-                        let mut corte = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
-                        for (_, r) in &recortes {
-                            corte = [corte[0].max(r[0]), corte[1].max(r[1]), corte[2].min(r[2]), corte[3].min(r[3])];
-                        }
-                        for p in &g.planas {
-                            let (ox, oy) = p.afin.aplicar(p.cx, p.cy);
-                            let mut en_origen = *p;
-                            (en_origen.cx, en_origen.cy, en_origen.afin.t) = (0.0, 0.0, [0.0, 0.0]);
-                            // Un camino es sus puntos, que la clave no ve: ese se mide siempre.
-                            let franjas = if p.tipo == 4 {
-                                franjas_de(&en_origen, &self.puntos)
-                            } else {
-                                let clave = [en_origen.tipo as f32, en_origen.mx, en_origen.my, en_origen.radio, en_origen.giro, en_origen.ex, en_origen.ey, en_origen.trazo, en_origen.afin.m[0], en_origen.afin.m[1], en_origen.afin.m[2], en_origen.afin.m[3]].map(f32::to_bits);
-                                let puesta = self.cache_de_cristales.entry(clave).or_insert_with(|| (franjas_de(&en_origen, &[]), false));
-                                puesta.1 = true;
-                                puesta.0.clone()
-                            };
-                            self.cristales.extend(franjas.into_iter().map(|f| [(f[0] + ox).max(corte[0]), (f[1] + oy).max(corte[1]), (f[2] + ox).min(corte[2]), (f[3] + oy).min(corte[3])]).filter(|f| f[2] > f[0] && f[3] > f[1]));
-                        }
+                        self.pedir_cristal(&g.planas, &recortes);
                     }
                     self.elemento(0.0, caja, &recortes, |e| {
                         afin.codificar(&mut e[44..52]);
@@ -643,13 +682,17 @@ impl Dibujo {
                         }
                     });
                 }
-                Instr::Plano { forma, color: col, alfa } => {
+                Instr::Plano { forma, color: col, alfa, vidrio } => {
                     let a = alfa.evaluar(c).clamp(0.0, 1.0) * veces;
                     if a <= 0.001 {
                         continue; // lo invisible no ocupa ni un quad
                     }
                     let p = aplanar(forma, &giros, &mut self.puntos);
                     let Some(b) = p.caja() else { continue };
+                    let v = vidrio.as_ref().map_or(0.0, |v| v.evaluar(c).clamp(0.0, 1.0));
+                    if v * a > CRISTAL_VISIBLE {
+                        self.pedir_cristal(&[p], &recortes);
+                    }
                     let k = self.forma(p, 0.0);
                     let rgb = color(col);
                     self.elemento(0.0, [b[0] - 2.0, b[1] - 2.0, b[2] + 2.0, b[3] + 2.0], &recortes, |e| {
@@ -658,6 +701,7 @@ impl Dibujo {
                         e[2] = 1.0;
                         e[3] = a;
                         e[8..11].copy_from_slice(&rgb);
+                        e[40] = v;
                     });
                 }
                 Instr::Imagen { imagen, destino, alfa, tinte } => {
@@ -1324,3 +1368,43 @@ impl Lamina {
 }
 
 pub const N_UNIFORMES: usize = 8 + 120;
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+    use crate::formas::{Afin, Plana};
+
+    fn area(f: &[[f32; 4]]) -> f32 {
+        f.iter().map(|r| (r[2] - r[0]) * (r[3] - r[1])).sum()
+    }
+
+    fn forma(tipo: u8, mx: f32, my: f32, radio: f32, ex: f32, ey: f32, escala: f32) -> Plana {
+        Plana { tipo, cx: 0.0, cy: 0.0, mx, my, radio, giro: 0.0, ex, ey, trazo: 0.0, afin: Afin { m: [escala, 0.0, 0.0, escala], t: [0.0, 0.0] } }
+    }
+
+    #[test]
+    fn la_formula_de_las_franjas_da_lo_mismo_que_buscarlas() {
+        for p in [forma(1, 210.0, 110.0, 36.0, 1.0, 1.0, 1.0), forma(0, 0.0, 0.0, 46.0, 1.0, 1.0, 1.0), forma(0, 0.0, 0.0, 30.0, 1.0, 0.4, 1.5), forma(1, 60.0, 20.0, 20.0, 1.0, 1.0, 2.0)] {
+            let exacta = franjas_de(&p, &[]);
+            // Un giro que no gira: obliga a buscar el borde por bisección.
+            let mut girada = p;
+            girada.giro = 1e-7;
+            let buscada = franjas_de(&girada, &[]);
+            // Contra el área de verdad: la fórmula se queda un pelo por dentro (el
+            // más estrecho de cada franja) y la búsqueda un pelo por fuera.
+            let s = p.afin.m[0] * p.afin.m[3];
+            let real = s * if p.tipo == 1 {
+                4.0 * p.mx * p.my - (4.0 - std::f32::consts::PI) * p.radio * p.radio
+            } else {
+                std::f32::consts::PI * p.radio * p.radio * p.ex * p.ey
+            };
+            for (cual, a) in [("fórmula", area(&exacta)), ("búsqueda", area(&buscada))] {
+                assert!((a - real).abs() / real < 0.04, "tipo {}, {cual}: {a} frente a {real}", p.tipo);
+            }
+            // Y los lados rectos se juntan: una caja no son cien franjas.
+            if p.tipo == 1 {
+                assert!(exacta.len() < buscada.len() + 4, "{} frente a {}", exacta.len(), buscada.len());
+            }
+        }
+    }
+}

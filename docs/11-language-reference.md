@@ -437,7 +437,11 @@ gets round blur, not a square—, through the standard `ext-background-effect`
 protocol (Hyprland and KWin have it). Nobody has to write a blur rule for the
 compositor: the scene asks. Where the compositor cannot do it, the glass is
 still a tint with its light, just with nothing blurred behind. How strong the
-blur is belongs to the compositor's settings. Below 30 % of glass (times
+blur is belongs to the compositor's settings. A loose shape takes `glass` too
+(`box { …; color: #4a5057; glass: 100% }`), and so does the `fill` of a `row`
+or a `column`: that is how a glass card holds glass plates —a mid grey at 36 %
+over dark glass lightens it just enough, and each plate gets its own lit edge.
+Inside a `body`, the body says it, not its shapes. Below 30 % of glass (times
 opacity) no blur is asked for. What glass cannot do is bend what is behind it
 like a lens: that needs the pixels behind, and on Linux only the compositor has
 them.
@@ -799,7 +803,7 @@ statements: surface permissions model service spring prop pose fact event text i
 library: let spring component permissions fact text model service event image figure prop pose gesture posture layer
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate
 properties.permissions: run services
-properties.shape: rotate stroke color opacity blend active show cursor grow
+properties.shape: rotate stroke color opacity blend glass active show cursor grow
 properties.ellipse: at radius scale
 properties.box: at from size corner
 properties.arc: at radius span width
@@ -813,7 +817,7 @@ properties.input: at width size weight color opacity family placeholder selectio
 properties.group: pivot rotate scale move opacity size show grow
 properties.popup: at size open
 properties.children: move
-properties.layout: at anchor gap padding align fill corner show opacity cursor view step content wrap size grow
+properties.layout: at anchor gap padding align fill glass corner show opacity cursor view step content wrap size grow
 functions: min max abs floor ceil sin cos clamp smooth mix if vel
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change still

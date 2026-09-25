@@ -13,4 +13,9 @@ scene Cristal {
     zone box encima { at: 150, 80; size: 240, 110; corner: 28 }
     on enter encima { cerca: 1 }
     on leave encima { cerca: 0 }
+    //  Y dentro, placas: una forma suelta y el fondo de un reparto.
+    box { at: 90, 80; size: 80, 60; corner: 14; color: #4a5057; glass: 100% }
+    row { at: 150, 55; padding: 8; fill: #4a5057; glass: 100%; corner: 12
+        text "placa" { size: 12; color: #f5f7f5 }
+    }
 }

@@ -107,14 +107,14 @@ impl Guion for Cara {
             mitad: (ancho * (0.5 * S), (ojos * (0.5 * S) * parpado).max(1.6)),
             radio: ancho * (0.5 * S),
         };
-        e.pintar(Instr::Plano { forma: pildora(-1.0), color: blanco.clone(), alfa: ve(p_ojos + p_rec) });
-        e.pintar(Instr::Plano { forma: pildora(1.0), color: blanco.clone(), alfa: ve(p_ojos.e()) });
+        e.pintar(Instr::Plano { forma: pildora(-1.0), color: blanco.clone(), alfa: ve(p_ojos + p_rec), vidrio: None });
+        e.pintar(Instr::Plano { forma: pildora(1.0), color: blanco.clone(), alfa: ve(p_ojos.e()), vidrio: None });
 
         // rec · el ojo derecho es el disco rojo, que crece al entrar.
         e.pintar(Instr::Plano {
             forma: Forma::circulo((ojo_x(1.0), ojo_y(1.0)), p_rec * (6.5 * S)),
             color: color(0.93, 0.23, 0.2),
-            alfa: ve(p_rec.e()),
+            alfa: ve(p_rec.e()), vidrio: None,
         });
 
         // contenta · dos arcos de verdad.
@@ -122,7 +122,7 @@ impl Guion for Cara {
             e.pintar(Instr::Plano {
                 forma: Forma::Arco { centro: (ojo_x(lado), ojo_y(lado) + 2.5 * S), radio: (4.6 * S).into(), apertura: 1.2.into(), grosor: (2.7 * S).into() },
                 color: blanco.clone(),
-                alfa: ve(p_contenta.e()),
+                alfa: ve(p_contenta.e()), vidrio: None,
             });
         }
 
@@ -131,18 +131,18 @@ impl Guion for Cara {
         e.pintar(Instr::Plano {
             forma: Forma::Caja { centro: (CX.into(), cy.clone() - 4.0 * S), mitad: ((2.3 * S).into(), (7.0 * S).into()), radio: (2.3 * S).into() },
             color: ambar.clone(),
-            alfa: ve(p_aviso.e()),
+            alfa: ve(p_aviso.e()), vidrio: None,
         });
-        e.pintar(Instr::Plano { forma: Forma::circulo((CX.into(), cy.clone() + 9.0 * S), 2.7 * S), color: ambar, alfa: ve(p_aviso.e()) });
+        e.pintar(Instr::Plano { forma: Forma::circulo((CX.into(), cy.clone() + 9.0 * S), 2.7 * S), color: ambar, alfa: ve(p_aviso.e()), vidrio: None });
 
         // lupa · un aro y su mango.
         let lx = CX + mira.0.clone() - 2.5 * S;
         let ly = cy.clone() + mira.1.clone() - 2.0 * S;
-        e.pintar(Instr::Plano { forma: Forma::aro((lx.clone(), ly.clone()), 6.2 * S, 2.6 * S), color: blanco.clone(), alfa: ve(p_lupa.e()) });
+        e.pintar(Instr::Plano { forma: Forma::aro((lx.clone(), ly.clone()), 6.2 * S, 2.6 * S), color: blanco.clone(), alfa: ve(p_lupa.e()), vidrio: None });
         e.pintar(Instr::Plano {
             forma: Forma::Segmento { de: (lx.clone() + 5.4 * S, ly.clone() + 5.4 * S), a: (lx + 9.6 * S, ly + 9.6 * S), grosor: (2.9 * S).into() },
             color: blanco.clone(),
-            alfa: ve(p_lupa.e()),
+            alfa: ve(p_lupa.e()), vidrio: None,
         });
         e.pintar(Instr::Transformar(None));
         e.pintar(Instr::Recorte(None));
