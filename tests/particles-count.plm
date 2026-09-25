@@ -1,0 +1,6 @@
+// expect: error «is a number, not something that changes»
+scene X {
+    surface { size: 100, 100 }
+    prop n = 10
+    particles { at: 50, 50; count: n }
+}

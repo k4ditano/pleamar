@@ -1,0 +1,5 @@
+// expect: error «between 1 and 4096»
+scene X {
+    surface { size: 100, 100 }
+    particles { at: 50, 50; count: 10000 }
+}

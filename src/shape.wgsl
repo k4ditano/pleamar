@@ -53,6 +53,8 @@ const TEXTURE: u32 = 1u;
 const LAYER: u32 = 2u;
 // One of the scene's own shaders: `user_shader`, added after this file (see shaders.rs).
 const SHADER: u32 = 3u;
+// A particle emitter: see `vs_particle`.
+const PARTICLES: u32 = 4u;
 const HUD: u32 = 9u;
 
 const FAR: f32 = 1e6;
@@ -112,7 +114,9 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> VertexO
         vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0),
     );
     let c = elements[i].bounds;
-    let p = mix(c.xy, c.zw, corners[v]);
+    // A particle emitter is not drawn here but by `vs_particle`: nothing.
+    var p = mix(c.xy, c.zw, corners[v]);
+    if (u32(elements[i].header.x) == PARTICLES) { p = c.xy; }
     var s: VertexOut;
     let q = p - u.hud.xw;
     s.pos = vec4<f32>(q.x / u.header.x * 2.0 - 1.0, 1.0 - q.y / u.header.y * 2.0, 0.0, 1.0);
@@ -497,4 +501,152 @@ fn layer_with_effects(el: Element, at: vec2<f32>, p: vec2<f32>, alpha: f32) -> v
     // is exactly that, here and in the compositor.
     if (el.light.w > 0.5) { return vec4<f32>(c.rgb, 0.0); }
     return c;
+}
+
+// ── particles ─────────────────────────────────────────────────────
+// No particle is stored: each one is worked out here from its number and the
+// time. Its emitter's element brings everything (see `Instr::Particles` in gpu.rs):
+// color0 colour and opacity at birth · color1 at death · line where, and the box
+// it is born in · light life a..b, speed a..b · border direction, spread, drag,
+// shape · shadow gravity, size at birth and at death · dest now, switched on,
+// switched off, last burst · uv the emitter's velocity, whether it bursts.
+const PARTICLE_SLOTS: u32 = 4096u;
+
+fn pcg(v: u32) -> u32 {
+    let s = v * 747796405u + 2891336453u;
+    let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+
+// A number from 0 to 1, always the same for the same three.
+fn chance(a: u32, b: u32, k: u32) -> f32 {
+    return f32(pcg(a ^ pcg(b ^ pcg(k)))) / 4294967295.0;
+}
+
+struct ParticleOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) @interpolate(flat) element: u32,
+    @location(1) quad: vec2<f32>,
+    @location(2) color: vec4<f32>,
+    @location(3) world: vec2<f32>,
+    // Its half size along and across, in pixels, and its shape.
+    @location(4) @interpolate(flat) extent: vec3<f32>,
+};
+
+@vertex
+fn vs_particle(@builtin(vertex_index) v: u32, @builtin(instance_index) instance: u32) -> ParticleOut {
+    var out: ParticleOut;
+    let k = instance / PARTICLE_SLOTS;
+    let i = instance % PARTICLE_SLOTS;
+    let el = elements[k];
+    out.element = k;
+    out.pos = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    let seed = u32(el.header.y);
+    let count = el.header.z;
+    let now = el.dest.x;
+    // When it was born, and in which round —each round, another particle—.
+    var born = 0.0;
+    var round = 0u;
+    let lifetime_most = max(el.light.x, el.light.y);
+    if (el.uv.z > 0.5) {
+        born = el.dest.w + chance(seed, i, 7u) * 0.06;
+        round = u32(max(el.dest.w, 0.0) * 1000.0);
+        if (el.dest.w < 0.0) { return out; }
+    } else {
+        // A steady stream: each slot is born once per `lifetime_most`, spread evenly.
+        let phase = f32(i) / count * lifetime_most;
+        let since = now - el.dest.y - phase;
+        if (since < 0.0) { return out; }
+        var n = floor(since / lifetime_most);
+        born = el.dest.y + phase + n * lifetime_most;
+        // Switched off: the ones born after it are not there; the last ones finish.
+        if (born > el.dest.z) {
+            n -= 1.0;
+            born -= lifetime_most;
+            if (n < 0.0) { return out; }
+        }
+        round = u32(n);
+    }
+    let life = mix(el.light.x, el.light.y, chance(seed, i, round * 11u + 1u));
+    let age = now - born;
+    if (age < 0.0 || age > life) { return out; }
+    let t = age / life;
+    // Where it was born: somewhere in the box, where the emitter was then.
+    let box = (vec2<f32>(chance(seed, i, round * 11u + 2u), chance(seed, i, round * 11u + 3u)) - 0.5) * el.line.zw;
+    let start = el.line.xy + box - el.uv.xy * age;
+    let angle = el.border.x + (chance(seed, i, round * 11u + 4u) - 0.5) * el.border.y;
+    let speed = mix(el.light.z, el.light.w, chance(seed, i, round * 11u + 5u));
+    let v0 = vec2<f32>(cos(angle), sin(angle)) * speed;
+    let g = el.shadow.xy;
+    let drag = el.border.z;
+    var at = vec2<f32>(0.0);
+    var velocity = vec2<f32>(0.0);
+    if (drag > 0.001) {
+        let slow = exp(-drag * age);
+        let f = (1.0 - slow) / drag;
+        at = start + v0 * f + g * (age - f) / drag;
+        velocity = v0 * slow + g * (1.0 - slow) / drag;
+    } else {
+        at = start + v0 * age + 0.5 * g * age * age;
+        velocity = v0 + g * age;
+    }
+    let size = mix(el.shadow.z, el.shadow.w, t);
+    let alpha = mix(el.color0.w, el.color1.w, t) * el.header.w;
+    if (size <= 0.01 || alpha <= 0.001) { return out; }
+    // Its quad: a square around it, or a streak along where it goes.
+    var along = vec2<f32>(1.0, 0.0);
+    var extent = vec2<f32>(size * 0.5, size * 0.5);
+    let shape = el.border.w;
+    if (shape > 1.5) {
+        let fast = length(velocity);
+        if (fast > 0.001) { along = velocity / fast; }
+        extent = vec2<f32>(size * 0.5 + fast * 0.03, max(size * 0.22, 0.6));
+    }
+    let across = vec2<f32>(-along.y, along.x);
+    var corners = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0),
+        vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
+    );
+    let q = corners[v];
+    // One pixel more on each side, for the edge's softness.
+    let pad = 1.0 / u.header.w;
+    let local = at + along * q.x * (extent.x + pad) + across * q.y * (extent.y + pad);
+    // Back from the group's space to the scene's: `to_local` inverted.
+    let det = el.t0.x * el.t0.w - el.t0.y * el.t0.z;
+    let d = local - el.t1.xy;
+    let world = vec2<f32>(el.t0.w * d.x - el.t0.y * d.y, -el.t0.z * d.x + el.t0.x * d.y) / det;
+    let screen = world - u.hud.xw;
+    out.pos = vec4<f32>(screen.x / u.header.x * 2.0 - 1.0, 1.0 - screen.y / u.header.y * 2.0, 0.0, 1.0);
+    out.quad = q * (extent + vec2<f32>(pad)) ;
+    out.color = vec4<f32>(mix(el.color0.rgb, el.color1.rgb, t), alpha);
+    out.world = world;
+    out.extent = vec3<f32>(extent, shape);
+    return out;
+}
+
+@fragment
+fn fs_particle(e: ParticleOut) -> @location(0) vec4<f32> {
+    let el = elements[e.element];
+    var clip = 1.0;
+    for (var k = 0; k < 4; k++) {
+        let r = el.clips[k];
+        if (r >= 0.0) { clip *= coverage(shape_distance(u32(r), e.world)); }
+    }
+    // Its distance to its own edge, in logical pixels, like any shape's.
+    var d = 0.0;
+    let x = e.extent.xy;
+    if (e.extent.z > 1.5) {
+        // A streak: a capsule along x.
+        let h = max(x.x - x.y, 0.0);
+        let q = vec2<f32>(max(abs(e.quad.x) - h, 0.0), e.quad.y);
+        d = length(q) - x.y;
+    } else if (e.extent.z > 0.5) {
+        let q = abs(e.quad) - x;
+        d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0);
+    } else {
+        d = length(e.quad) - x.x;
+    }
+    let a = e.color.a * coverage(d) * clip;
+    if (a <= 0.001) { discard; }
+    return vec4<f32>(e.color.rgb * a, a);
 }

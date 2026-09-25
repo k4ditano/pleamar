@@ -25,4 +25,11 @@ scene Effects {
     text "ripple" { at: 440, 215; anchor: center; size: 12; color: ink; opacity: 70% }
     shader haze { at: 550, 30; size: 180, 200; corner: 20; values: 1; colors: #202830 }
     text "haze" { at: 640, 215; anchor: center; size: 12; color: ink; opacity: 70% }
+
+    // Sparks over the aurora, glowing: particles in a group with `glow`.
+    group {
+        glow: 6, 80%
+        particles { at: 180, 200; area: 260, 0; count: 160; life: 1.2s .. 2.4s; speed: 20 .. 60
+                    direction: -90deg; spread: 50deg; size: 2, 0; colors: #5ef2b0, #7a6cff; shape: spark }
+    }
 }

@@ -923,6 +923,11 @@ pub fn run(
             }
             for (s, from_logic, payload) in std::mem::take(&mut signals) {
                 let id = SignalId(s as u16);
+                // When it last happened: what a `burst:` of particles starts from.
+                if draw.signal_times.len() != scene.signals.len() {
+                    draw.signal_times = vec![-1.0; scene.signals.len()];
+                }
+                draw.signal_times[s] = t_total;
                 for (layer, st) in scene.layers.iter().zip(layers.iter_mut()) {
                     for (k, r) in layer.claims.iter().enumerate() {
                         match &r.when {
@@ -1284,7 +1289,14 @@ pub fn run(
         let reading = Instant::now();
         let skip: Vec<std::ops::Range<usize>> = asleep.iter().map(|t| t.instrs.clone()).collect();
         draw.skip = skip;
+        draw.clock = t_total;
+        draw.reduced_motion = op.reduced_motion;
+        if draw.signal_times.len() != scene.signals.len() {
+            draw.signal_times = vec![-1.0; scene.signals.len()];
+        }
         draw.compose(to_paint, c, &texts, &mut letters, view, size, op.hud);
+        // Particles carry themselves: while one is alive, the scene does not rest.
+        alive |= draw.particles_alive;
         cycle.compose_ms += reading.elapsed().as_secs_f32() * 1000.0;
         let Some(g) = &mut gpu else {
             // Nowhere yet: time runs all the same, but unhurried.

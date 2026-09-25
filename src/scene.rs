@@ -598,6 +598,49 @@ pub struct Light {
 
 pub type Color = [Expr; 3];
 
+/// `particles sparks { at: x, y; count: 300; life: 0.6s .. 1.4s; … }`.
+///
+/// No particle is kept anywhere: each one is worked out in the shader from its
+/// number and the time —when it was born, where it went, how it fell—, so
+/// thousands cost what their pixels cost. The only state is the emitter's: when
+/// it was switched on and off, when its last burst was, and where it was
+/// going, so that what it leaves behind stays where it was left.
+#[derive(Clone, Debug)]
+pub struct Particles {
+    pub at: Point,
+    /// The emitter is a box this size, centred on `at`; 0, 0 is a point.
+    pub area: Point,
+    pub count: u32,
+    /// Seconds, from one to the other: each particle its own.
+    pub life: (Expr, Expr),
+    /// Pixels per second.
+    pub speed: (Expr, Expr),
+    /// Where they go and how open the fan is, in radians (`-90deg` is up).
+    pub direction: Expr,
+    pub spread: Expr,
+    pub gravity: Point,
+    /// How much the air brakes them: 0 nothing.
+    pub drag: Expr,
+    /// At birth and at death.
+    pub size: (Expr, Expr),
+    pub colors: (Color, Color),
+    pub opacity: (Expr, Expr),
+    pub shape: ParticleShape,
+    /// Continuous: while this is true, they keep being born.
+    pub emit: Expr,
+    /// Or all at once, each time this event happens.
+    pub burst: Option<SignalId>,
+    pub alpha: Expr,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ParticleShape {
+    Dot,
+    Square,
+    /// A streak along where it is going: sparks, rain.
+    Spark,
+}
+
 /// What a `group` does to what it holds when blending it: `blur: 12`,
 /// `glow: 16, 80%, mint`, `saturation: 0`, `brightness: 1.2`, `contrast: 1.1`,
 /// `hue: 40deg`, `mask: …`, `mode: add`.
@@ -875,6 +918,8 @@ pub enum Instr {
     /// this opacity: what is in front does not let what is behind show through half blended.
     /// `None` closes the group.
     Opacity(Option<Expr>),
+    /// A particle emitter: see `Particles`.
+    Particles(Box<Particles>),
     /// Like `Opacity(Some(..))`, but what is inside is painted apart WITH
     /// effects applied when it is blended: blur, glow, colour, mask, how it
     /// blends. It always wants a layer of its own. `Opacity(None)` closes it.

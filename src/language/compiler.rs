@@ -1695,6 +1695,7 @@ impl<'a> Compiler<'a> {
                 "image" => self.image(n)?,
                 "figure" => self.figure(n)?,
                 "shader" => self.shader(n)?,
+                "particles" => self.particles(n)?,
                 "input" => self.input_field(n)?,
                 "clip" => {
                     let margin = if c.word("inset") { c.num()? } else { 0.0 };
@@ -2864,6 +2865,103 @@ impl<'a> Compiler<'a> {
         let time = u.animated.then(|| self.time_prop().e());
         let pointer = u.pointer.then(|| (self.facts["pointer.x"].e(), self.facts["pointer.y"].e()));
         self.e.paint(Instr::Shader { shader: k, target: (x, y, w, h), corner, alpha, values, colors, time, pointer, behind: u.behind });
+        Ok(())
+    }
+
+    /// `particles sparks { at: 200, 100; count: 300; life: 0.6s .. 1.4s; speed: 40 .. 160; … }`
+    fn particles(&mut self, n: &Node) -> R<()> {
+        let mut c = Cur::new(&n.head[1..], n.line, n.col);
+        // A name, if it likes: it says what they are, nothing refers to it yet.
+        if matches!(c.peek(), Some(TokenKind::Id(_))) {
+            let _ = c.id("a name")?;
+        }
+        c.expect_end()?;
+        let mut p = self.properties(n, vocab::properties("particles"))?;
+        let missing = |q: &str| CompileError::at(n.line, n.col, format!("these particles are missing '{q}'"));
+        let at = self.point(p.get_mut("at").ok_or_else(|| missing("at"))?)?;
+        // `a .. b`, or one number that is both.
+        let range = |o: &Self, c: &mut Cur| -> R<(Expr, Expr)> {
+            let a = o.expr(c)?;
+            Ok(if c.sym("..") { (a, o.expr(c)?) } else { (a.clone(), a) })
+        };
+        let pair = |o: &Self, c: &mut Cur| -> R<(Expr, Expr)> {
+            let a = o.expr(c)?;
+            Ok(if c.sym(",") { (a, o.expr(c)?) } else { (a.clone(), a) })
+        };
+        let area = match p.get_mut("area") {
+            Some(c) => self.point(c)?,
+            None => (Expr::K(0.0), Expr::K(0.0)),
+        };
+        let count = match p.get_mut("count") {
+            Some(c) => match self.expr(c)? {
+                Expr::K(v) if (1.0..=4096.0).contains(&v) => v as u32,
+                Expr::K(_) => return c.error("between 1 and 4096 particles per emitter"),
+                _ => return c.error("how many particles there are is a number, not something that changes: it is how many the card reserves"),
+            },
+            None => 100,
+        };
+        let life = match p.get_mut("life") {
+            Some(c) => range(self, c)?,
+            None => (Expr::K(1.0), Expr::K(1.0)),
+        };
+        let speed = match p.get_mut("speed") {
+            Some(c) => range(self, c)?,
+            None => (Expr::K(60.0), Expr::K(60.0)),
+        };
+        let direction = match p.get_mut("direction") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(-std::f32::consts::FRAC_PI_2),
+        };
+        let spread = match p.get_mut("spread") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(std::f32::consts::TAU),
+        };
+        let gravity = match p.get_mut("gravity") {
+            Some(c) => self.point(c)?,
+            None => (Expr::K(0.0), Expr::K(0.0)),
+        };
+        let drag = match p.get_mut("drag") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(0.0),
+        };
+        let size = match p.get_mut("size") {
+            Some(c) => pair(self, c)?,
+            None => (Expr::K(4.0), Expr::K(4.0)),
+        };
+        let opacity = match p.get_mut("opacity") {
+            Some(c) => pair(self, c)?,
+            None => (Expr::K(1.0), Expr::K(0.0)),
+        };
+        let colors = match p.get_mut("colors") {
+            Some(c) => {
+                let a = self.color(c)?;
+                let b = if c.sym(",") { self.color(c)? } else { a.clone() };
+                (a, b)
+            }
+            None => (color(1.0, 1.0, 1.0), color(1.0, 1.0, 1.0)),
+        };
+        let shape = match p.get_mut("shape") {
+            Some(c) => match c.one_of(vocab::PARTICLE_SHAPES, "the shape of a particle")?.as_str() {
+                "square" => ParticleShape::Square,
+                "spark" => ParticleShape::Spark,
+                _ => ParticleShape::Dot,
+            },
+            None => ParticleShape::Dot,
+        };
+        let burst = match p.get_mut("burst") {
+            Some(c) => Some(self.signal(c)?),
+            None => None,
+        };
+        let emit = match p.get_mut("emit") {
+            Some(c) if burst.is_some() => return c.error("particles are either born all the time (`emit:`) or all at once (`burst:`), not both"),
+            Some(c) => self.expr(c)?,
+            None => Expr::K(if burst.is_some() { 0.0 } else { 1.0 }),
+        };
+        let alpha = match p.get_mut("show") {
+            Some(c) => self.expr(c)?.clamp(0.0, 1.0),
+            None => Expr::K(1.0),
+        };
+        self.e.paint(Instr::Particles(Box::new(Particles { at, area, count, life, speed, direction, spread, gravity, drag, size, colors, opacity, shape, emit, burst, alpha })));
         Ok(())
     }
 

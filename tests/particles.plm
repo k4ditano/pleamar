@@ -1,0 +1,15 @@
+// expect: ok
+// Particles: a steady stream switched by a fact, a burst on an event, and
+// every property of an emitter at least once.
+scene Particles {
+    surface { size: 400, 200; anchor: top }
+    fact open = false
+    event pop
+    prop x = 100 ~calm
+    particles sparks { at: x, 180; area: 20, 0; count: 400; life: 0.8s .. 1.6s; speed: 120 .. 220
+                       direction: -90deg; spread: 40deg; gravity: 0, 260; drag: 0.3; size: 3, 1
+                       colors: #ffd166, #ff4d6d; opacity: 100%, 0%; shape: spark; emit: open; show: x > 0 }
+    particles { at: 300, 100; count: 200; life: 1s; speed: 150 .. 380; spread: 360deg
+                gravity: 0, 420; drag: 1.4; size: 6; colors: #5ef2b0; opacity: 90%, 0%; shape: square; burst: pop }
+    particles { at: pointer.x, pointer.y; count: 100; shape: dot }
+}

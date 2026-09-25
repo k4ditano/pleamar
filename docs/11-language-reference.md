@@ -75,7 +75,7 @@ let          = "let" name "=" ( expr | color ) ;
 zone         = "zone" shape ;
 spring_ref   = name | "spring" "(" number "," number ")" | duration ;   (* ~620ms: gets there in that long *)
 
-drawing      = body | shape | text | image | figure | shader | field | clip | group | popup ;
+drawing      = body | shape | text | image | figure | shader | particles | field | clip | group | popup ;
 body         = "body" "{" { element_prop | shape } "}" ;
 shape        = ( "ellipse" | "box" | "arc" | "line" ) [ name ] "{" { element_prop } "}"
              | "path" [ name ] "{" { element_prop | step } "}" ;
@@ -84,6 +84,7 @@ text         = "text" ( text | name | "number" "(" expr [ "," number [ "," text 
 image        = "image" name "{" { element_prop } "}" ;
 figure       = "figure" name [ "." name ] "{" { element_prop } "}" ;            (* whole, or one layer *)
 shader       = "shader" name "{" { element_prop } "}" ;
+particles    = "particles" [ name ] "{" { element_prop } "}" ;
 field        = "input" name "{" { element_prop } "}" ;
 clip         = "clip" [ "inset" number ] shape ;
 group        = "group" "{" { element_prop | statement } "}" ;
@@ -418,6 +419,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `glass` · `lens` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` |
 | `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `show` |
+| `particles` | `at` · `area` · `count` · `life` · `speed` · `direction` · `spread` · `gravity` · `drag` · `size` · `colors` · `opacity` · `shape` · `emit` or `burst` · `show`: §8.3 |
 | `shader` | `at` (its top left corner) · `size: w, h` · `corner` · `opacity` · `show` · `values: a, b, …` (up to eight numbers, any expression) · `colors: c1, c2` (up to two). What it is and how it is written: §8.1 |
 | `figure` | `at` (where the piece's centre goes) · `size: w, h` or `scale:` (without either, one unit of the svg is one pixel) · `pivot: x, y` (in the svg's units, from its centre: the point it **turns** around, which does not move it) · `rotate` · `color` (instead of the one in the file) · `opacity` · `blend` · `stroke` · `show` |
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `secret` · `show` |
@@ -655,6 +657,51 @@ Two groups with effects cannot go **one inside the other** —only the outer one
 would get them, and so it is an error—; side by side, as many as needed. A group
 with only `opacity` around one with effects is fine: it fades each thing inside
 instead of the whole, and the effects keep their layer.
+
+### 8.3. Particles
+
+An emitter: sparks, snow, confetti, a trail. **No particle is kept anywhere**:
+each one is worked out on the graphics card from its number and the time —when
+it was born, where it went, how it fell—, so thousands cost what their pixels
+cost and nothing in the processor.
+
+```plm
+language 0.1
+scene Fountain {
+    surface { size: 300, 260; anchor: top }
+    fact open = true
+    event pop
+    group {
+        glow: 8, 90%                                       // they are light: a glow suits them
+        particles sparks {
+            at: 150, 240; count: 400
+            life: 0.8s .. 1.6s; speed: 120 .. 220
+            direction: -90deg; spread: 40deg; gravity: 0, 260
+            size: 3, 1; colors: #ffd166, #ff4d6d; opacity: 100%, 0%
+            shape: spark; emit: open
+        }
+    }
+    particles { at: 150, 120; count: 200; life: 1s .. 2s; speed: 150 .. 380; spread: 140deg
+                gravity: 0, 420; drag: 1.4; size: 6, 5; colors: #5ef2b0, #3dd6ff; shape: square; burst: pop }
+}
+```
+
+| | |
+| --- | --- |
+| `at: x, y` · `area: w, h` | where they are born: a point, or anywhere in a box that size centred on it. If `at` moves —`at: pointer.x, pointer.y`— what was born stays where it was born: it leaves a trail |
+| `count: n` | how many at most, 1 to 4096. A number, not an expression: it is what the card reserves |
+| `life: a .. b` | how long each one lives, in seconds, each its own between the two. A steady stream is born at `count / b` per second |
+| `speed: a .. b` · `direction: angle` · `spread: angle` | how fast they leave, where to (`-90deg` is up) and how open the fan is (`360deg`, all round, is the default) |
+| `gravity: x, y` · `drag: k` | what pulls them, in pixels per second squared, and how much the air brakes them (0: nothing) |
+| `size: birth, death` · `colors: birth, death` · `opacity: birth, death` | from one to the other over their life; one value, the same all their life. By default they fade out |
+| `shape: dot \| square \| spark` | a disc, a square, or a streak along where it goes that stretches with its speed |
+| `emit: condition` | born while it holds —`true` by default—. Switched off, no more are born and the ones in the air finish |
+| `burst: event` | instead, all at once each time that event happens |
+
+They carry themselves, so the scene does not rest while one is in the air —and
+rests again when the last one dies—. With reduced motion there are none. An
+emitter with `shape: spark` inside a group with `glow:` is most of what a
+firework is.
 
 ## 9. Layouts
 
@@ -963,7 +1010,7 @@ This is the output of `pleamar --grammar`, copied. It is not a second list: thes
 
 ```vocabulary
 language: 0.1
-statements: surface permissions model service spring prop pose fact event text image figure shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture translations
+statements: surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture translations
 library: let spring component permissions fact text model service event image figure shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate
 properties.permissions: run services
@@ -978,6 +1025,7 @@ properties.text: at anchor width size weight color opacity lines align line_heig
 properties.image: at size opacity tint show grow
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow
 properties.shader: at size corner opacity show values colors grow
+properties.particles: at area count life speed direction spread gravity drag size colors opacity shape emit burst show
 properties.input: at width size weight color opacity family placeholder selection secret show
 properties.group: pivot rotate scale move opacity size show grow blur glow saturation brightness contrast hue mask mode
 properties.popup: at size open
@@ -994,7 +1042,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: translations surface permissions model service spring prop pose fact event text image figure shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture import scene library language
+documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture import scene library language
 services: clock clock.seconds audio battery brightness network media window
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
@@ -1015,6 +1063,7 @@ surface.keyboard: none on_demand exclusive
 text.align: left center right
 layout.align: start center end
 group.mode: normal add
+particles.shape: dot square spark
 ```
 
 `properties.shape` are the ones common to `ellipse`, `box`, `arc` and `line`; `properties.layout`, those of `row` and `column`.

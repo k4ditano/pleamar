@@ -159,6 +159,11 @@ mint` (or without a colour, a bloom), `saturation`, `brightness`, `contrast`,
 `hue: 120deg`, `mask: x1, y1 to x2, y2` / `mask: radial x, y radius r1 to r2`,
 `mode: add`. All animatable; §8.2. Two groups with effects cannot nest.
 
+Particles are an element: `particles { at: x, y; count: 400; life: 0.8s .. 1.6s;
+speed: 120 .. 220; direction: -90deg; spread: 40deg; gravity: 0, 260; size: 3, 1;
+colors: a, b; shape: dot | square | spark; emit: cond }` (or `burst: event`).
+Worked out on the card, thousands are cheap; §8.3.
+
 For smaller things there is maths: `noise(x)`, `noise(x, y)`, `random(k)`,
 `sqrt`, `pow`, `fract`, `mod`, `atan2`, `length`… and `time`, the seconds since
 the scene started (naming it keeps the scene painting). Gesture frames take

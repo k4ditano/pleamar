@@ -6,7 +6,7 @@
 
 /// What a statement can start with (besides the name of a component).
 pub const STATEMENTS: &[&str] = &[
-    "surface", "permissions", "model", "service", "spring", "prop", "pose", "fact", "event", "text", "image", "figure", "shader", "measure", "let", "zone",
+    "surface", "permissions", "model", "service", "spring", "prop", "pose", "fact", "event", "text", "image", "figure", "shader", "particles", "measure", "let", "zone",
     "body", "ellipse", "box", "arc", "line", "path", "input", "clip", "group", "popup",
     "component", "children", "repeat", "for", "row", "column", "space", "between",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
@@ -31,6 +31,7 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("image", &["at", "size", "opacity", "tint", "show", "grow"]),
     ("figure", &["at", "size", "scale", "rotate", "pivot", "color", "opacity", "blend", "stroke", "show", "grow"]),
     ("shader", &["at", "size", "corner", "opacity", "show", "values", "colors", "grow"]),
+    ("particles", &["at", "area", "count", "life", "speed", "direction", "spread", "gravity", "drag", "size", "colors", "opacity", "shape", "emit", "burst", "show"]),
     ("input", &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "secret", "show"]),
     ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show", "grow", "blur", "glow", "saturation", "brightness", "contrast", "hue", "mask", "mode"]),
     ("popup", &["at", "size", "open"]),
@@ -69,6 +70,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("text", "Declares a live text (`text title = \"…\"`) or paints one (`text title { size: 14 }`). In a painted one, `\"{a} · {b}\"` has holes."),
     ("image", "`image fox = icon \"firefox\", 48, 48` — an image by icon name, by file, or from a text that says which."),
     ("figure", "`figure hat = file \"hat.svg\"` — an svg as geometry: its layers are paths, by the `id` of each one."),
+    ("particles", "`particles { at: 200, 100; count: 300; life: 0.6s .. 1.4s; speed: 40 .. 160; direction: -90deg; spread: 60deg; gravity: 0, 120; size: 5, 0; colors: mint, #fff; emit: open }` — an emitter. Each particle is worked out on the card from its number and the time, so thousands cost what their pixels cost. `burst: event` lets them all out at once instead."),
     ("shader", "Declares one of the scene's own shaders (`shader aurora = file \"aurora.wgsl\"`, with `fn shade(s: Shader) -> vec4<f32>`) or paints a box with it (`shader aurora { at: 360, 60; size: 400, 120; values: glow; colors: mint }`)."),
     ("measure", "`measure label` — creates `label.width` and `label.height`, filled by the text that carries `measure: label`."),
     ("let", "`let panel.x = orb.x + 62` — a name for an expression, or for a colour. It has to come before whoever uses it."),
@@ -141,6 +143,8 @@ pub const TEXT_ALIGNS: &[&str] = &["left", "center", "right"];
 pub const STACK_ALIGNS: &[&str] = &["start", "center", "end"];
 /// How a group with effects blends: covering, or adding light.
 pub const GROUP_MODES: &[&str] = &["normal", "add"];
+/// What each particle looks like.
+pub const PARTICLE_SHAPES: &[&str] = &["dot", "square", "spark"];
 
 /// The properties of an element. Blowing up here is a mistake of whoever programs, not of whoever writes the scene.
 pub fn properties(of: &str) -> &'static [&'static str] {
@@ -185,5 +189,6 @@ pub fn to_text() -> String {
     line("text.align", TEXT_ALIGNS);
     line("layout.align", STACK_ALIGNS);
     line("group.mode", GROUP_MODES);
+    line("particles.shape", PARTICLE_SHAPES);
     s
 }

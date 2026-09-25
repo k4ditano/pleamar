@@ -1,0 +1,6 @@
+// expect: error «either born all the time (`emit:`) or all at once (`burst:`)»
+scene X {
+    surface { size: 100, 100 }
+    event pop
+    particles { at: 50, 50; burst: pop; emit: true }
+}

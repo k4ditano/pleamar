@@ -46,6 +46,18 @@ pub struct DrawList {
     pub views: Vec<[f32; 4]>,
     clips_warned: bool,
     effects_warned: bool,
+    /// The seconds the render has been running, and when each event last
+    /// happened (−1: never): what the particles are worked out from.
+    pub clock: f32,
+    pub signal_times: Vec<f32>,
+    pub reduced_motion: bool,
+    /// Each emitter's own state, by its instruction: when it was switched on
+    /// and off, and where it was going. It outlives the frame.
+    emitters: std::collections::HashMap<usize, Emitter>,
+    /// Where the particles go among the elements: after which element, and how many.
+    pub particle_marks: Vec<(u32, u32)>,
+    /// Some particle is still alive: the scene must not rest.
+    pub particles_alive: bool,
     /// A cut shadow and a cut shape, waiting to be reported.
     shadow: Pending,
     clipping: Pending,
@@ -175,6 +187,21 @@ enum OpacityGroup {
     Hidden,
     Layer { alpha: f32, index: usize, first_element: usize, fx: Option<Fx> },
 }
+
+/// What an emitter remembers between frames.
+#[derive(Clone, Copy)]
+struct Emitter {
+    on: bool,
+    start: f32,
+    stop: f32,
+    at: (f32, f32),
+    velocity: (f32, f32),
+    seen: f32,
+}
+
+/// How many instances an emitter can have: the instance number carries the
+/// emitter's element as well, `element * PARTICLE_SLOTS + particle`.
+pub const PARTICLE_SLOTS: u32 = 4096;
 
 /// A group's effects, already evaluated for this frame: what goes into the
 /// element that blends its layer. See `Instr::Effect` and `shape.wgsl`.
@@ -580,6 +607,8 @@ impl DrawList {
         self.elements.clear();
         let mut placed_stops: Vec<f32> = Vec::new();
         self.offscreen_groups.clear();
+        self.particle_marks.clear();
+        self.particles_alive = false;
         self.glass_regions.clear();
         let mut clips: Vec<(usize, [f32; 4])> = Vec::new();
         // Each entry is already the product of all those above it.
@@ -663,6 +692,85 @@ impl DrawList {
                     });
                     if let Some(OpacityGroup::Layer { first_element, .. }) = opacity_groups.last() {
                         self.offscreen_groups.push((*first_element as u32..*first_element as u32, 0));
+                    }
+                }
+                Instr::Particles(pp) => {
+                    // With reduced motion there is nothing that carries itself: no particles.
+                    if self.reduced_motion {
+                        continue;
+                    }
+                    let now = self.clock;
+                    let at = (pp.at.0.eval(c), pp.at.1.eval(c));
+                    let st = self.emitters.entry(idx).or_insert(Emitter { on: false, start: f32::MIN, stop: f32::MIN, at, velocity: (0.0, 0.0), seen: now });
+                    // Where the emitter is going, softened: what it leaves behind is
+                    // born where it was, not where it is now.
+                    let dt = now - st.seen;
+                    if dt > 1e-4 {
+                        let v = ((at.0 - st.at.0) / dt, (at.1 - st.at.1) / dt);
+                        let k = (dt / 0.08).min(1.0);
+                        st.velocity = (st.velocity.0 + (v.0 - st.velocity.0) * k, st.velocity.1 + (v.1 - st.velocity.1) * k);
+                        (st.at, st.seen) = (at, now);
+                    }
+                    let emitting = pp.emit.eval(c) > 0.5;
+                    if emitting && !st.on {
+                        (st.on, st.start) = (true, now);
+                    } else if !emitting && st.on {
+                        (st.on, st.stop) = (false, now);
+                    }
+                    let st = *st;
+                    let life = (pp.life.0.eval(c).max(0.01), pp.life.1.eval(c).max(0.01));
+                    let life_max = life.0.max(life.1);
+                    let burst = pp.burst.map_or(-1.0, |s| self.signal_times.get(s.0 as usize).copied().unwrap_or(-1.0));
+                    let alive = st.on || now - st.stop < life_max || (burst >= 0.0 && now - burst < life_max + 0.1);
+                    let a = pp.alpha.eval(c).clamp(0.0, 1.0) * mult;
+                    if !alive || a <= 0.001 {
+                        continue;
+                    }
+                    self.particles_alive = true;
+                    let speed = (pp.speed.0.eval(c), pp.speed.1.eval(c));
+                    let gravity = (pp.gravity.0.eval(c), pp.gravity.1.eval(c));
+                    let size = (pp.size.0.eval(c).max(0.0), pp.size.1.eval(c).max(0.0));
+                    let area = (pp.area.0.eval(c).abs(), pp.area.1.eval(c).abs());
+                    // How far one can get: the fastest, all its life, plus what it falls
+                    // and what the emitter moved meanwhile.
+                    let reach = speed.0.abs().max(speed.1.abs()) * life_max
+                        + 0.5 * gravity.0.hypot(gravity.1) * life_max * life_max
+                        + st.velocity.0.hypot(st.velocity.1) * life_max
+                        + size.0.max(size.1) * 2.0;
+                    let b = affine.bounds([at.0 - area.0 * 0.5 - reach, at.1 - area.1 * 0.5 - reach, at.0 + area.0 * 0.5 + reach, at.1 + area.1 * 0.5 + reach]);
+                    let (c0, c1) = (color(&pp.colors.0), color(&pp.colors.1));
+                    let before = self.element_count();
+                    let shape = match pp.shape {
+                        ParticleShape::Dot => 0.0,
+                        ParticleShape::Square => 1.0,
+                        ParticleShape::Spark => 2.0,
+                    };
+                    let (start, stop) = (if st.start == f32::MIN { 1e9 } else { st.start }, if st.on { 1e9 } else { st.stop });
+                    let fields = [
+                        idx as f32, pp.count as f32, a,
+                        c0[0], c0[1], c0[2], pp.opacity.0.eval(c),
+                        c1[0], c1[1], c1[2], pp.opacity.1.eval(c),
+                        at.0, at.1, area.0, area.1,
+                        life.0, life.1, speed.0, speed.1,
+                        pp.direction.eval(c), pp.spread.eval(c), pp.drag.eval(c).max(0.0), shape,
+                        gravity.0, gravity.1, size.0, size.1,
+                        now, start, stop, burst,
+                        st.velocity.0, st.velocity.1, if pp.burst.is_some() { 1.0 } else { 0.0 },
+                    ];
+                    self.element(4.0, b, &clips, |e| {
+                        e[1..3].copy_from_slice(&fields[0..2]);
+                        e[3] = fields[2];
+                        e[8..16].copy_from_slice(&fields[3..11]);
+                        e[16..20].copy_from_slice(&fields[11..15]);
+                        e[20..24].copy_from_slice(&fields[15..19]);
+                        e[24..28].copy_from_slice(&fields[19..23]);
+                        e[28..32].copy_from_slice(&fields[23..27]);
+                        e[36..40].copy_from_slice(&fields[27..31]);
+                        e[40..43].copy_from_slice(&fields[31..34]);
+                        affine.encode(&mut e[44..52]);
+                    });
+                    if self.element_count() > before {
+                        self.particle_marks.push((before as u32, pp.count));
                     }
                 }
                 Instr::Fade(a) => {
@@ -1125,6 +1233,9 @@ pub struct Gpu {
     alpha: wgpu::CompositeAlphaMode,
     non_blocking: Option<wgpu::PresentMode>,
     pipeline: wgpu::RenderPipeline,
+    /// The particles: the same shader and layout, other entry points, one
+    /// instance per particle.
+    particles: wgpu::RenderPipeline,
     pipeline_layout: wgpu::PipelineLayout,
     /// The scene's own shaders, as they went into `pipeline`.
     user_code: String,
@@ -1199,7 +1310,7 @@ impl Gpu {
         // layout, and every bind group already made keeps being valid for it.
         let pipeline_layout = Self::pipeline_layout(&device);
         let base = crate::shaders::generate(&[]);
-        let pipeline = Self::build_pipeline(&device, &pipeline_layout, format, &base).expect("pleamar's own shader does not compile");
+        let (pipeline, particles) = Self::build_pipeline(&device, &pipeline_layout, format, &base).expect("pleamar's own shader does not compile");
         // A single atlas for glyphs and images. 2048² in RGBA is 16 MB.
         let atlas = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("atlas"),
@@ -1228,7 +1339,7 @@ impl Gpu {
             view_formats: &[],
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
-        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
+        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
     }
 
     /// The four groups the shapes shader reads, written out. See `shape.wgsl`.
@@ -1263,28 +1374,31 @@ impl Gpu {
     /// pleamar's shader with the scene's own ones added. An error comes back as
     /// text instead of bringing the program down: they were checked when the
     /// scene was read, but a driver can still say no.
-    fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str) -> Result<wgpu::RenderPipeline, String> {
+    fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str) -> Result<(wgpu::RenderPipeline, wgpu::RenderPipeline), String> {
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         let source = format!("{}{extra}", include_str!("shape.wgsl"));
         let module = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape"), source: wgpu::ShaderSource::Wgsl(source.into()) });
-        let pipeline = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("elements"),
-            layout: Some(layout),
-            vertex: wgpu::VertexState { module: &module, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let make = |label, vs, fs| {
+            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(layout),
+                vertex: wgpu::VertexState { module: &module, entry_point: Some(vs), compilation_options: Default::default(), buffers: &[] },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let pipelines = (make("elements", "vs", "fs"), make("particles", "vs_particle", "fs_particle"));
         match pollster::block_on(scope.pop()) {
-            None => Ok(pipeline),
+            None => Ok(pipelines),
             Some(e) => Err(e.to_string()),
         }
     }
@@ -1298,11 +1412,11 @@ impl Gpu {
             return;
         }
         match Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &code) {
-            Ok(p) => self.pipeline = p,
+            Ok((p, q)) => (self.pipeline, self.particles) = (p, q),
             Err(e) => {
                 eprintln!("shader · the scene's own shaders could not be built, and they are not painted: {e}");
-                if let Ok(p) = Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &crate::shaders::generate(&[])) {
-                    self.pipeline = p;
+                if let Ok((p, q)) = Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &crate::shaders::generate(&[])) {
+                    (self.pipeline, self.particles) = (p, q);
                 }
             }
         }
@@ -1585,7 +1699,21 @@ impl Gpu {
             // Never beyond what was uploaded (only happens if the card could not take it all).
             let uploaded = (self.capacity.1 / PER_ELEMENT) as u32;
             for t in spans.iter().map(|t| t.start.min(uploaded)..t.end.min(uploaded)).filter(|t| !t.is_empty()) {
-                pass.draw(0..6, t);
+                // The particles go where their emitter is among the elements: the
+                // stretch is cut there, and they are drawn with their own pipeline.
+                let mut from = t.start;
+                for &(at, count) in d.particle_marks.iter().filter(|(at, _)| t.contains(at)) {
+                    if at > from {
+                        pass.draw(0..6, from..at);
+                    }
+                    pass.set_pipeline(&self.particles);
+                    pass.draw(0..6, at * PARTICLE_SLOTS..at * PARTICLE_SLOTS + count);
+                    pass.set_pipeline(&self.pipeline);
+                    from = at + 1;
+                }
+                if t.end > from {
+                    pass.draw(0..6, from..t.end);
+                }
             }
         };
         // Everything in order, and each group with opacity or effects painted
