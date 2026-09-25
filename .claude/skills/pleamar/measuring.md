@@ -48,7 +48,7 @@ costs, but **whether it lasts what it says**. `--record` prints the value of
 properties, facts and live texts once per frame:
 
 ```sh
-pleamar --scene bolita.plm --no-hud --stall 0 --seconds 8 \
+pleamar --scene marea.plm --no-hud --stall 0 --seconds 8 \
         --record calma,dibuja,capsula > log.tsv
 ```
 

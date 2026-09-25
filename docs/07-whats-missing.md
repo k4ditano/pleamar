@@ -1,6 +1,6 @@
 # Parity with Quickshell — what is actually missing
 
-**What this note is for.** pleamar is **an alternative to Quickshell**, not Marea's engine. Marea was the stress test at the start, and some day it will be rewritten in this language; but what decides whether this is worth anything is whether someone who writes their desktop in Quickshell today can write it here. This note is that yardstick, and it overrules [[pleamar · 04 Prueba - cabe Marea]].
+**What this note is for.** pleamar is **an alternative to Quickshell**, not Marea's engine. Marea was the stress test at the start, and some day it will be rewritten in this language; but what decides whether this is worth anything is whether someone who writes their desktop in Quickshell today can write it here. This note is that yardstick, and it overrules [Test: does the real Marea fit in the language?](04-marea-test.md).
 
 **Where the numbers come from.** Not from Quickshell's documentation: from **two real configurations** on this machine —`~/.config/quickshell` (k4, 278 QML files) and `proyecto-marea` (370)—, counting which types they instantiate. A type nobody uses is not a gap; one that shows up 800 times is.
 

@@ -2,7 +2,7 @@
 
 **Status:** implemented (`src/logic_luau.rs`). If there is a `marea.luau` next to `marea.plm`, that is its logic. It reloads itself when saved, just like the scene.
 
-Examples: `examples/marea.luau` (notices coming in) and `examples/bandeja.luau` (a list of data that grows and shrinks).
+Examples: `examples/marea.luau` (notices coming in) and `examples/tray.luau` (a list of data that grows and shrinks).
 
 ## What it can do, and what it cannot
 
@@ -76,13 +76,13 @@ A misspelled name is an error there and then, with a suggestion: `the scene has 
 | `apps` | `{ { name, exec, icon }, … }`, in alphabetical order | Linux: the `.desktop` files in `XDG_DATA_DIRS` (without the hidden ones or the terminal ones) |
 | `sys.call("apps.launch", exec)` | launch one, loose from the program | Linux: `setsid -f sh -c` |
 
-Whatever is not a service yet can be got out with `spawn` and `run`, but that ties the script to one system: it is a stopgap until the service exists. `barra.luau` used to read the volume that way; it no longer calls anything of Linux's.
+Whatever is not a service yet can be got out with `spawn` and `run`, but that ties the script to one system: it is a stopgap until the service exists. `bar.luau` used to read the volume that way; it no longer calls anything of Linux's.
 
 On exit, the program stops everything the logic left running; on reloading the logic, too. And if it is killed outright, it all goes with it just the same (on Linux the kernel is asked to see to it).
 
 ## Plugins: one logic per library
 
-A library with a `.luau` next to it is a plugin (see [[pleamar · 11 Referencia del lenguaje 0.1]], §5). Its logic is a script like any other, with four differences:
+A library with a `.luau` next to it is a plugin (see [Language reference — version 0.1](11-language-reference.md), §5). Its logic is a script like any other, with four differences:
 
 - **It only sees its own.** `text.now` is the scene's `Clock.now`; `fact.secret`, if `secret` belongs to the scene, does not exist: `plugin 'Nosy' has no fact called 'secret'. A plugin only sees what its library declares`. The same with `model`, `emit` and what it listens to: `on("tapped", …)` is `Clock.tapped`, and `on("key", …)` hears nothing.
 - **Its permissions are approved by whoever uses it.** `pleamar --approve scene.plm` shows what each plugin asks for and asks about it; unapproved, it runs with none (`plugin 'Clock' wants to run 'date', but nobody has approved its permissions`), and if its code or what it asks for changes, it goes back to unapproved.
@@ -91,7 +91,7 @@ A library with a `.luau` next to it is a plugin (see [[pleamar · 11 Referencia 
 
 Each plugin has its own Luau state —its memory, its timers, its processes— **and its own thread**: one that gets stuck does not hold back the others or the scene's logic. The scene may have no logic at all.
 
-`require("lib/formato")` loads `lib/formato.luau` from that logic's folder (the scene's, or the plugin's), once; whatever it returns is the module. No `..`, no whole paths: it does not leave its folder.
+`require("lib/format")` loads `lib/format.luau` from that logic's folder (the scene's, or the plugin's), once; whatever it returns is the module. No `..`, no whole paths: it does not leave its folder.
 
 ## Permissions
 

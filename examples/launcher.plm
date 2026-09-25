@@ -1,6 +1,6 @@
 // A launcher: a field to type in and a list that filters as you
 // type. It opens from outside —a Hyprland shortcut that runs
-// `pleamar --decir launcher "emit toggle"`— and it closes with Escape, on launching
+// `pleamar --say launcher "emit toggle"`— and it closes with Escape, on launching
 // something, or on pressing anywhere else.
 
 import "common/palette.plm"

@@ -1,24 +1,24 @@
 # The language — the guide
 
-> **This is the guide**: it reads straight through and tells the why. The exact description —grammar, every element with what it accepts, version— is in [[pleamar · 11 Referencia del lenguaje 0.1]].
+> **This is the guide**: it reads straight through and tells the why. The exact description —grammar, every element with what it accepts, version— is in [Language reference — version 0.1](11-language-reference.md).
 
-**Status:** implemented (`src/language/`). A `.plm` file goes in and out comes the same `Escena` that used to be written in Rust. [[pleamar · 03 El lenguaje - borrador 0]] was the sketch in Spanish; **this is what there really is, with the keywords in English**. Still with no name of its own.
+**Status:** implemented (`src/language/`). A `.plm` file goes in and out comes the same `Scene` that used to be written in Rust. [The language — draft 0](03-language-draft-0.md) was the sketch, first written in Spanish; **this is what there really is, with the keywords in English**. Still with no name of its own.
 
 ```sh
 pleamar --scene examples/marea.plm      # reloads itself when the file is saved
 pleamar --check examples/marea.plm   # reads it, says whether it is right, and exits
 ```
 
-Full examples: **`examples/barra.plm` (a real bar: workspaces, window, clock and volume)**, `examples/marea.plm` (the ball and its card, 150 lines), `examples/cara.plm` (layers and gestures, no logic at all) and `examples/bandeja.plm` (components, `repeat` and layout: a notice list that grows and shrinks).
+Full examples: **`examples/bar.plm` (a real bar: workspaces, window, clock and volume)**, `examples/marea.plm` (the ball and its card, 150 lines), `examples/face.plm` (layers and gestures, no logic at all) and `examples/tray.plm` (components, `repeat` and layout: a notice list that grows and shrinks).
 
 ## The idea in one sentence
 
-**Everything written here is run by the renderer, on its own.** There are no loops and no mutating variables: everything terminates and everything is checked at load time. The logic —outside, in a `.luau` with the same name: [[pleamar · 10 La lógica en Luau]]— only sets facts, texts and events.
+**Everything written here is run by the renderer, on its own.** There are no loops and no mutating variables: everything terminates and everything is checked at load time. The logic —outside, in a `.luau` with the same name: [The logic, in Luau](10-luau-logic.md)— only sets facts, texts and events.
 
 ## Several files: `import` and `library`
 
 ```
-// examples/common/paleta.plm
+// examples/common/palette.plm
 library Palette {
     let ink  = #f5f7f5
     let mint = #9ed6bd
@@ -27,9 +27,9 @@ library Palette {
 }
 ```
 ```
-// examples/iconos.plm
-import "comun/paleta.plm"
-import "comun/menu.plm"              // which in turn imports the palette: it is read once
+// examples/icons.plm
+import "common/palette.plm"
+import "common/menu.plm"              // which in turn imports the palette: it is read once
 
 scene TrayIcons {
     let mint = #e86a9a               // the scene's one wins: that is how a tone is changed
@@ -39,9 +39,9 @@ scene TrayIcons {
 
 The `import`s go before `scene` (or before `library`), and the path is relative **to the file that imports**, not to wherever it is launched from. A library **only declares** —`let`, `spring` and `component`—: what is painted, what moves and the boundary with the logic belong to the scene. What is imported behaves as if it were written at the start of the scene, so a library component sees the facts, the events and the colors of whoever uses it.
 
-Two components with the same name cannot live together (`there is already a component 'Dot', at paleta.plm:4`); a circle of imports is reported with its path; and **an error says which file it is in**, including when it is inside a library. Saving a library hot-reloads the scenes that use it.
+Two components with the same name cannot live together (`there is already a component 'Dot', at palette.plm:4`); a circle of imports is reported with its path; and **an error says which file it is in**, including when it is inside a library. Saving a library hot-reloads the scenes that use it.
 
-**A plugin is a library with its logic alongside** (`reloj.plm` + `reloj.luau`): it declares its boundary and its permissions, which live apart from the scene's.
+**A plugin is a library with its logic alongside** (`clock.plm` + `clock.luau`): it declares its boundary and its permissions, which live apart from the scene's.
 
 ```
 library Clock strict {
@@ -52,16 +52,16 @@ library Clock strict {
 }
 ```
 
-From the scene its boundary is called `Clock.now`, `Clock.tapped`; its logic only sees its own and only has its own permissions. `examples/con-plugin.plm` is a scene with no logic of its own that puts a clock in like this.
+From the scene its boundary is called `Clock.now`, `Clock.tapped`; its logic only sees its own and only has its own permissions. `examples/with-plugin.plm` is a scene with no logic of its own that puts a clock in like this.
 
 A scene can ask for **several windows**: `surface { … }` is its own, and `surface panel { …; …what it draws… }` one of several, with its `open:` to appear and disappear. They all share properties, facts and rules.
 
 ## General shape
 
 ```
-scene Nombre {
-    palabra cabecera … { bloque }     // a node
-    nombre: valor, valor              // a property
+scene Name {
+    word header … { block }           // a node
+    name: value, value                // a property
 }
 ```
 
@@ -73,7 +73,7 @@ Numbers with a unit: `40`, `40px`, `34%` (= 0.34), `138deg` (into radians), `320
 
 ## Declarations
 
-`permissions { run: "date"; services: "audio", "apps" }` — what the scene's logic may touch of the system. Undeclared, nothing: see [[pleamar · 10 La lógica en Luau]].
+`permissions { run: "date"; services: "audio", "apps" }` — what the scene's logic may touch of the system. Undeclared, nothing: see [The logic, in Luau](10-luau-logic.md).
 
 | Statement | What it is |
 | --- | --- |
@@ -173,7 +173,7 @@ component Row(r) {                        // a record is passed like any paramet
 
 A field can also be an enum (`urgency: low | normal | critical = normal`), an image (`icon: image 24, 24`, and then `image r.icon { … }` with nothing else to declare) or **another list** (`list items max 6 { label: text }`, walked with `for it in r.items`).
 
-The logic hands it over whole, in one go: `model.rows = list` (see [[pleamar · 10 La lógica en Luau]]). A `text` field is used where a live text goes (`text r.label { … }`, `image pic = from r.icon, 24, 24`); a `number` or `bool` one, in any expression. Each turn of the `for` **only exists if the list reaches that far**: it is not seen, it takes no room in its layout and its zones do not stop a click. `rows.count` is how many are seen and `rows.total` how many there really are (`show: rows.total > rows.count` for a "there are more"). `max` is how many fit (16 if not said); a single record is named `rows.0.label`.
+The logic hands it over whole, in one go: `model.rows = list` (see [The logic, in Luau](10-luau-logic.md)). A `text` field is used where a live text goes (`text r.label { … }`, `image pic = from r.icon, 24, 24`); a `number` or `bool` one, in any expression. Each turn of the `for` **only exists if the list reaches that far**: it is not seen, it takes no room in its layout and its zones do not stop a click. `rows.count` is how many are seen and `rows.total` how many there really are (`show: rows.total > rows.count` for a "there are more"). `max` is how many fit (16 if not said); a single record is named `rows.0.label`.
 
 A `for` works inside a `row` or a `column` and also loose, and inside a `popup`.
 
@@ -219,7 +219,7 @@ box { from: 180, 66 + list.height + 10; size: head.width, 2 }   // with a name, 
 - What a copy declares inside (`prop`, named shapes, measures) **is its own**: two copies do not tread on each other, and the rules inside talk about their own.
 - **There is no layout engine.** Each child's place is an expression —what the previous ones take up—: if one grows, the rest shift; with `~spring`, they shift animated. `show:` decides whether a child is there: it takes room and is seen, or neither one nor the other, and with a spring that too is a journey.
 - Inside a layout a child does not say where it goes. The ones that know how much room they take are `box`, `ellipse`, `image`, `text` (it measures itself), another `row`/`column`, and a `group` or a component with `size:`.
-- A list of variable length is today one of fixed capacity with `show:`. See `examples/bandeja.plm`.
+- A list of variable length is today one of fixed capacity with `show:`. See `examples/tray.plm`.
 
 **A slot for children.** Whatever a copy brings inside its block goes where its component says `children`, and it is read with the names of whoever wrote it:
 
@@ -344,15 +344,15 @@ When the text changes, the workshop looks for the new image on its own thread an
 ## Orders from outside
 
 ```
-pleamar --say lanzador "emit toggle"
+pleamar --say launcher "emit toggle"
 ```
 
-Every running scene listens on a socket with its name (the file's). `emit event` or `emit event 3` fires its rules as if the logic had emitted it. Also `fact name value`, `text name whatever it should say` (the logic hears about it, as if someone had typed it), `focus field`, `quit`, and **`get name`, which answers** with whatever that fact, text or property is worth: `pleamar --say lanzador "get open"` → `1`.
+Every running scene listens on a socket with its name (the file's). `emit event` or `emit event 3` fires its rules as if the logic had emitted it. Also `fact name value`, `text name whatever it should say` (the logic hears about it, as if someone had typed it), `focus field`, `quit`, and **`get name`, which answers** with whatever that fact, text or property is worth: `pleamar --say launcher "get open"` → `1`.
 
 **A global shortcut is this**: a compositor bind that runs that order. In Hyprland:
 
 ```lua
-hl.bind("SUPER + space", hl.dsp.exec_cmd('pleamar --say lanzador "emit toggle"'))
+hl.bind("SUPER + space", hl.dsp.exec_cmd('pleamar --say launcher "emit toggle"'))
 ```
 
 ## What it runs on its own

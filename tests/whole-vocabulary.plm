@@ -1,6 +1,6 @@
 // expect: ok
 language 0.1
-// What no other test uses. `./probar.sh` requires every word of the
+// What no other test uses. `./run-tests.sh` requires every word of the
 // vocabulary to show up in some test: one nobody uses is one nobody watches.
 scene WholeVocabulary {
     surface { size: 300, 200; anchor: bottom; level: background; keyboard: none }

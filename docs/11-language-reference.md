@@ -1,6 +1,6 @@
 # Language reference — version 0.1
 
-**What this note is.** The complete, exact description of what the language accepts. [[pleamar · 09 El lenguaje v0]] is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
+**What this note is.** The complete, exact description of what the language accepts. [The language — the guide](09-language-v0.md) is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
 ```sh
 pleamar --version                  # pleamar 0.1.0 · language 0.1
@@ -68,7 +68,7 @@ fact         = "fact" name [ ":" ( "number" | "bool" | enum ) ] "=" ( number | "
 event        = "event" name [ "->" ] ;
 live_text    = "text" name "=" text ;
 image_decl   = "image" name "=" ( "icon" text | "file" text | "from" name ) "," number "," number ;
-figure_decl  = "figure" name "=" "file" text ;                                  (* un svg, por sus capas *)
+figure_decl  = "figure" name "=" "file" text ;                                  (* an svg, by its layers *)
 measure      = "measure" name ;
 let          = "let" name "=" ( expr | color ) ;
 zone         = "zone" shape ;
@@ -81,7 +81,7 @@ shape        = ( "ellipse" | "box" | "arc" | "line" ) [ name ] "{" { element_pro
 step         = "move" point | "line" point | "curve" point "via" point | "close" ;
 text         = "text" ( text | name | "number" "(" expr [ "," number [ "," text ] ] ")" ) "{" { element_prop } "}" ;
 image        = "image" name "{" { element_prop } "}" ;
-figure       = "figure" name [ "." name ] "{" { element_prop } "}" ;            (* entera, o una capa *)
+figure       = "figure" name [ "." name ] "{" { element_prop } "}" ;            (* whole, or one layer *)
 field        = "input" name "{" { element_prop } "}" ;
 clip         = "clip" [ "inset" number ] shape ;
 group        = "group" "{" { element_prop | statement } "}" ;
@@ -531,7 +531,7 @@ row card { size: 164, 66; gap: 10; padding: 12; fill: #1b1b1c; corner: 14
 
 **`wrap: 5`** turns a layout into a **grid**: five per line and on to the next. The cell is as big as the largest child, and **what is not seen leaves no gap**, so the rest move up, with the layout's spring if it has one. It is what a `Flow` is in Quickshell.
 
-`examples/lista-larga` is five thousand rows in sixteen copies: 0.49 ms per frame, and the same sixteen groups and nineteen zones however many there are.
+`examples/long-list` is five thousand rows in sixteen copies: 0.49 ms per frame, and the same sixteen groups and nineteen zones however many there are.
 
 `clip [inset n] shape` clips everything that comes after, to the end of its `group` —or, loose in the scene, up to the next named `surface`—. Up to four nested ones clip by their shape; the outer ones, by their box.
 
@@ -912,4 +912,4 @@ layout.align: start center end
 
 ## 18. What this version does not have
 
-So as not to look for it here: `import … as`, a line break in the layouts, times and plurals in the slots, and writing to the field of a record from a rule. It is all there, with its plan, in [[pleamar · 08 Limitaciones conocidas]].
+So as not to look for it here: `import … as`, a line break in the layouts, times and plurals in the slots, and writing to the field of a record from a rule. It is all there, with its plan, in [Known limitations](08-limitations.md).

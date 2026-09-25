@@ -41,14 +41,14 @@ belongs to another element, a service asked for something it does not report.
 | `docs/guide.md` | From zero to a bar, six steps |
 | `docs/recipes.md` | Whole scenes that work: long lists, grids, melting shapes, gradients, paths, saved settings, normal windows, popups |
 | `docs/10-luau-logic.md` | What the `.luau` logic can and cannot do |
-| `examples/*.plm` | Real scenes that run: `barra.plm` (a bar), `lista-larga.plm` (5000 rows), `iconos.plm` (tray with menus), `lanzador.plm` (launcher), `caminos.plm` (paths and gradients) |
+| `examples/*.plm` | Real scenes that run: `bar.plm` (a bar), `long-list.plm` (5000 rows), `icons.plm` (tray with menus), `launcher.plm` (launcher), `paths.plm` (paths and gradients) |
 | `tests/*.plm` | One file per language feature, each with the expected result on its first line |
 
 ## The shape of a scene
 
 ```
 language 0.1              // optional, first line: which language version it needs
-import "comun/paleta.plm" // libraries, relative to this file
+import "common/palette.plm" // libraries, relative to this file
 
 scene Name {
     surface { size: full, 44; anchor: top }   // the window it asks for
@@ -143,7 +143,7 @@ scene Name {
 
 ## The logic, if there is any
 
-`escena.luau` next to `escena.plm`. Sandboxed Luau, own thread, cut off if a
+`scene.luau` next to `scene.plm`. Sandboxed Luau, own thread, cut off if a
 handler runs longer than two seconds. It can only cross the boundary the scene
 declares:
 

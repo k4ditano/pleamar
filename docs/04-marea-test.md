@@ -1,7 +1,7 @@
 # Test: does the real Marea fit in the language?
 
 
-> The code in this note is written in Spanish on purpose: that is how the draft was written at the time, and translating its keywords would misrepresent what was actually considered. The language that came out of it has English keywords.
+> The draft-language code in this note was first written with Spanish keywords and names; it is translated here, and where a draft word later became a real keyword, that keyword is used. It is still the draft, not valid syntax today. Names quoted from Marea's QML (`buscar`, `forma`, `caraLibre`, `_ultimoClic`…) are kept as they are in that file. The language that came out of it has English keywords.
 
 **Date:** 2026-09-19 · **What was read:** `proyecto-marea/prototype/ExpressionController.qml`, all of it, at commit `ad95cf4`.
 
@@ -54,48 +54,48 @@ And there are places where it is missing. `confirmado()`, `noticeUrgent()`, `alD
 Today the logic calls 41 functions of the controller (`onBuscando`, `onGrabacionCambiada`, `onPaquetesAlDia`…) and each one decides what to do with the face. In the language, the logic only **reports what happens**:
 
 ```
-hecho durmiendo, grabando, buscando, catalogando, en_faro: bool
-hecho instalando, actualizando, terminal_ocupada, no_molestar: bool
-hecho cuenta: entero = 0
-hecho soltando: símbolo?           // nothing, or what kind of thing is handed over
+fact sleeping, recording, searching, cataloguing, in_lighthouse: bool
+fact installing, updating, terminal_busy, do_not_disturb: bool
+fact count: int = 0
+fact dropping: symbol?           // nothing, or what kind of thing is handed over
 
-suceso confirmado, aviso_urgente, al_día, no_pudo, olvidado
-suceso gesto(nombre, clase)
+event confirmed, urgent_notice, up_to_date, could_not, forgotten
+event gesture(name, class)
 ```
 
-A **fact** is something that is true for a while. An **event** happens in an instant. The logic touches nothing else: not `forma`, not poses, not timers.
+A **fact** is something that is true for a while. An **event** happens in an instant. The logic touches nothing else: not `shape`, not poses, not timers.
 
 ### 3.2 Layers with claims — goodbye to the guard
 
 A **layer** is a slot many can claim. The first claim that holds wins; when it stops holding, the next one is seen **on its own**.
 
 ```
-capa forma {                          // from highest to lowest priority
-    cuenta     mientras cuenta > 0
-    rec        mientras grabando
-    cámara     mientras en_cámara
-    drop       mientras soltando
-    roto       desde no_pudo hasta olvidado | instalando | catalogando
-    aviso      700ms tras aviso_urgente | cupo_apurado
-    contenta   620ms tras confirmado | al_día | avisos_en_racha
-    instala    mientras instalando
-    actualiza  mientras actualizando
-    catálogo   mientras catalogando
-    faro       mientras en_faro
-    lupa       mientras buscando
-    reloj      mientras comprobando_cupos
-    sin_datos  mientras cupos_sin_datos y página == "reservas"
-    de_plugin  mientras cara_de_plugin y cara.libre
-    ojos                              // what is left when nobody says anything
+layer shape {                         // from highest to lowest priority
+    count        while count > 0
+    rec          while recording
+    camera       while in_camera
+    drop         while dropping
+    broken       from could_not until forgotten | installing | cataloguing
+    notice       700ms after urgent_notice | quota_tight
+    happy        620ms after confirmed | up_to_date | notices_in_a_row
+    install      while installing
+    update       while updating
+    catalogue    while cataloguing
+    lighthouse   while in_lighthouse
+    magnifier    while searching
+    clock        while checking_quotas
+    no_data      while quotas_without_data and page == "bookings"
+    from_plugin  while plugin_face and face.free
+    eyes                              // what is left when nobody says anything
 }
 ```
 
 What changes:
 
 - **The eight guards disappear.** Stopping a search cannot wipe the red disc: `rec` sits above it and never stopped claiming.
-- **The `confirmado()`-while-recording bug cannot be written.** `contenta` sits below `rec`; it claims, it is not seen, and it expires on its own.
-- **The `volverDe…` timers disappear.** `700ms tras aviso_urgente` *is* the timer.
-- **`wakeReconciliation` disappears.** It exists because face and model can fall out of sync; if the face *derives* from `durmiendo`, they cannot.
+- **The `confirmado()`-while-recording bug cannot be written.** `happy` sits below `rec`; it claims, it is not seen, and it expires on its own.
+- **The `volverDe…` timers disappear.** `700ms after urgent_notice` *is* the timer.
+- **`wakeReconciliation` disappears.** It exists because face and model can fall out of sync; if the face *derives* from `sleeping`, they cannot.
 
 ⚠️ **The order above is mine**, deduced from the comments. It does not exist today —the last writer rules—, so it has to be reviewed line by line. That review is, in fact, the design the current file never had to make explicit.
 
@@ -106,37 +106,37 @@ What does **not** simplify as much: `caraLibre` has 16 conditions. Six become im
 Gestures **are already data** in Marea, so this is almost a transcription:
 
 ```
-pose reposo { ojos: 14; ancho: 6; hueco: 16; giro: 0; sx: 1; sy: 1; sube: 0; mira: 0 0 }
+pose rest { eyes: 14; width: 6; gap: 16; turn: 0; sx: 1; sy: 1; lift: 0; look: 0 0 }
 
-gesto asentir clase reflejo {
-    130ms OutQuad { mira: 0 4; ojos: 10 }
-    170ms OutBack { ojos: 15 }
+gesture nod class reflex {
+    130ms OutQuad { look: 0 4; eyes: 10 }
+    170ms OutBack { eyes: 15 }
 }
 
-gesto señalar(lado) clase pedido {
-    170ms         { mira: 4*lado 0; giro: 4*lado; ojos: 18 }   aguanta 200ms
-    190ms         { ojos: 16 }                                  aguanta 140ms
-    110ms InQuad  { mira: 4*lado 0; giro: 5*lado; ojos: 19; sx: 1.08; sy: 0.9; sube: 4 }
+gesture point(side) class asked {
+    170ms         { look: 4*side 0; turn: 4*side; eyes: 18 }   hold 200ms
+    190ms         { eyes: 16 }                                  hold 140ms
+    110ms InQuad  { look: 4*side 0; turn: 5*side; eyes: 19; sx: 1.08; sy: 0.9; lift: 4 }
     …
 }
 
-postura trabajando mientras herramienta_en_curso { … }          // repeats on its own
+posture working while tool_running { … }          // repeats on its own
 ```
 
 Three rules of the language replace code that is hand-written today:
 
-1. **Every keyframe starts from `reposo`**: whatever it does not name goes back to its value. It is what `pose()` does with its twelve `=== undefined ?`.
-2. **When it ends, it returns to the base pose of wherever it is** —`reposo` or `dormida`—. It replaces `asentarLuego`, `_esPoseNeutra` and the `concat` that sticks the sleeping pose onto the end of any gesture.
-3. **A gesture only interrupts another of its own class or lower**: `estado > pedido > reflejo > postura > ambiente`. It replaces `reflejo()`, `_ultimoFueReflejo`, `_finDelGesto` and `ocupadaHasta()`. It is the rule the comment on line 144 explains in twenty lines: "reflex gestures and asked-for ones are not worth the same".
+1. **Every keyframe starts from `rest`**: whatever it does not name goes back to its value. It is what `pose()` does with its twelve `=== undefined ?`.
+2. **When it ends, it returns to the base pose of wherever it is** —`rest` or `asleep`—. It replaces `asentarLuego`, `_esPoseNeutra` and the `concat` that sticks the sleeping pose onto the end of any gesture.
+3. **A gesture only interrupts another of its own class or lower**: `state > asked > reflex > posture > ambient`. It replaces `reflejo()`, `_ultimoFueReflejo`, `_finDelGesto` and `ocupadaHasta()`. It is the rule the comment on line 144 explains in twenty lines: "reflex gestures and asked-for ones are not worth the same".
 
-A gesture can **emit events** in a keyframe —the camera needs `disparo` exactly when the shutter closes— and **claim a layer** for as long as it lasts:
+A gesture can **emit events** in a keyframe —the camera needs `shot` exactly when the shutter closes— and **claim a layer** for as long as it lasts:
 
 ```
-gesto foto clase estado, reclama forma cámara {
+gesture photo class state, claim shape camera {
     210ms { }
-    80ms  { obturador: 1 }    emite disparo
-    170ms { obturador: 0 }
-    emite captura_terminada
+    80ms  { shutter: 1 }    emit shot
+    170ms { shutter: 0 }
+    emit capture_done
 }
 ```
 
@@ -145,22 +145,22 @@ gesto foto clase estado, reclama forma cámara {
 **A life of its own, with randomness:**
 
 ```
-cada 2.5s..7s  mientras ambiente { parpadea;  17%: otra vez a los 250ms }
-cada 5s..14s   mientras ambiente y miradas y no abierta {
-    60%: mira puntero | 40%: mira azar(±3.2, ±2);  suelta tras 620ms..2120ms
+every 2.5s..7s  while ambient { blink;  17%: again at 250ms }
+every 5s..14s   while ambient and glances and not open {
+    60%: look pointer | 40%: look random(±3.2, ±2);  release after 620ms..2120ms
 }
-cada 12s..24s  mientras reposo_desnudo { gesto respiro(lado: azar(-1 | 1)) }
+every 12s..24s  while bare_rest { gesture breather(side: random(-1 | 1)) }
 ```
 
-**Reduced motion, from the language and not from every function.** With `movimiento reducido` on, the runtime settles the springs instantly and, of each gesture, shows its **still face** —declared with `quieta { … }` or, failing that, the keyframe furthest from rest, which is what `_quietaDe()` computes today— for as long as it would have lasted. **The 56 branches go to zero.**
+**Reduced motion, from the language and not from every function.** With `reduced motion` on, the runtime settles the springs instantly and, of each gesture, shows its **still face** —declared with `still { … }` or, failing that, the keyframe furthest from rest, which is what `_quietaDe()` computes today— for as long as it would have lasted. **The 56 branches go to zero.**
 
 ## 4. What does not fit, or fits with help
 
 | What | Where it is | What to do |
 | --- | --- | --- |
-| Lightening a color so it reads (`_tinteLegible`) | l. 1139 | Color functions in expressions: `hsl()`, `aclarar()` |
-| "At most once every 30 s" (`lastGreeting`, `_ultimoClic`) | l. 1871, 862 | A rule modifier: `como mucho cada 30s` |
-| Picking a gesture from data (`_comoLoTraga`) | l. 838 | A ternary with symbols: `piezas > 1 ? lote : …` |
+| Lightening a color so it reads (`_tinteLegible`) | l. 1139 | Color functions in expressions: `hsl()`, `lighten()` |
+| "At most once every 30 s" (`lastGreeting`, `_ultimoClic`) | l. 1871, 862 | A rule modifier: `at most every 30s` |
+| Picking a gesture from data (`_comoLoTraga`) | l. 838 | A ternary with symbols: `pieces > 1 ? batch : …` |
 | Plugin gestures validated by a tool | `extraGestures` | They become files in the same language; validating is loading |
 | **Deciding when a fact changes** | `MascotModel`, services | **Stays in the logic (Luau). That is its job.** |
 
@@ -171,10 +171,10 @@ None of this breaks the design. The last one is the boundary working as it shoul
 This is the expensive part, and it is not the parser:
 
 1. **Keyframe tracks with easing** (`OutBack`, `InQuad`…). Today pleamar only has springs.
-2. **The layer evaluator**: claims, `mientras`, `N ms tras`, `desde … hasta`.
+2. **The layer evaluator**: claims, `while`, `N ms after`, `from … until`.
 3. **The fact and event channel** logic → scene, and events scene → logic.
 4. **Randomness and timed rules** in the renderer.
-5. **Gestures with parameters** (`lado`) and **symbols** in expressions.
+5. **Gestures with parameters** (`side`) and **symbols** in expressions.
 6. **Rotation.** Shapes do not rotate yet, and `tilt` is in almost every gesture.
 7. **More SDF primitives**: ring, arc, segment. The 24 eye shapes (camera, padlock, hourglass, moon…) do not come out of ellipses and boxes. **It is the biggest chunk.**
 
@@ -184,6 +184,6 @@ Of the 2103 lines: 679 are comment (they stay, they are worth gold), some 250 ar
 
 ## 7. What this decides
 
-- Sketch B falls short: `estado` is not the central concept, **`capa` is**. A B `estado` (reposo/abierta) is a layer with two claims that also set properties.
+- Sketch B falls short: `state` is not the central concept, **`layer` is**. A B `state` (rest/open) is a layer with two claims that also set properties.
 - The language needs **two ways to animate**, not one: springs for what follows a value, keyframes for what tells a story.
-- The next step with the most return **is not the parser**: it is points 1–3 of the runtime list, tested with Marea: `capa forma` with `rec`, `lupa` and `contenta`, and three gestures.
+- The next step with the most return **is not the parser**: it is points 1–3 of the runtime list, tested with Marea: `layer shape` with `rec`, `magnifier` and `happy`, and three gestures.

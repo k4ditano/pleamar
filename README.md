@@ -88,13 +88,13 @@ running one starts again with the same arguments.
 
 ```sh
 cargo build --release
-./target/release/pleamar --scene examples/barra.plm       # a bar: workspaces, window, time and volume
-./target/release/pleamar --scene examples/lista-larga.plm # five thousand rows in sixteen copies
-./target/release/pleamar --scene examples/caminos.plm     # paths, curves and gradients
-./target/release/pleamar --scene examples/ventana.plm     # a normal window, with its frame
-./target/release/pleamar --scene examples/iconos.plm      # the system tray; right-click opens an icon's menu
-./target/release/pleamar --scene examples/ajustes.plm     # saves what you pick in its own folder
-./target/release/pleamar --check examples/barra.plm    # reads it, says whether it is fine, exits
+./target/release/pleamar --scene examples/bar.plm       # a bar: workspaces, window, time and volume
+./target/release/pleamar --scene examples/long-list.plm # five thousand rows in sixteen copies
+./target/release/pleamar --scene examples/paths.plm     # paths, curves and gradients
+./target/release/pleamar --scene examples/window.plm     # a normal window, with its frame
+./target/release/pleamar --scene examples/icons.plm      # the system tray; right-click opens an icon's menu
+./target/release/pleamar --scene examples/settings.plm     # saves what you pick in its own folder
+./target/release/pleamar --check examples/bar.plm    # reads it, says whether it is fine, exits
 ./run-tests.sh                                               # the language tests, and the examples in its reference
 ```
 
@@ -131,7 +131,7 @@ start from zero, [`docs/guide.md`](docs/guide.md); to copy and paste,
 
 ## The logic
 
-If there is a `barra.luau` next to `barra.plm`, that is its logic: Luau in a
+If there is a `bar.luau` next to `bar.plm`, that is its logic: Luau in a
 sandbox, on its own thread, which the renderer never waits for. It can only cross
 the boundary the scene declares — `fact.open = true`, `text.title = …`,
 `model.rows = {…}`, `emit`, and listening with `on(…)` — plus timers, `sys` for
@@ -160,14 +160,14 @@ per plugin, one per service, and a workshop thread for text and images.
 
 | | |
 | --- | --- |
-| `lenguaje/` | From text to scene: `fichas` tokenises, `arbol` groups without knowing what anything means, `obra` gives it meaning and checks the names, `vocabulario` is the list of what exists |
-| `escena.rs` | The contract: properties, expressions, drawing instructions, rules, layers, gestures, zones, surfaces |
+| `language/` | From text to scene: `tokens` tokenises, `tree` groups without knowing what anything means, `compiler` gives it meaning and checks the names, `vocabulary` is the list of what exists |
+| `scene.rs` | The contract: properties, expressions, drawing instructions, rules, layers, gestures, zones, surfaces |
 | `render.rs` | The interpreter. Still, it does not paint a single frame |
-| `gpu.rs` · `forma.wgsl` | One quad per element; each pixel only runs the shapes of the element covering it |
-| `formas.rs` | The geometry, written once, used three times: the GPU, the mouse and the bounding boxes |
-| `logica_luau.rs` | A scene's logic: Luau in a sandbox, with the boundary and nothing else |
-| `texto.rs` | Real text (`cosmic-text`) and images (SVG, PNG, JPEG) in an atlas at the monitor's scale |
-| `plataforma/` | The only part that knows about the system: Wayland, the services, files, the clock |
+| `gpu.rs` · `shape.wgsl` | One quad per element; each pixel only runs the shapes of the element covering it |
+| `shapes.rs` | The geometry, written once, used three times: the GPU, the mouse and the bounding boxes |
+| `logic_luau.rs` | A scene's logic: Luau in a sandbox, with the boundary and nothing else |
+| `text.rs` | Real text (`cosmic-text`) and images (SVG, PNG, JPEG) in an atlas at the monitor's scale |
+| `platform/` | The only part that knows about the system: Wayland, the services, files, the clock |
 | `lsp.rs` | The language server and the highlighters, both drawn from the vocabulary |
 
 ## What is missing
