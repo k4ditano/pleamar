@@ -389,6 +389,14 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             o.group(this_pass.into_iter());
             continue;
         }
+        // The named surfaces are not the scene surface's: each one has its own
+        // place in the plane and its own copies per monitor. Read inside each
+        // copy of the scene's, what they draw was moved by that copy's place —out
+        // of their own window— and skipped when that copy was closed: a named
+        // surface next to a scene surface with `screens: each` drew nothing, or
+        // only on the first monitor, whose place is zero.
+        let (named, this_pass): (Vec<&Entry>, Vec<&Entry>) = this_pass.into_iter().partition(|e| is_surface(e) && matches!(e, Entry::Node(n) if n.head.len() > 1));
+        o.group(named.into_iter());
         for (ox, oy, k) in copies {
             let mark = o.rules.len();
             let (i0, c0) = (o.e.instrs.len(), o.e.behaviors.len());
@@ -3169,7 +3177,18 @@ impl<'a> Compiler<'a> {
             self.e.surfaces.insert(0, fresh);
         } else {
             self.next_origin += 10000.0;
-            self.e.surfaces.push(Surface { origin: (0.0, self.next_origin), ..fresh });
+            // What it really measures, once the compositor says: `panel.width`,
+            // `panel.height`. With `full`, it is the only way to know it.
+            let size_props = match self.props.get(&format!("{name}.width")) {
+                Some(w) => Some((*w, self.props[&format!("{name}.height")])),
+                None => {
+                    let (w, h) = self.e.measured(interned(&name));
+                    self.props.insert(format!("{name}.width"), w);
+                    self.props.insert(format!("{name}.height"), h);
+                    Some((w, h))
+                }
+            };
+            self.e.surfaces.push(Surface { origin: (0.0, self.next_origin), size_props, ..fresh });
         }
         let which = self.e.surfaces.iter().position(|s| s.name == name).unwrap();
         let mut pending_open = None;
@@ -3186,10 +3205,10 @@ impl<'a> Compiler<'a> {
         }
         let s = &mut self.e.surfaces[which];
         if let Some(c) = p.get_mut("size") {
-            // `size: full, 36`: the whole width of the monitor.
+            // `size: full, 36`: the whole width of the monitor; `full, full`, all of it.
             s.width = if c.word("full") { 0 } else { c.num()? as u32 };
             c.expect_sym(",")?;
-            s.height = c.num()? as u32;
+            s.height = if c.word("full") { 0 } else { c.num()? as u32 };
         }
         if let Some(c) = p.get_mut("anchor") {
             let pos = c.pos();

@@ -117,6 +117,8 @@ pub struct Surface {
     /// 0 is "the whole width of the monitor".
     pub width: u32,
     pub height: u32,
+    /// A named one publishes what it really measures: `name.width`, `name.height`.
+    pub size_props: Option<(PropId, PropId)>,
     pub anchor: SurfaceAnchor,
     /// If the edge it attaches to is decided by a fact: which one, and which anchor
     /// each of its values corresponds to. Layer-shell lets it change on the
@@ -163,7 +165,7 @@ pub enum Keyboard {
 impl Default for Surface {
     fn default() -> Self {
         // Neutral: full width, at the top, on all monitors. Whatever the scene asks for wins.
-        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, lock_screen: false, width: 0, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, max_fps: 0, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true }
+        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, lock_screen: false, width: 0, size_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, max_fps: 0, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true }
     }
 }
 

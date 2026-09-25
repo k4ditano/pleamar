@@ -290,6 +290,12 @@ pub fn run(
                     // A window measures whatever the compositor has given it, and that can change.
                     let is_window = scene.surface().window.is_some();
                     let its_own = n.view.surface == 0 && n.view.popup.is_none();
+                    // A named surface publishes what it measures (see `SheetSize`).
+                    if let Some((w, h)) = scene.surfaces.get(n.view.surface).and_then(|s| s.size_props).filter(|_| n.view.popup.is_none()) {
+                        for (p, v) in [(w, n.size.0 as f32), (h, n.size.1 as f32)] {
+                            props[p.0 as usize] = Animated { x: v, v: 0.0, target: v, spring: props[p.0 as usize].spring };
+                        }
+                    }
                     if (scene.surface().width == 0 || is_window) && its_own {
                         size.0 = n.size.0 as f32;
                     }
@@ -369,6 +375,12 @@ pub fn run(
                 }
                 ToRender::SheetSize(id, new_size) => {
                     if let (Some(g), Some(l)) = (&gpu, sheets.iter_mut().find(|l| l.id == id)) {
+                        // A named surface publishes what it measures.
+                        if let Some((w, h)) = scene.surfaces.get(l.view.surface).and_then(|s| s.size_props) {
+                            for (p, v) in [(w, new_size.0), (h, new_size.1)] {
+                                props[p.0 as usize] = Animated { x: v, v: 0.0, target: v, spring: props[p.0 as usize].spring };
+                            }
+                        }
                         if l.view.size != new_size {
                             l.view.size = new_size;
                             g.reconfigure(l, size);

@@ -1,0 +1,14 @@
+// expect: ok
+// A surface the size of the whole monitor, next to a scene surface with one
+// copy per monitor, drawing from what it really measures.
+scene FullSurface {
+    surface { size: 200, 40; anchor: top; screens: each max 2 }
+    fact on = false
+    surface stage {
+        size: full, full
+        level: overlay
+        screens: each max 2
+        open: on
+        box { from: 0, stage.height - 6; size: stage.width, 6; color: #ff6f91 }
+    }
+}

@@ -563,7 +563,7 @@ impl State {
                 continue;
             }
             let layer = self.layers.create_layer_surface(qh, wl, level, Some("pleamar"), Some(output));
-            layer.set_anchor(anchor_edges(p.anchor, p.width == 0));
+            layer.set_anchor(anchor_edges(p.anchor, p.width == 0, p.height == 0));
             // The second one on the same monitor, below the first: it's for trying things out.
             let m = p.margin;
             let margin = [m[0] + k as i32 * (height as i32 + 12), m[1], m[2], m[3]];
@@ -571,7 +571,7 @@ impl State {
             // Noted down, in case the scene decides to move it to another edge while running.
             if p.anchor_from.is_some() {
                 if let Some(c) = MOVABLE_LAYERS.get() {
-                    c.placed.lock().unwrap().push((which, layer.clone(), margin, p.width == 0));
+                    c.placed.lock().unwrap().push((which, layer.clone(), margin, (p.width == 0, p.height == 0)));
                 }
             }
             layer.set_size(p.width, height);
@@ -589,7 +589,7 @@ impl State {
             let surface = self.wgpu_surface_for(layer.wl_surface());
             let output_name = self.outputs.info(output).and_then(|i| i.name).unwrap_or_default();
             let backdrop = Some(BackdropTarget::new(id, Some((output.clone(), output_name)), BackdropKind::Layer));
-            let layer_placement = Some((anchor_edges(p.anchor, p.width == 0), margin));
+            let layer_placement = Some((anchor_edges(p.anchor, p.width == 0, p.height == 0), margin));
             self.placed.push(Placed { id, which, role: Role::Layer(layer), output: output.clone(), viewport, _fractional_scale: fractional_scale, scale: 1.0, size: (0, 0), pending: Some((surface, name.clone(), mhz)), layer_placement, backdrop });
             }
         }
@@ -765,8 +765,9 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32))>) {
 }
 
 /// The edges it sticks to, as protocol flags. With width 0 it also
-/// sticks to left and right: that's what stretches it from side to side.
-fn anchor_edges(anchor: SurfaceAnchor, full_width: bool) -> Anchor {
+/// sticks to left and right: that's what stretches it from side to side; with
+/// height 0, to the top and the bottom.
+fn anchor_edges(anchor: SurfaceAnchor, full_width: bool, full_height: bool) -> Anchor {
     (match anchor {
         SurfaceAnchor::Top => Anchor::TOP,
         SurfaceAnchor::Bottom => Anchor::BOTTOM,
@@ -778,6 +779,7 @@ fn anchor_edges(anchor: SurfaceAnchor, full_width: bool) -> Anchor {
         SurfaceAnchor::BottomRight => Anchor::BOTTOM | Anchor::RIGHT,
         SurfaceAnchor::Center => Anchor::empty(),
     }) | if full_width { Anchor::LEFT | Anchor::RIGHT } else { Anchor::empty() }
+        | if full_height { Anchor::TOP | Anchor::BOTTOM } else { Anchor::empty() }
 }
 
 /// The layers that can change edge, to reach them without going through the
@@ -786,7 +788,7 @@ fn anchor_edges(anchor: SurfaceAnchor, full_width: bool) -> Anchor {
 /// Marea unable to choose a corner while recording.
 struct MovableLayers {
     connection: Connection,
-    placed: Mutex<Vec<(usize, LayerSurface, [i32; 4], bool)>>,
+    placed: Mutex<Vec<(usize, LayerSurface, [i32; 4], (bool, bool))>>,
 }
 static MOVABLE_LAYERS: std::sync::OnceLock<MovableLayers> = std::sync::OnceLock::new();
 
@@ -797,7 +799,7 @@ pub fn reanchor(which: usize, anchor: SurfaceAnchor) {
         if *k != which {
             continue;
         }
-        layer.set_anchor(anchor_edges(anchor, *zero_width));
+        layer.set_anchor(anchor_edges(anchor, zero_width.0, zero_width.1));
         layer.set_margin(margin[0], margin[1], margin[2], margin[3]);
         layer.commit();
         any = true;
