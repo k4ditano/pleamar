@@ -184,6 +184,11 @@ struct CuerpoAbierto {
     planas: Vec<crate::formas::Plana>,
 }
 
+/// El ancho del bisel de un cristal: un tercio de su lado corto, sin pasar de 30 px.
+fn bisel_de(caja: [f32; 4]) -> f32 {
+    ((caja[2] - caja[0]).min(caja[3] - caja[1]) * 0.33).clamp(4.0, 30.0)
+}
+
 /// Por debajo de esto, un cristal casi no se ve y no se pide desenfoque.
 const CRISTAL_VISIBLE: f32 = 0.3;
 /// El alto de cada franja de la región de desenfoque, en píxeles lógicos.
@@ -663,8 +668,11 @@ impl Dibujo {
                             }
                         }
                         e[11] = *filo;
-                        // Un cuerpo no usa `uv`, que es de las texturas: ahí va el cristal.
+                        // Un cuerpo no usa `uv`, que es de las texturas: ahí va el
+                        // cristal, y el ancho de su bisel, que crece con él: lo grande
+                        // dobla más la luz, como un cristal más grueso.
                         e[40] = v;
+                        e[41] = bisel_de(forma_sola);
                         if let Some(l) = luz {
                             e[20..23].copy_from_slice(&[l.cantidad, l.desde_y.evaluar(c), l.alto]);
                         }
@@ -702,6 +710,7 @@ impl Dibujo {
                         e[3] = a;
                         e[8..11].copy_from_slice(&rgb);
                         e[40] = v;
+                        e[41] = bisel_de(b);
                     });
                 }
                 Instr::Imagen { imagen, destino, alfa, tinte } => {
@@ -899,6 +908,22 @@ impl Vista {
     }
 }
 
+/// La foto de lo de detrás que una lámina con lente tiene en camino. Para
+/// despejar el fondo hay que saber **exactamente** qué había pintado nuestro
+/// cuando se hizo: con el lienzo equivocado el error se multiplica por
+/// α / (1 − α) en cada vuelta —×6 con el cristal al 86 %— y la lente se
+/// llena de colores que no existen. Así que tras presentar se pide la foto, y
+/// hasta que llega no se presenta otra: la trae la siguiente vez que el
+/// compositor pinta, que ya lleva nuestro frame. Y sin nada que pintar se
+/// vigila: la foto llega cuando algo cambie detrás, y si antes hay que
+/// pintar, se olvida.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FotoDetras {
+    Nada,
+    TrasPresentar,
+    Vigilando,
+}
+
 /// Una superficie de Wayland vista desde la GPU: su cadena de imágenes, a su
 /// escala, con sus capas y sus uniformes.
 pub struct Lamina {
@@ -928,6 +953,21 @@ pub struct Lamina {
     capas_ociosas: u32,
     /// Lo último que se le pidió al compositor que desenfocase, en sus coordenadas.
     pub desenfoque: Vec<[i32; 4]>,
+    /// Si enseña cristal y se puede ver lo de detrás: su lienzo y su fondo.
+    pub lente: Option<crate::lente::Lente>,
+    /// Si este frame tiene cristal en su trozo del plano.
+    pub quiere_lente: bool,
+    /// Qué foto de lo de detrás hay en camino, y desde cuándo.
+    pub foto: FotoDetras,
+    /// Dónde hay cristal en su trozo, con margen para esmerilar —en píxeles
+    /// lógicos suyos—, y la caja de la foto que está en camino.
+    pub caja_cristal: Option<[i32; 4]>,
+    pub caja_pedida: [i32; 4],
+    pub foto_pedida: std::time::Instant,
+    /// La última foto pedida tras presentar: marca el ritmo de las fotos.
+    pub foto_hecha: std::time::Instant,
+    /// Si se ha pintado en esta vuelta del render.
+    pub pintada_ahora: bool,
     /// Qué trozo del plano y a qué escala tiene pintado, si lo que enseña está
     /// al día. Con otro sitio, otra escala o sin nada (recién hecha,
     /// reconfigurada), se pinta aunque la escena no haya cambiado.
@@ -935,6 +975,12 @@ pub struct Lamina {
 }
 
 pub struct Gpu {
+    /// Lo que despeja y esmerila lo de detrás del cristal.
+    lente: crate::lente::Tuberias,
+    /// Para una lámina sin lente: un fondo de un píxel que nadie lee.
+    grupo_sin_detras: wgpu::BindGroup,
+    /// Si la pantalla acepta que se le copie un lienzo: sin eso, no hay lente.
+    puede_copiar: bool,
     adaptador: wgpu::Adapter,
     pub dispositivo: wgpu::Device,
     pub cola: wgpu::Queue,
@@ -1047,7 +1093,46 @@ impl Gpu {
         let grupo_escena = Self::grupo_de_escena(&dispositivo, &tuberia, &bufer_formas, &bufer_elementos, &bufer_puntos, &bufer_paradas, &vista_del_atlas, &muestreo);
         let tope = dispositivo.limits().max_storage_buffer_binding_size as usize / 4;
         let grupo_sin_capas = Self::capas_de(&dispositivo, &tuberia, formato, 1, 1, 1).1;
-        Gpu { adaptador, dispositivo, cola, formato, alfa, sin_bloqueo, tuberia, bufer_formas, bufer_elementos, bufer_puntos, bufer_paradas, atlas, vista_del_atlas, muestreo, caben: (FORMAS_DE_SALIDA * POR_FORMA, ELEMENTOS_DE_SALIDA * POR_ELEMENTO, PUNTOS_DE_SALIDA, PARADAS_DE_SALIDA), tope, avisado_del_tope: false, grupo_escena, grupo_sin_capas }
+        let lente = crate::lente::Tuberias::nuevas(&dispositivo);
+        let puede_copiar = caps.usages.contains(wgpu::TextureUsages::COPY_DST);
+        let nada = dispositivo.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sin detras"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        }).create_view(&Default::default());
+        let grupo_sin_detras = Self::grupo_detras(&dispositivo, &tuberia, &nada, &nada, &muestreo);
+        Gpu { lente, grupo_sin_detras, puede_copiar, adaptador, dispositivo, cola, formato, alfa, sin_bloqueo, tuberia, bufer_formas, bufer_elementos, bufer_puntos, bufer_paradas, atlas, vista_del_atlas, muestreo, caben: (FORMAS_DE_SALIDA * POR_FORMA, ELEMENTOS_DE_SALIDA * POR_ELEMENTO, PUNTOS_DE_SALIDA, PARADAS_DE_SALIDA), tope, avisado_del_tope: false, grupo_escena, grupo_sin_capas }
+    }
+
+    fn grupo_detras(d: &wgpu::Device, tuberia: &wgpu::RenderPipeline, nitido: &wgpu::TextureView, borroso: &wgpu::TextureView, muestreo: &wgpu::Sampler) -> wgpu::BindGroup {
+        d.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("detras"),
+            layout: &tuberia.get_bind_group_layout(3),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(nitido) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(borroso) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(muestreo) },
+            ],
+        })
+    }
+
+    /// Lo que lee el shader de las formas de una lámina con lente.
+    pub fn grupo_de_detras(&self, nitido: &wgpu::TextureView, borroso: &wgpu::TextureView) -> wgpu::BindGroup {
+        Self::grupo_detras(&self.dispositivo, &self.tuberia, nitido, borroso, &self.muestreo)
+    }
+
+    /// Llega una foto de lo de detrás de una lámina. `true` si hay que volver a pintarla.
+    pub fn recibir_detras(&self, l: &mut Lamina, d: crate::plataforma::Detras) -> bool {
+        let (escala, caja) = (l.escala, l.caja_pedida);
+        match &mut l.lente {
+            Some(lente) => lente.recibir(self, d, escala, caja),
+            None => false,
+        }
     }
 
     /// Sube al atlas lo que el taller haya pintado desde la última vez.
@@ -1123,7 +1208,7 @@ impl Gpu {
         let (vistas_de_capa, grupo_capas) = Self::capas_de(&self.dispositivo, &self.tuberia, self.formato, 1, 1, 1);
         let mut l = Lamina {
             id: n.id, nombre: n.nombre, mhz: n.mhz, escala: n.escala, marca_el_ritmo: true, abierta: true, vaciada: false, vista: n.vista,
-            superficie: n.superficie, ventana: n.ventana, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas, capas: 0, capas_ociosas: 0, desenfoque: Vec::new(), pintada: None,
+            superficie: n.superficie, ventana: n.ventana, px: (0, 0), uniformes, grupo_uniformes, vistas_de_capa, grupo_capas, capas: 0, capas_ociosas: 0, desenfoque: Vec::new(), lente: None, quiere_lente: false, foto: FotoDetras::Nada, caja_cristal: None, caja_pedida: [0; 4], foto_pedida: std::time::Instant::now(), foto_hecha: std::time::Instant::now(), pintada_ahora: false, pintada: None,
         };
         self.configurar(&mut l, tam);
         l
@@ -1137,6 +1222,8 @@ impl Gpu {
         l.pintada = None;
         if px != l.px {
             l.px = px;
+            // Un lienzo de otro tamaño ya no vale: se hace otro cuando haga falta.
+            l.lente = None;
             // Las que hubiera ya no miden lo que la superficie: se piden de nuevo cuando hagan falta.
             self.soltar_capas(l);
         }
@@ -1171,7 +1258,8 @@ impl Gpu {
         l.superficie.configure(
             &self.dispositivo,
             &wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                // Con COPY_DST se le puede copiar el lienzo de la lente.
+                usage: if self.puede_copiar { wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST } else { wgpu::TextureUsages::RENDER_ATTACHMENT },
                 format: self.formato,
                 view_formats: vec![],
                 alpha_mode: self.alfa,
@@ -1240,8 +1328,15 @@ impl Gpu {
         let v = l.vista.caja();
         let hacen_falta = d.apartes.iter().filter(|(t, _)| d.toca_la_vista(t, v)).map(|(_, c)| *c as u32 + 1).max().unwrap_or(0);
         self.capas_para(l, hacen_falta);
+        // La lente, si enseña cristal y la pantalla deja que se le copie un lienzo.
+        if !l.quiere_lente || !self.puede_copiar {
+            l.lente = None;
+        } else if l.lente.is_none() {
+            l.lente = Some(crate::lente::Lente::nueva(&self.dispositivo, self.formato, l.px));
+        }
         let mut u = uniformes.to_vec();
         u[3] = l.escala;
+        u[128] = l.lente.as_ref().is_some_and(|x| x.listo) as u8 as f32;
         let (v, o) = (l.vista.tam, l.vista.origen);
         (u[0], u[1], u[4], u[7]) = (v.0, v.1, o.0, o.1);
         self.cola.write_buffer(&l.uniformes, 0, bytemuck::cast_slice(&u));
@@ -1260,6 +1355,12 @@ impl Gpu {
         };
         let vista = marco.texture.create_view(&Default::default());
         let mut codificador = self.dispositivo.create_command_encoder(&Default::default());
+        // Lo que dejó la última foto de lo de detrás, antes de pintar con ello.
+        let escala = l.escala;
+        if let Some(lente) = &mut l.lente {
+            lente.preparar(self, &self.lente, &mut codificador, escala);
+        }
+        let grupo_detras = l.lente.as_ref().and_then(|x| x.grupo.as_ref()).unwrap_or(&self.grupo_sin_detras);
         let pase_a = |codificador: &mut wgpu::CommandEncoder, destino: &wgpu::TextureView, capas: &wgpu::BindGroup, tramos: &[Range<u32>]| {
             let mut pase = codificador.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
@@ -1278,6 +1379,7 @@ impl Gpu {
             pase.set_bind_group(0, &self.grupo_escena, &[]);
             pase.set_bind_group(1, capas, &[]);
             pase.set_bind_group(2, &l.grupo_uniformes, &[]);
+            pase.set_bind_group(3, grupo_detras, &[]);
             // Nunca más allá de lo que se subió (solo pasa si la tarjeta no dio para todo).
             let subidos = (self.caben.1 / POR_ELEMENTO) as u32;
             for t in tramos.iter().map(|t| t.start.min(subidos)..t.end.min(subidos)).filter(|t| !t.is_empty()) {
@@ -1302,8 +1404,16 @@ impl Gpu {
         if !l.abierta {
             principal.clear();
         }
-        // …y luego todo lo demás, con las capas ya hechas entre medias.
-        pase_a(&mut codificador, &vista, &l.grupo_capas, &principal);
+        // …y luego todo lo demás, con las capas ya hechas entre medias. Con
+        // lente, en su lienzo, que después se copia a la pantalla: hay que saber
+        // exactamente qué se pintó para despejar lo de detrás.
+        match &l.lente {
+            Some(lente) => pase_a(&mut codificador, lente.lienzo(), &l.grupo_capas, &principal),
+            None => pase_a(&mut codificador, &vista, &l.grupo_capas, &principal),
+        }
+        if let Some(lente) = &mut l.lente {
+            lente.copiar_a(&mut codificador, &marco.texture);
+        }
         let t1 = crono.then(std::time::Instant::now);
         let orden = codificador.finish();
         let t2 = crono.then(std::time::Instant::now);
@@ -1358,6 +1468,25 @@ impl Lamina {
         self.ventana.cursor(c);
     }
 
+    /// Pedir la foto de lo de detrás: tras presentar, la de la próxima vez que
+    /// el compositor pinte; si no, la de cuando algo cambie detrás.
+    pub fn pedir_detras(&mut self, al_cambiar: bool) {
+        let Some(caja) = self.caja_cristal else { return };
+        if self.ventana.capturar_detras(caja, al_cambiar) {
+            self.caja_pedida = caja;
+            self.foto = if al_cambiar { FotoDetras::Vigilando } else { FotoDetras::TrasPresentar };
+            self.foto_pedida = std::time::Instant::now();
+            if !al_cambiar {
+                self.foto_hecha = self.foto_pedida;
+            }
+        }
+    }
+
+    pub fn cancelar_detras(&mut self) {
+        self.ventana.cancelar_detras();
+        self.foto = FotoDetras::Nada;
+    }
+
     pub fn region_de_desenfoque(&self, cajas: &[[i32; 4]]) {
         self.ventana.region_de_desenfoque(cajas);
     }
@@ -1367,7 +1496,8 @@ impl Lamina {
     }
 }
 
-pub const N_UNIFORMES: usize = 8 + 120;
+/// Cabecera, historial de frames y, al final, la lente: si hay fondo que enseñar.
+pub const N_UNIFORMES: usize = 8 + 120 + 4;
 
 #[cfg(test)]
 mod pruebas {

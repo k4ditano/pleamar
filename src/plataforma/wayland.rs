@@ -49,6 +49,153 @@ use wayland_protocols::ext::background_effect::v1::client::{ext_background_effec
 /// hacer (`ext-background-effect`): Hyprland y KWin, sí. Sin él, el cristal
 /// es un tinte con su luz, sin nada borroso detrás.
 static EFECTOS: std::sync::OnceLock<ExtBackgroundEffectManagerV1> = std::sync::OnceLock::new();
+
+use wayland_protocols_wlr::screencopy::v1::client::{zwlr_screencopy_frame_v1::{self, ZwlrScreencopyFrameV1}, zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1};
+use wayland_client::protocol::{wl_buffer::WlBuffer, wl_shm::{self, WlShm}, wl_shm_pool::WlShmPool};
+
+/// Quien fotografía la pantalla (`wlr-screencopy`), y la memoria compartida
+/// donde deja la foto. Con los dos, pleamar puede ver lo que tiene detrás.
+static CAPTURAS: std::sync::OnceLock<(ZwlrScreencopyManagerV1, WlShm)> = std::sync::OnceLock::new();
+
+/// Lo que hace falta para capturar lo de detrás de una superficie: en qué
+/// monitor está y dónde dentro de él —en píxeles lógicos—, y si ya hay una
+/// captura en camino. El sitio lo pone el hilo de Wayland al configurarla.
+struct Detras {
+    id: u32,
+    salida: wl_output::WlOutput,
+    sitio: Mutex<Option<(i32, i32)>>,
+    en_vuelo: std::sync::atomic::AtomicBool,
+    /// La foto en camino, para poder olvidarla.
+    marco: Mutex<Option<ZwlrScreencopyFrameV1>>,
+}
+
+/// Dónde cae una capa dentro de su monitor, por las reglas de layer-shell: el
+/// margen solo cuenta del lado al que está pegada, y lo que no está pegado a
+/// ningún lado va centrado. No sabe de las zonas que reserve otra capa (una
+/// barra que aparta a las demás): con una de esas, se equivoca por su alto.
+fn sitio_en_la_salida(ancla: Anchor, margen: [i32; 4], tam: (u32, u32), salida: (i32, i32)) -> (i32, i32) {
+    let (w, h) = (tam.0 as i32, tam.1 as i32);
+    let x = match (ancla.contains(Anchor::LEFT), ancla.contains(Anchor::RIGHT)) {
+        (true, true) => margen[3] + (salida.0 - margen[3] - margen[1] - w) / 2,
+        (true, false) => margen[3],
+        (false, true) => salida.0 - w - margen[1],
+        (false, false) => (salida.0 - w) / 2,
+    };
+    let y = match (ancla.contains(Anchor::TOP), ancla.contains(Anchor::BOTTOM)) {
+        (true, true) => margen[0] + (salida.1 - margen[0] - margen[2] - h) / 2,
+        (true, false) => margen[0],
+        (false, true) => salida.1 - h - margen[2],
+        (false, false) => (salida.1 - h) / 2,
+    };
+    (x, y)
+}
+
+/// Una foto en camino: de quién, y qué caja.
+struct CapturaDe {
+    detras: Arc<Detras>,
+    al_cambiar: bool,
+    formato: Mutex<Option<(u32, u32, u32)>>,
+}
+
+/// La memoria donde el compositor deja las fotos de una superficie. Se
+/// reutiliza mientras mida lo mismo.
+struct Foto {
+    mapa: Arc<Mapa>,
+    tam: (u32, u32, u32),
+    _pool: WlShmPool,
+    bufer: WlBuffer,
+    _fd: std::os::fd::OwnedFd,
+}
+
+impl Drop for Foto {
+    fn drop(&mut self) {
+        self.bufer.destroy();
+    }
+}
+
+/// La memoria de una foto, vista desde este proceso. Viaja al render sin
+/// copiarse: el compositor no vuelve a escribir en ella hasta que se le pide
+/// otra foto, y el render solo la pide después de haberla subido a la tarjeta.
+struct Mapa {
+    ptr: *mut u8,
+    largo: usize,
+}
+unsafe impl Send for Mapa {}
+unsafe impl Sync for Mapa {}
+impl AsRef<[u8]> for Mapa {
+    fn as_ref(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr, self.largo) }
+    }
+}
+impl Drop for Mapa {
+    fn drop(&mut self) {
+        unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.largo) };
+    }
+}
+
+impl Dispatch2<ZwlrScreencopyFrameV1, Estado> for CapturaDe {
+    fn event(&self, e: &mut Estado, marco: &ZwlrScreencopyFrameV1, ev: zwlr_screencopy_frame_v1::Event, _: &Connection, qh: &QueueHandle<Estado>) {
+        use zwlr_screencopy_frame_v1::Event as E;
+        let acabar = |marco: &ZwlrScreencopyFrameV1| {
+            marco.destroy();
+            *self.detras.marco.lock().unwrap() = None;
+            self.detras.en_vuelo.store(false, Ordering::Relaxed);
+        };
+        match ev {
+            // Solo en el formato de siempre: cuatro bytes, azul primero.
+            E::Buffer { format: wayland_client::WEnum::Value(f), width, height, stride } if matches!(f, wl_shm::Format::Argb8888 | wl_shm::Format::Xrgb8888) => {
+                *self.formato.lock().unwrap() = Some((width, height, stride));
+            }
+            E::BufferDone => {
+                let (Some(tam), Some((_, shm))) = (*self.formato.lock().unwrap(), CAPTURAS.get()) else { return acabar(marco) };
+                let id = self.detras.id;
+                if e.fotos.get(&id).is_none_or(|f| f.tam != tam) {
+                    e.fotos.remove(&id);
+                    let largo = (tam.2 * tam.1) as usize;
+                    let Some(fd) = memfd(largo) else { return acabar(marco) };
+                    let ptr = unsafe { libc::mmap(std::ptr::null_mut(), largo, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, std::os::fd::AsRawFd::as_raw_fd(&fd), 0) };
+                    if ptr == libc::MAP_FAILED {
+                        return acabar(marco);
+                    }
+                    let pool = shm.create_pool(std::os::fd::AsFd::as_fd(&fd), largo as i32, qh, Mudo);
+                    let bufer = pool.create_buffer(0, tam.0 as i32, tam.1 as i32, tam.2 as i32, wl_shm::Format::Argb8888, qh, Mudo);
+                    e.fotos.insert(id, Foto { mapa: Arc::new(Mapa { ptr: ptr as *mut u8, largo }), tam, _pool: pool, bufer, _fd: fd });
+                }
+                // Vigilando, espera a que algo cambie: con lo de detrás quieto, no
+                // llega nada. Tras presentar, la trae la próxima vez que se pinte.
+                if self.al_cambiar {
+                    marco.copy_with_damage(&e.fotos[&id].bufer);
+                } else {
+                    marco.copy(&e.fotos[&id].bufer);
+                }
+            }
+            E::Ready { .. } => {
+                let id = self.detras.id;
+                if let Some(f) = e.fotos.get(&id) {
+                    let datos: Arc<dyn AsRef<[u8]> + Send + Sync> = f.mapa.clone();
+                    let _ = e.a_render.send(ARender::Detras(Box::new(super::Detras { lamina: id, ancho: f.tam.0, alto: f.tam.1, zancada: f.tam.2, datos: Some(datos) })));
+                }
+                acabar(marco);
+            }
+            // Que el render no se quede esperándola.
+            E::Failed => {
+                let _ = e.a_render.send(ARender::Detras(Box::new(super::Detras { lamina: self.detras.id, ancho: 0, alto: 0, zancada: 0, datos: None })));
+                acabar(marco)
+            }
+            _ => {}
+        }
+    }
+}
+
+fn memfd(largo: usize) -> Option<std::os::fd::OwnedFd> {
+    unsafe {
+        let fd = libc::memfd_create(c"pleamar-detras".as_ptr(), libc::MFD_CLOEXEC);
+        if fd < 0 || libc::ftruncate(fd, largo as i64) != 0 {
+            return None;
+        }
+        Some(std::os::fd::FromRawFd::from_raw_fd(fd))
+    }
+}
 use wayland_client::protocol::wl_data_device_manager::DndAction;
 use wayland_client::{
     globals::registry_queue_init,
@@ -73,6 +220,8 @@ struct VentanaWayland {
     /// Su desenfoque, que se pide la primera vez que tiene cristal: pedirlo dos
     /// veces para la misma superficie es un error del protocolo.
     efecto: Mutex<Option<ExtBackgroundEffectSurfaceV1>>,
+    /// Para ver lo que tiene detrás. Solo las capas: de una ventana no se sabe dónde está.
+    detras: Option<Arc<Detras>>,
 }
 
 fn interactividad(t: Teclado) -> KeyboardInteractivity {
@@ -105,6 +254,26 @@ impl Ventana for VentanaWayland {
     /// la región de entrada: el aviso llega cuando el compositor quiera otro.
     fn pedir_frame(&self) {
         self.wl.frame(&self.qh, FrameDe(self.id));
+    }
+
+    fn capturar_detras(&self, caja: [i32; 4], al_cambiar: bool) -> bool {
+        let (Some(d), Some((gestor, _))) = (&self.detras, CAPTURAS.get()) else { return false };
+        let Some((x, y)) = *d.sitio.lock().unwrap() else { return false };
+        if d.en_vuelo.swap(true, Ordering::Relaxed) {
+            return false;
+        }
+        // Sin el cursor: el cristal no lo refracta, va encima.
+        let marco = gestor.capture_output_region(0, &d.salida, x + caja[0], y + caja[1], caja[2], caja[3], &self.qh, CapturaDe { detras: d.clone(), al_cambiar, formato: Mutex::new(None) });
+        *d.marco.lock().unwrap() = Some(marco);
+        true
+    }
+
+    fn cancelar_detras(&self) {
+        let Some(d) = &self.detras else { return };
+        if let Some(m) = d.marco.lock().unwrap().take() {
+            m.destroy();
+        }
+        d.en_vuelo.store(false, Ordering::Relaxed);
     }
 
     /// Como la región de entrada, vale con el siguiente frame que se presente.
@@ -178,6 +347,10 @@ struct Puesta {
     pendiente: Option<(wgpu::Surface<'static>, String, i32)>,
     /// Lo que mide ahora: una ventana la estira quien quiera.
     tam: (u32, u32),
+    /// Una capa: a qué bordes está pegada y con qué márgenes, para saber
+    /// dónde cae en su monitor; y lo que hace falta para ver lo de detrás.
+    capa_sitio: Option<(Anchor, [i32; 4])>,
+    detras: Option<Arc<Detras>>,
 }
 
 struct Estado {
@@ -206,6 +379,8 @@ struct Estado {
     salir: bool,
     a_render: Sender<ARender>,
     qh: QueueHandle<Estado>,
+    /// La memoria de las fotos de lo de detrás, una por superficie.
+    fotos: std::collections::HashMap<u32, Foto>,
 }
 
 /// Los objetos de Wayland que no nos cuentan nada.
@@ -313,7 +488,7 @@ impl Estado {
                 let ventanilla = self.ventanillas.as_ref().map(|v| v.get_viewport(concha.wl(), qh, Mudo));
                 let escala = self.escalas.as_ref().map(|m| m.get_fractional_scale(concha.wl(), qh, EscalaDe(id)));
                 let superficie = self.superficie_de(concha.wl());
-                self.puestas.push(Puesta { id, cual, concha, salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, tam: (0, 0), pendiente: Some((superficie, nombre.clone(), mhz)) });
+                self.puestas.push(Puesta { id, cual, concha, salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, tam: (0, 0), pendiente: Some((superficie, nombre.clone(), mhz)), capa_sitio: None, detras: None });
                 continue;
             }
             let capa = self.capas.create_layer_surface(qh, wl, nivel, Some("pleamar"), Some(salida));
@@ -341,7 +516,9 @@ impl Estado {
             let escala = self.escalas.as_ref().map(|m| m.get_fractional_scale(capa.wl_surface(), qh, EscalaDe(id)));
             capa.commit();
             let superficie = self.superficie_de(capa.wl_surface());
-            self.puestas.push(Puesta { id, cual, concha: Concha::Capa(capa), salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, tam: (0, 0), pendiente: Some((superficie, nombre.clone(), mhz)) });
+            let detras = Some(Arc::new(Detras { id, salida: salida.clone(), sitio: Mutex::new(None), en_vuelo: std::sync::atomic::AtomicBool::new(false), marco: Mutex::new(None) }));
+            let capa_sitio = Some((bordes(p.ancla, p.ancho == 0), margen));
+            self.puestas.push(Puesta { id, cual, concha: Concha::Capa(capa), salida: salida.clone(), ventanilla, _escala: escala, escala: 1.0, tam: (0, 0), pendiente: Some((superficie, nombre.clone(), mhz)), capa_sitio, detras });
             }
         }
     }
@@ -634,7 +811,7 @@ impl PopupHandler for Estado {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: a.id,
                 superficie,
-                ventana: Box::new(VentanaWayland { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursores: e.cursores.clone(), serie: e.serie.clone(), capa: None, qh: e.qh.clone(), id: a.id, efecto: Mutex::new(None) }),
+                ventana: Box::new(VentanaWayland { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursores: e.cursores.clone(), serie: e.serie.clone(), capa: None, qh: e.qh.clone(), id: a.id, efecto: Mutex::new(None), detras: None }),
                 escala: a.madre.escala,
                 tam: a.tam,
                 mhz: a.madre.mhz,
@@ -663,6 +840,9 @@ pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance
     if let Ok(m) = globales.bind::<ExtBackgroundEffectManagerV1, _, _>(&qh, 1..=1, Mudo) {
         let _ = EFECTOS.set(m);
     }
+    if let (Ok(c), Ok(s)) = (globales.bind::<ZwlrScreencopyManagerV1, _, _>(&qh, 1..=3, Mudo), globales.bind::<WlShm, _, _>(&qh, 1..=1, Mudo)) {
+        let _ = CAPTURAS.set((c, s));
+    }
     let mut estado = Estado {
         registro: RegistryState::new(&globales),
         asientos: SeatState::new(&globales, &qh),
@@ -673,6 +853,7 @@ pub fn atender(pide: Vec<Superficie>, alto_extra: u32, instancia: wgpu::Instance
         compositor,
         conexion: conexion.clone(),
         qh: qh.clone(),
+        fotos: std::collections::HashMap::new(),
         instancia,
         pide,
         alto_extra,
@@ -771,6 +952,12 @@ impl Estado {
         if let Some(v) = &p.ventanilla {
             v.set_destination(tam.0 as i32, tam.1 as i32);
         }
+        // Dónde cae dentro de su monitor: lo que hace falta para fotografiar lo de detrás.
+        if let (Some((ancla, margen)), Some(d)) = (p.capa_sitio, &p.detras) {
+            if let Some((w, h)) = self.salidas.info(&p.salida).and_then(|i| i.logical_size) {
+                *d.sitio.lock().unwrap() = Some(sitio_en_la_salida(ancla, margen, tam, (w, h)));
+            }
+        }
         // Ya estaba entregada y ha cambiado de tamaño: alguien ha estirado la ventana.
         if p.pendiente.is_none() && p.tam != tam {
             let _ = self.a_render.send(ARender::TamLamina(p.id, (tam.0 as f32, tam.1 as f32)));
@@ -784,7 +971,7 @@ impl Estado {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: p.id,
                 superficie,
-                ventana: Box::new(VentanaWayland { wl: p.concha.wl().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: p.concha.capa().cloned(), qh: self.qh.clone(), id: p.id, efecto: Mutex::new(None) }),
+                ventana: Box::new(VentanaWayland { wl: p.concha.wl().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: p.concha.capa().cloned(), qh: self.qh.clone(), id: p.id, efecto: Mutex::new(None), detras: p.detras.clone() }),
                 escala: p.escala,
                 tam,
                 mhz,
@@ -839,7 +1026,7 @@ impl smithay_client_toolkit::session_lock::SessionLockHandler for Estado {
             let _ = self.a_render.send(ARender::Lamina(Box::new(gpu::NuevaLamina {
                 id: cara.id,
                 superficie: pinta,
-                ventana: Box::new(VentanaWayland { wl: cara.superficie.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: None, qh: self.qh.clone(), id: cara.id, efecto: Mutex::new(None) }),
+                ventana: Box::new(VentanaWayland { wl: cara.superficie.wl_surface().clone(), compositor: self.compositor.clone(), cursores: self.cursores.clone(), serie: self.serie.clone(), capa: None, qh: self.qh.clone(), id: cara.id, efecto: Mutex::new(None), detras: None }),
                 escala: 1.0,
                 tam,
                 mhz: cara.mhz,

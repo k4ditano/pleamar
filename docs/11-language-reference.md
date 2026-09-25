@@ -431,8 +431,22 @@ The edge catches the light: a thin highlight on the side facing the top left,
 a softer one on the opposite side, and the glass getting lighter towards its
 edge, like glass seen side-on; all of it comes from where the edge points,
 which a signed distance knows. And the body's `shadow` stops showing through
-it: only around it. On top of that, **the compositor is asked to blur what is
-behind the silhouette**, following its shape in 2 px strips —a round thing
+it: only around it. And **it bends what is behind it, like a lens**:
+near the edge the background is pulled in, following a bevel with the profile
+of a squircle and Snell's law (index 1.5), a touch differently for red, green
+and blue; further in it is frosted. A bigger piece of glass bends more, as
+thicker glass would. Pressing it lights it from the pointer, and over something
+bright it tints itself a little more so what is written on it still reads. To
+bend the background pleamar needs its pixels, and on Wayland only the
+compositor has them: it asks for a screenshot of what is under the surface
+(`wlr-screencopy`) —with the surface on top, the only thing it can give— and
+works the background out, because it knows exactly what it painted itself:
+screenshot = ours + (1 − our alpha) · background. It takes one after presenting,
+at most every 50 ms while something moves, and when nothing moves it waits for
+something behind to change: still, it costs nothing. Where that cannot be done
+(another system, a compositor without screencopy, a normal window or a popup),
+**the compositor is asked to blur what is
+behind the silhouette** instead, following its shape in 2 px strips —a round thing
 gets round blur, not a square—, through the standard `ext-background-effect`
 protocol (Hyprland and KWin have it). Nobody has to write a blur rule for the
 compositor: the scene asks. Where the compositor cannot do it, the glass is
@@ -442,9 +456,9 @@ blur is belongs to the compositor's settings. A loose shape takes `glass` too
 or a `column`: that is how a glass card holds glass plates —a mid grey at 36 %
 over dark glass lightens it just enough, and each plate gets its own lit edge.
 Inside a `body`, the body says it, not its shapes. Below 30 % of glass (times
-opacity) no blur is asked for. What glass cannot do is bend what is behind it
-like a lens: that needs the pixels behind, and on Linux only the compositor has
-them.
+opacity) no blur is asked for. The `fill` of a layout takes an opacity after the colour (`fill: ink 9%`):
+inside a glass card, the plates are veils like that, not more glass —glass on
+glass is what Apple says not to do—.
 
 ```
 body {

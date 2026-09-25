@@ -133,6 +133,11 @@ pub fn hilo(
     // Lo que emite un fotograma se atiende en el frame siguiente.
     let mut sucesos_tardios: Vec<SucesoId> = Vec::new();
     let mut puntero: Option<(f32, f32)> = None;
+    // La luz que deja un clic en el cristal: dónde, y cuánta queda. Se enciende
+    // al pulsar y se apaga sola, despacio.
+    let mut dedo = (0.0f32, 0.0f32);
+    let mut luz_dedo = 0.0f32;
+    let mut dedo_abajo = false;
     // Lo que se está arrastrando: qué zona, y dónde estaba el ratón al pulsar.
     let mut arrastre: Option<(usize, (f32, f32), Instant)> = None;
     let mut cursor_puesto = Cursor::Normal;
@@ -335,6 +340,14 @@ pub fn hilo(
                 ARender::Taller(p) => letras.recibir(*p),
                 // Una ventana que alguien estira: la lámina cambia, y con ella lo que la
                 // escena lee en `screen.width` y `screen.height`.
+                // Una foto de lo de detrás de un cristal: se despeja el fondo, y si
+                // ha cambiado algo, esa lámina se vuelve a pintar. Y se pide la
+                // siguiente, que no llegará hasta que algo cambie en pantalla.
+                ARender::Detras(d) => {
+                    if let Some(g) = &gpu {
+                        atender_detras(g, &mut laminas, d);
+                    }
+                }
                 ARender::Frame(id) => {
                     if frame_pedido == Some(id) {
                         frame_listo = true;
@@ -463,6 +476,13 @@ pub fn hilo(
                 }
                 ARender::Boton(b, abajo) => {
                     botones.push((b, abajo));
+                    if b == 0 {
+                        dedo_abajo = abajo;
+                        if let (true, Some(p)) = (abajo, puntero) {
+                            dedo = p;
+                            luz_dedo = 1.0;
+                        }
+                    }
                     ultima_actividad = Instant::now();
                 }
                 ARender::Rueda(d) => {
@@ -1216,7 +1236,8 @@ pub fn hilo(
         g.subir_atlas(&mut letras.por_subir);
         g.subir(&dibujo);
         // Qué ha cambiado, y dónde. La gráfica de frames cambia siempre.
-        let todo_cambiado = !anterior.cambios(&dibujo, &mut cambiado) || op.hud;
+        // La luz de un clic cambia el cristal sin cambiar la lista: se pinta todo.
+        let todo_cambiado = !anterior.cambios(&dibujo, &mut cambiado) || op.hud || luz_dedo > 0.0;
 
         // Por dónde entra el ratón: las zonas activas, y nada más. Lo demás de
         // la superficie es transparente también para el clic.
@@ -1261,6 +1282,22 @@ pub fn hilo(
                 .filter(|b| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1])
                 .map(|b| [(b[0].max(v[0]) - v[0]) as i32, (b[1].max(v[1]) - v[1]) as i32, (b[2].min(v[2]) - v[0]).ceil() as i32, (b[3].min(v[3]) - v[1]).ceil() as i32])
                 .collect();
+            // Con cristal, la lente; mientras no tenga fondo que enseñar —o donde no
+            // se pueda ver lo de detrás—, el desenfoque lo pone el compositor.
+            l.quiere_lente = !suyas.is_empty() && l.vista.emergente.is_none();
+            // Solo se fotografía lo que hace falta: la caja del cristal, con
+            // margen para esmerilar, redondeada a 16 px para no rehacer
+            // texturas por un píxel. En Marea, la bolita y no los 820 × 680.
+            l.caja_cristal = suyas.iter().copied().reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]).map(|b| {
+                let m = crate::lente::MARGEN.ceil() as i32;
+                let (w, h) = (l.vista.tam.0 as i32, l.vista.tam.1 as i32);
+                let x0 = ((b[0] - m).max(0) / 16) * 16;
+                let y0 = ((b[1] - m).max(0) / 16) * 16;
+                let x1 = ((b[2] + m + 15) / 16 * 16).min(w);
+                let y1 = ((b[3] + m + 15) / 16 * 16).min(h);
+                [x0, y0, x1 - x0, y1 - y0]
+            });
+            let suyas = if l.lente.as_ref().is_some_and(|x| x.listo) { Vec::new() } else { suyas };
             if suyas != l.desenfoque {
                 l.region_de_desenfoque(&suyas);
                 l.desenfoque = suyas;
@@ -1269,7 +1306,20 @@ pub fn hilo(
 
         // El 4 y el 7 son el origen de la vista: cero en la principal; cada emergente pone el suyo.
         uniformes[..8].copy_from_slice(&[tam.0, tam.1, t_total, 1.0, 0.0, periodo_ms, if bloqueada { 1.0 } else { 0.0 }, 0.0]);
-        uniformes[8..].copy_from_slice(&historial);
+        uniformes[8..128].copy_from_slice(&historial);
+        // Mientras se pulsa, la luz sigue al dedo; al soltar, se apaga en ~0,4 s.
+        if dedo_abajo {
+            if let Some(p) = puntero {
+                dedo = p;
+            }
+        } else {
+            luz_dedo *= (-dt / 0.4).exp();
+        }
+        let luz_viva = luz_dedo > 0.01;
+        if !luz_viva {
+            luz_dedo = 0.0;
+        }
+        uniformes[129..132].copy_from_slice(&[dedo.0, dedo.1, luz_dedo]);
         // La que marca el ritmo va la última: es la que espera a la pantalla.
         laminas.sort_by_key(|l| l.marca_el_ritmo);
         // ¿Alguna superficie ha decidido pegarse a otro borde? La esquina que
@@ -1297,6 +1347,10 @@ pub fn hilo(
             cambio_de_abiertas |= ab != l.abierta;
             if ab {
                 l.vaciada = false;
+            } else if l.lente.is_some() {
+                // Cerrada no enseña cristal: su lienzo y su fondo, fuera.
+                l.cancelar_detras();
+                l.lente = None;
             }
             l.abierta = ab;
         }
@@ -1329,8 +1383,37 @@ pub fn hilo(
                 // enseguida: dos frames por refresco—, pero sí dice otra cosa: si
                 // alguien está mirando.
                 if proximo_frame > ahora_mismo {
-                    std::thread::sleep(proximo_frame - ahora_mismo);
-                    proximo_frame += periodo;
+                    // Esperando, puede llegar la foto que una lámina con lente
+                    // necesitaba para pintar: entonces se pinta ya, sin esperar
+                    // al reloj, o su paso y el del compositor se desfasan y se
+                    // pinta uno de cada dos.
+                    let espera_foto = laminas.iter().any(|l| l.foto == crate::gpu::FotoDetras::TrasPresentar);
+                    if espera_foto {
+                        loop {
+                            let queda = proximo_frame.saturating_duration_since(Instant::now());
+                            if queda.is_zero() {
+                                proximo_frame += periodo;
+                                break;
+                            }
+                            match rx.recv_timeout(queda) {
+                                Ok(ARender::Detras(d)) => {
+                                    if atender_detras(g, &mut laminas, d) {
+                                        proximo_frame = Instant::now() + periodo;
+                                        break;
+                                    }
+                                }
+                                // El aviso de frame se espera justo después: guardado para la
+                                // vuelta siguiente, esa espera no lo vería y se agotaría.
+                                Ok(ARender::Frame(k)) => frame_listo |= frame_pedido == Some(k),
+                                Ok(m) => guardados.push(m),
+                                Err(RecvTimeoutError::Timeout) => {}
+                                Err(RecvTimeoutError::Disconnected) => return,
+                            }
+                        }
+                    } else {
+                        std::thread::sleep(proximo_frame - ahora_mismo);
+                        proximo_frame += periodo;
+                    }
                 } else {
                     proximo_frame = ahora_mismo + periodo;
                 }
@@ -1396,9 +1479,34 @@ pub fn hilo(
                 al_dia += 1;
                 continue;
             }
+            // Con lente: si la foto de lo último presentado aún no ha llegado, se
+            // espera a ella —llega en menos de un refresco— y se pinta después.
+            // Si solo se estaba vigilando, se olvida esa foto y se pinta.
+            if l.lente.is_some() {
+                match l.foto {
+                    // Llega en menos de un refresco. Si tarda más, se ha perdido.
+                    crate::gpu::FotoDetras::TrasPresentar if l.foto_pedida.elapsed() < Duration::from_millis(100) => {
+                        l.pintada = None;
+                        al_dia += 1;
+                        continue;
+                    }
+                    crate::gpu::FotoDetras::TrasPresentar => l.cancelar_detras(),
+                    crate::gpu::FotoDetras::Vigilando => l.cancelar_detras(),
+                    crate::gpu::FotoDetras::Nada => {}
+                }
+            }
             // La que marca el ritmo pide que el compositor avise cuando quiera otro.
             let pide = l.marca_el_ritmo && g.con_buzon() && !op.sin_vsync && !op.ingenuo;
             let pintada = g.pintar(l, &dibujo, &uniformes, pide);
+            // Con lente, lo presentado se fotografía para seguir lo de detrás.
+            // No en cada frame: a Hyprland cada foto le cuesta leer la pantalla
+            // de la tarjeta, y a 60 por segundo eran 14 puntos de un núcleo.
+            // Una cada `ENTRE_FOTOS` como mucho mientras se pinta; y cuando se
+            // deja de pintar, se vigila (ver más abajo).
+            if pintada && l.lente.is_some() && l.foto_hecha.elapsed() >= crate::lente::ENTRE_FOTOS {
+                l.pedir_detras(false);
+            }
+            l.pintada_ahora = pintada;
             if pide {
                 frame_pedido = pintada.then_some(l.id);
                 frame_listo = false;
@@ -1407,6 +1515,16 @@ pub fn hilo(
             l.pintada = (pintada && l.abierta).then_some(donde);
             espero_a_la_pantalla |= pintada && l.marca_el_ritmo && !g.con_buzon();
             pintadas += pintada as u32;
+        }
+        // Una lámina con lente que esta vuelta no ha pintado se ha quedado
+        // quieta: se vigila lo de detrás. Vigilar mientras se pinta no sirve,
+        // porque nuestro propio frame ya cuenta como cambio y la foto llegaría
+        // en cada refresco; ahora llega solo si algo cambia detrás, y trae lo
+        // último que se presentó.
+        for l in &mut laminas {
+            if l.lente.is_some() && !std::mem::take(&mut l.pintada_ahora) && l.foto == crate::gpu::FotoDetras::Nada {
+                l.pedir_detras(true);
+            }
         }
         // Con vsync de cola, el paso lo daba la espera de la que marca el ritmo.
         // Si esta vez no le tocaba pintar, el paso lo da el reloj: un periodo entero.
@@ -1533,7 +1651,7 @@ pub fn hilo(
         if op.sin_vsync && ciclo.dts.len() >= 600 {
             ciclo.cerrar();
         }
-        if !op.sin_vsync && !vivo && !paso_algo && !bloqueada && !cambia_la_region && !cambio_de_medida && !cambio_de_teclado && props.iter().all(Animada::quieta) {
+        if !op.sin_vsync && !vivo && !paso_algo && luz_dedo == 0.0 && !bloqueada && !cambia_la_region && !cambio_de_medida && !cambio_de_teclado && props.iter().all(Animada::quieta) {
             for a in &mut props {
                 a.posar();
             }
@@ -1543,6 +1661,25 @@ pub fn hilo(
             // Quieta ya: si algo se salía, esto es lo que se queda mirando.
             dibujo.decir_lo_pendiente();
         }
+    }
+}
+
+/// Llega una foto de lo de detrás de una lámina: se despeja el fondo con el
+/// lienzo que se presentó. Si ha cambiado algo, hay que volver a pintarla (y
+/// tras pintarla se pedirá otra); si no, se vigila hasta que cambie algo detrás.
+/// Devuelve si hay que pintar.
+fn atender_detras(g: &Gpu, laminas: &mut [Lamina], d: Box<crate::plataforma::Detras>) -> bool {
+    let Some(l) = laminas.iter_mut().find(|l| l.id == d.lamina) else { return false };
+    l.foto = crate::gpu::FotoDetras::Nada;
+    if l.lente.is_none() {
+        return false;
+    }
+    if g.recibir_detras(l, *d) {
+        l.pintada = None;
+        true
+    } else {
+        l.pedir_detras(true);
+        false
     }
 }
 

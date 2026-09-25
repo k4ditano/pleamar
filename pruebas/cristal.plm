@@ -18,4 +18,8 @@ scene Cristal {
     row { at: 150, 55; padding: 8; fill: #4a5057; glass: 100%; corner: 12
         text "placa" { size: 12; color: #f5f7f5 }
     }
+    //  Un velo: un fondo que apenas se ve.
+    row { at: 150, 110; padding: 8; fill: #f5f7f5 9%; corner: 12
+        text "placa" { size: 12; color: #f5f7f5 }
+    }
 }

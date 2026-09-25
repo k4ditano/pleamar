@@ -9,6 +9,7 @@ mod escenas;
 mod formas;
 mod lsp;
 mod gpu;
+mod lente;
 mod lenguaje;
 mod logica;
 #[cfg(feature = "luau")]

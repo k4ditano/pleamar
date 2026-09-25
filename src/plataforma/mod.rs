@@ -383,6 +383,29 @@ pub trait Ventana: Send {
     /// Qué desenfoca el sistema detrás de la ventana: rectángulos en píxeles
     /// lógicos, los de su cristal. Vacío, nada. Donde no se sepa pedir, no hace nada.
     fn region_de_desenfoque(&self, _cajas: &[[i32; 4]]) {}
+    /// Pedir lo que se ve en pantalla en esa caja de la ventana —x, y, ancho y
+    /// alto lógicos—, **con ella encima**: llega como `ARender::Detras`. Es lo
+    /// que deja ver lo que hay detrás del cristal: se le resta lo que pintó la
+    /// propia ventana. Con `al_cambiar`, no llega hasta que algo cambie en esa
+    /// caja; sin él, con la próxima vez que el compositor pinte la pantalla.
+    /// `false` si no se sabe pedir, o si ya hay una en camino.
+    fn capturar_detras(&self, _caja: [i32; 4], _al_cambiar: bool) -> bool {
+        false
+    }
+    /// Olvidar la foto que haya en camino: ya no llegará.
+    fn cancelar_detras(&self) {}
+}
+
+/// Una captura de lo que se veía en pantalla en una caja de una ventana.
+pub struct Detras {
+    /// De qué ventana es.
+    pub lamina: u32,
+    /// En píxeles de verdad, cuatro bytes por píxel: azul, verde, rojo y alfa.
+    pub ancho: u32,
+    pub alto: u32,
+    pub zancada: u32,
+    /// Los píxeles, donde los dejó el compositor, sin copiarlos. `None` si la foto falló.
+    pub datos: Option<std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>>,
 }
 
 #[cfg(target_os = "linux")]

@@ -15,6 +15,7 @@ struct U {
     cab: vec4<f32>,    // ancho y alto lógicos, tiempo, escala (píxeles de verdad por píxel lógico)
     hud: vec4<f32>,    // origen x, periodo en ms, lógica bloqueada, origen y: desde dónde mira esta superficie la escena
     tiempos: array<vec4<f32>, 30>,
+    detras: vec4<f32>, // x: hay fondo despejado que leer (la lente) · yz: dónde se pulsó · w: cuánta luz deja
 };
 
 struct Forma {
@@ -67,6 +68,34 @@ const LEJOS: f32 = 1e6;
 @group(2) @binding(0) var<uniform> u: U;
 // Los grupos con opacidad se pintan aparte, aquí, y se funden de una vez.
 @group(1) @binding(0) var capas: texture_2d_array<f32>;
+// 3 · lo que hay detrás del cristal, ya despejado: nítido y esmerilado.
+@group(3) @binding(0) var detras_nitido: texture_2d<f32>;
+@group(3) @binding(1) var detras_borroso: texture_2d<f32>;
+@group(3) @binding(2) var detras_muestreo: sampler;
+
+// La lente: cuánto del cristal es fondo doblado (el resto, lo de detrás tal cual,
+// que el compositor pone debajo y deja despejar la foto siguiente) y cuánto tinte.
+const LENTE_ALFA: f32 = 0.88;
+const LENTE_TINTE: f32 = 0.22;
+// El grosor del cristal, en anchos de bisel: cuánto dobla.
+const LENTE_GROSOR: f32 = 1.4;
+
+// Cuánto se corre lo de detrás a una distancia `dentro` del borde, con un bisel
+// de ancho `bisel`. El canto tiene el perfil de un «squircle», ⁴√(1 − (1 − x)⁴):
+// sube casi vertical y se aplana hacia dentro, y en el centro no dobla nada.
+// Un rayo que baja en vertical entra por esa pendiente y se tuerce según Snell
+// (índice 1,5); lo que se corre es lo que le queda de grosor por la tangente de
+// lo que se ha torcido.
+fn corrimiento(dentro: f32, bisel: f32) -> f32 {
+    let x = clamp(dentro / bisel, 0.0, 1.0);
+    let v = 1.0 - x;
+    let v4 = v * v * v * v;
+    let alto = pow(max(1.0 - v4, 0.0), 0.25);
+    let pendiente = v * v * v * pow(max(1.0 - v4, 1e-4), -0.75);
+    let entra = atan(pendiente);
+    let sale = asin(sin(entra) / 1.5);
+    return alto * bisel * LENTE_GROSOR * tan(entra - sale);
+}
 
 struct Salida {
     @builtin(position) pos: vec4<f32>,
@@ -288,24 +317,68 @@ fn fs(e: Salida) -> @location(0) vec4<f32> {
     }
     let luz = clamp(1.0 - (local.y - el.luz.y) / max(el.luz.z, 1.0), 0.0, 1.0) * el.luz.x;
     tono += vec3<f32>(luz) + vec3<f32>(el.color0.w) * smoothstep(-2.2, -0.4, d);
-    // Hecho cristal, el relleno es un tinte: deja ver lo que hay detrás (que el
-    // compositor desenfoca) y guarda su color.
-    c = sobre(c, tono, cubre(d) * alfa * mix(1.0, 0.36, vidrio));
+    // Hacia dónde apunta el borde: hacia donde crece la distancia.
+    let g = vec2<f32>(dpdx(d), dpdy(d));
+    let normal = g / max(length(g), 1e-6);
+    let dentro = max(-d, 0.0);
+    if (vidrio > 0.0 && u.detras.x > 0.5) {
+        // Con lo de detrás a mano, el cristal es ese fondo doblado por el
+        // bisel, esmerilado, con un poco de su tinte. Rojo, verde y azul se
+        // doblan un pelo distinto: la franja de color de un canto de cristal.
+        let bisel = select(16.0, el.uv.y, el.uv.y > 0.5);
+        // Un cristal que aparece no se funde: empieza a doblar la luz.
+        let corre = corrimiento(dentro, bisel) * u.cab.w * vidrio;
+        let tam = u.cab.xy * u.cab.w;
+        let q = e.pos.xy - normal * corre;
+        let tq = normal * corre * 0.06;
+        let esmerilado = vec3<f32>(
+            textureSampleLevel(detras_borroso, detras_muestreo, (q - tq) / tam, 0.0).r,
+            textureSampleLevel(detras_borroso, detras_muestreo, q / tam, 0.0).g,
+            textureSampleLevel(detras_borroso, detras_muestreo, (q + tq) / tam, 0.0).b,
+        );
+        let nitido = vec3<f32>(
+            textureSampleLevel(detras_nitido, detras_muestreo, (q - tq) / tam, 0.0).r,
+            textureSampleLevel(detras_nitido, detras_muestreo, q / tam, 0.0).g,
+            textureSampleLevel(detras_nitido, detras_muestreo, (q + tq) / tam, 0.0).b,
+        );
+        // En el bisel lo doblado se ve bastante nítido; hacia dentro, esmerilado.
+        let en_bisel = 1.0 - clamp(dentro / bisel, 0.0, 1.0);
+        let fondo = mix(esmerilado, nitido, smoothstep(0.0, 0.6, en_bisel) * 0.85);
+        // Un cristal aviva un poco lo que deja ver.
+        let gris = dot(fondo, vec3<f32>(0.299, 0.587, 0.114));
+        let vivo = clamp(mix(vec3<f32>(gris), fondo, 1.18), vec3<f32>(0.0), vec3<f32>(1.0));
+        // Lo que tiene que verse es este cristal. Pero el compositor pone debajo
+        // de nuestro alfa lo de detrás de verdad, nítido, y se colaría como un
+        // fantasma del texto de detrás: se resta de antemano, que lo sabemos.
+        // Se ve: lo nuestro + (1 − α)·detrás = cristal · cobertura.
+        let visto = cubre(d) * alfa * vidrio;
+        let debajo = textureSampleLevel(detras_nitido, detras_muestreo, e.pos.xy / tam, 0.0).rgb;
+        let a_lente = visto * LENTE_ALFA;
+        let rgb = clamp(visto * (mix(vivo, tono, LENTE_TINTE) - (1.0 - LENTE_ALFA) * debajo), vec3<f32>(0.0), vec3<f32>(a_lente));
+        c = vec4<f32>(rgb, a_lente) + c * (1.0 - a_lente);
+        // Sobre algo claro, más tinte: lo que va escrito encima se sigue leyendo.
+        let claro = smoothstep(0.45, 0.9, gris);
+        c = sobre(c, tono, claro * 0.35 * visto);
+    } else {
+        // Sin él, el relleno es un tinte: deja ver lo que hay detrás (que el
+        // compositor desenfoca) y guarda su color.
+        c = sobre(c, tono, cubre(d) * alfa * mix(1.0, 0.36, vidrio));
+    }
     if (vidrio > 0.0) {
-        // Hacia dónde apunta el borde: hacia donde crece la distancia.
-        let g = vec2<f32>(dpdx(d), dpdy(d));
-        let n = g / max(length(g), 1e-6);
-        let dentro = max(-d, 0.0);
         // La luz viene de arriba a la izquierda. El canto que la mira brilla
         // fino y fuerte; el de enfrente, más flojo: es la luz que sale.
         let hacia_la_luz = normalize(vec2<f32>(-0.55, -0.83));
         let canto = 1.0 - smoothstep(0.4, 3.0, dentro);
-        let mira = pow(max(dot(n, hacia_la_luz), 0.0), 1.6);
-        let sale = pow(max(-dot(n, hacia_la_luz), 0.0), 1.6);
+        let mira = pow(max(dot(normal, hacia_la_luz), 0.0), 1.6);
+        let sale = pow(max(-dot(normal, hacia_la_luz), 0.0), 1.6);
         // Y cuanto más cerca del borde, más claro: el cristal visto de canto.
         let fresnel = exp(-dentro / 10.0);
         let brillo = canto * (0.85 * mira + 0.4 * sale + 0.12) + 0.14 * fresnel;
         c = sobre(c, vec3<f32>(1.0), clamp(brillo, 0.0, 1.0) * vidrio * cubre(d) * alfa);
+        // Al pulsarlo, el cristal se ilumina desde el dedo, y la luz se extiende.
+        let lejos = distance(p, u.detras.yz);
+        let luz_dedo = u.detras.w * exp(-lejos * lejos / (2.0 * 70.0 * 70.0));
+        c = sobre(c, vec3<f32>(1.0), luz_dedo * 0.3 * vidrio * cubre(d) * alfa);
     }
     if (el.luz.w > 0.0) {
         c = sobre(c, el.borde.rgb, cubre(abs(d + el.luz.w * 0.5) - el.luz.w * 0.5) * alfa);

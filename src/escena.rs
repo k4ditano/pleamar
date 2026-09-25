@@ -1329,6 +1329,8 @@ pub enum ARender {
     LaminaFuera(u32),
     /// El compositor ya enseñó el último frame de esa lámina y quiere otro.
     Frame(u32),
+    /// Lo que se veía en pantalla detrás de un cristal, con él encima.
+    Detras(Box<crate::plataforma::Detras>),
     /// El taller ha terminado algo: una maqueta, unas imágenes.
     Taller(Box<crate::texto::Paquete>),
     Escala(u32, f32),

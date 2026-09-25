@@ -3159,9 +3159,16 @@ impl<'a> Obra<'a> {
             },
             None => 0.0,
         };
-        let fondo = match p.get_mut("fill") {
-            Some(c) => Some(self.color(c)?),
-            None => None,
+        // `fill: ink 9%`: el color, y si se dice, cuánto se ve. Sobre cristal un
+        // fondo opaco tapa lo que el cristal enseña; uno translúcido lo deja ver.
+        let (fondo, fondo_alfa) = match p.get_mut("fill") {
+            Some(c) => {
+                let col = self.color(c)?;
+                let alfa = if c.acabo() { Expr::K(1.0) } else { self.expr(c)?.acotar(0.0, 1.0) };
+                c.nada_mas()?;
+                (Some(col), alfa)
+            }
+            None => (None, Expr::K(1.0)),
         };
         // Y su fondo puede ser cristal, como una forma suelta.
         let fondo_vidrio = match p.get_mut("glass") {
@@ -3562,7 +3569,7 @@ impl<'a> Obra<'a> {
             self.e.instrs[k] = Instr::Plano {
                 forma: Forma::Caja { centro: (tam.0.clone() * 0.5, tam.1.clone() * 0.5), mitad: (tam.0.clone() * 0.5, tam.1.clone() * 0.5), radio: esquina },
                 color,
-                alfa: Expr::K(1.0),
+                alfa: fondo_alfa,
                 vidrio: fondo_vidrio,
             };
         }
