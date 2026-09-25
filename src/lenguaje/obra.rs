@@ -1115,7 +1115,7 @@ impl<'a> Obra<'a> {
             }
         };
         let (rotate, stroke, opacity, blend, active) = (una(self, "rotate")?, una(self, "stroke")?, una(self, "opacity")?, una(self, "blend")?, una(self, "active")?);
-        let vidrio = una(self, "glass")?.map(|v| v.acotar(0.0, 1.0));
+        let vidrio = self.vidrio(una(self, "glass")?, una(self, "lens")?, n)?;
         // `show:` es «está o no está»: se apaga entera, y con ella su zona. Pulsar
         // lo que no se ve es peor que no poder pulsarlo.
         let visible = una(self, "show")?;
@@ -1861,10 +1861,15 @@ impl<'a> Obra<'a> {
             Some(c) => c.num()?,
             None => 0.0,
         };
-        let vidrio = match p.get_mut("glass") {
-            Some(c) => Some(self.expr(c)?.acotar(0.0, 1.0)),
+        let glass = match p.get_mut("glass") {
+            Some(c) => Some(self.expr(c)?),
             None => None,
         };
+        let lens = match p.get_mut("lens") {
+            Some(c) => Some(self.expr(c)?),
+            None => None,
+        };
+        let vidrio = self.vidrio(glass, lens, n)?;
         let alfa = match p.get_mut("opacity") {
             Some(c) => self.expr(c)?,
             None => Expr::K(1.0),
@@ -1877,6 +1882,15 @@ impl<'a> Obra<'a> {
         self.e.pintar(Instr::Relleno { pintura, alfa, filo, luz, borde, vidrio });
         self.ultimo_tam = tam;
         Ok(())
+    }
+
+    /// `glass` y `lens`, juntos: sin cristal no hay nada que doble la luz.
+    fn vidrio(&self, glass: Option<Expr>, lens: Option<Expr>, n: &Nodo) -> R<Option<Vidrio>> {
+        match (glass, lens) {
+            (Some(g), l) => Ok(Some(Vidrio { cuanto: g.acotar(0.0, 1.0), lente: l.unwrap_or(Expr::K(1.0)) })),
+            (None, Some(_)) => Err(Fallo::en(n.linea, n.col, "`lens` says whether glass bends what is behind it, and here there is no `glass`: `glass: 100%; lens: false`")),
+            (None, None) => Ok(None),
+        }
     }
 
     // ── textos con huecos ───────────────────────────────────────
@@ -3171,10 +3185,15 @@ impl<'a> Obra<'a> {
             None => (None, Expr::K(1.0)),
         };
         // Y su fondo puede ser cristal, como una forma suelta.
-        let fondo_vidrio = match p.get_mut("glass") {
-            Some(c) => Some(self.expr(c)?.acotar(0.0, 1.0)),
+        let glass = match p.get_mut("glass") {
+            Some(c) => Some(self.expr(c)?),
             None => None,
         };
+        let lens = match p.get_mut("lens") {
+            Some(c) => Some(self.expr(c)?),
+            None => None,
+        };
+        let fondo_vidrio = self.vidrio(glass, lens, n)?;
         // `size: 164, 66`: lo que mide el reparto. Hace falta para que un hijo
         // pueda pedir «lo que sobre»: sin decir de cuánto se reparte, no hay resto.
         let tam_dicho = match p.get_mut("size") {
@@ -4388,5 +4407,5 @@ struct FormaLeida {
     opacidad: Option<Expr>,
     fusion: Option<Expr>,
     /// Suelta, una forma también puede ser cristal. Dentro de un `body`, lo dice el cuerpo.
-    vidrio: Option<Expr>,
+    vidrio: Option<Vidrio>,
 }

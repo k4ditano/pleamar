@@ -1277,20 +1277,18 @@ pub fn hilo(
         // caen en el trozo de cada superficie, en sus coordenadas. Solo cuando cambian.
         for l in laminas.iter_mut() {
             let v = l.vista.caja();
-            let suyas: Vec<[i32; 4]> = dibujo
-                .cristales
-                .iter()
-                .filter(|b| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1])
-                .map(|b| [(b[0].max(v[0]) - v[0]) as i32, (b[1].max(v[1]) - v[1]) as i32, (b[2].min(v[2]) - v[0]).ceil() as i32, (b[3].min(v[3]) - v[1]).ceil() as i32])
-                .collect();
-            // Con cristal, la lente; mientras no tenga fondo que enseñar —o donde no
-            // se pueda ver lo de detrás—, el desenfoque lo pone el compositor.
-            // `PLEAMAR_SIN_LENTE=1`: el cristal sin lente, con el desenfoque del compositor.
-            l.quiere_lente = !suyas.is_empty() && !sin_lente;
+            let local = |b: &[f32; 4]| [(b[0].max(v[0]) - v[0]) as i32, (b[1].max(v[1]) - v[1]) as i32, (b[2].min(v[2]) - v[0]).ceil() as i32, (b[3].min(v[3]) - v[1]).ceil() as i32];
+            // Las del cristal que dobla la luz (`lens`), y las del que no.
+            // `PLEAMAR_SIN_LENTE=1`: ninguno la dobla, y lo desenfoca el compositor.
+            let (mut con_lente, mut sin) = (Vec::new(), Vec::new());
+            for (b, lente) in dibujo.cristales.iter().filter(|(b, _)| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]) {
+                if *lente && !sin_lente { con_lente.push(local(b)) } else { sin.push(local(b)) }
+            }
+            l.quiere_lente = !con_lente.is_empty();
             // Solo se fotografía lo que hace falta: la caja del cristal, con
             // margen para esmerilar, redondeada a 16 px para no rehacer
             // texturas por un píxel. En Marea, la bolita y no los 820 × 680.
-            l.caja_cristal = suyas.iter().copied().reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]).map(|b| {
+            l.caja_cristal = con_lente.iter().copied().reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]).map(|b| {
                 let m = crate::lente::MARGEN.ceil() as i32;
                 let (w, h) = (l.vista.tam.0 as i32, l.vista.tam.1 as i32);
                 let x0 = ((b[0] - m).max(0) / 16) * 16;
@@ -1299,10 +1297,14 @@ pub fn hilo(
                 let y1 = ((b[3] + m + 15) / 16 * 16).min(h);
                 [x0, y0, x1 - x0, y1 - y0]
             });
-            let suyas = if l.lente.as_ref().is_some_and(|x| x.listo) { Vec::new() } else { suyas };
-            if suyas != l.desenfoque {
-                l.region_de_desenfoque(&suyas);
-                l.desenfoque = suyas;
+            // Lo que desenfoca el compositor: el cristal sin lente, y el que la
+            // tiene mientras aún no hay fondo que enseñar.
+            if !l.lente.as_ref().is_some_and(|x| x.listo) {
+                sin.extend(con_lente);
+            }
+            if sin != l.desenfoque {
+                l.region_de_desenfoque(&sin);
+                l.desenfoque = sin;
             }
         }
 

@@ -321,7 +321,7 @@ fn fs(e: Salida) -> @location(0) vec4<f32> {
     let g = vec2<f32>(dpdx(d), dpdy(d));
     let normal = g / max(length(g), 1e-6);
     let dentro = max(-d, 0.0);
-    if (vidrio > 0.0 && u.detras.x > 0.5) {
+    if (vidrio > 0.0 && u.detras.x > 0.5 && el.uv.z > 0.5) {
         // Con lo de detrás a mano, el cristal es ese fondo doblado por el
         // bisel, esmerilado, con un poco de su tinte. Rojo, verde y azul se
         // doblan un pelo distinto: la franja de color de un canto de cristal.
@@ -357,9 +357,21 @@ fn fs(e: Salida) -> @location(0) vec4<f32> {
         let a_lente = visto * LENTE_ALFA;
         let rgb = clamp(visto * (mix(vivo, tono, LENTE_TINTE) - (1.0 - LENTE_ALFA) * debajo), vec3<f32>(0.0), vec3<f32>(a_lente));
         c = vec4<f32>(rgb, a_lente) + c * (1.0 - a_lente);
-        // Sobre algo claro, más tinte: lo que va escrito encima se sigue leyendo.
+        // Sobre algo claro, o sobre algo con mucho detalle —texto, líneas—, más
+        // tinte: lo que va escrito encima se sigue leyendo. Apple lo dice así: la
+        // sombra del cristal sube sobre texto. El detalle es cuánto varía lo
+        // esmerilado a unos pasos de aquí, que en un fondo liso es nada.
         let claro = smoothstep(0.45, 0.9, gris);
-        c = sobre(c, tono, claro * 0.35 * visto);
+        let paso = 14.0 * u.cab.w;
+        let alrededor = array<vec2<f32>, 4>(vec2<f32>(paso, 0.0), vec2<f32>(-paso, 0.0), vec2<f32>(0.0, paso), vec2<f32>(0.0, -paso));
+        var varia = 0.0;
+        for (var k = 0; k < 4; k++) {
+            let m = textureSampleLevel(detras_borroso, detras_muestreo, (q + alrededor[k]) / tam, 0.0);
+            let l = dot(m.rgb / max(m.a, 0.001), vec3<f32>(0.299, 0.587, 0.114));
+            varia += abs(l - gris);
+        }
+        let detalle = smoothstep(0.03, 0.14, varia * 0.25);
+        c = sobre(c, tono, max(claro * 0.5, detalle * 0.55) * visto);
     } else {
         // Sin él, el relleno es un tinte: deja ver lo que hay detrás (que el
         // compositor desenfoca) y guarda su color.

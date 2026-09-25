@@ -16,7 +16,7 @@
 use crate::plataforma::Detras;
 
 /// Cuánto se esmerila lo de detrás, en píxeles lógicos.
-const ESMERILADO: f32 = 6.0;
+const ESMERILADO: f32 = 8.0;
 
 pub struct Tuberias {
     despejar: wgpu::RenderPipeline,

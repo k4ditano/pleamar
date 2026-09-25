@@ -55,7 +55,7 @@ pub struct Dibujo {
     pegada: [bool; 4],
     /// Dónde hay cristal este frame, en franjas del plano de la escena: lo que
     /// se le pide al compositor que desenfoque.
-    pub cristales: Vec<[f32; 4]>,
+    pub cristales: Vec<([f32; 4], bool)>,
     /// Las franjas de cada forma de cristal, en el origen, por lo que la hace
     /// ser como es menos dónde está: mientras solo se mueva, no se vuelven a buscar.
     cache_de_cristales: std::collections::HashMap<[u32; 12], (Vec<[f32; 4]>, bool)>,
@@ -480,7 +480,7 @@ impl Dibujo {
     /// Que el compositor desenfoque lo que hay detrás de estas formas: sus
     /// franjas, cada una por separado —la unión de sus siluetas es la del
     /// cuerpo, menos el cuello donde dos se funden, que es poco— y recortadas.
-    fn pedir_cristal(&mut self, planas: &[crate::formas::Plana], recortes: &[(usize, [f32; 4])]) {
+    fn pedir_cristal(&mut self, planas: &[crate::formas::Plana], recortes: &[(usize, [f32; 4])], lente: bool) {
         let mut corte = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
         for (_, r) in recortes {
             corte = [corte[0].max(r[0]), corte[1].max(r[1]), corte[2].min(r[2]), corte[3].min(r[3])];
@@ -498,7 +498,7 @@ impl Dibujo {
                 puesta.1 = true;
                 puesta.0.clone()
             };
-            self.cristales.extend(franjas.into_iter().map(|f| [(f[0] + ox).max(corte[0]), (f[1] + oy).max(corte[1]), (f[2] + ox).min(corte[2]), (f[3] + oy).min(corte[3])]).filter(|f| f[2] > f[0] && f[3] > f[1]));
+            self.cristales.extend(franjas.into_iter().map(|f| [(f[0] + ox).max(corte[0]), (f[1] + oy).max(corte[1]), (f[2] + ox).min(corte[2]), (f[3] + oy).min(corte[3])]).filter(|f| f[2] > f[0] && f[3] > f[1]).map(|f| (f, lente)));
         }
     }
 
@@ -644,9 +644,10 @@ impl Dibujo {
                         self.mirar_el_corte(forma_sola);
                     }
                     // Un cristal que se ve pide que se desenfoque lo de detrás, por su silueta.
-                    let v = vidrio.as_ref().map_or(0.0, |v| v.evaluar(c));
+                    let v = vidrio.as_ref().map_or(0.0, |v| v.cuanto.evaluar(c));
+                    let lente = vidrio.as_ref().is_some_and(|v| v.lente.es_verdad(c));
                     if v * a > CRISTAL_VISIBLE {
-                        self.pedir_cristal(&g.planas, &recortes);
+                        self.pedir_cristal(&g.planas, &recortes, lente);
                     }
                     self.elemento(0.0, caja, &recortes, |e| {
                         afin.codificar(&mut e[44..52]);
@@ -673,6 +674,7 @@ impl Dibujo {
                         // dobla más la luz, como un cristal más grueso.
                         e[40] = v;
                         e[41] = bisel_de(forma_sola);
+                        e[42] = lente as u8 as f32;
                         if let Some(l) = luz {
                             e[20..23].copy_from_slice(&[l.cantidad, l.desde_y.evaluar(c), l.alto]);
                         }
@@ -697,9 +699,10 @@ impl Dibujo {
                     }
                     let p = aplanar(forma, &giros, &mut self.puntos);
                     let Some(b) = p.caja() else { continue };
-                    let v = vidrio.as_ref().map_or(0.0, |v| v.evaluar(c).clamp(0.0, 1.0));
+                    let v = vidrio.as_ref().map_or(0.0, |v| v.cuanto.evaluar(c).clamp(0.0, 1.0));
+                    let lente = vidrio.as_ref().is_some_and(|v| v.lente.es_verdad(c));
                     if v * a > CRISTAL_VISIBLE {
-                        self.pedir_cristal(&[p], &recortes);
+                        self.pedir_cristal(&[p], &recortes, lente);
                     }
                     let k = self.forma(p, 0.0);
                     let rgb = color(col);
@@ -711,6 +714,7 @@ impl Dibujo {
                         e[8..11].copy_from_slice(&rgb);
                         e[40] = v;
                         e[41] = bisel_de(b);
+                        e[42] = lente as u8 as f32;
                     });
                 }
                 Instr::Imagen { imagen, destino, alfa, tinte } => {

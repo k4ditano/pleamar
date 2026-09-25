@@ -401,7 +401,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `line` | `from` · `to` · `width` |
 | `path` | `at` (what its points hang from) · `size: w, h` (what it takes up in a layout), and inside it its steps: `move x, y` (once, the first one) · `line x, y` · `curve x, y via cx, cy` · `close`. Closed, it is filled; open, or with `stroke`, it is a line |
 | …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `show` |
-| `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `glass` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
+| `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `glass` · `lens` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` |
 | `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `show` |
 | `figure` | `at` (where the piece's centre goes) · `size: w, h` or `scale:` (without either, one unit of the svg is one pixel) · `pivot: x, y` (in the svg's units, from its centre: the point it **turns** around, which does not move it) · `rotate` · `color` (instead of the one in the file) · `opacity` · `blend` · `stroke` · `show` |
@@ -443,7 +443,10 @@ compositor has them: it asks for a screenshot of what is under the surface
 works the background out, because it knows exactly what it painted itself:
 screenshot = ours + (1 − our alpha) · background. It takes one after presenting,
 at most every 50 ms while something moves, and when nothing moves it waits for
-something behind to change: still, it costs nothing. It works on layers, normal
+something behind to change: still, it costs nothing. `lens: false` keeps the glass
+and leaves the bending out: the compositor blurs what is behind it instead,
+which costs less; like `glass`, it is an expression, so a setting can switch
+it while the scene runs. It works on layers, normal
 windows and popups; where each one is on its monitor is asked of Hyprland,
 and worked out from the anchor elsewhere. Where it cannot be done (another
 system, a compositor without screencopy),
@@ -819,13 +822,13 @@ statements: surface permissions model service spring prop pose fact event text i
 library: let spring component permissions fact text model service event image figure prop pose gesture posture layer
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate
 properties.permissions: run services
-properties.shape: rotate stroke color opacity blend glass active show cursor grow
+properties.shape: rotate stroke color opacity blend glass lens active show cursor grow
 properties.ellipse: at radius scale
 properties.box: at from size corner
 properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
-properties.body: color gradient rim light shadow border glass opacity show
+properties.body: color gradient rim light shadow border glass lens opacity show
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow
 properties.image: at size opacity tint show grow
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow
@@ -833,7 +836,7 @@ properties.input: at width size weight color opacity family placeholder selectio
 properties.group: pivot rotate scale move opacity size show grow
 properties.popup: at size open
 properties.children: move
-properties.layout: at anchor gap padding align fill glass corner show opacity cursor view step content wrap size grow
+properties.layout: at anchor gap padding align fill glass lens corner show opacity cursor view step content wrap size grow
 functions: min max abs floor ceil sin cos clamp smooth mix if vel
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change still

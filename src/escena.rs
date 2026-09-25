@@ -463,6 +463,14 @@ pub struct Sombra {
     pub color: Option<Color>,
 }
 
+/// Un cristal: cuánto (`glass`, de 0 a 1) y si dobla lo de detrás como una
+/// lente (`lens`, verdad o no) o solo lo deja ver desenfocado.
+#[derive(Clone, Debug)]
+pub struct Vidrio {
+    pub cuanto: Expr,
+    pub lente: Expr,
+}
+
 /// Un degradado vertical de claridad, para que el cuerpo no sea plano.
 #[derive(Clone, Debug)]
 pub struct Luz {
@@ -681,7 +689,7 @@ pub enum Instr {
     Forma { forma: Forma, fusion: Expr },
     /// Pinta el cuerpo acumulado: sombra, relleno, luz y filo. Con `vidrio`, de
     /// 0 a 1, el relleno se vuelve cristal: translúcido, y con la luz en los cantos.
-    Relleno { pintura: Pintura, alfa: Expr, filo: f32, luz: Option<Luz>, borde: Option<(Expr, Color)>, vidrio: Option<Expr> },
+    Relleno { pintura: Pintura, alfa: Expr, filo: f32, luz: Option<Luz>, borde: Option<(Expr, Color)>, vidrio: Option<Vidrio> },
     /// Todo lo que venga después se recorta a esta forma, además de a las que
     /// ya hubiera (hasta cuatro). `None` quita la última.
     Recorte(Option<(Forma, f32)>),
@@ -693,7 +701,7 @@ pub enum Instr {
     /// `None` cierra el grupo.
     Opacidad(Option<Expr>),
     /// Una forma suelta, de color plano.
-    Plano { forma: Forma, color: Color, alfa: Expr, vidrio: Option<Expr> },
+    Plano { forma: Forma, color: Color, alfa: Expr, vidrio: Option<Vidrio> },
     /// Texto. `en` es el punto de referencia y `ancla` qué parte del texto cae
     /// sobre él: (0, 0) la esquina de arriba a la izquierda, (0.5, 0.5) el
     /// centro. Con `ancho` se parte en líneas; sin él, es una sola.
