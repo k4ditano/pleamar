@@ -402,13 +402,13 @@ impl DrawList {
 
     /// A piece of the atlas —a glyph, an image— placed on screen. With
     /// `tint`, its alpha is a mask painted in that colour.
-    fn sprite(&mut self, d: [f32; 4], uv: [f32; 4], alpha: f32, tint: Option<[f32; 3]>, affine: Affine, clips: &[(usize, [f32; 4])]) {
+    fn sprite(&mut self, d: [f32; 4], uv: [f32; 4], alpha: f32, tint: Option<[f32; 3]>, text: bool, affine: Affine, clips: &[(usize, [f32; 4])]) {
         let bounds = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
         self.element(1.0, [bounds[0] - 1.0, bounds[1] - 1.0, bounds[2] + 1.0, bounds[3] + 1.0], clips, |e| {
             affine.encode(&mut e[44..52]);
             e[3] = alpha;
             if let Some(rgb) = tint {
-                e[2] = 1.0;
+                e[2] = if text { 2.0 } else { 1.0 };
                 e[8..11].copy_from_slice(&rgb);
             }
             e[36..40].copy_from_slice(&d);
@@ -749,7 +749,7 @@ impl DrawList {
                     }
                     let d = [target.0.eval(c), target.1.eval(c), target.2.eval(c), target.3.eval(c)];
                     let rgb = tint.as_ref().map(&color);
-                    self.sprite(d, slot.uv(), a, rgb, affine, &clips);
+                    self.sprite(d, slot.uv(), a, rgb, false, affine, &clips);
                 }
                 Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret } => {
                     let k = text.0 as usize;
@@ -802,7 +802,7 @@ impl DrawList {
                         let (tx, ty) = (((x0 - scroll) * s).round() / s, (y0 * s).round() / s);
                         for g in &m.glyphs {
                             let d = [tx + g.rect[0], ty + g.rect[1], g.rect[2], g.rect[3]];
-                            self.sprite(d, g.uv, if empty { a * 0.4 } else { a }, if g.colored { None } else { Some(rgb) }, affine, &clips);
+                            self.sprite(d, g.uv, if empty { a * 0.4 } else { a }, if g.colored { None } else { Some(rgb) }, true, affine, &clips);
                         }
                     }
                     if let Some(v) = mine.filter(|v| v.visible) {
@@ -839,7 +839,7 @@ impl DrawList {
                     let y0 = ((at.1.eval(c) - m.size.1 * anchor.1) * s).round() / s;
                     for g in &m.glyphs {
                         let d = [x0 + g.rect[0], y0 + g.rect[1], g.rect[2], g.rect[3]];
-                        self.sprite(d, g.uv, a, if g.colored { None } else { Some(rgb) }, affine, &clips);
+                        self.sprite(d, g.uv, a, if g.colored { None } else { Some(rgb) }, true, affine, &clips);
                     }
                 }
                 Instr::Clip(Some((shape, margin))) => {

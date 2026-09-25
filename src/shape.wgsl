@@ -281,7 +281,22 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
         let uv01 = (q - el.dest.xy) / max(el.dest.zw, vec2<f32>(1.0));
         if (uv01.x < 0.0 || uv01.x > 1.0 || uv01.y < 0.0 || uv01.y > 1.0) { discard; }
         let t = textureSampleLevel(atlas, atlas_sampler, mix(el.uv.xy, el.uv.zw, uv01), 0.0);
-        // Tinted: the piece is a mask —a letter, a symbolic icon— and the element provides the colour.
+        // Tinted: the piece is a mask —a letter (2), a symbolic icon (1)— and the element provides the colour.
+        // A letter (2) gets its edges firmed up. Blended as they are, in sRGB,
+        // a stem that falls across two pixels —most of them: the letters are
+        // placed at quarters of a pixel and the font is only hinted
+        // vertically— comes out as two greys, and light text on a dark
+        // background reads thin and washed out. This is the contrast curve
+        // DirectWrite and Skia apply to their coverage: stronger the lighter
+        // the letter, because dark text on light already gains body from the
+        // sRGB blend. Measured on an «I» in #f6f6f5 over #1b1b1c: #bc + #67
+        // became #d4 + #8a —the same width, but a letter and not a smudge.
+        if (el.header.z > 1.5) {
+            let lum = dot(el.color0.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let k = mix(0.3, 1.0, lum);
+            let a = t.a * (k + 1.0) / (t.a * k + 1.0);
+            return vec4<f32>(el.color0.rgb * a, a) * alpha;
+        }
         if (el.header.z > 0.5) { return vec4<f32>(el.color0.rgb * t.a, t.a) * alpha; }
         return t * alpha;
     }
