@@ -417,7 +417,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `path` | `at` (what its points hang from) · `size: w, h` (what it takes up in a layout), and inside it its steps: `move x, y` (once, the first one) · `line x, y` · `curve x, y via cx, cy` · `close`. Closed, it is filled; open, or with `stroke`, it is a line |
 | …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `show` |
 | `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `glass` · `lens` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
-| `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` |
+| `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` · and its effects: `gradient` · `outline` · `shadow` · `letter_move` · `letter_opacity` · `letter_scale` (§8.4) |
 | `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `show` |
 | `particles` | `at` · `area` · `count` · `life` · `speed` · `direction` · `spread` · `gravity` · `drag` · `size` · `colors` · `opacity` · `shape` · `emit` or `burst` · `show`: §8.3 |
 | `shader` | `at` (its top left corner) · `size: w, h` · `corner` · `opacity` · `show` · `values: a, b, …` (up to eight numbers, any expression) · `colors: c1, c2` (up to two). What it is and how it is written: §8.1 |
@@ -702,6 +702,36 @@ They carry themselves, so the scene does not rest while one is in the air —and
 rests again when the last one dies—. With reduced motion there are none. An
 emitter with `shape: spark` inside a group with `glow:` is most of what a
 firework is.
+
+### 8.4. Text with effects
+
+A `text` can have a gradient across its letters, an outline and a shadow, and
+each letter can move, fade and grow on its own.
+
+```plm
+language 0.1
+scene Title {
+    surface { size: 420, 160; anchor: top }
+    prop reveal = 0 ~2s
+    follow reveal = 1
+    text "PLEAMAR" { at: 210, 50; anchor: center; size: 48; weight: 800; color: #fff
+                     gradient: 100, 0 to 320, 0, #5ef2b0, #7a6cff, #ff6f91
+                     outline: 2, #0b0f14; shadow: 3, 5, 6, 70%, #000000 }
+    text "one letter at a time" { at: 210, 110; anchor: center; size: 18; color: #f5f7f5
+                                  letter_opacity: clamp(reveal * letters - letter, 0, 1) }
+}
+```
+
+| | |
+| --- | --- |
+| `gradient:` | like a `body`'s (§8): `x1, y1 to x2, y2, colours…` or `radial x, y radius r, colours…`, in the scene's coordinates. It replaces `color` for the fill |
+| `outline: width, color` | the letters grown by `width`, in that colour, under them |
+| `shadow: dx, dy, blur, alpha` · `…, color` | the letters moved and blurred, under everything; black unless a colour is given |
+| `letter_move: dx, dy` · `letter_opacity: o` · `letter_scale: s` | each letter on its own. Inside them, **`letter`** is which one (from 0) and **`letters`** how many there are: `letter_move: 0, sin(time * 300 + letter * 35) * 5` is a wave, `letter_opacity: clamp(reveal * letters - letter, 0, 1)` a typewriter as `reveal` goes from 0 to 1, `letter_scale: 1 + 0.3 * max(0, sin(time * 240 - letter * 25))` a ripple of growth |
+
+A letter scaled up covers its neighbours: scale is around its own centre, the
+line does not open up for it. Colour letters (emoji) take the movement, fading
+and scale, not the outline, shadow or gradient.
 
 ## 9. Layouts
 
@@ -1021,7 +1051,7 @@ properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
 properties.body: color gradient rim light shadow border glass lens opacity show
-properties.text: at anchor width size weight color opacity lines align line_height family measure show grow
+properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale
 properties.image: at size opacity tint show grow
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow
 properties.shader: at size corner opacity show values colors grow

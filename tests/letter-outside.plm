@@ -1,0 +1,5 @@
+// expect: error «only exist inside a text's `letter_move`»
+scene X {
+    surface { size: 100, 100 }
+    text "a" { at: 10 + letter, 10; size: 12; color: #fff }
+}

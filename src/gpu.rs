@@ -458,6 +458,31 @@ impl DrawList {
         });
     }
 
+    /// A letter with its text's effects: its gradient, outline and shadow
+    /// (`looks`, see the text's arm in `compose`), in a box grown by `pad` so
+    /// the outline and the shadow fit.
+    #[allow(clippy::too_many_arguments)]
+    fn sprite_with_effects(&mut self, d: [f32; 4], uv: [f32; 4], alpha: f32, tint: [f32; 3], colored: bool, looks: &[f32; 20], pad: f32, affine: Affine, clips: &[(usize, [f32; 4])]) {
+        let bounds = affine.bounds([d[0] - pad, d[1] - pad, d[0] + d[2] + pad, d[1] + d[3] + pad]);
+        self.element(1.0, [bounds[0] - 1.0, bounds[1] - 1.0, bounds[2] + 1.0, bounds[3] + 1.0], clips, |e| {
+            affine.encode(&mut e[44..52]);
+            e[2] = if colored { 0.0 } else { 2.0 };
+            e[3] = alpha;
+            e[8..11].copy_from_slice(&tint);
+            e[12..15].copy_from_slice(&looks[15..18]);
+            e[15] = looks[0];
+            e[16..20].copy_from_slice(&looks[1..5]);
+            e[20] = looks[5];
+            e[21] = looks[6];
+            e[23] = 1.0;
+            e[24..27].copy_from_slice(&looks[8..11]);
+            e[27] = looks[7];
+            e[28..32].copy_from_slice(&looks[11..15]);
+            e[36..40].copy_from_slice(&d);
+            e[40..44].copy_from_slice(&uv);
+        });
+    }
+
     /// A shadow is never cut on purpose. If the shape fits whole in the
     /// surface and its shadow does not, the edge is left straight and whoever
     /// sees it has nowhere to look: the shadow is not declared with a size, it
@@ -606,6 +631,8 @@ impl DrawList {
         self.points.clear();
         self.elements.clear();
         let mut placed_stops: Vec<f32> = Vec::new();
+        // A text's effects, waiting for the text they belong to.
+        let mut text_fx: Option<&TextFx> = None;
         self.offscreen_groups.clear();
         self.particle_marks.clear();
         self.particles_alive = false;
@@ -1037,7 +1064,9 @@ impl DrawList {
                     }
                     clips.pop();
                 }
+                Instr::TextFx(fx) => text_fx = Some(fx),
                 Instr::Text { content, at, anchor, width, style, alpha, measure } => {
+                    let fx = text_fx.take();
                     let text = content_text(content, c, texts);
                     let text: &str = &text;
                     // It is ordered even if not visible: so that when it appears, it is already there.
@@ -1056,10 +1085,51 @@ impl DrawList {
                     let s = tip_scale;
                     let x0 = ((at.0.eval(c) - m.size.0 * anchor.0) * s).round() / s;
                     let y0 = ((at.1.eval(c) - m.size.1 * anchor.1) * s).round() / s;
-                    for g in &m.glyphs {
-                        let d = [x0 + g.rect[0], y0 + g.rect[1], g.rect[2], g.rect[3]];
-                        self.sprite(d, g.uv, a, if g.colored { None } else { Some(rgb) }, true, affine, &clips);
+                    let Some(fx) = fx else {
+                        for g in &m.glyphs {
+                            let d = [x0 + g.rect[0], y0 + g.rect[1], g.rect[2], g.rect[3]];
+                            self.sprite(d, g.uv, a, if g.colored { None } else { Some(rgb) }, true, affine, &clips);
+                        }
+                        continue;
+                    };
+                    // With effects: what is the same for every letter, worked out once.
+                    let mut looks = [0f32; 20];
+                    if let Some(Paint::Gradient { radial, from, to, stops }) = &fx.gradient {
+                        looks[0] = if *radial { 2.0 } else { 1.0 };
+                        looks[1..5].copy_from_slice(&[from.0.eval(c), from.1.eval(c), to.0.eval(c), to.1.eval(c)]);
+                        looks[5] = (placed_stops.len() / 4) as f32;
+                        looks[6] = stops.len() as f32;
+                        for (at, col) in stops {
+                            let k = color(col);
+                            placed_stops.extend_from_slice(&[k[0], k[1], k[2], at.eval(c).clamp(0.0, 1.0)]);
+                        }
                     }
+                    if let Some((w, col)) = &fx.outline {
+                        looks[7] = w.eval(c).max(0.0);
+                        looks[8..11].copy_from_slice(&color(col));
+                    }
+                    if let Some(sh) = &fx.shadow {
+                        looks[11..15].copy_from_slice(&[sh.offset.0.eval(c), sh.offset.1.eval(c), sh.blur.eval(c).max(0.0), sh.alpha.eval(c).clamp(0.0, 1.0)]);
+                        if let Some(col) = &sh.color {
+                            looks[15..18].copy_from_slice(&color(col));
+                        }
+                    }
+                    let pad = looks[7].max(looks[11].abs().max(looks[12].abs()) + looks[13]) + 1.0;
+                    let count = m.glyphs.len() as f32;
+                    for (k, g) in m.glyphs.iter().enumerate() {
+                        // Each letter on its own: `letter` and `letters` are these two while it is worked out.
+                        LETTER.with(|l| l.set((k as f32, count)));
+                        let (dx, dy) = fx.letter_move.as_ref().map_or((0.0, 0.0), |(x, y)| (x.eval(c), y.eval(c)));
+                        let opacity = fx.letter_opacity.as_ref().map_or(1.0, |e| e.eval(c).clamp(0.0, 1.0));
+                        let scale = fx.letter_scale.as_ref().map_or(1.0, |e| e.eval(c).max(0.0));
+                        let (w, h) = (g.rect[2] * scale, g.rect[3] * scale);
+                        let (cxg, cyg) = (x0 + g.rect[0] + g.rect[2] * 0.5 + dx, y0 + g.rect[1] + g.rect[3] * 0.5 + dy);
+                        let d = [cxg - w * 0.5, cyg - h * 0.5, w, h];
+                        if a * opacity > 0.001 {
+                            self.sprite_with_effects(d, g.uv, a * opacity, rgb, g.colored, &looks, pad, affine, &clips);
+                        }
+                    }
+                    LETTER.with(|l| l.set((0.0, 0.0)));
                 }
                 Instr::Clip(Some((shape, margin))) => {
                     let p = flatten(shape, &transforms, &mut self.points).shrink(*margin);

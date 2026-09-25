@@ -232,6 +232,15 @@ pub enum Expr {
     Un(Un, Box<Expr>),
     /// …and of two: `pow`, `atan2`, `mod`, `noise(x, y)`, `length`.
     Bin(Bin, Box<Expr>, Box<Expr>),
+    /// Inside a text's `letter_*` properties: 0 which letter it is, 1 how many there are.
+    Letter(u8),
+}
+
+thread_local! {
+    /// The letter being painted, and how many: what `Expr::Letter` reads. Set by
+    /// the render around each letter of a text with `letter_*` properties, on
+    /// its own thread; anywhere else it is 0.
+    pub static LETTER: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((0.0, 0.0)) };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -373,6 +382,7 @@ impl Expr {
             Not(a) => (a.eval(c) <= 0.5) as u8 as f32,
             Un(f, a) => f.apply(a.eval(c)),
             Bin(f, a, b) => f.apply(a.eval(c), b.eval(c)),
+            Letter(k) => LETTER.with(|l| if *k == 0 { l.get().0 } else { l.get().1 }),
         }
     }
     pub fn is_true(&self, c: Ctx) -> bool {
@@ -385,7 +395,7 @@ impl Expr {
     pub fn reads(&self, f: impl Fn(FactId) -> bool + Copy) -> bool {
         use Expr::*;
         match self {
-            K(_) | P(_) | Vel(_) => false,
+            K(_) | P(_) | Vel(_) | Letter(_) => false,
             H(h) => f(*h),
             Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => a.reads(f),
             Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) | Bin(_, a, b) => a.reads(f) || b.reads(f),
@@ -395,7 +405,7 @@ impl Expr {
     pub fn node_count(&self) -> usize {
         use Expr::*;
         match self {
-            K(_) | P(_) | H(_) | Vel(_) => 1,
+            K(_) | P(_) | H(_) | Vel(_) | Letter(_) => 1,
             Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => 1 + a.node_count(),
             Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) | Bin(_, a, b) => 1 + a.node_count() + b.node_count(),
             Mix(a, b, t) => 1 + a.node_count() + b.node_count() + t.node_count(),
@@ -415,7 +425,7 @@ impl Expr {
         use Expr::*;
         let k = |e: &Expr| e.constant();
         let constant_children = match &self {
-            K(_) | P(_) | H(_) | Vel(_) => return self,
+            K(_) | P(_) | H(_) | Vel(_) | Letter(_) => return self,
             Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => k(a).is_some(),
             Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) | Bin(_, a, b) => k(a).is_some() && k(b).is_some(),
             Mix(a, b, t) => k(a).is_some() && k(b).is_some() && k(t).is_some(),
@@ -597,6 +607,19 @@ pub struct Light {
 }
 
 pub type Color = [Expr; 3];
+
+/// A text's effects: a gradient across its letters, an outline, a shadow,
+/// and each letter moved, faded or scaled on its own (`letter` is which one,
+/// `letters` how many). It goes right before the `Text` it belongs to.
+#[derive(Clone, Debug)]
+pub struct TextFx {
+    pub gradient: Option<Paint>,
+    pub outline: Option<(Expr, Color)>,
+    pub shadow: Option<Shadow>,
+    pub letter_move: Option<Point>,
+    pub letter_opacity: Option<Expr>,
+    pub letter_scale: Option<Expr>,
+}
 
 /// `particles sparks { at: x, y; count: 300; life: 0.6s .. 1.4s; … }`.
 ///
@@ -920,6 +943,8 @@ pub enum Instr {
     Opacity(Option<Expr>),
     /// A particle emitter: see `Particles`.
     Particles(Box<Particles>),
+    /// What the next `Text` does besides being written: see `TextFx`.
+    TextFx(Box<TextFx>),
     /// Like `Opacity(Some(..))`, but what is inside is painted apart WITH
     /// effects applied when it is blended: blur, glow, colour, mask, how it
     /// blends. It always wants a layer of its own. `Opacity(None)` closes it.

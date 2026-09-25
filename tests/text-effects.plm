@@ -1,0 +1,15 @@
+// expect: ok
+// A text's effects: gradient, outline, shadow, and each letter on its own.
+scene TextEffects {
+    surface { size: 400, 200; anchor: top }
+    prop reveal = 0 ~2s
+    follow reveal = 1
+    text "PLEAMAR" { at: 200, 40; anchor: center; size: 40; weight: 800; color: #fff
+                     gradient: 80, 0 to 320, 0, #5ef2b0, #7a6cff 60%, #ff6f91
+                     outline: 2, #0b0f14; shadow: 3, 5, 6, 70%, #000000 }
+    text "radial" { at: 200, 90; anchor: center; size: 20; color: #fff; gradient: radial 200, 90 radius 60, #ffffff, #7a6cff }
+    text "waves" { at: 100, 140; anchor: center; size: 20; color: #9ed6bd; letter_move: 0, sin(time * 300 + letter * 35) * 5 }
+    text "typewriter" { at: 200, 140; anchor: left center; size: 18; color: #fff; letter_opacity: clamp(reveal * letters - letter, 0, 1) }
+    text "grow" { at: 100, 180; anchor: center; size: 22; color: #ffd166; letter_scale: 1 + 0.3 * max(0, sin(time * 240 - letter * 25)) }
+    text "soft" { at: 300, 180; anchor: center; size: 22; color: #fff; shadow: 0, 4, 10, 90% }
+}

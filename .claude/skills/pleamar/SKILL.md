@@ -164,6 +164,10 @@ speed: 120 .. 220; direction: -90deg; spread: 40deg; gravity: 0, 260; size: 3, 1
 colors: a, b; shape: dot | square | spark; emit: cond }` (or `burst: event`).
 Worked out on the card, thousands are cheap; §8.3.
 
+A `text` can have `gradient:` (like a body's), `outline: w, color`, `shadow: dx,
+dy, blur, alpha[, color]`, and per letter `letter_move: dx, dy`, `letter_opacity`,
+`letter_scale`, where `letter` is its index and `letters` the count; §8.4.
+
 For smaller things there is maths: `noise(x)`, `noise(x, y)`, `random(k)`,
 `sqrt`, `pow`, `fract`, `mod`, `atan2`, `length`… and `time`, the seconds since
 the scene started (naming it keeps the scene painting). Gesture frames take

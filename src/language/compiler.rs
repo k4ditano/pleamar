@@ -247,6 +247,8 @@ struct Compiler<'a> {
     /// What a `strict` component has read from the scene without asking for it: (component, name).
     unrequested: std::cell::RefCell<Vec<(String, String, (usize, usize))>>,
     unwatched: std::cell::Cell<bool>,
+    /// Reading a text's `letter_*` property: `letter` and `letters` mean something.
+    in_letters: std::cell::Cell<bool>,
     /// `translations`: each language with its table, original → translated. And, per
     /// language, the texts found without a translation, to say so once at the end.
     translations: Vec<(String, HashMap<String, String>)>,
@@ -334,7 +336,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None,
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None,
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -1023,6 +1025,11 @@ impl<'a> Compiler<'a> {
                 match n.as_str() {
                     "true" => return Ok(Expr::K(1.0)),
                     "false" => return Ok(Expr::K(0.0)),
+                    "letter" if self.in_letters.get() => return Ok(Expr::Letter(0)),
+                    "letters" if self.in_letters.get() => return Ok(Expr::Letter(1)),
+                    "letter" | "letters" if !self.scopes.iter().any(|e| e.exprs.contains_key(n.as_str())) && !self.lets.contains_key(n.as_str()) && !self.props.contains_key(n.as_str()) && !self.facts.contains_key(n.as_str()) => {
+                        return c.error(format!("there is nothing called '{n}' here: `letter` (which letter, from 0) and `letters` (how many) only exist inside a text's `letter_move`, `letter_opacity` and `letter_scale`"));
+                    }
                     _ => {}
                 }
                 // First what is inside —parameters and `let`s of the component—, then what is outside.
@@ -2050,46 +2057,7 @@ impl<'a> Compiler<'a> {
             return Err(CompileError::at(n.line, n.col, "a 'body' with no shapes paints nothing"));
         }
         let paint = if let Some(c) = p.get_mut("gradient") {
-            // `gradient: radial 20, 20 radius 30 { … }`: from a centre outwards.
-            let radial = c.word("radial");
-            let from = self.point(c)?;
-            let a = if radial {
-                c.expect_word("radius")?;
-                (self.expr(c)?, Expr::K(0.0))
-            } else {
-                // `0, 0 to 0, 44` reads the same as `0, 0, 0, 44`.
-                if !c.word("to") {
-                    c.expect_sym(",")?;
-                }
-                self.point(c)?
-            };
-            // The colours, separated by commas. Each one can say where it falls
-            // (`sand 40%`); those that do not say are spread evenly. Two plain
-            // colours is the usual gradient.
-            let mut stops: Vec<(Expr, Color)> = Vec::new();
-            // Which ones did not say where. Marking them with a -1 will not do: `mint -10%` is already
-            // a constant -0.1 when read, and it would be confused with not saying anything.
-            let mut unplaced: Vec<bool> = Vec::new();
-            while c.sym(",") {
-                let col = self.color(c)?;
-                let given = !c.at_end() && !matches!(c.peek(), Some(TokenKind::Sym(",")));
-                stops.push((if given { self.expr(c)? } else { Expr::K(0.0) }, col));
-                unplaced.push(!given);
-            }
-            c.expect_end()?;
-            if stops.len() < 2 {
-                return Err(CompileError::at(n.line, n.col, "a gradient needs at least two colours: `gradient: 0, 0 to 0, 44, mint, sand 40%, coal`"));
-            }
-            if stops.len() > 8 {
-                return Err(CompileError::at(n.line, n.col, "a gradient holds at most 8 colours"));
-            }
-            let last = stops.len() - 1;
-            for (k, stop) in stops.iter_mut().enumerate() {
-                if unplaced[k] {
-                    stop.0 = Expr::K(k as f32 / last as f32);
-                }
-            }
-            Paint::Gradient { radial, from, to: a, stops }
+            self.gradient(n, c)?
         } else if let Some(c) = p.get_mut("color") {
             Paint::Color(self.color(c)?)
         } else {
@@ -2553,6 +2521,55 @@ impl<'a> Compiler<'a> {
         if let Some((w, h)) = measure {
             self.last_size = Some((width.clone().unwrap_or(w.e()), h.e()));
         }
+        // Its effects, if it has any: they go right before it.
+        let gradient = match p.get_mut("gradient") {
+            Some(c) => Some(self.gradient(n, c)?),
+            None => None,
+        };
+        let outline = match p.get_mut("outline") {
+            Some(c) => {
+                let w = self.expr(c)?;
+                c.expect_sym(",")?;
+                Some((w, self.color(c)?))
+            }
+            None => None,
+        };
+        let shadow = match p.get_mut("shadow") {
+            Some(c) => {
+                let dx = self.expr(c)?;
+                c.expect_sym(",")?;
+                let dy = self.expr(c)?;
+                c.expect_sym(",")?;
+                let blur = self.expr(c)?;
+                c.expect_sym(",")?;
+                let alpha = self.expr(c)?;
+                let color = if c.sym(",") { Some(self.color(c)?) } else { None };
+                Some(Shadow { offset: (dx, dy), blur, alpha, color })
+            }
+            None => None,
+        };
+        // Each letter on its own: `letter` is which one (from 0), `letters` how many.
+        self.in_letters.set(true);
+        let letters = (|| -> R<_> {
+            let letter_move = match p.get_mut("letter_move") {
+                Some(c) => Some(self.point(c)?),
+                None => None,
+            };
+            let letter_opacity = match p.get_mut("letter_opacity") {
+                Some(c) => Some(self.expr(c)?),
+                None => None,
+            };
+            let letter_scale = match p.get_mut("letter_scale") {
+                Some(c) => Some(self.expr(c)?),
+                None => None,
+            };
+            Ok((letter_move, letter_opacity, letter_scale))
+        })();
+        self.in_letters.set(false);
+        let (letter_move, letter_opacity, letter_scale) = letters?;
+        if gradient.is_some() || outline.is_some() || shadow.is_some() || letter_move.is_some() || letter_opacity.is_some() || letter_scale.is_some() {
+            self.e.paint(Instr::TextFx(Box::new(TextFx { gradient, outline, shadow, letter_move, letter_opacity, letter_scale })));
+        }
         self.e.paint(Instr::Text { content, at, anchor, width, style, alpha, measure });
         Ok(())
     }
@@ -2826,6 +2843,51 @@ impl<'a> Compiler<'a> {
         };
         self.e.paint(Instr::Image { image, target: (x, y, w, h), alpha, tint });
         Ok(())
+    }
+
+    /// `gradient: 0, 0 to 0, 44, mint, sand 40%, coal` · `gradient: radial x, y radius r, …`:
+    /// for a `body` and for a `text`.
+    fn gradient(&self, n: &Node, c: &mut Cur) -> R<Paint> {
+        // `gradient: radial 20, 20 radius 30 { … }`: from a centre outwards.
+        let radial = c.word("radial");
+        let from = self.point(c)?;
+        let a = if radial {
+            c.expect_word("radius")?;
+            (self.expr(c)?, Expr::K(0.0))
+        } else {
+            // `0, 0 to 0, 44` reads the same as `0, 0, 0, 44`.
+            if !c.word("to") {
+                c.expect_sym(",")?;
+            }
+            self.point(c)?
+        };
+        // The colours, separated by commas. Each one can say where it falls
+        // (`sand 40%`); those that do not say are spread evenly. Two plain
+        // colours is the usual gradient.
+        let mut stops: Vec<(Expr, Color)> = Vec::new();
+        // Which ones did not say where. Marking them with a -1 will not do: `mint -10%` is already
+        // a constant -0.1 when read, and it would be confused with not saying anything.
+        let mut unplaced: Vec<bool> = Vec::new();
+        while c.sym(",") {
+            let col = self.color(c)?;
+            let given = !c.at_end() && !matches!(c.peek(), Some(TokenKind::Sym(",")));
+            stops.push((if given { self.expr(c)? } else { Expr::K(0.0) }, col));
+            unplaced.push(!given);
+        }
+        c.expect_end()?;
+        if stops.len() < 2 {
+            return Err(CompileError::at(n.line, n.col, "a gradient needs at least two colours: `gradient: 0, 0 to 0, 44, mint, sand 40%, coal`"));
+        }
+        if stops.len() > 8 {
+            return Err(CompileError::at(n.line, n.col, "a gradient holds at most 8 colours"));
+        }
+        let last = stops.len() - 1;
+        for (k, stop) in stops.iter_mut().enumerate() {
+            if unplaced[k] {
+                stop.0 = Expr::K(k as f32 / last as f32);
+            }
+        }
+        Ok(Paint::Gradient { radial, from, to: a, stops })
     }
 
     /// `shader aurora { at: 360, 60; size: 400, 120; corner: 20; values: open, glow; colors: mint, deep }`

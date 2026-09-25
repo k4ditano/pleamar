@@ -289,6 +289,8 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
     let local = to_local(p, el.t0, el.t1);
     if (kind == TEXTURE) {
         let q = local;
+        // A letter with effects draws outside itself too: its outline and its shadow.
+        if (el.header.z > 1.5 && el.light.w > 0.5) { return text_with_effects(el, q, alpha); }
         let uv01 = (q - el.dest.xy) / max(el.dest.zw, vec2<f32>(1.0));
         if (uv01.x < 0.0 || uv01.x > 1.0 || uv01.y < 0.0 || uv01.y > 1.0) { discard; }
         let t = textureSampleLevel(atlas, atlas_sampler, mix(el.uv.xy, el.uv.zw, uv01), 0.0);
@@ -649,4 +651,70 @@ fn fs_particle(e: ParticleOut) -> @location(0) vec4<f32> {
     let a = e.color.a * coverage(d) * clip;
     if (a <= 0.001) { discard; }
     return vec4<f32>(e.color.rgb * a, a);
+}
+
+// ── a text's effects ──────────────────────────────────────────────
+// How much of the letter covers this point; nothing outside its piece of the atlas.
+fn glyph_at(el: Element, q: vec2<f32>) -> f32 {
+    let uv01 = (q - el.dest.xy) / max(el.dest.zw, vec2<f32>(1.0));
+    if (uv01.x < 0.0 || uv01.x > 1.0 || uv01.y < 0.0 || uv01.y > 1.0) { return 0.0; }
+    return textureSampleLevel(atlas, atlas_sampler, mix(el.uv.xy, el.uv.zw, uv01), 0.0).a;
+}
+
+// color0 the letter's colour · color1 the shadow's colour, and the gradient's kind ·
+// line the gradient's points · light first stop, how many, -, «has effects» ·
+// border the outline's colour and width · shadow its offset, blur and alpha
+fn text_with_effects(el: Element, q: vec2<f32>, alpha: f32) -> vec4<f32> {
+    // The letter, firmed up like any other (see the contrast curve above).
+    let lum = dot(el.color0.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let k = mix(0.3, 1.0, lum);
+    let raw = glyph_at(el, q);
+    let fill = raw * (k + 1.0) / (raw * k + 1.0);
+    var c = vec4<f32>(0.0);
+    // The shadow: the letter moved and blurred, under everything.
+    if (el.shadow.w > 0.0) {
+        // Blurred over a disc of `blur`: 24 points on a golden-angle spiral,
+        // weighted like a gaussian —with a 3 × 3 grid, a wide blur came out as
+        // stacked copies of the letter—.
+        let at = q - el.shadow.xy;
+        let radius = el.shadow.z;
+        var s = 0.0;
+        var weights = 0.0;
+        for (var i = 0; i < 24; i++) {
+            let f = (f32(i) + 0.5) / 24.0;
+            let r = radius * sqrt(f);
+            let a = f32(i) * 2.39996323;
+            let w = exp(-2.0 * f);
+            s += glyph_at(el, at + vec2<f32>(cos(a), sin(a)) * r) * w;
+            weights += w;
+        }
+        c = vec4<f32>(el.color1.rgb, 1.0) * (s / weights) * el.shadow.w;
+    }
+    // The outline: the letter grown by its width, in its colour, under the fill.
+    if (el.border.w > 0.0) {
+        let w = el.border.w;
+        var o = raw;
+        for (var i = 0; i < 12; i++) {
+            let a = f32(i) * 0.5235988;
+            let dir = vec2<f32>(cos(a), sin(a));
+            o = max(o, glyph_at(el, q + dir * w));
+            o = max(o, glyph_at(el, q + dir * w * 0.5));
+        }
+        c = over(c, el.border.rgb, clamp(o * 1.4, 0.0, 1.0));
+    }
+    // The fill: its colour, or its gradient at this point.
+    var tone = el.color0.rgb;
+    if (el.color1.w > 0.5) {
+        var t = 0.0;
+        if (el.color1.w > 1.5) {
+            t = clamp(length(q - el.line.xy) / max(el.line.z, 0.0001), 0.0, 1.0);
+        } else {
+            let axis = el.line.zw - el.line.xy;
+            t = clamp(dot(q - el.line.xy, axis) / max(dot(axis, axis), 0.0001), 0.0, 1.0);
+        }
+        tone = between_stops(u32(el.light.x), u32(el.light.y), t);
+    }
+    c = over(c, tone, fill);
+    if (c.a <= 0.001) { discard; }
+    return c * alpha;
 }
