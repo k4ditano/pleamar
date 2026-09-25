@@ -259,6 +259,9 @@ struct Obra<'a> {
     gestos: HashMap<String, GestoId>,
     zonas: HashMap<String, ZonaId>,
     lets: HashMap<String, Expr>,
+    /// En qué línea se declaró cada `let` suelto: para no dejar que otro, más
+    /// abajo, le cambie el sentido sin decir nada.
+    donde_let: HashMap<String, usize>,
     colores: HashMap<String, Color>,
     muelles: HashMap<String, Muelle>,
     candidatas: Vec<Candidata>,
@@ -311,7 +314,7 @@ pub fn levantar<'a>(arbol: &'a [Entrada], ficheros: &'a [String], carpetas: &'a 
     let mut o = Obra {
         e: Escena::default(),
         props: HashMap::new(), hechos: HashMap::new(), sucesos: HashMap::new(), textos: HashMap::new(), imagenes: HashMap::new(), figuras: HashMap::new(), modelos: HashMap::new(),
-        medidas: HashMap::new(), gestos: HashMap::new(), zonas: HashMap::new(), lets: HashMap::new(), colores: HashMap::new(),
+        medidas: HashMap::new(), gestos: HashMap::new(), zonas: HashMap::new(), lets: HashMap::new(), donde_let: HashMap::new(), colores: HashMap::new(),
         muelles: voz::MUELLES.iter().map(|n| ((*n).to_owned(), match *n {
             "lively" => Muelle::VIVO,
             "calm" => Muelle::SERENO,
@@ -1434,6 +1437,20 @@ impl<'a> Obra<'a> {
                     let nombre = c.id("a name")?;
                     if n.linea >= super::POR_FICHERO {
                         self.de_biblioteca.insert(nombre.clone());
+                    }
+                    // Dos `let` con el mismo nombre en el mismo fichero: el segundo
+                    // cambiaba lo que significa el primero en todo lo de debajo, sin
+                    // una palabra. En marea-plm, un `let fuera` para «hay algo abierto»
+                    // pisó al `let fuera = sitio` de 2 700 líneas más arriba, y ella
+                    // bajaba 46 px cada vez que se abría algo. Leer la misma línea
+                    // otra vez —una por copia de pantalla— no cuenta.
+                    if self.entornos.is_empty() {
+                        if let Some(&antes) = self.donde_let.get(&nombre) {
+                            if antes != n.linea && antes / super::POR_FICHERO == n.linea / super::POR_FICHERO {
+                                return Err(Fallo::en(n.linea, n.col, format!("there is already a `let {nombre}`, on line {}: a second one would change what the first means in everything below it. Give this one another name", antes % super::POR_FICHERO)));
+                            }
+                        }
+                        self.donde_let.insert(nombre.clone(), n.linea);
                     }
                     c.exige_sim("=")?;
                     // `let mint = #9ed6bd`: un color con nombre.

@@ -1,0 +1,11 @@
+// espera: fallo «there is already a `let fuera`»
+language 0.1
+// Un segundo `let` con el mismo nombre cambiaría lo que significa el primero.
+scene LetDosVeces {
+    surface { size: 200, 100 }
+    prop sitio = 0
+    let fuera = sitio
+    ellipse { at: 100, 40 + fuera * 20; radius: 10; color: #ffffff }
+    fact abierta = false
+    let fuera = abierta
+}
