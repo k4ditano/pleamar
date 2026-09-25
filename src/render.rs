@@ -142,7 +142,12 @@ pub fn hilo(
     // Lo que se está arrastrando: qué zona, y dónde estaba el ratón al pulsar.
     let mut arrastre: Option<(usize, (f32, f32), Instant)> = None;
     let mut cursor_puesto = Cursor::Normal;
-    let mut teclado_pedido = false;
+
+    // El teclado que se le ha pedido al compositor, si tiene el foco, y si se le
+    // ha pedido en exclusiva (ver `Efecto::Enfocar`).
+    let mut teclado_puesto: Option<Teclado> = None;
+    let mut tengo_teclado = false;
+    let mut teclado_prestado: Option<Instant> = None;
     // El campo donde se está escribiendo, y la tecla que se ha quedado pulsada.
     let mut edicion: Option<Edicion> = None;
     let mut repite: Option<(String, Option<String>, Mods, Instant)> = None;
@@ -556,6 +561,7 @@ pub fn hilo(
             teclas.push(combo);
         }
         for si in &cambios_de_foco {
+            tengo_teclado = *si;
             let _ = a_logica.send(Evento::Foco(*si));
             if *si {
                 // Al ganar el teclado, si hay dónde escribir y nadie lo tiene, el primero.
@@ -686,16 +692,35 @@ pub fn hilo(
         }
 
         // El teclado, solo mientras la escena lo quiera: un lanzador cerrado no
-        // puede quedarse con él.
-        if let Some(cuando) = &escena.teclado_mientras {
-            let quiere = cuando.es_verdad(Ctx { props: &props, hechos: &hechos });
-            if quiere != teclado_pedido {
-                teclado_pedido = quiere;
-                for l in &laminas {
-                    l.teclado(if quiere { escena.superficie().teclado } else { Teclado::Nunca });
-                }
-                cambio_de_teclado = true;
+        // puede quedarse con él. Y si pidió el foco para un campo sin tenerlo, en
+        // exclusiva hasta que llegue (ver `Efecto::Enfocar`).
+        let teclado_pedido = match &escena.teclado_mientras {
+            Some(cuando) => cuando.es_verdad(Ctx { props: &props, hechos: &hechos }),
+            None => true,
+        };
+        // El préstamo dura mientras la escena quiera el teclado: devolverlo al
+        // recibir el foco no sirve, porque al volver a «al pulsar» Hyprland se lo
+        // da otra vez a la ventana de antes. Es lo que hace cualquier lanzador:
+        // abierto, el teclado es suyo; Esc lo cierra y lo suelta.
+        if !teclado_pedido {
+            teclado_prestado = None;
+        }
+        let modo = if !teclado_pedido {
+            Teclado::Nunca
+        } else if teclado_prestado.is_some() {
+            Teclado::Siempre
+        } else {
+            escena.superficie().teclado
+        };
+        // Sin condición y sin préstamo, el teclado es el que se pidió al crearla.
+        if teclado_puesto != Some(modo) && (teclado_puesto.is_some() || escena.teclado_mientras.is_some() || teclado_prestado.is_some()) {
+            teclado_puesto = Some(modo);
+            for l in &mut laminas {
+                l.teclado(modo);
+                // Se aplica con el frame que se presente: que haya uno.
+                l.pintada = None;
             }
+            cambio_de_teclado = true;
         }
 
         // El cursor, el de la zona que tenga encima.
@@ -873,6 +898,14 @@ pub fn hilo(
                     Efecto::Enfocar(t) => {
                         edicion = t.map(|t| t.0 as usize).map(|k| Edicion { campo: k, cursor: textos[k].len(), ancla: textos[k].len() });
                         ultima_tecla = ahora;
+                        // Enfocar un campo es querer escribir ya. Con el teclado «al
+                        // pulsar», el compositor solo lo da con un clic, y un buscador
+                        // que se abre con un atajo no lo recibe nunca: lo que se teclea
+                        // va a otra ventana y Esc no lo cierra. Se pide en exclusiva
+                        // mientras la escena siga queriendo el teclado.
+                        if t.is_some() && !tengo_teclado && escena.superficie().teclado == Teclado::AlPulsar {
+                            teclado_prestado = Some(ahora);
+                        }
                     }
                 }
             }
