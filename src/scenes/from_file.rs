@@ -243,4 +243,28 @@ mod tests {
             assert!(pressed.contains(&name), "no rule presses {name}: {pressed:?}");
         }
     }
+
+    /// A rule that names nothing of its copy is the same rule once per monitor:
+    /// only the first one may act, or a count goes up twice per monitor.
+    #[test]
+    fn a_shared_rule_acts_once_whatever_the_copies() {
+        let dir = std::env::temp_dir().join(format!("pleamar-twins-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("twins.plm");
+        std::fs::write(&path, "scene Twins {
+    surface { size: 200, 40; anchor: top; screens: each max 2 }
+    event landed
+    fact n = 0
+    on landed { n = n + 1 }
+    zone box hit { from: 0, 0; size: 20, 20 }
+    on press hit { n = 0 }
+}
+").unwrap();
+        let scene = super::read(path.to_str().unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let twins: Vec<usize> = (0..scene.rules.len()).filter(|&k| scene.twin_of[k] != k).collect();
+        // The count is one rule written twice; the press is each copy's own zone.
+        assert_eq!(twins.len(), 1, "twins: {:?}", scene.twin_of);
+        assert!(matches!(scene.rules[twins[0]].when, crate::scene::Trigger::On(_)));
+    }
 }

@@ -771,6 +771,7 @@ pub fn run(
         // Rules: all of this happens here, whatever state the logic is in.
         {
             let c = Ctx { props: &props, facts: &facts };
+            let mut acted: Vec<usize> = Vec::new();
             for (k, (r, e)) in scene.rules.iter().zip(rules.iter_mut()).enumerate() {
                 if rule_asleep(k) {
                     continue;
@@ -876,7 +877,11 @@ pub fn run(
                     }
                     Trigger::On(_) => false, // handled with the signals, below
                 };
-                if fires && r.guard.as_ref().is_none_or(|guard| guard.is_true(c)) {
+                // Its twins in the other copies watched too —each one keeps its own
+                // `on change`, its own `on still`—, but only the first awake acts.
+                let twin = scene.twin_of.get(k).copied().unwrap_or(k);
+                if fires && !acted.contains(&twin) && r.guard.as_ref().is_none_or(|guard| guard.is_true(c)) {
+                    acted.push(twin);
                     effects.extend(r.effects.iter().cloned());
                 }
             }
@@ -955,7 +960,11 @@ pub fn run(
                         }
                     }
                 }
-                for r in &scene.rules {
+                for (k, r) in scene.rules.iter().enumerate() {
+                    // One signal, one answer per rule: not one per monitor.
+                    if scene.twin_of.get(k).is_some_and(|&t| t != k) {
+                        continue;
+                    }
                     if matches!(&r.when, Trigger::On(x) if *x == id) && r.guard.as_ref().is_none_or(|guard| guard.is_true(Ctx { props: &props, facts: &facts })) {
                         effects.extend(r.effects.iter().cloned());
                     }

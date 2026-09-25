@@ -1377,6 +1377,12 @@ pub struct Scene {
     /// the render skips its part entirely. Without this, two copies were twice
     /// the scene per frame even if one was not visible.
     pub spans: Vec<Span>,
+    /// With `screens: each`, a rule that comes out the same in every copy —it
+    /// names nothing of its own copy, only the scene's facts and props— is the
+    /// same rule written twice: for each one, the first of its twins. Only one
+    /// of them may act, or a `n = n + 1` counts once per monitor, an `emit` is
+    /// heard twice and a `toggle` undoes itself. Empty: every rule is its own.
+    pub twin_of: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Default)]

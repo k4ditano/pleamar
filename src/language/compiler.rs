@@ -435,6 +435,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         let (a, b) = (t.rules.start.min(starts_at.len() - 1), t.rules.end.min(starts_at.len() - 1));
         t.rules = starts_at[a]..starts_at[b];
     }
+    o.e.twin_of = twins(&o.e.rules, &o.e.spans);
     if let Some((tokens, (l, col))) = o.pending_keyboard.take() {
         o.scopes.clear();
         let mut c = Cur::new(tokens, l, col);
@@ -5127,4 +5128,26 @@ struct ParsedShape {
     blend: Option<Expr>,
     /// Loose, a shape can also be glass. Inside a `body`, the body says so.
     glass_spec: Option<Glass>,
+}
+
+/// For each rule, the first one of the copies that came out exactly like it
+/// (see `Scene::twin_of`). The copies were compiled from the same nodes in the
+/// same order, so the n-th rule of one copy is the n-th of the first; if they
+/// read the same —same trigger, same guard, same effects, all with the same
+/// ids— nothing in them belongs to a copy.
+fn twins(rules: &[crate::scene::Rule], spans: &[crate::scene::Span]) -> Vec<usize> {
+    let mut twin: Vec<usize> = (0..rules.len()).collect();
+    let Some(first) = spans.first() else { return Vec::new() };
+    let read: Vec<String> = first.rules.clone().map(|k| format!("{:?}", rules[k])).collect();
+    for t in &spans[1..] {
+        if t.rules.len() != first.rules.len() {
+            continue;
+        }
+        for (i, k) in t.rules.clone().enumerate() {
+            if format!("{:?}", rules[k]) == read[i] {
+                twin[k] = first.rules.start + i;
+            }
+        }
+    }
+    twin
 }
