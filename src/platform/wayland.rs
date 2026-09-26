@@ -1339,7 +1339,12 @@ impl KeyboardHandler for State {
     }
     fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, e: KeyEvent) {
         let typed = e.utf8.clone().filter(|t| !t.chars().any(char::is_control));
-        let _ = self.to_render.send(ToRender::Key(key_name(&e), typed, self.mods));
+        let _ = self.to_render.send(ToRender::Key(key_name(&e), typed, self.mods, e.raw_code));
+    }
+    /// The layout as the user has it: the scene's own compositor hands the
+    /// same one to its windows.
+    fn update_keymap(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, keymap: smithay_client_toolkit::seat::keyboard::Keymap<'_>) {
+        super::set_host_keymap(keymap.as_string());
     }
     fn update_repeat_info(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, info: RepeatInfo) {
         let r = match info {
@@ -1354,7 +1359,7 @@ impl KeyboardHandler for State {
     }
     fn repeat_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
     fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, e: KeyEvent) {
-        let _ = self.to_render.send(ToRender::KeyReleased(key_name(&e)));
+        let _ = self.to_render.send(ToRender::KeyReleased(key_name(&e), e.raw_code));
     }
     fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, m: Modifiers, _: RawModifiers, _: u32) {
         self.mods = Mods { ctrl: m.ctrl, alt: m.alt, shift: m.shift, logo: m.logo };

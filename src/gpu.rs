@@ -79,6 +79,13 @@ pub struct DrawList {
     /// The strips of each glass shape, at the origin, keyed by what makes it
     /// what it is except where it is: while it only moves, they are not searched again.
     glass_cache: std::collections::HashMap<[u32; 12], (Vec<[f32; 4]>, bool)>,
+    /// The windows of the scene's compositor that have an image: for each slot,
+    /// where it is in the windows' texture (its layer, and the corners of the
+    /// window itself inside it). The render sets it before composing.
+    pub window_tex: Vec<Option<(u32, [f32; 4], (f32, f32))>>,
+    /// Where each window was drawn this frame: its slot, its box and what it
+    /// lives under. It is what a click on it is measured against.
+    pub windows_drawn: Vec<(usize, [f32; 4], Affine)>,
 }
 
 /// The draw list of the previous frame, to know **where** something has changed.
@@ -683,6 +690,7 @@ impl DrawList {
         self.particles_alive = false;
         self.wake_at = None;
         self.glass_regions.clear();
+        self.windows_drawn.clear();
         let mut clips: Vec<(usize, [f32; 4])> = Vec::new();
         // Each entry is already the product of all those above it.
         let mut transforms: Vec<Affine> = Vec::new();
@@ -1017,6 +1025,31 @@ impl DrawList {
                     let d = [target.0.eval(c), target.1.eval(c), target.2.eval(c), target.3.eval(c)];
                     let rgb = tint.as_ref().map(&color);
                     self.sprite(d, slot.uv(), a, rgb, false, affine, &clips);
+                }
+                Instr::Window { slot, target, alpha, ask } => {
+                    let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
+                    if a <= 0.001 {
+                        continue;
+                    }
+                    let Some(Some((layer, uv, (gw, gh)))) = self.window_tex.get(*slot).copied() else { continue };
+                    // Scaled as much as its box is from the size it was asked to
+                    // have, from its corner: a window that could not be that
+                    // small —a minimum of its own— comes out cut, not squashed.
+                    let b = [target.0.eval(c), target.1.eval(c), target.2.eval(c).max(1.0), target.3.eval(c).max(1.0)];
+                    let (sx, sy) = (b[2] / ask.0.eval(c).max(1.0), b[3] / ask.1.eval(c).max(1.0));
+                    let d = [b[0], b[1], (gw * sx).max(1.0), (gh * sy).max(1.0)];
+                    self.windows_drawn.push((*slot, d, affine));
+                    // Only what falls inside its box is painted.
+                    let bounds = affine.bounds([d[0], d[1], d[0] + d[2].min(b[2]), d[1] + d[3].min(b[3])]);
+                    self.element(1.0, bounds, &clips, |e| {
+                        affine.encode(&mut e[44..52]);
+                        // −1: from the windows' texture, not the atlas; which layer, in the second slot.
+                        e[1] = layer as f32;
+                        e[2] = -1.0;
+                        e[3] = a;
+                        e[36..40].copy_from_slice(&d);
+                        e[40..44].copy_from_slice(&uv);
+                    });
                 }
                 Instr::Shader { shader, target, corner, alpha, values, colors, time, pointer, behind } => {
                     let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
@@ -1382,6 +1415,10 @@ pub struct Gpu {
     elements_buffer: wgpu::Buffer,
     atlas: wgpu::Texture,
     atlas_view: wgpu::TextureView,
+    /// The windows of the scene's compositor, one per layer: width, height and layers.
+    windows: wgpu::Texture,
+    windows_view: wgpu::TextureView,
+    windows_dims: (u32, u32, u32),
     sampler: wgpu::Sampler,
     /// How many floats fit now in each store, and how many at most on this card.
     capacity: (usize, usize, usize, usize),
@@ -1460,7 +1497,8 @@ impl Gpu {
             view_formats: &[],
         });
         let atlas_view = atlas.create_view(&Default::default());
-        let scene_group = Self::build_scene_group(&device, &pipeline, &shapes_buffer, &elements_buffer, &points_buffer, &stops_buffer, &atlas_view, &sampler);
+        let (windows, windows_view) = Self::windows_texture(&device, (1, 1, 1));
+        let scene_group = Self::build_scene_group(&device, &pipeline, &shapes_buffer, &elements_buffer, &points_buffer, &stops_buffer, &atlas_view, &sampler, &windows_view);
         let limit = device.limits().max_storage_buffer_binding_size as usize / 4;
         let no_layers_group = Self::make_layers(&device, &pipeline, format, 1, 1, 1).1;
         let lens = crate::lens::Pipelines::new(&device);
@@ -1476,7 +1514,7 @@ impl Gpu {
             view_formats: &[],
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
-        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
+        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
     }
 
     /// The four groups the shapes shader reads, written out. See `shape.wgsl`.
@@ -1496,7 +1534,7 @@ impl Gpu {
         };
         let sampler = |binding| wgpu::BindGroupLayoutEntry { binding, visibility: both, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None };
         let group = |label, entries: &[wgpu::BindGroupLayoutEntry]| d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries });
-        let scene = group("scene", &[storage(0), storage(1), texture(2, wgpu::TextureViewDimension::D2), sampler(3), storage(4), storage(5)]);
+        let scene = group("scene", &[storage(0), storage(1), texture(2, wgpu::TextureViewDimension::D2), sampler(3), storage(4), storage(5), texture(6, wgpu::TextureViewDimension::D2Array)]);
         let layers = group("layers", &[texture(0, wgpu::TextureViewDimension::D2Array)]);
         let uniforms = group("surface", &[wgpu::BindGroupLayoutEntry {
             binding: 0,
@@ -1734,7 +1772,59 @@ impl Gpu {
         );
     }
 
-    fn build_scene_group(device: &wgpu::Device, pipeline: &wgpu::RenderPipeline, shapes: &wgpu::Buffer, elements: &wgpu::Buffer, points: &wgpu::Buffer, stops: &wgpu::Buffer, atlas: &wgpu::TextureView, sampler: &wgpu::Sampler) -> wgpu::BindGroup {
+    fn windows_texture(device: &wgpu::Device, (w, h, n): (u32, u32, u32)) -> (wgpu::Texture, wgpu::TextureView) {
+        let t = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("windows"),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: n },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            // As the programs hand them over: BGRA, premultiplied.
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let v = t.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
+        (t, v)
+    }
+
+    /// What a window of the scene's compositor drew, to its layer. If it does
+    /// not fit —a bigger window, more of them— the texture grows, and what the
+    /// others had is lost: returns true, and the render uploads them again.
+    pub fn upload_window(&mut self, layer: u32, size: (u32, u32), pixels: &[u8]) -> bool {
+        let max = self.device.limits().max_texture_dimension_2d;
+        let (w, h) = (size.0.min(max), size.1.min(max));
+        let mut remade = false;
+        let (dw, dh, dn) = self.windows_dims;
+        if w > dw || h > dh || layer >= dn {
+            // Grown with room to spare, so that a window being stretched does not remake it every frame.
+            let grow = |have: u32, want: u32| if want > have { want.div_ceil(256) * 256 } else { have }.min(max);
+            let dims = (grow(dw.max(1), w), grow(dh.max(1), h), (layer + 1).max(dn));
+            let (t, v) = Self::windows_texture(&self.device, dims);
+            self.windows = t;
+            self.windows_view = v;
+            self.windows_dims = dims;
+            self.scene_group = Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.sampler, &self.windows_view);
+            remade = true;
+        }
+        if w > 0 && h > 0 && pixels.len() >= (size.0 * size.1 * 4) as usize {
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: &self.windows, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: 0, z: layer }, aspect: wgpu::TextureAspect::All },
+                pixels,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(size.0 * 4), rows_per_image: Some(size.1) },
+                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            );
+        }
+        remade
+    }
+
+    /// How big the windows' texture is: what a window's corners are measured against.
+    pub fn windows_dims(&self) -> (u32, u32) {
+        (self.windows_dims.0, self.windows_dims.1)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_scene_group(device: &wgpu::Device, pipeline: &wgpu::RenderPipeline, shapes: &wgpu::Buffer, elements: &wgpu::Buffer, points: &wgpu::Buffer, stops: &wgpu::Buffer, atlas: &wgpu::TextureView, sampler: &wgpu::Sampler, windows: &wgpu::TextureView) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1745,6 +1835,7 @@ impl Gpu {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(sampler) },
                 wgpu::BindGroupEntry { binding: 4, resource: points.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: stops.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(windows) },
             ],
         })
     }
@@ -1762,7 +1853,7 @@ impl Gpu {
                 if new.1 != self.capacity.1 { self.elements_buffer = store("elements", new.1) }
                 if new.2 != self.capacity.2 { self.points_buffer = store("points", new.2) }
                 if new.3 != self.capacity.3 { self.stops_buffer = store("stops", new.3) }
-                self.scene_group = Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.sampler);
+                self.scene_group = Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.sampler, &self.windows_view);
                 self.capacity = new;
                 println!("render · the scene has grown: now {} shapes and {} elements fit", new.0 / PER_SHAPE, new.1 / PER_ELEMENT);
             }

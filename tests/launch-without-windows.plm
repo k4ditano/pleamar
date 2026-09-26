@@ -1,0 +1,5 @@
+// expect: error «`launch` opens a program among the scene's windows»
+scene LaunchAlone {
+    surface { size: 200, 100 }
+    on key Alt+Return { launch "kitty" }
+}

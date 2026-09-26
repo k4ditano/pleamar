@@ -1054,6 +1054,11 @@ pub enum Instr {
     /// An image or an icon. With `tint`, its shape is painted in that color: what
     /// a symbolic icon wants.
     Image { image: ImageId, target: (Expr, Expr, Expr, Expr), alpha: Expr, tint: Option<Color> },
+    /// Another program's window, from the compositor inside the scene
+    /// (`windows`): what it last drew, stretched over `target` (x, y, width,
+    /// height). `ask` is the size it is told to have; while the box travels on
+    /// its springs, the window keeps its size and is only stretched.
+    Window { slot: usize, target: (Expr, Expr, Expr, Expr), alpha: Expr, ask: (Expr, Expr) },
 }
 
 // ── what the render does on its own ─────────────────────────────
@@ -1387,6 +1392,21 @@ pub enum Effect {
     Gesture(GestureId),
     /// Put the text cursor in a field, or take it away.
     FocusField(Option<TextId>),
+    /// Something done to a window of the compositor inside the scene: which
+    /// one is an expression, `close win(win.focus)`.
+    Window(WindowAction, Expr),
+    /// A program started inside the scene's compositor: `launch "kitty"`.
+    Launch(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WindowAction {
+    /// The keyboard goes to it.
+    Focus,
+    /// It is asked to close, as its own close button would.
+    Close,
+    /// It goes first in the order the scene lays them out in.
+    Promote,
 }
 
 impl Effect {
@@ -1397,6 +1417,7 @@ impl Effect {
             Effect::Fact(h, e) => Effect::Fact(*h, e.with_payload(v)),
             Effect::Signal(s, e) => Effect::Signal(*s, e.as_ref().map(|e| e.with_payload(v))),
             Effect::Impulse(p, e) => Effect::Impulse(*p, e.with_payload(v)),
+            Effect::Window(a, e) => Effect::Window(*a, e.with_payload(v)),
             other => other.clone(),
         }
     }
@@ -1424,6 +1445,8 @@ pub struct Scene {
     /// `hit.hover` and `hit.pressed`: springs the render moves by itself, from
     /// 0 to 1 while the pointer is over the zone and while it is pressed.
     pub zone_springs: Vec<(ZoneId, PropId, PropId)>,
+    /// `windows win max 6`: the scene holds other programs' windows.
+    pub nest: Option<Nest>,
     /// Name and initial value of each live text.
     pub texts: Vec<(&'static str, String)>,
     /// Each image, and the largest logical size it is painted at.
@@ -1772,8 +1795,9 @@ pub enum ToRender {
     /// Wheel notches: positive, upwards.
     Wheel(f32),
     /// The name of the key, what it types if it types anything, and what it was pressed with.
-    Key(String, Option<String>, Mods),
-    KeyReleased(String),
+    /// And its evdev code, to hand it to a window of the scene's compositor (0 if made up).
+    Key(String, Option<String>, Mods, u32),
+    KeyReleased(String, u32),
     /// The surface has gained or lost the keyboard.
     KeyboardFocus(bool),
     /// Put the text cursor in a field, or take it away from wherever it is.
@@ -1792,6 +1816,57 @@ pub enum ToRender {
     Query(&'static str, std::sync::mpsc::Sender<String>),
     /// Something has been dropped on it, dragged from another application: (type, content).
     Dropped(String, String),
+    /// What the compositor inside the scene has to say.
+    Nest(NestEvent),
+    Quit,
+}
+
+/// `windows win max 6`: its name, and how many windows it holds at once.
+#[derive(Clone, Debug)]
+pub struct Nest {
+    pub name: String,
+    pub max: usize,
+}
+
+/// What the compositor inside the scene tells the render.
+pub enum NestEvent {
+    /// Where programs connect: `WAYLAND_DISPLAY`.
+    Socket(String),
+    Opened { slot: usize, title: String, app: String },
+    Title(usize, String),
+    App(usize, String),
+    /// What a window drew: BGRA, premultiplied, `size` pixels, and where the
+    /// window itself is inside it (a program may draw its shadow around it).
+    Image { slot: usize, size: (u32, u32), geometry: [i32; 4], pixels: Vec<u8> },
+    Closed(usize),
+    Focused(Option<usize>),
+    /// The slots in the order the scene lays them out in.
+    Order(Vec<usize>),
+    /// The cursor the window under the pointer asks for.
+    Cursor(Cursor),
+}
+
+/// What the render tells the compositor inside the scene. Pointer positions
+/// are in the window's own pixels, from its corner.
+#[derive(Debug)]
+pub enum ToNest {
+    Size(i32, i32),
+    Pointer { slot: usize, x: f64, y: f64 },
+    PointerOut,
+    /// evdev codes: 0x110 left, 0x111 right, 0x112 middle.
+    Button { code: u32, down: bool },
+    Wheel(f64),
+    /// An evdev key code.
+    Key { code: u32, down: bool },
+    /// Whether pleamar's own window has the keyboard.
+    HostFocus(bool),
+    Configure { slot: usize, w: i32, h: i32 },
+    Focus(usize),
+    Close(usize),
+    Promote(usize),
+    Launch(String),
+    /// The render has painted: the programs may draw their next frame.
+    FrameDone,
     Quit,
 }
 

@@ -1,0 +1,6 @@
+// expect: error «is not one of the windows: they are win.0 to win.1»
+scene OutOfRange {
+    surface { size: 200, 100 }
+    windows win max 2
+    window win.2 { at: 0, 0; size: 200, 100 }
+}

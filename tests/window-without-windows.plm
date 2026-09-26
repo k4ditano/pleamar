@@ -1,0 +1,5 @@
+// expect: error «there are no windows here»
+scene NoWindows {
+    surface { size: 200, 100 }
+    window win.0 { at: 0, 0; size: 200, 100 }
+}

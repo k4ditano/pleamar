@@ -997,6 +997,64 @@ scene Pieces {
 }
 ```
 
+### 10.3. Other programs' windows: `windows`
+
+`windows win max 6` puts a Wayland compositor inside the scene. Programs
+started with `launch "kitty"` —or by hand, with the `WAYLAND_DISPLAY` that
+`win.socket` says— open in it, and each one takes a slot, `win.0` to `win.5`.
+Where it goes, how big, how it arrives and how it leaves is the scene's: the
+window manager is the `.plm` file, with its springs, rules and zones, and it
+reloads on save while the programs in it keep running.
+
+| per slot | |
+| --- | --- |
+| `win.$i.open` · `win.$i.focused` | whether there is a window in it, and whether it has the keyboard |
+| `win.$i.title` · `win.$i.app` | texts: what the window calls itself, and its program (`kitty`) |
+| `win.$i.width` · `win.$i.height` | the size it has drawn itself at |
+| `win.$i.place` | its turn in the layout: 0 leads, −1 if there is none. `promote` changes it |
+| **for all of them** | |
+| `win.count` · `win.focus` | how many are open, and which slot has the keyboard (−1, none) |
+| `win.order.$p` | which slot is at each place: `win.order.0` leads |
+| `win.socket` | where programs connect |
+
+`window win.$i { at: x, y; size: w, h }` draws that slot's window in that box.
+`ask: w, h` is the size it is told to have, by default `size`: let the box
+travel on its springs and `ask` be where it is going, and the program is only
+asked once, not every frame. While box and `ask` differ, the window is scaled
+by as much as its box is; a program that cannot be that small comes out cut at
+its box, not squashed. The window is a zone with its name —`on press win.$i`,
+`win.$i.hover`— and the mouse and the keys reach it through it: the pointer in
+its own pixels, the keys while it has the keyboard, except the ones the scene
+has a rule for (`on key Alt+Return`, or `on key Escape while overview` while
+that holds), which are the scene's.
+
+| effect | |
+| --- | --- |
+| `launch "kitty"` | starts a program so that it opens here |
+| `focus win.$i` · `focus win(expr)` | the keyboard goes to that window |
+| `close win.$i` · `close win(win.focus)` | asks it to close, as its own close button would |
+| `promote win.$i` | it goes first in the layout: `place` 0 |
+
+A window that closes leaves its last image in its slot: the scene can see it
+leave, fading on a spring, instead of vanishing. Programs that draw with the
+GPU are started with Mesa's software GL, since the frames this compositor takes
+yet are in shared memory; there is no XWayland either, so an X11-only program
+does not open here. A whole window manager is in `examples/windows.plm`.
+
+```plm
+scene Nested {
+    surface { size: 900, 600; kind: window; title: "nested" }
+    windows win max 2
+    // Alone it takes it all; with company, half each, sliding over on a spring.
+    prop w0 = 900 ~lively
+    follow w0 = if(win.count > 1.5, 450, 900)
+    window win.0 { at: 0, 0; size: w0, 600; ask: if(win.count > 1.5, 450, 900), 600; show: win.0.open }
+    window win.1 { at: w0, 0; size: 450, 600; show: win.1.open }
+    on key Alt+Return { launch "kitty" }
+    on key Alt+q { close win(win.focus) }
+}
+```
+
 ## 11. Text with slots
 
 Inside a text in quotes that is the content of a `text` or the argument of a component:
@@ -1231,7 +1289,7 @@ This is the output of `pleamar --grammar`, copied. It is not a second list: thes
 
 ```vocabulary
 language: 0.1
-statements: surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations
+statements: surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
 library: let spring component permissions fact text model service event image figure shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate
 properties.permissions: run services
@@ -1244,6 +1302,7 @@ properties.path: at size
 properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple opacity show
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale
 properties.image: at size opacity tint show grow
+properties.window: at size ask opacity show
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow
 properties.shader: at size corner opacity show values colors grow
 properties.particles: at area count life speed direction spread gravity drag size colors opacity shape emit burst show
@@ -1256,7 +1315,7 @@ properties.layout: at anchor gap padding align fill glass lens shine refraction 
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change still
-effects: toggle emit impulse play focus blur
+effects: toggle emit impulse play focus blur close promote launch
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
 classes: ambient reflex asked state
@@ -1264,7 +1323,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid pages column space between layer on every blink wave spin follow look gesture posture import scene library language
+documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look gesture posture import scene library language
 services: clock clock.seconds audio battery brightness network media window
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date

@@ -71,6 +71,8 @@ const FAR: f32 = 1e6;
 @group(0) @binding(4) var<storage, read> points: array<f32>;
 // The gradient stops: r, g, b and where each one falls, in order.
 @group(0) @binding(5) var<storage, read> stops: array<vec4<f32>>;
+// The windows of the scene's compositor (`windows`), one per layer.
+@group(0) @binding(6) var windows: texture_2d_array<f32>;
 // 2 · what belongs to each surface: its size and its scale.
 @group(2) @binding(0) var<uniform> u: U;
 // Groups with opacity are painted separately, here, and blended at once.
@@ -318,6 +320,10 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
         if (el.header.z > 1.5 && el.light.w > 0.5) { return text_with_effects(el, q, alpha); }
         let uv01 = (q - el.dest.xy) / max(el.dest.zw, vec2<f32>(1.0));
         if (uv01.x < 0.0 || uv01.x > 1.0 || uv01.y < 0.0 || uv01.y > 1.0) { discard; }
+        // Another program's window: its layer of the windows' texture, as it drew it.
+        if (el.header.z < -0.5) {
+            return textureSampleLevel(windows, atlas_sampler, mix(el.uv.xy, el.uv.zw, uv01), i32(el.header.y), 0.0) * alpha;
+        }
         let t = textureSampleLevel(atlas, atlas_sampler, mix(el.uv.xy, el.uv.zw, uv01), 0.0);
         // Tinted: the piece is a mask —a letter (2), a symbolic icon (1)— and the element provides the colour.
         // A letter (2) gets its edges firmed up. Blended as they are, in sRGB,

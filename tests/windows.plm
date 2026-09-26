@@ -1,0 +1,15 @@
+// expect: ok
+scene Windows {
+    surface { size: 600, 400; kind: window; title: "windows" }
+    windows win max 3
+    repeat i in 0..3 {
+        prop x.$i = 0 ~lively
+        follow x.$i = max(win.$i.place, 0) * 200
+        window win.$i { at: x.$i, 0; size: 200, 400; ask: 200, 400; opacity: win.$i.hover * 0.2 + 0.8; show: win.$i.open }
+        on press win.$i { focus win.$i }
+    }
+    text "{win.count} · {win.socket} · {win.0.title}" { at: 10, 10; size: 11; color: #fff }
+    on key Alt+Return { launch "kitty" }
+    on key Alt+q { close win(win.focus) }
+    on key Alt+m { promote win(win.order.1) }
+}

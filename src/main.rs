@@ -216,7 +216,7 @@ fn main() {
     let to_logic_for_commands = to_logic.clone();
     let render = {
         let blocked = blocked.clone();
-        let op = render::Options { hud: a.hud, naive: a.naive, reduced_motion: a.reduced, no_vsync: a.no_vsync, trace: a.record.clone(), start_time };
+        let op = render::Options { hud: a.hud, naive: a.naive, reduced_motion: a.reduced, no_vsync: a.no_vsync, trace: a.record.clone(), start_time, to_self: to_render.clone() };
         let instance = instance.clone();
         std::thread::Builder::new()
             .name("render".into())
@@ -305,17 +305,23 @@ fn main() {
                                 }
                             }
                         }
-                        tx.send(ToRender::Key(name.to_owned(), None, m)).and_then(|_| tx.send(ToRender::KeyReleased(name.to_owned())))
+                        tx.send(ToRender::Key(name.to_owned(), None, m, 0)).and_then(|_| tx.send(ToRender::KeyReleased(name.to_owned(), 0)))
                     }
                     // `type:hello`: letter by letter, like a keyboard. A `_` is a space.
                     t if t.starts_with("type:") => {
                         for ch in t[5..].chars() {
                             let ch = if ch == '_' { ' ' } else { ch };
-                            let _ = tx.send(ToRender::Key(ch.to_string(), Some(ch.to_string()), Mods::default()));
-                            let _ = tx.send(ToRender::KeyReleased(ch.to_string()));
+                            let _ = tx.send(ToRender::Key(ch.to_string(), Some(ch.to_string()), Mods::default(), 0));
+                            let _ = tx.send(ToRender::KeyReleased(ch.to_string(), 0));
                         }
                         Ok(())
                     }
+                    // `code:30`: a key by its evdev code, pressed and released, as
+                    // a real keyboard would —what reaches a window of `windows`—.
+                    t if t.starts_with("code:") => match t[5..].parse::<u32>() {
+                        Ok(code) => tx.send(ToRender::Key(format!("{code:#x}"), None, Mods::default(), code)).and_then(|_| tx.send(ToRender::KeyReleased(format!("{code:#x}"), code))),
+                        Err(_) => Ok(()),
+                    },
                     "focus+" => tx.send(ToRender::KeyboardFocus(true)),
                     "focus-" => tx.send(ToRender::KeyboardFocus(false)),
                     t if t.starts_with("drop:") => tx.send(ToRender::Dropped("text/plain".into(), t[5..].to_owned())),

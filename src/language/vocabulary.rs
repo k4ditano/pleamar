@@ -10,7 +10,7 @@ pub const STATEMENTS: &[&str] = &[
     "body", "ellipse", "box", "arc", "line", "path", "input", "clip", "group", "popup",
     "component", "children", "repeat", "for", "row", "column", "grid", "pages", "space", "between",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
-    "translations",
+    "translations", "windows", "window",
 ];
 
 /// What a library can declare.
@@ -29,6 +29,7 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("body", &["color", "gradient", "rim", "light", "shadow", "border", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "opacity", "show"]),
     ("text", &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show", "grow", "gradient", "outline", "shadow", "letter_move", "letter_opacity", "letter_scale"]),
     ("image", &["at", "size", "opacity", "tint", "show", "grow"]),
+    ("window", &["at", "size", "ask", "opacity", "show"]),
     ("figure", &["at", "size", "scale", "rotate", "pivot", "color", "opacity", "blend", "stroke", "show", "grow"]),
     ("shader", &["at", "size", "corner", "opacity", "show", "values", "colors", "grow"]),
     ("particles", &["at", "area", "count", "life", "speed", "direction", "spread", "gravity", "drag", "size", "colors", "opacity", "shape", "emit", "burst", "show"]),
@@ -46,7 +47,7 @@ pub const TEXT_FUNCTIONS: &[&str] = &["upper", "lower"];
 /// What can go after `on`. Any other word is the name of an event.
 pub const TRIGGERS: &[&str] = &["press", "release", "scroll", "drag", "hold", "enter", "leave", "hover", "away", "idle", "key", "submit", "focus", "blur", "drop", "change", "still"];
 /// The effects with a word of their own. Also: `prop: value ~spring` and `fact = expr`.
-pub const EFFECTS: &[&str] = &["toggle", "emit", "impulse", "play", "focus", "blur"];
+pub const EFFECTS: &[&str] = &["toggle", "emit", "impulse", "play", "focus", "blur", "close", "promote", "launch"];
 pub const CURVES: &[&str] = &["linear", "in_quad", "out_quad", "in_cubic", "out_cubic", "in_out_sine", "out_back", "bezier"];
 /// What a keyframe can carry besides a curve.
 pub const KEYFRAME_OPTIONS: &[&str] = &["hold", "emit"];
@@ -92,6 +93,8 @@ pub const HELP: &[(&str, &str)] = &[
     ("for", "`for r in rows { … }` · `for r in rows from first { … }` — once per record of a model."),
     ("row", "`row { gap: 8; align: center }` — children side by side, with gap, padding, fill and scroll (`view:`)."),
     ("grid", "`grid { columns: 2; gap: 12; width: 456; row: 106 }` — children in cells, left to right and down; `span: 2` takes two. Inside each, `cell.w` and `cell.h` are its cell."),
+    ("windows", "`windows win max 6` — a compositor inside the scene: programs started with `launch \"kitty\"` open in it. Per slot: `win.$i.open`, `.title`, `.app`, `.width`, `.height`, `.focused`, `.place` (its turn in the layout, −1 if closed); and `win.count`, `win.focus`, `win.socket`."),
+    ("window", "`window win.$i { at: x, y; size: w, h }` — that slot's window, drawn there and answering the mouse and the keyboard. `ask: w, h` is the size it is told to have (by default `size`): let `size` travel on a spring and `ask` be where it goes. It is also a zone: `on press win.$i`, `win.$i.hover`."),
     ("pages", "`pages settings { header: 20, 45; page menu \"Settings\" { … } page look \"Her look\" { … } }` — one page at a time, sliding in; `settings` is a fact with the pages' names (`settings = look`), and with `header:` comes the ← and the title, and Esc goes back."),
     ("column", "`column { gap: 8 }` — children one under the other. Same properties as `row`."),
     ("space", "`space 12` — a gap of that size inside a layout."),

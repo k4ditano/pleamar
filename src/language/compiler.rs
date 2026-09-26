@@ -659,7 +659,7 @@ fn pass_of(e: &Entry) -> u8 {
     let is_assignment = matches!(n.head.get(2).map(|x| &x.kind), Some(TokenKind::Sym("=")));
     match n.head.first().map(|f| &f.kind) {
         Some(TokenKind::Id(p)) => match p.as_str() {
-            "surface" | "permissions" | "model" | "service" | "spring" | "prop" | "pose" | "fact" | "event" | "measure" | "component" => 0,
+            "surface" | "permissions" | "model" | "service" | "spring" | "prop" | "pose" | "fact" | "event" | "measure" | "component" | "windows" => 0,
             // An image or a figure is read once: they belong to the scene, not to each copy.
             "text" | "image" | "figure" | "shader" if is_assignment => 0,
             "let" | "layer" => 1,
@@ -1530,10 +1530,7 @@ impl<'a> Compiler<'a> {
         // is used above it.
         for e in &entries {
             let Entry::Node(n) = e else { continue };
-            let (Some(TokenKind::Id(w)), Some(TokenKind::Id(local))) = (n.head.first().map(|t| &t.kind), n.head.get(2).map(|t| &t.kind)) else { continue };
-            if w == "zone" && self.hover_mentions.contains(local.as_str()) {
-                self.zone_springs_for(local);
-            }
+            self.zone_springs_prescan(n);
         }
         let mut clips = 0;
         for e in entries {
@@ -1577,6 +1574,7 @@ impl<'a> Compiler<'a> {
                 }
                 "model" => self.model(n, &mut c)?,
                 "service" => self.service(n, &mut c)?,
+                "windows" => self.windows(n, &mut c)?,
                 "permissions" => {
                     // permissions { run: "date", "notify-send";  services: "audio", "apps" }
                     let mut p = self.properties(n, vocab::properties("permissions"))?;
@@ -1894,6 +1892,7 @@ impl<'a> Compiler<'a> {
                 "shader" => self.shader(n)?,
                 "particles" => self.particles(n)?,
                 "input" => self.input_field(n)?,
+                "window" => self.window(n)?,
                 "clip" => {
                     let margin = if c.word("inset") { c.num()? } else { 0.0 };
                     let from = c.i;
@@ -4851,8 +4850,14 @@ impl<'a> Compiler<'a> {
 
     /// A zone about to be declared outside `group` —an expansion—: its springs.
     fn zone_springs_prescan(&mut self, n: &Node) {
-        if let (Some(TokenKind::Id(w)), Some(TokenKind::Id(local))) = (n.head.first().map(|t| &t.kind), n.head.get(2).map(|t| &t.kind)) {
-            if w == "zone" && self.hover_mentions.contains(local.as_str()) {
+        // `zone box hit { … }`, and `window win.$i { … }`, which is a zone too.
+        let at = match n.head.first().map(|t| &t.kind) {
+            Some(TokenKind::Id(w)) if w == "zone" => 2,
+            Some(TokenKind::Id(w)) if w == "window" => 1,
+            _ => return,
+        };
+        if let Some(TokenKind::Id(local)) = n.head.get(at).map(|t| &t.kind) {
+            if self.hover_mentions.contains(local.as_str()) {
                 let local = local.clone();
                 self.zone_springs_for(&local);
             }
@@ -5104,6 +5109,104 @@ impl<'a> Compiler<'a> {
             }
         }
         self.e.services.push(crate::scene::Service { name, alias, fields });
+        Ok(())
+    }
+
+    /// `windows win max 6`: a compositor inside the scene, and what the scene
+    /// knows of each of its windows. They are facts and texts like any other:
+    /// the layout is written with them, and the render keeps them up to date.
+    fn windows(&mut self, n: &'a Node, c: &mut Cur) -> R<()> {
+        let name = self.declare(&c.id("a name for the windows")?);
+        let max = if c.word("max") { c.num()? as usize } else { 8 };
+        c.expect_end()?;
+        if self.e.nest.is_some() {
+            return Err(CompileError::at(n.line, n.col, "a scene holds one set of windows: this is the second `windows`"));
+        }
+        if !(1..=32).contains(&max) {
+            return Err(CompileError::at(n.line, n.col, "`max` is between 1 and 32 windows"));
+        }
+        let fact = |o: &mut Self, full: String, initial: f32, boolean: bool| {
+            let id = o.e.fact(interned(&full), initial);
+            if boolean {
+                o.e.types.push((full.clone(), FactType::Bool));
+            }
+            o.facts.insert(full, id);
+        };
+        for k in 0..max {
+            fact(self, format!("{name}.{k}.open"), 0.0, true);
+            fact(self, format!("{name}.{k}.focused"), 0.0, true);
+            fact(self, format!("{name}.{k}.width"), 0.0, false);
+            fact(self, format!("{name}.{k}.height"), 0.0, false);
+            fact(self, format!("{name}.{k}.place"), -1.0, false);
+            for field in ["title", "app"] {
+                let full = format!("{name}.{k}.{field}");
+                let id = self.e.live_text(interned(&full), "");
+                self.texts.insert(full, id);
+            }
+        }
+        // Which window is at each place of the layout: `win.order.0` leads.
+        for k in 0..max {
+            fact(self, format!("{name}.order.{k}"), -1.0, false);
+        }
+        fact(self, format!("{name}.count"), 0.0, false);
+        fact(self, format!("{name}.focus"), -1.0, false);
+        let full = format!("{name}.socket");
+        let id = self.e.live_text(interned(&full), "");
+        self.texts.insert(full, id);
+        // The right button is the windows' as well: it no longer closes the scene.
+        self.e.surface_mut().right_click_quits = false;
+        self.e.nest = Some(crate::scene::Nest { name, max });
+        Ok(())
+    }
+
+    /// `window win.$i { at: x, y; size: w, h }`: that slot's window, drawn in
+    /// that box and answering the mouse there. It is also a zone with its name.
+    fn window(&mut self, n: &Node) -> R<()> {
+        let mut c = Cur::new(&n.head[1..], n.line, n.col);
+        let local = c.id("which window: `win.$i`")?;
+        c.expect_end()?;
+        let name = self.global(&local);
+        let Some(nest) = self.e.nest.clone() else {
+            return Err(CompileError::at(n.line, n.col, "there are no windows here: declare them first, `windows win max 6`"));
+        };
+        let slot = name.strip_prefix(&format!("{}.", nest.name)).and_then(|k| k.parse::<usize>().ok());
+        let Some(slot) = slot.filter(|k| *k < nest.max) else {
+            return Err(CompileError::at(n.line, n.col, format!("'{name}' is not one of the windows: they are {0}.0 to {0}.{1}", nest.name, nest.max - 1)));
+        };
+        let mut p = self.properties(n, vocab::properties("window"))?;
+        let in_slot = std::mem::take(&mut self.in_slot);
+        let missing = |q: &str| CompileError::at(n.line, n.col, format!("this window is missing '{q}'"));
+        let (x, y) = match p.get_mut("at") {
+            Some(c) => self.point(c)?,
+            None if in_slot => (0.0.into(), 0.0.into()),
+            None => return Err(missing("at")),
+        };
+        let (w, h) = self.point(p.get_mut("size").ok_or_else(|| missing("size"))?)?;
+        let ask = match p.get_mut("ask") {
+            Some(c) => self.point(c)?,
+            None => (w.clone(), h.clone()),
+        };
+        self.last_size = Some((w.clone(), h.clone()));
+        let alpha = match p.get_mut("opacity") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(1.0),
+        };
+        let alpha = match p.get_mut("show") {
+            Some(c) => alpha * self.expr(c)?.clamp(0.0, 1.0),
+            None => alpha,
+        };
+        // Its zone: where it is drawn, and only while it can be seen.
+        let zone = self.declare_zone(&local);
+        self.candidates.push(Candidate {
+            name: zone,
+            shape: Shape::Rect { center: (x.clone() + w.clone() * 0.5, y.clone() + h.clone() * 0.5), half_size: (w.clone() * 0.5, h.clone() * 0.5), radius: 0.0.into() },
+            active: None,
+            visible: Some(alpha.clone()),
+            under: self.under.clone(),
+            forced: true,
+            cursor: Cursor::Normal,
+        });
+        self.e.paint(Instr::Window { slot, target: (x, y, w, h), alpha, ask });
         Ok(())
     }
 
@@ -5485,6 +5588,15 @@ impl<'a> Compiler<'a> {
                     effects.push(match if vocab::EFFECTS.contains(&p.as_str()) { p.as_str() } else { "" } {
                         "toggle" => Effect::Toggle(self.fact(&mut c)?),
                         "blur" => Effect::FocusField(None),
+                        "focus" if self.names_window(&c) => Effect::Window(WindowAction::Focus, self.which_window(&mut c)?),
+                        "close" => Effect::Window(WindowAction::Close, self.which_window(&mut c)?),
+                        "promote" => Effect::Window(WindowAction::Promote, self.which_window(&mut c)?),
+                        "launch" => {
+                            if self.e.nest.is_none() {
+                                return c.error("`launch` opens a program among the scene's windows: declare them first, `windows win max 6`");
+                            }
+                            Effect::Launch(c.string()?)
+                        }
                         "focus" => {
                             let n = self.global(&c.id("the name of the input")?);
                             match self.texts.get(&n) {
@@ -5544,6 +5656,36 @@ impl<'a> Compiler<'a> {
             r.guard = guard;
         }
         Ok(())
+    }
+
+    /// Whether what follows names one of the scene's windows: `win.3`, `win.$i`
+    /// or `win(win.focus)`.
+    fn names_window(&self, c: &Cur) -> bool {
+        let Some(nest) = &self.e.nest else { return false };
+        match c.peek() {
+            Some(TokenKind::Id(w)) => w == &nest.name || w.starts_with(&format!("{}.", nest.name)),
+            _ => false,
+        }
+    }
+
+    /// Which window: `win.3` and `win.$i` are that slot; `win(expr)`, the one
+    /// the expression says when the rule fires.
+    fn which_window(&self, c: &mut Cur) -> R<Expr> {
+        let Some(nest) = self.e.nest.clone() else {
+            return c.error("there are no windows here: declare them first, `windows win max 6`");
+        };
+        let local = c.id("which window: `win.$i`, or `win(win.focus)`")?;
+        if local == nest.name {
+            c.expect_sym("(")?;
+            let e = self.expr(c)?;
+            c.expect_sym(")")?;
+            return Ok(e);
+        }
+        let name = self.global(&local);
+        match name.strip_prefix(&format!("{}.", nest.name)).and_then(|k| k.parse::<usize>().ok()).filter(|k| *k < nest.max) {
+            Some(k) => Ok(Expr::K(k as f32)),
+            None => c.error(format!("'{name}' is not one of the windows: they are {0}.0 to {0}.{1}, or {0}(an expression)", nest.name, nest.max - 1)),
+        }
     }
 
     // ── what the render carries on its own ──────────────────────

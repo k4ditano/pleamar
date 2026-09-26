@@ -1,13 +1,13 @@
 " pleamar syntax for Vim and Neovim. Made by `pleamar --highlight vim`:
 " it is not written by hand, so it does not lag behind the language.
 if exists("b:current_syntax") | finish | endif
-syn keyword plmStatement surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations
+syn keyword plmStatement surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
 syn keyword plmStatement scene library import language
 syn keyword plmKeyword in max while for after from until at by reach within rest inset right middle as via strict each all
 syn keyword plmFunction min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
 syn keyword plmFunction upper lower
 syn keyword plmTrigger press release scroll drag hold enter leave hover away idle key submit focus blur drop change still
-syn keyword plmEffect toggle emit impulse play focus blur
+syn keyword plmEffect toggle emit impulse play focus blur close promote launch
 syn keyword plmStep move line curve close
 syn keyword plmConstant true false lively calm quick slow gentle pose linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier text number bool image
 syn match plmProperty "\<\w\+\ze\s*:"

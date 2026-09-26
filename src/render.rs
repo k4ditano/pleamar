@@ -20,6 +20,40 @@ pub struct Options {
     /// It is how you check that an animation lasts as long as it says it lasts.
     pub trace: Vec<String>,
     pub start_time: Instant,
+    /// Where the render's own messages arrive: what the compositor inside the
+    /// scene (`windows`) is given to talk to it.
+    pub to_self: std::sync::mpsc::Sender<ToRender>,
+}
+
+/// A window of the compositor inside the scene, as the render knows it: what
+/// it last drew and where the window itself is in it, whether that is already
+/// on the card, and the size it was last told to have.
+#[derive(Default)]
+struct NestWindow {
+    size: (u32, u32),
+    geometry: [i32; 4],
+    pixels: Vec<u8>,
+    uploaded: bool,
+    ask: Option<(i32, i32)>,
+}
+
+/// A fact of the scene's windows, by name: set, and told to the logic.
+fn nest_fact(scene: &Scene, facts: &mut [f32], to_logic: &Sender<Event>, name: &str, v: f32) {
+    if let Some(k) = scene.facts.iter().position(|h| h.0 == name) {
+        if (facts[k] - v).abs() > f32::EPSILON {
+            facts[k] = v;
+            let _ = to_logic.send(Event::Fact(scene.facts[k].0, v));
+        }
+    }
+}
+
+fn nest_text(scene: &Scene, texts: &mut [String], to_logic: &Sender<Event>, name: &str, v: String) {
+    if let Some(k) = scene.texts.iter().position(|t| t.0 == name) {
+        if k < texts.len() && texts[k] != v {
+            texts[k] = v.clone();
+            let _ = to_logic.send(Event::Text(scene.texts[k].0, v));
+        }
+    }
 }
 
 struct Rng(u64);
@@ -180,6 +214,21 @@ pub fn run(
     let mut with_warning: Vec<Instr> = Vec::new();
     let mut next_frame = Instant::now();
     let mut frames_for_period = 0u32;
+    // The compositor inside the scene (`windows`), once the scene asks for it;
+    // it outlives reloads, and so do the programs in it.
+    let mut nest: Option<crate::platform::NestSender> = None;
+    let mut nest_windows: Vec<NestWindow> = Vec::new();
+    // Which zone is which window's, the pointer as last told to it, the window
+    // holding the buttons pressed on it, and the keys it was handed.
+    let mut nest_zones: Vec<Option<usize>> = Vec::new();
+    let mut nest_pointer: Option<(usize, f64, f64)> = None;
+    let mut nest_grab: Option<usize> = None;
+    let mut nest_buttons: Vec<u32> = Vec::new();
+    let mut nest_keys: Vec<u32> = Vec::new();
+    let mut nest_size: (i32, i32) = (0, 0);
+    // A window drew something new: what it covers is painted again.
+    let mut nest_changed = false;
+    let mut nest_cursor = Cursor::Normal;
 
     loop {
         // ── 1. what has arrived ─────────────────────────────────
@@ -188,7 +237,8 @@ pub fn run(
         let mut buttons: Vec<(u8, bool)> = Vec::new();
         let mut wheel = 0.0f32;
         let mut keys: Vec<String> = Vec::new();
-        let mut key_presses: Vec<(String, Option<String>, Mods)> = Vec::new();
+        let mut key_presses: Vec<(String, Option<String>, Mods, u32)> = Vec::new();
+        let mut key_releases: Vec<u32> = Vec::new();
         let mut focus_changes: Vec<bool> = Vec::new();
         let mut drops: Vec<(String, String)> = Vec::new();
         // (which one, whether it comes from the logic)
@@ -285,6 +335,27 @@ pub fn run(
                         fresh.gestures.len(), fresh.rules.len(), fresh.zones.len()
                     );
                     scene = fresh;
+                    if let Some(n) = &scene.nest {
+                        if nest.is_none() {
+                            nest = crate::platform::start_nest(n.max, op.to_self.clone());
+                        }
+                        nest_windows.resize_with(nest_windows.len().max(n.max), NestWindow::default);
+                        for w in &mut nest_windows {
+                            w.uploaded = false;
+                            w.ask = None;
+                        }
+                        nest_size = (0, 0);
+                    }
+                    // A window's zone is named like it: `win.3`, with the copy's mark if it has one.
+                    nest_zones = scene
+                        .zones
+                        .iter()
+                        .map(|z| {
+                            let n = scene.nest.as_ref()?;
+                            let bare = z.id.split('#').next().unwrap_or(z.id);
+                            bare.strip_prefix(&format!("{}.", n.name))?.parse::<usize>().ok().filter(|k| *k < n.max)
+                        })
+                        .collect();
                     // Its own shaders: the pipeline is only remade if they changed.
                     if let Some(g) = gpu.as_mut() {
                         g.set_shaders(&scene.shaders);
@@ -535,18 +606,80 @@ pub fn run(
                     last_activity = Instant::now();
                 }
                 ToRender::KeyRepeat(r) => key_repeat = r,
-                ToRender::Key(name, typed, mods) => {
+                ToRender::Key(name, typed, mods, code) => {
                     last_activity = Instant::now();
                     // If it is held down, it repeats, however this user has it set up.
                     repeat = key_repeat.map(|(delay, _)| (name.clone(), typed.clone(), mods, Instant::now() + Duration::from_millis(delay as u64)));
-                    key_presses.push((name, typed, mods));
+                    key_presses.push((name, typed, mods, code));
                 }
-                ToRender::KeyReleased(name) => {
+                ToRender::KeyReleased(name, code) => {
                     if repeat.as_ref().is_some_and(|r| r.0 == name) {
                         repeat = None;
                     }
+                    // A key handed to a window is released in it too: after the
+                    // presses of this round, which may include its own.
+                    key_releases.push(code);
                 }
-                ToRender::KeyboardFocus(yes) => focus_changes.push(yes),
+                ToRender::KeyboardFocus(yes) => {
+                    focus_changes.push(yes);
+                    if let Some(send) = &nest {
+                        send(ToNest::HostFocus(yes));
+                        if !yes {
+                            nest_keys.clear();
+                        }
+                    }
+                }
+                ToRender::Nest(e) => {
+                    let Some(n) = scene.nest.clone() else { continue };
+                    let name = &n.name;
+                    match e {
+                        NestEvent::Socket(socket) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.socket"), socket),
+                        NestEvent::Opened { slot, title, app } => {
+                            // What the slot showed before —a window closing, still fading— is no longer it.
+                            if let Some(w) = nest_windows.get_mut(slot) {
+                                *w = NestWindow { ask: w.ask, ..NestWindow::default() };
+                            }
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.open"), 1.0);
+                            nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.title"), title);
+                            nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), app);
+                        }
+                        NestEvent::Title(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.title"), t),
+                        NestEvent::App(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), t),
+                        NestEvent::Image { slot, size: sz, geometry, pixels } => {
+                            if let Some(w) = nest_windows.get_mut(slot) {
+                                *w = NestWindow { size: sz, geometry, pixels, uploaded: false, ask: w.ask };
+                                nest_changed = true;
+                            }
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.width"), geometry[2] as f32);
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.height"), geometry[3] as f32);
+                        }
+                        NestEvent::Closed(slot) => {
+                            // Its last image stays: the scene may want to see it leave.
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.open"), 0.0);
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.focused"), 0.0);
+                            if nest_grab == Some(slot) {
+                                nest_grab = None;
+                            }
+                        }
+                        NestEvent::Focused(which) => {
+                            for k in 0..n.max {
+                                nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{k}.focused"), (which == Some(k)) as u8 as f32);
+                            }
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.focus"), which.map_or(-1.0, |k| k as f32));
+                        }
+                        NestEvent::Cursor(kind) => nest_cursor = kind,
+                        NestEvent::Order(order) => {
+                            for k in 0..n.max {
+                                let place = order.iter().position(|s| *s == k).map_or(-1.0, |p| p as f32);
+                                nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{k}.place"), place);
+                            }
+                            for p in 0..n.max {
+                                nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.order.{p}"), order.get(p).map_or(-1.0, |s| *s as f32));
+                            }
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.count"), order.len() as f32);
+                        }
+                    }
+                }
                 ToRender::FocusField(name) => {
                     editing = name.and_then(|n| scene.texts.iter().position(|t| t.0 == n)).map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() });
                     last_key = Instant::now();
@@ -561,12 +694,13 @@ pub fn run(
         // The key that is still held down counts again.
         if let Some((name, typed, mods, when)) = &mut repeat {
             if Instant::now() >= *when {
-                key_presses.push((name.clone(), typed.clone(), *mods));
+                // A repeat is made up here: a window repeats on its own, it is not handed one.
+                key_presses.push((name.clone(), typed.clone(), *mods, 0));
                 *when = Instant::now() + Duration::from_millis(key_repeat.map_or(33, |r| r.1) as u64);
             }
         }
         let mut submitted: Vec<usize> = Vec::new();
-        for (name, typed, mods) in key_presses {
+        for (name, typed, mods, code) in key_presses {
             // The field first: whatever is typing belongs to it. The rest —Escape, a
             // shortcut— goes on to the rules and to the logic.
             if let Some(ed) = &mut editing {
@@ -596,8 +730,26 @@ pub fn run(
                 }
             }
             combo.push_str(&name);
+            // A key the scene has no rule for belongs to the window that has
+            // the keyboard. With a rule —`on key Super+Return`—, to the scene.
+            // (A rule whose `while` does not hold now does not take it: `on key
+            // Escape while overview` leaves Esc to the windows the rest of the time.)
+            let the_scenes = scene.rules.iter().any(|r| matches!(&r.when, Trigger::Key(t) if *t == combo) && r.guard.as_ref().is_none_or(|g| g.is_true(Ctx { props: &props, facts: &facts })));
+            if let Some(send) = &nest {
+                let focus = scene.nest.as_ref().and_then(|n| scene.facts.iter().position(|h| h.0 == format!("{}.focus", n.name))).map_or(-1.0, |k| facts[k]);
+                if !the_scenes && code != 0 && focus >= 0.0 {
+                    send(ToNest::Key { code, down: true });
+                    nest_keys.push(code);
+                }
+            }
             let _ = to_logic.send(Event::Key(combo.clone(), typed));
             keys.push(combo);
+        }
+        for code in key_releases {
+            if let (Some(send), Some(k)) = (&nest, nest_keys.iter().position(|c| *c == code)) {
+                nest_keys.remove(k);
+                send(ToNest::Key { code, down: false });
+            }
         }
         for gained in &focus_changes {
             have_keyboard = *gained;
@@ -707,6 +859,53 @@ pub fn run(
             let k = z.0 as usize;
             props[hover.0 as usize].target = if inside.get(k).copied().unwrap_or(false) { 1.0 } else { 0.0 };
             props[pressed.0 as usize].target = if drag.is_some_and(|d| d.0 == k) { 1.0 } else { 0.0 };
+        }
+
+        // The windows of the scene's compositor: the one under the pointer —or
+        // the one a button was pressed on, while it is held— gets the pointer,
+        // in its own pixels, and the buttons and the wheel.
+        if let Some(send) = &nest {
+            let under = nest_grab.or_else(|| hovered.and_then(|k| nest_zones.get(k).copied().flatten()));
+            let local = under.zip(pointer).and_then(|(slot, (x, y))| {
+                let (_, d, affine) = draw.windows_drawn.iter().rev().find(|w| w.0 == slot)?;
+                let g = nest_windows.get(slot)?.geometry;
+                let (lx, ly) = affine.inverse().apply(x, y);
+                Some((slot, ((lx - d[0]) / d[2] * g[2] as f32) as f64, ((ly - d[1]) / d[3] * g[3] as f32) as f64))
+            });
+            match local {
+                Some(p) if nest_pointer != Some(p) => {
+                    send(ToNest::Pointer { slot: p.0, x: p.1, y: p.2 });
+                    nest_pointer = Some(p);
+                }
+                None if nest_pointer.is_some() => {
+                    send(ToNest::PointerOut);
+                    nest_pointer = None;
+                }
+                _ => {}
+            }
+            for (button, down) in &buttons {
+                let code = match button {
+                    0 => 0x110,
+                    1 => 0x111,
+                    _ => 0x112,
+                };
+                if *down {
+                    if let Some((slot, _, _)) = local {
+                        send(ToNest::Button { code, down: true });
+                        nest_buttons.push(code);
+                        nest_grab = Some(slot);
+                    }
+                } else if let Some(k) = nest_buttons.iter().position(|c| *c == code) {
+                    nest_buttons.remove(k);
+                    send(ToNest::Button { code, down: false });
+                    if nest_buttons.is_empty() {
+                        nest_grab = None;
+                    }
+                }
+            }
+            if wheel != 0.0 && local.is_some() {
+                send(ToNest::Wheel(wheel as f64));
+            }
         }
 
         // What a rule can read from the mouse: where it is, where inside the zone
@@ -851,6 +1050,8 @@ pub fn run(
 
         // The cursor, the one of the zone it is over.
         let wanted = drag.map(|a| a.0).or(hovered).and_then(|k| scene.zones.get(k)).map_or(Cursor::Normal, |z| z.cursor);
+        // Over a window, the one the window asks for.
+        let wanted = if nest_pointer.is_some() { nest_cursor } else { wanted };
         if wanted != cursor_set {
             cursor_set = wanted;
             for l in &sheets {
@@ -1026,6 +1227,22 @@ pub fn run(
                         props[p.0 as usize].v += v;
                     }
                     Effect::Gesture(g) => gestures_asked.push(g.0 as usize),
+                    Effect::Window(action, which) => {
+                        let slot = which.eval(Ctx { props: &props, facts: &facts }).round();
+                        if let (Some(send), true) = (&nest, slot >= 0.0) {
+                            let slot = slot as usize;
+                            send(match action {
+                                WindowAction::Focus => ToNest::Focus(slot),
+                                WindowAction::Close => ToNest::Close(slot),
+                                WindowAction::Promote => ToNest::Promote(slot),
+                            });
+                        }
+                    }
+                    Effect::Launch(command) => {
+                        if let Some(send) = &nest {
+                            send(ToNest::Launch(command));
+                        }
+                    }
                     Effect::FocusField(t) => {
                         editing = t.map(|t| t.0 as usize).map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() });
                         last_key = now;
@@ -1434,6 +1651,63 @@ pub fn run(
         if draw.signal_times.len() != scene.signals.len() {
             draw.signal_times = vec![-1.0; scene.signals.len()];
         }
+        if nest.is_some() {
+            // What the windows drew, to the card; and where each one is in it.
+            if let Some(g) = gpu.as_mut() {
+                let mut again = true;
+                while again {
+                    again = false;
+                    for (slot, w) in nest_windows.iter_mut().enumerate() {
+                        if w.uploaded || w.pixels.is_empty() {
+                            continue;
+                        }
+                        w.uploaded = true;
+                        if g.upload_window(slot as u32, w.size, &w.pixels) {
+                            // The texture grew and the others' images were lost with it.
+                            again = true;
+                            break;
+                        }
+                    }
+                    if again {
+                        for w in nest_windows.iter_mut() {
+                            w.uploaded = false;
+                        }
+                    }
+                }
+                let (dw, dh) = g.windows_dims();
+                draw.window_tex = nest_windows
+                    .iter()
+                    .enumerate()
+                    .map(|(slot, w)| {
+                        (!w.pixels.is_empty()).then(|| {
+                            let gm = w.geometry;
+                            let (x0, y0) = (gm[0].max(0) as f32, gm[1].max(0) as f32);
+                            let (x1, y1) = (((gm[0] + gm[2]) as f32).min(w.size.0 as f32), ((gm[1] + gm[3]) as f32).min(w.size.1 as f32));
+                            (slot as u32, [x0 / dw as f32, y0 / dh as f32, x1 / dw as f32, y1 / dh as f32], (x1 - x0, y1 - y0))
+                        })
+                    })
+                    .collect();
+            }
+            if let Some(send) = &nest {
+                // The size each window is told to have: only when it changes.
+                for i in to_paint {
+                    let Instr::Window { slot, ask, .. } = i else { continue };
+                    let wanted = (ask.0.eval(c).round().max(1.0) as i32, ask.1.eval(c).round().max(1.0) as i32);
+                    if let Some(w) = nest_windows.get_mut(*slot) {
+                        if w.ask != Some(wanted) {
+                            w.ask = Some(wanted);
+                            send(ToNest::Configure { slot: *slot, w: wanted.0, h: wanted.1 });
+                        }
+                    }
+                }
+                // And the monitor they believe they are on is the scene's surface.
+                let own = (size.0 as i32, (size.1 - if op.hud { crate::gpu::HUD_HEIGHT } else { 0.0 }) as i32);
+                if own != nest_size {
+                    nest_size = own;
+                    send(ToNest::Size(own.0, own.1));
+                }
+            }
+        }
         draw.compose(to_paint, c, &texts, &mut letters, view, size, op.hud);
         // Particles carry themselves: while one is alive, the scene does not rest.
         alive |= draw.particles_alive;
@@ -1456,7 +1730,7 @@ pub fn run(
         g.upload(&draw);
         // What has changed, and where. The frame graph always changes.
         // The light of a click changes the glass without changing the list: everything is painted.
-        let all_changed = !previous.changed_rects(&draw, &mut changed) || op.hud || finger_light > 0.0 || ripple.is_some();
+        let all_changed = !previous.changed_rects(&draw, &mut changed) || op.hud || finger_light > 0.0 || ripple.is_some() || std::mem::take(&mut nest_changed);
 
         // Where the mouse comes in: the active zones, and nothing else. The rest of
         // the surface is transparent for the click too.
@@ -1817,6 +2091,12 @@ pub fn run(
             if sheet_counts.2 >= 300 {
                 println!("timing · surfaces per frame: {:.2} painted, {:.2} up to date", sheet_counts.0 as f32 / 300.0, sheet_counts.1 as f32 / 300.0);
                 sheet_counts = (0, 0, 0);
+            }
+        }
+        // What the windows drew has been shown: they may draw the next one.
+        if painted > 0 {
+            if let Some(send) = &nest {
+                send(ToNest::FrameDone);
             }
         }
         if painted + up_to_date == 0 {

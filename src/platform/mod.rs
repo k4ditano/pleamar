@@ -430,6 +430,39 @@ pub fn watch_cursor(to_render: std::sync::mpsc::Sender<crate::scene::ToRender>) 
     let _ = to_render;
 }
 
+/// The keyboard layout pleamar's own window was given, as xkb text.
+static HOST_KEYMAP: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn set_host_keymap(k: String) {
+    *HOST_KEYMAP.lock().unwrap() = Some(k);
+}
+
+pub fn host_keymap() -> Option<String> {
+    HOST_KEYMAP.lock().unwrap().clone()
+}
+
+/// The compositor inside the scene (`windows`): where to tell it things, if
+/// this system can have one.
+pub type NestSender = Box<dyn Fn(crate::scene::ToNest) + Send>;
+
+pub fn start_nest(max: usize, to_render: std::sync::mpsc::Sender<crate::scene::ToRender>) -> Option<NestSender> {
+    #[cfg(target_os = "linux")]
+    {
+        let tx = nest::start(max, to_render)?;
+        Some(Box::new(move |m| {
+            let _ = tx.send(m);
+        }))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (max, to_render);
+        eprintln!("windows · this system cannot hold other programs' windows yet");
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod nest;
 #[cfg(target_os = "linux")]
 mod auth;
 #[cfg(target_os = "linux")]
