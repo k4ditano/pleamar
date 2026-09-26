@@ -501,7 +501,14 @@ pub fn run(
                     Some(i) => gestures_asked.push(i),
                     None => eprintln!("render · I don't know the gesture '{name}'"),
                 },
-                ToRender::Cursor(at, monitors) => cursor = Some((at, monitors)),
+                // The mouse moving anywhere is someone there: for `idle`, it counts
+                // as much as moving it over the scene.
+                ToRender::Cursor(at, monitors) => {
+                    if cursor.as_ref().is_some_and(|c| c.0 != at) {
+                        last_activity = Instant::now();
+                    }
+                    cursor = Some((at, monitors));
+                }
                 ToRender::Pointer(p) => {
                     pointer = p;
                     last_activity = Instant::now();
