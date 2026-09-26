@@ -154,6 +154,8 @@ pub fn run(
     let mut keyboard_set: Option<Keyboard> = None;
     let mut have_keyboard = false;
     let mut keyboard_lent: Option<Instant> = None;
+    // Since when the scene stopped wanting the keyboard while it was lent.
+    let mut loan_grace: Option<Instant> = None;
     // The field being typed into, and the key that has been left held down.
     let mut editing: Option<Editing> = None;
     let mut repeat: Option<(String, Option<String>, Mods, Instant)> = None;
@@ -794,13 +796,29 @@ pub fn run(
         // receiving the focus does not work, because on going back to "on demand" Hyprland
         // gives it again to the previous window. It is what any launcher does:
         // open, the keyboard is its own; Esc closes it and releases it.
+        //
+        // And it outlives a short gap: the finder closes, and 180 ms later the
+        // card it opened comes out. Released in between, the keyboard went back
+        // to the window below and the card was left without it —Esc did not
+        // reach it until the mouse went over—. So on not being wanted the loan
+        // is kept 300 ms more; if something wants it again by then, it goes on.
         if !keyboard_wanted {
-            keyboard_lent = None;
+            if keyboard_lent.is_some() {
+                let since = *loan_grace.get_or_insert(now);
+                if now.duration_since(since) >= Duration::from_millis(300) {
+                    keyboard_lent = None;
+                    loan_grace = None;
+                } else {
+                    appointments.push(since + Duration::from_millis(300));
+                }
+            }
+        } else {
+            loan_grace = None;
         }
-        let mode = if !keyboard_wanted {
-            Keyboard::Never
-        } else if keyboard_lent.is_some() {
+        let mode = if keyboard_lent.is_some() {
             Keyboard::Always
+        } else if !keyboard_wanted {
+            Keyboard::Never
         } else {
             scene.surface().keyboard
         };
