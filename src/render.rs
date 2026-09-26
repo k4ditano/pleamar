@@ -805,14 +805,23 @@ pub fn run(
             scene.surface().keyboard
         };
         // With no condition and no loan, the keyboard is the one asked for when creating it.
-        if keyboard_set != Some(mode) && (keyboard_set.is_some() || scene.keyboard_while.is_some() || keyboard_lent.is_some()) {
+        // Each surface gets it while it is OPEN, and no other: a closed one
+        // never asks for the keyboard. Handed to all of them, a closed
+        // full-screen catcher or the copy on the other monitor took it —an
+        // exclusive keyboard asked for by the finder went to one of them, and
+        // nothing could be typed in the finder—.
+        if keyboard_set.is_some() || scene.keyboard_while.is_some() || keyboard_lent.is_some() {
             keyboard_set = Some(mode);
             for l in &mut sheets {
-                l.keyboard(mode);
-                // It is applied with the frame that gets presented: let there be one.
-                l.painted = None;
+                let its = if l.open || l.view.popup.is_some() { mode } else { Keyboard::Never };
+                if l.keyboard_mode != Some(its) {
+                    l.keyboard(its);
+                    l.keyboard_mode = Some(its);
+                    // It is applied with the frame that gets presented: let there be one.
+                    l.painted = None;
+                    keyboard_changed = true;
+                }
             }
-            keyboard_changed = true;
         }
 
         // The cursor, the one of the zone it is over.
