@@ -297,6 +297,10 @@ struct Compiler<'a> {
     /// The measure a layout imposes on the text it is going to paint.
     imposed_measure: Option<(PropId, PropId)>,
     pending_keyboard: Option<(&'a [Token], (usize, usize))>,
+    /// Where each property was declared: the same line read twice is the same
+    /// declaration (a `repeat` inside a surface per monitor); another line with
+    /// the same name is a mistake.
+    prop_sites: HashMap<String, (usize, usize)>,
     /// The transforms under which painting is happening: a zone inherits them.
     under: Vec<Transform>,
 }
@@ -336,7 +340,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None,
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -1461,7 +1465,19 @@ impl<'a> Compiler<'a> {
                     self.springs.insert(name, Spring { stiffness, damping: c.num()? });
                 }
                 "prop" | "pose" => {
+                    let site = c.tokens.first().map_or((0, 0), |t| (t.line, t.col));
                     let name = self.declare(&c.id("a name for the property")?);
+                    // Two declarations with one name are one property, moved by both:
+                    // a `prop tide` next to the water's `pose tide` made the eyes
+                    // swell with the tide, and nothing said why.
+                    match self.prop_sites.get(&name) {
+                        Some(&(line, col)) if (line, col) != site => {
+                            return c.error(format!("'{name}' is already a property, declared on line {}: two with the same name would be the same one, and whatever moves one would move the other. Give this one another name", line % super::PER_FILE));
+                        }
+                        _ => {
+                            self.prop_sites.insert(name.clone(), site);
+                        }
+                    }
                     c.expect_sym("=")?;
                     let v = c.num()?;
                     let spring = if c.sym("~") { self.spring(&mut c)? } else if word == "pose" { Spring::POSE } else { Spring::LIVELY };

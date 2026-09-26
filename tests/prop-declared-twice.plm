@@ -1,0 +1,7 @@
+// expect: error «is already a property, declared on line 4»
+scene D {
+    surface { size: 100, 100 }
+    pose tide = 0
+    prop tide = 0 ~240ms
+    box { at: 50, 50 + tide; size: 10, 10; color: #ffffff }
+}
