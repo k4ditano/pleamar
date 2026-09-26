@@ -1207,6 +1207,12 @@ impl PointerHandler for State {
                     *pp.last_press.lock().unwrap() = Some((serial, std::time::Instant::now()));
                 }
             }
+            // `PLEAMAR_DEBUG_ZONES=1`: which surface the compositor gives the mouse to,
+            // when it enters, leaves or presses —not every motion—.
+            if std::env::var_os("PLEAMAR_DEBUG_ZONES").is_some() && !matches!(e.kind, PointerEventKind::Motion { .. } | PointerEventKind::Axis { .. }) {
+                let which = self.placed.iter().find(|p| p.role.wl() == &e.surface).map(|p| p.which);
+                eprintln!("pointer · {:?} on surface {which:?} at {:.0},{:.0}", e.kind, x, y);
+            }
             match e.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                     if let PointerEventKind::Enter { serial } = e.kind {

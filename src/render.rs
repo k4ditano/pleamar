@@ -1034,10 +1034,28 @@ pub fn run(
         // full-screen catcher or the copy on the other monitor took it —an
         // exclusive keyboard asked for by the finder went to one of them, and
         // nothing could be typed in the finder—.
+        // The keyboard asked for exclusively goes to the surface where the text
+        // cursor is, and no other. Asked by every open one, Hyprland gave it to
+        // the last —Marea's full-screen catcher— and with it the mouse: over
+        // the calendar, which puts the cursor in its field as it opens, the
+        // pointer stayed on the catcher and the first click closed everything.
+        let typing_at = editing
+            .as_ref()
+            .and_then(|e| draw.fields.iter().find(|f| f.text == e.field))
+            .and_then(|f| scene.zones.iter().find(|z| z.id == f.zone))
+            .and_then(|z| z.bounds(Ctx { props: &props, facts: &facts }));
         if keyboard_set.is_some() || scene.keyboard_while.is_some() || keyboard_lent.is_some() {
             keyboard_set = Some(mode);
             for l in &mut sheets {
-                let its = if l.open || l.view.popup.is_some() { mode } else { Keyboard::Never };
+                let v = l.view.bounds();
+                let elsewhere = typing_at.is_some_and(|b| !(b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]));
+                let its = if !(l.open || l.view.popup.is_some()) {
+                    Keyboard::Never
+                } else if mode == Keyboard::Always && elsewhere {
+                    Keyboard::OnDemand
+                } else {
+                    mode
+                };
                 if l.keyboard_mode != Some(its) {
                     l.keyboard(its);
                     l.keyboard_mode = Some(its);
@@ -1756,6 +1774,24 @@ pub fn run(
             .map(|b| [(b[0] - 3.0).floor() as i32, (b[1] - 3.0).floor() as i32, (b[2] + 3.0).ceil() as i32, (b[3] + 3.0).ceil() as i32])
             .collect();
         let region_changes = boxes != region;
+        // `PLEAMAR_REGIONS=card`: and the zones whose name has that in it, with
+        // where they are and whether a closed surface is hiding them.
+        if region_changes {
+            if let Some(which) = std::env::var_os("PLEAMAR_REGIONS").filter(|w| w.len() > 1) {
+                let which = which.to_string_lossy();
+                for z in scene.zones.iter().filter(|z| z.id.contains(which.as_ref())) {
+                    let b = z.bounds(c);
+                    let hidden = b.is_some_and(|b| closed.iter().any(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]));
+                    eprintln!("regions · zone {} · active {} · {:?} · under a closed surface {hidden}", z.id, z.active.is_true(c), b);
+                    if let Some(b) = b.filter(|_| hidden) {
+                        for v in closed.iter().filter(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]) {
+                            let who: Vec<String> = sheets.iter().filter(|l| l.view.bounds() == *v).map(|l| format!("sheet of surface {}", l.view.surface)).chain(scene.surfaces.iter().enumerate().filter(|(_, s)| s.origin.0 == v[0] && s.origin.1 == v[1]).map(|(k, s)| format!("surface {k} '{}' #{}", s.name, s.instance))).collect();
+                            eprintln!("regions ·   hidden by {v:?}: {who:?}");
+                        }
+                    }
+                }
+            }
+        }
         if region_changes {
             // Each surface gets the zones that fall on ITS piece of the plane, in its
             // coordinates. A popup is all its own, and carries no region.
