@@ -1201,8 +1201,18 @@ pub fn run(
                         continue;
                     }
                     let v = per_second.eval(Ctx { props: &props, facts: &facts });
+                    // Stopped, it lets the property be: a rule can send it
+                    // somewhere. Pinning it every frame at speed 0 undid every
+                    // `x: 0` —a reading clock that was never reset—.
+                    if v.abs() < 1e-9 {
+                        continue;
+                    }
+                    // Turning, it carries the property and where it is going
+                    // together: a rule that sends it back to 0 midway is obeyed,
+                    // and it goes on turning from there.
                     let a = &mut props[prop.0 as usize];
-                    a.set(a.x + v * dt);
+                    a.x += v * dt;
+                    a.target += v * dt;
                     alive |= v.abs() > 1e-4;
                 }
                 Behavior::Gaze { x, y, center, reach, distance, rest } => {
