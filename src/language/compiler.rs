@@ -379,9 +379,10 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     // Four passes: declarations; names and layers; drawing; rules.
     for pass in 0..3 {
         o.pass = pass;
-        // The pages' facts, wherever they are written: from the start, so that
-        // anything can read them and set them (`settings = look`).
-        if pass == 1 {
+        // The pages' facts, wherever they are written: before anything else,
+        // so that anything can read them and set them (`settings = look`) and
+        // their pages' names are taken before other declarations use them.
+        if pass == 0 {
             o.declare_pages_early(body);
         }
         // The surfaces are already known: if any is repeated per monitor, its named
@@ -3583,13 +3584,20 @@ impl<'a> Compiler<'a> {
                 }
             }
             // What the render reports about each monitor, and how many there are.
+            // Once: a second `screens: each` surface —the lock, a corner— speaks
+            // of the same monitors, and a second `screen.0.name` would be the one
+            // the scene names while the render fills the first, so it stayed empty.
             for k in 0..limit {
-                let t = self.e.live_text(interned(&format!("screen.{k}.name")), "");
-                self.texts.insert(format!("screen.{k}.name"), t);
+                if !self.texts.contains_key(&format!("screen.{k}.name")) {
+                    let t = self.e.live_text(interned(&format!("screen.{k}.name")), "");
+                    self.texts.insert(format!("screen.{k}.name"), t);
+                }
                 for part in ["width", "height"] {
                     let full_name = format!("screen.{k}.{part}");
-                    let h = self.e.fact(interned(&full_name), 0.0);
-                    self.facts.insert(full_name, h);
+                    if !self.facts.contains_key(&full_name) {
+                        let h = self.e.fact(interned(&full_name), 0.0);
+                        self.facts.insert(full_name, h);
+                    }
                 }
                 // And its number, as a fact: that way a loose `let` —which is read
                 // once, not once per copy— can say `if(screen.index == 0, …)`
@@ -3597,8 +3605,10 @@ impl<'a> Compiler<'a> {
                 // little ball crossing from one monitor to the other needs without wrapping three thousand
                 // lines in a group.
                 let full_name = format!("screen.{k}.index");
-                let h = self.e.fact(interned(&full_name), k as f32);
-                self.facts.insert(full_name, h);
+                if !self.facts.contains_key(&full_name) {
+                    let h = self.e.fact(interned(&full_name), k as f32);
+                    self.facts.insert(full_name, h);
+                }
             }
             if !self.facts.contains_key("screens.count") {
                 let h = self.e.fact("screens.count", 0.0);
@@ -4722,6 +4732,9 @@ impl<'a> Compiler<'a> {
         }
         if pages.is_empty() {
             return Err(CompileError::at(n.line, n.col, "`pages` without a single `page` shows nothing"));
+        }
+        if pages.len() == 1 {
+            return Err(CompileError::at(n.line, n.col, "`pages` with a single page has nowhere to go: that is a `group`"));
         }
         Ok((name.clone(), pages, header))
     }
