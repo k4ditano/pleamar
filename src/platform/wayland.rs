@@ -1057,7 +1057,11 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
         eprintln!("warning: none of the monitors asked for ({:?}) is plugged in; waiting for one to appear", state.wanted.iter().map(|s| &s.screens).collect::<Vec<_>>());
     }
     while !state.quit {
-        events.blocking_dispatch(&mut state).unwrap();
+        // The compositor went away (its session ended): nothing left to show on.
+        if let Err(e) = events.blocking_dispatch(&mut state) {
+            eprintln!("wayland · the compositor is gone ({e}): leaving");
+            std::process::exit(0);
+        }
     }
 }
 
