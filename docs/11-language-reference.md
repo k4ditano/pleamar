@@ -999,7 +999,9 @@ scene Pieces {
 
 ### 10.3. Other programs' windows: `windows`
 
-`windows win max 6` puts a Wayland compositor inside the scene. Programs
+`windows win max 6` puts a Wayland compositor inside the scene —with
+[pleamar-wm](https://github.com/k4ditano/pleamar-wm), which is pleamar with
+one inside; plain `pleamar` reads these scenes but holds no windows—. Programs
 started with `launch "kitty"` —or by hand, with the `WAYLAND_DISPLAY` that
 `win.socket` says— open in it, and each one takes a slot, `win.0` to `win.5`.
 Where it goes, how big, how it arrives and how it leaves is the scene's: the
@@ -1039,7 +1041,7 @@ A window that closes leaves its last image in its slot: the scene can see it
 leave, fading on a spring, instead of vanishing. Programs that draw with the
 GPU are started with Mesa's software GL, since the frames this compositor takes
 yet are in shared memory; there is no XWayland either, so an X11-only program
-does not open here. A whole window manager is in `examples/windows.plm`.
+does not open here. A whole window manager is in pleamar-wm's `examples/windows.plm`.
 
 ```plm
 scene Nested {

@@ -34,9 +34,6 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # fontconfig gives the system's font aliases ("sans-serif" → whichever it is). Without it,
 # on Windows and macOS, fontdb reads the font folders directly.
 cosmic-text = { version = "0.19.0", default-features = false, features = ["fontconfig"] }
-# `windows`: a Wayland compositor inside the scene. Only the protocol side: the
-# painting is pleamar's own, so no backend and no renderer of smithay's.
-smithay = { version = "0.7", default-features = false, features = ["wayland_frontend", "desktop"] }
 
 # The Luau logic brings a C++ compiler with it: Luau is built from its
 # sources. It is a feature so that the core can be checked against other

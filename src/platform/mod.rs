@@ -441,28 +441,33 @@ pub fn host_keymap() -> Option<String> {
     HOST_KEYMAP.lock().unwrap().clone()
 }
 
-/// The compositor inside the scene (`windows`): where to tell it things, if
-/// this system can have one.
+/// The compositor inside the scene (`windows`): where to tell it things.
 pub type NestSender = Box<dyn Fn(crate::scene::ToNest) + Send>;
 
+/// What starts one: given how many windows the scene holds and where to
+/// report to the render, it answers where to talk to it —or nothing, if it
+/// could not start—.
+pub type NestStarter = fn(usize, std::sync::mpsc::Sender<crate::scene::ToRender>) -> Option<NestSender>;
+
+static NEST: std::sync::OnceLock<NestStarter> = std::sync::OnceLock::new();
+
+/// pleamar itself holds no compositor: whoever builds one on top of it
+/// (pleamar-wm) hands it over here before `run()`, and the scenes' `windows`
+/// fill from it.
+pub fn provide_windows(start: NestStarter) {
+    let _ = NEST.set(start);
+}
+
 pub fn start_nest(max: usize, to_render: std::sync::mpsc::Sender<crate::scene::ToRender>) -> Option<NestSender> {
-    #[cfg(target_os = "linux")]
-    {
-        let tx = nest::start(max, to_render)?;
-        Some(Box::new(move |m| {
-            let _ = tx.send(m);
-        }))
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (max, to_render);
-        eprintln!("windows · this system cannot hold other programs' windows yet");
-        None
+    match NEST.get() {
+        Some(start) => start(max, to_render),
+        None => {
+            eprintln!("windows · this pleamar holds no other programs' windows: open the scene with pleamar-wm");
+            None
+        }
     }
 }
 
-#[cfg(target_os = "linux")]
-mod nest;
 #[cfg(target_os = "linux")]
 mod auth;
 #[cfg(target_os = "linux")]
