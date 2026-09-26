@@ -248,7 +248,10 @@ pub fn run(
     let mut nest_layers: Vec<bool> = Vec::new();
     let mut nest_gpu_told = false;
     // The buffers copied this round, and the copy to wait for before handing them back.
-    let mut nest_copied: (Vec<u64>, Option<wgpu::SubmissionIndex>) = (Vec::new(), None);
+    let mut nest_copied: (Vec<u64>, bool) = (Vec::new(), false);
+    // Programs' buffers the card is still copying, by the work they went in:
+    // they go back as soon as it says it has finished, and nobody waits for it.
+    let mut nest_lent: Vec<(wgpu::SubmissionIndex, Vec<u64>)> = Vec::new();
 
     // `PLEAMAR_TIMING=1`: where a frame's time goes, section by section, without the waits.
     let profiling = crate::gpu::timing_enabled();
@@ -281,9 +284,23 @@ pub fn run(
             // resting, there is nothing to paint after it. It woke it once per
             // frame of a window in the scene —a round for nothing, every time—.
             while incoming.is_empty() {
-                match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
+                // A program's buffer still on loan is looked at every couple of
+                // milliseconds, without a round: it goes back as soon as it is copied.
+                if let (Some(g), Some(send)) = (&gpu, &nest) {
+                    nest_lent.retain(|(index, buffers)| {
+                        let done = g.is_done(index);
+                        if done {
+                            send(ToNest::Released(buffers.clone()));
+                        }
+                        !done
+                    });
+                }
+                let wait = until.saturating_duration_since(Instant::now());
+                let wait = if nest_lent.is_empty() { wait } else { wait.min(Duration::from_millis(2)) };
+                match rx.recv_timeout(wait) {
                     Ok(ToRender::Frame(id)) => frame_ready |= frame_requested == Some(id),
                     Ok(m) => incoming.push(m),
+                    Err(RecvTimeoutError::Timeout) if Instant::now() < until => {}
                     Err(RecvTimeoutError::Timeout) => break,
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
@@ -292,6 +309,15 @@ pub fn run(
             last = Instant::now() - Duration::from_secs_f32(period_ms / 1000.0);
         }
         incoming.extend(rx.try_iter());
+        if let (Some(g), Some(send)) = (&gpu, &nest) {
+            nest_lent.retain(|(index, buffers)| {
+                let done = g.is_done(index);
+                if done {
+                    send(ToNest::Released(buffers.clone()));
+                }
+                !done
+            });
+        }
         for m in incoming {
             match m {
                 // A reload that does not go through is shown on the surface, not only on
@@ -1780,7 +1806,7 @@ pub fn run(
                     }
                 }
                 let mut released: Vec<u64> = Vec::new();
-                let mut last_copy: Option<wgpu::SubmissionIndex> = None;
+                let mut copied_any = false;
                 let mut again = true;
                 while again {
                     again = false;
@@ -1796,11 +1822,11 @@ pub fn run(
                                     let fresh = p.fresh.take();
                                     let was_fresh = fresh.is_some();
                                     match g.copy_dmabuf(p.layer, p.size, buffer, fresh) {
-                                        Ok((grew, index)) => {
+                                        Ok(grew) => {
                                             if was_fresh {
                                                 released.push(buffer);
                                             }
-                                            last_copy = Some(index);
+                                            copied_any = true;
                                             grew
                                         }
                                         Err(e) => {
@@ -1837,10 +1863,8 @@ pub fn run(
                 }
                 // The programs' buffers go back once the card has copied them:
                 // that is waited for after painting, when it is long done.
-                if let Some(index) = last_copy {
-                    nest_copied.0.extend(released);
-                    nest_copied.1 = Some(index);
-                }
+                nest_copied.0.extend(released);
+                nest_copied.1 |= copied_any;
                 let (dw, dh) = g.windows_dims();
                 draw.window_tex = nest_windows
                     .iter()
@@ -2308,13 +2332,12 @@ pub fn run(
             prof_t = n;
         }
         prof_painted += painted;
-        if let (Some(index), Some(g)) = (nest_copied.1.take(), &gpu) {
-            g.wait_for(index);
-            if let Some(send) = &nest {
-                let done = std::mem::take(&mut nest_copied.0);
-                if !done.is_empty() {
-                    send(ToNest::Released(done));
-                }
+        if let (true, Some(g)) = (std::mem::take(&mut nest_copied.1), &gpu) {
+            // The copies went with the painting; if nothing was painted, on their own.
+            g.flush_copies();
+            let done = std::mem::take(&mut nest_copied.0);
+            if let (Some(index), false) = (g.last_submission(), done.is_empty()) {
+                nest_lent.push((index, done));
             }
         }
         // What the windows drew has been shown: they may draw the next one.

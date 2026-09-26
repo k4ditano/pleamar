@@ -1460,6 +1460,11 @@ pub struct Gpu {
     /// buffer: a program cycles through two or three, and each is imported once.
     #[cfg(target_os = "linux")]
     dmabufs: std::collections::HashMap<u64, wgpu::Texture>,
+    /// Copies of programs' frames waiting for the next painting: which
+    /// buffer, to which layer, how much.
+    #[cfg(target_os = "linux")]
+    copies: std::cell::RefCell<Vec<(u64, u32, wgpu::Extent3d)>>,
+    last_submission: std::cell::RefCell<Option<wgpu::SubmissionIndex>>,
     sampler: wgpu::Sampler,
     /// How many floats fit now in each store, and how many at most on this card.
     capacity: (usize, usize, usize, usize),
@@ -1558,7 +1563,7 @@ impl Gpu {
             view_formats: &[],
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
-        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
+        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), last_submission: Default::default(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
     }
 
     /// The four groups the shapes shader reads, written out. See `shape.wgsl`.
@@ -1877,7 +1882,7 @@ impl Gpu {
     #[cfg(target_os = "linux")]
     /// `buffer` is which of the program's buffers; `fresh`, if it has come
     /// now, what it takes to read it (a buffer already read is not read again).
-    pub fn copy_dmabuf(&mut self, layer: u32, size: (u32, u32), buffer: u64, fresh: Option<crate::scene::DmabufPiece>) -> Result<(bool, wgpu::SubmissionIndex), String> {
+    pub fn copy_dmabuf(&mut self, layer: u32, size: (u32, u32), buffer: u64, fresh: Option<crate::scene::DmabufPiece>) -> Result<bool, String> {
         use wgpu::hal::api::Vulkan;
         let extent = wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 };
         if let Some(d) = fresh.filter(|_| !self.dmabufs.contains_key(&buffer)) {
@@ -1918,22 +1923,49 @@ impl Gpu {
             self.dmabufs.insert(buffer, texture);
         }
         let remade = self.window_room(layer, size);
-        let source = self.dmabufs.get(&buffer).ok_or("that buffer was never read")?;
+        if !self.dmabufs.contains_key(&buffer) {
+            return Err("that buffer was never read".into());
+        }
         let max = self.device.limits().max_texture_dimension_2d;
         let copy = wgpu::Extent3d { width: size.0.min(max).max(1), height: size.1.min(max).max(1), depth_or_array_layers: 1 };
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo { texture: source, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            wgpu::TexelCopyTextureInfo { texture: &self.windows, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: 0, z: layer }, aspect: wgpu::TextureAspect::All },
-            copy,
-        );
-        let index = self.queue.submit(Some(encoder.finish()));
-        Ok((remade, index))
+        // Not now: it goes in the same work as the next painting, which is
+        // what reads it. A submission of its own cost as much as the painting's.
+        self.copies.borrow_mut().push((buffer, layer, copy));
+        Ok(remade)
     }
 
-    /// Waits until that copy is done: then its buffer can go back to its program.
-    pub fn wait_for(&self, index: wgpu::SubmissionIndex) {
-        let _ = self.device.poll(wgpu::PollType::Wait { submission_index: Some(index), timeout: Some(std::time::Duration::from_millis(100)) });
+    /// The copies still waiting for a painting, in this encoder.
+    #[cfg(target_os = "linux")]
+    fn record_copies(&self, encoder: &mut wgpu::CommandEncoder) {
+        for (buffer, layer, copy) in self.copies.borrow_mut().drain(..) {
+            let Some(source) = self.dmabufs.get(&buffer) else { continue };
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo { texture: source, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                wgpu::TexelCopyTextureInfo { texture: &self.windows, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: 0, z: layer }, aspect: wgpu::TextureAspect::All },
+                copy,
+            );
+        }
+    }
+
+    /// If no painting took the copies this round, they go on their own.
+    pub fn flush_copies(&self) {
+        #[cfg(target_os = "linux")]
+        if !self.copies.borrow().is_empty() {
+            let mut encoder = self.device.create_command_encoder(&Default::default());
+            self.record_copies(&mut encoder);
+            self.last_submission.replace(Some(self.queue.submit(Some(encoder.finish()))));
+        }
+    }
+
+    /// The last work sent to the card: what has to be waited for before
+    /// handing a program's buffer back.
+    pub fn last_submission(&self) -> Option<wgpu::SubmissionIndex> {
+        self.last_submission.borrow().clone()
+    }
+
+    /// Whether the card has finished that work, without waiting for it.
+    pub fn is_done(&self, index: &wgpu::SubmissionIndex) -> bool {
+        self.device.poll(wgpu::PollType::Wait { submission_index: Some(index.clone()), timeout: Some(std::time::Duration::ZERO) }).is_ok()
     }
 
     /// Buffers of programs that no longer exist: what was kept of them goes.
@@ -2071,6 +2103,8 @@ impl Gpu {
         };
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
+        #[cfg(target_os = "linux")]
+        self.record_copies(&mut encoder);
         // What the last capture of what is behind left, before painting with it.
         let scale = l.scale;
         if let Some(lens) = &mut l.lens {
@@ -2171,7 +2205,7 @@ impl Gpu {
         let t1 = timing.then(std::time::Instant::now);
         let commands = encoder.finish();
         let t2 = timing.then(std::time::Instant::now);
-        self.queue.submit(Some(commands));
+        self.last_submission.replace(Some(self.queue.submit(Some(commands))));
         let t3 = timing.then(std::time::Instant::now);
         if request_frame {
             l.window.request_frame();
