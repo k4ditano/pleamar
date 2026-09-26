@@ -266,6 +266,10 @@ pub fn content_text<'t>(content: &'t Content, c: Ctx, texts: &'t [String]) -> st
             let k = (c.facts[locale.0 as usize].round().max(0.0) as usize).min(versions.len().saturating_sub(1));
             content_text(&versions[k], c, texts)
         }
+        Content::Pick(i, options) => match options.get(crate::scene::pick_index(i.eval(c), options.len())) {
+            Some(o) => content_text(o, c, texts),
+            None => Cow::Borrowed(""),
+        },
     }
 }
 

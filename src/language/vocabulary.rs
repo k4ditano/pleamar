@@ -39,7 +39,7 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "corner", "show", "opacity", "cursor", "view", "step", "content", "wrap", "size", "grow"]),
 ];
 
-pub const FUNCTIONS: &[&str] = &["min", "max", "abs", "floor", "ceil", "sin", "cos", "clamp", "smooth", "mix", "if", "vel", "sqrt", "pow", "fract", "mod", "sign", "round", "exp", "log", "tan", "atan2", "length", "noise", "random"];
+pub const FUNCTIONS: &[&str] = &["min", "max", "abs", "floor", "ceil", "sin", "cos", "clamp", "smooth", "mix", "if", "vel", "sqrt", "pow", "fract", "mod", "sign", "round", "exp", "log", "tan", "atan2", "length", "noise", "random", "pick"];
 /// Inside a hole of a text.
 pub const TEXT_FUNCTIONS: &[&str] = &["upper", "lower"];
 /// What can go after `on`. Any other word is the name of an event.

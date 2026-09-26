@@ -1,0 +1,9 @@
+// expect: ok
+scene Pick {
+    surface { size: 300, 120 }
+    fact mode: calm | busy | away = busy
+    text status = "live"
+    box { at: pick(mode, 40, 150, 260), 60; size: 60, 40; corner: 8; color: pick(mode, #9ed6bd, #f0b85a, #ef7a66) }
+    text pick(mode, "Calm", "Busy", "Away") { at: 150, 20; anchor: center; size: 14; color: #ffffff }
+    text pick(mode, "fixed", status) { at: 150, 100; anchor: center; size: 12; color: #ffffff }
+}

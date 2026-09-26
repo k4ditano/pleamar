@@ -242,6 +242,9 @@ pub enum Expr {
     Bin(Bin, Box<Expr>, Box<Expr>),
     /// Inside a text's `letter_*` properties: 0 which letter it is, 1 how many there are.
     Letter(u8),
+    /// `pick(i, a, b, c)`: the one at place `i` (0 is the first), rounded and
+    /// kept within the list. Only the chosen one is evaluated.
+    Pick(Box<Expr>, Vec<Expr>),
 }
 
 thread_local! {
@@ -353,6 +356,14 @@ impl Bin {
     }
 }
 
+/// Which of `n` a `pick` takes: rounded, and kept within the list.
+pub fn pick_index(v: f32, n: usize) -> usize {
+    if n == 0 || !v.is_finite() {
+        return 0;
+    }
+    (v.round().max(0.0) as usize).min(n - 1)
+}
+
 impl Expr {
     pub fn eval(&self, c: Ctx) -> f32 {
         use Expr::*;
@@ -391,6 +402,7 @@ impl Expr {
             Un(f, a) => f.apply(a.eval(c)),
             Bin(f, a, b) => f.apply(a.eval(c), b.eval(c)),
             Letter(k) => LETTER.with(|l| if *k == 0 { l.get().0 } else { l.get().1 }),
+            Pick(i, options) => options.get(pick_index(i.eval(c), options.len())).map_or(0.0, |e| e.eval(c)),
         }
     }
     pub fn is_true(&self, c: Ctx) -> bool {
@@ -408,6 +420,7 @@ impl Expr {
             Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => a.reads(f),
             Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) | Bin(_, a, b) => a.reads(f) || b.reads(f),
             Mix(a, b, t) => a.reads(f) || b.reads(f) || t.reads(f),
+            Pick(i, options) => i.reads(f) || options.iter().any(|e| e.reads(f)),
         }
     }
     pub fn node_count(&self) -> usize {
@@ -417,6 +430,7 @@ impl Expr {
             Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => 1 + a.node_count(),
             Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) | Bin(_, a, b) => 1 + a.node_count() + b.node_count(),
             Mix(a, b, t) => 1 + a.node_count() + b.node_count() + t.node_count(),
+            Pick(i, options) => 1 + i.node_count() + options.iter().map(Expr::node_count).sum::<usize>(),
         }
     }
     /// What it is worth, if it depends on nothing.
@@ -437,6 +451,11 @@ impl Expr {
             Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => k(a).is_some(),
             Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) | Bin(_, a, b) => k(a).is_some() && k(b).is_some(),
             Mix(a, b, t) => k(a).is_some() && k(b).is_some() && k(t).is_some(),
+            // With the place known, it is that one, whatever the others are.
+            Pick(i, options) => match k(i) {
+                Some(v) => return options.get(pick_index(v, options.len())).cloned().unwrap_or(K(0.0)),
+                None => false,
+            },
         };
         if constant_children {
             return K(self.eval(Ctx { props: &[], facts: &[] }));
@@ -456,7 +475,11 @@ impl Expr {
             other => other,
         }
     }
-    pub fn mix(self, b: impl Into<Expr>, t: impl Into<Expr>) -> Expr {
+    /// The same folding, for whoever builds a node by hand (`pick`).
+    pub fn folded_pub(self) -> Expr {
+        self.folded()
+    }
+        pub fn mix(self, b: impl Into<Expr>, t: impl Into<Expr>) -> Expr {
         Expr::Mix(Box::new(self), Box::new(b.into()), Box::new(t.into())).folded()
     }
     pub fn gt(self, o: impl Into<Expr>) -> Expr {
@@ -804,6 +827,8 @@ pub enum Content {
     /// A text with one version per language (`translations`): the one the
     /// `locale` fact says. The first is the one the scene is written in.
     Translated { locale: FactId, versions: Vec<Content> },
+    /// `pick(skin, "Liquid", "Light liquid", "Classic")`: the one at that place.
+    Pick(Expr, Vec<Content>),
 }
 
 #[derive(Clone, Debug)]

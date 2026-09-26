@@ -1187,6 +1187,15 @@ impl<'a> Compiler<'a> {
             "atan2" => take()?.bin(Bin::Atan2, take()?),
             "mod" => take()?.bin(Bin::Mod, take()?),
             "length" => take()?.bin(Bin::Length, take()?),
+            // `pick(i, a, b, c)`: the one at place i. At least one to choose from.
+            "pick" => {
+                let i = take()?;
+                let options: Vec<Expr> = a.collect();
+                if options.is_empty() {
+                    return Err(CompileError::at(l, col, "`pick` needs a place and something to choose: `pick(i, 10, 20, 30)`"));
+                }
+                Expr::Pick(Box::new(i), options).folded_pub()
+            }
             // One argument or two: a wobble in time, or a field to move over.
             "noise" => {
                 let x = take()?;
@@ -1231,6 +1240,22 @@ impl<'a> Compiler<'a> {
                 let [a0, a1, a2] = a;
                 let [b0, b1, b2] = b;
                 Ok([a0.mix(b0, t.clone()), a1.mix(b1, t.clone()), a2.mix(b2, t)])
+            }
+            // `pick(i, #a, #b, #c)`: the one at place i, channel by channel.
+            Some(TokenKind::Id(m)) if m == "pick" => {
+                c.i += 1;
+                c.expect_sym("(")?;
+                let i = self.expr(c)?;
+                let mut options = Vec::new();
+                while c.sym(",") {
+                    options.push(self.color(c)?);
+                }
+                c.expect_sym(")")?;
+                if options.is_empty() {
+                    return c.error("`pick` needs a place and colours to choose from: `pick(i, #a, #b)`");
+                }
+                let channel = |k: usize| Expr::Pick(Box::new(i.clone()), options.iter().map(|o: &Color| o[k].clone()).collect()).folded_pub();
+                Ok([channel(0), channel(1), channel(2)])
             }
             // `if(cond, #a, #b)`: choosing a colour is mixing with 0 or 1, as with numbers.
             Some(TokenKind::Id(m)) if m == "if" => {
@@ -2505,6 +2530,36 @@ impl<'a> Compiler<'a> {
                 let trailing = if c.sym(",") { c.string()? } else { String::new() };
                 c.expect_sym(")")?;
                 Content::Number(e, decimals, trailing)
+            }
+            // `text pick(skin, "Liquid", "Light liquid", "Classic")`: the one at
+            // that place; each is a text like any other, and is translated.
+            Some(TokenKind::Id(n)) if n == "pick" && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => {
+                c.i += 2;
+                let i = self.expr(&mut c)?;
+                let mut options = Vec::new();
+                while c.sym(",") {
+                    options.push(match c.peek() {
+                        Some(TokenKind::Str(s)) => {
+                            let s = s.clone();
+                            let at = c.i;
+                            c.i += 1;
+                            self.content_of(&s, &c.tokens[at])?
+                        }
+                        Some(TokenKind::Id(name)) => match self.texts.get(&self.global(name)) {
+                            Some(t) => {
+                                c.i += 1;
+                                Content::Live(*t)
+                            }
+                            None => return c.error("in a text's `pick`, each option is a quoted text or the name of a live text"),
+                        },
+                        _ => return c.error("in a text's `pick`, each option is a quoted text or the name of a live text"),
+                    });
+                }
+                c.expect_sym(")")?;
+                if options.is_empty() {
+                    return c.error("`pick` needs a place and texts to choose from: `pick(i, \"a\", \"b\")`");
+                }
+                Content::Pick(i, options)
             }
             // A component parameter that is worth a quoted text.
             Some(TokenKind::Id(name)) if self.scopes.iter().any(|e| e.contents.contains_key(name)) => {

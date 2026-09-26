@@ -421,6 +421,7 @@ From weakest to strongest: `or` · `and` · `not` · `< > <= >= == !=` (they do 
 | `sqrt(x)` `pow(a, b)` `exp(x)` `log(x)` | square root (of 0 or more), power, e to the x, natural logarithm. A power that would not be a number (`pow(-8, 0.5)`) is 0 |
 | `tan(deg)` `atan2(y, x)` | tangent, and the angle of the point (x, y): **in degrees**, like `sin` and `cos`. `atan2(pointer.y - cy, pointer.x - cx)` is where the mouse is, seen from (cx, cy) |
 | `length(x, y)` | how long the vector (x, y) is: `length(pointer.x - cx, pointer.y - cy)` is how far the mouse is |
+| `pick(i, a, b, c…)` | the one at place `i` (0 is the first; rounded, and kept within the list). With an enum fact it reads as a table: `pick(mode, 40, 150, 260)`. It also chooses **colours** —`color: pick(mode, #9ed6bd, #f0b85a, #ef7a66)`— and **texts** —`text pick(skin, "Liquid", "Light liquid", "Classic")`, each one translated like any other, or the name of a live text—: one text instead of three with `show:` |
 | `fract(x)` `mod(a, b)` | the part after the point, and the remainder **always positive**: `mod(-1, 3)` is 2, which is what something going round in a circle needs |
 | `round(x)` `sign(x)` | to the nearest integer; −1, 0 or 1 |
 | `noise(x)` `noise(x, y)` | smooth noise from −1 to 1: the same input, the same value, and it never jumps. `noise(time)` is a wobble that never repeats; `noise(k * 0.3, time)` a different one for each `k` |
@@ -1120,7 +1121,7 @@ properties.group: pivot rotate scale move opacity size show grow blur glow satur
 properties.popup: at size open
 properties.children: move
 properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple corner show opacity cursor view step content wrap size grow
-functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random
+functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change still
 effects: toggle emit impulse play focus blur

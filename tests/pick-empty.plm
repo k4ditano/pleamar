@@ -1,0 +1,5 @@
+// expect: error «`pick` needs a place and something to choose»
+scene PickEmpty {
+    surface { size: 100, 40 }
+    box { at: pick(1), 20; size: 10, 10; color: #ffffff }
+}
