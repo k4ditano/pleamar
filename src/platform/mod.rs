@@ -225,17 +225,6 @@ pub fn reanchor(which: usize, anchor: crate::scene::SurfaceAnchor) {
     let _ = (which, anchor);
 }
 
-/// A prototype's emergency exit: the right button closes **if it hasn't
-/// landed on anything in the scene**. The one who knows is the render, which is who
-/// looks at the zones, so it asks for it from there and the platform's loop sees it
-/// on the next event —which is the button release, a millisecond
-/// later—. When no surface uses the right button, the platform closes on its own
-/// and this is not needed.
-pub fn request_quit() {
-    #[cfg(target_os = "linux")]
-    wayland::request_quit();
-}
-
 /// That a process we launch does not outlive us, not even if we're killed
 /// forcibly. On Linux we ask the kernel; on Windows it will be a Job Object.
 pub fn die_with_parent(command: &mut std::process::Command) {

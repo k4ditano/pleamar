@@ -54,7 +54,7 @@ const HELP: &str = "pleamar [options]
                       contract: «--record lid,body.y --seconds 20 > log.tsv»
   --no-vsync          paint without waiting for the screen, to measure what a frame costs
   --reduced-motion    springs settle at once and gestures show their still face
-Right-click closes it, unless the scene has something under the pointer that uses it.";
+Right-click closes it, if the scene does not use the right button for anything.";
 
 struct Args {
     scene: String,

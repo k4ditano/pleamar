@@ -303,8 +303,15 @@ impl PlatformWindow for WaylandWindow {
             for c in boxes {
                 region.add(c[0], c[1], c[2] - c[0], c[3] - c[1]);
             }
-            // It applies with the next frame presented.
+            // Committed now, not with the next frame: a surface that has just
+            // closed paints no more frames, and its old region stayed on for
+            // ever —a transparent wall taking every click—. A commit without a
+            // new buffer only applies the pending state.
             self.wl.set_input_region(Some(region.wl_region()));
+            self.wl.commit();
+            if let Some(c) = MOVABLE_LAYERS.get() {
+                let _ = c.connection.flush();
+            }
         }
     }
 
@@ -1042,15 +1049,9 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
     if state.placed.is_empty() {
         eprintln!("warning: none of the monitors asked for ({:?}) is plugged in; waiting for one to appear", state.wanted.iter().map(|s| &s.screens).collect::<Vec<_>>());
     }
-    while !state.quit && !QUIT_REQUESTED.load(std::sync::atomic::Ordering::Relaxed) {
+    while !state.quit {
         events.blocking_dispatch(&mut state).unwrap();
     }
-}
-
-/// The render asks for it when a right click wasn't wanted by anyone.
-static QUIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub fn request_quit() {
-    QUIT_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 impl State {
@@ -1231,9 +1232,8 @@ impl PointerHandler for State {
                         _ => continue,
                     };
                     // As long as a scene makes no use of the right button, it closes: it's the
-                    // emergency exit of a prototype without a keyboard. If some
-                    // surface does use it, the decision is the render's —it knows whether the
-                    // click has landed on something—, and it comes back through `request_quit`.
+                    // emergency exit of a prototype without a keyboard. A scene that uses it
+                    // is not a quick prototype, and a right click never closes it.
                     if btn == 1 && down && self.wanted.iter().all(|s| s.right_click_quits) {
                         self.quit = true;
                         continue;

@@ -687,11 +687,6 @@ pub fn run(
         // pointer, it closes; if there was, the click belongs to the scene.
         // The platform already closes on its own when NO surface uses the
         // right button, and then this does not even run.
-        if scene.surfaces.iter().any(|s| !s.right_click_quits) && hovered.is_none()
-            && buttons.iter().any(|(b, down)| *b == 1 && *down)
-        {
-            crate::platform::request_quit();
-        }
         let dragged = match (drag, pointer) {
             (Some((k, _, _)), Some(p)) if last_pointer != Some(p) => Some(k),
             _ => None,
