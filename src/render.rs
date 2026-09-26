@@ -252,6 +252,9 @@ pub fn run(
     // Programs' buffers the card is still copying, by the work they went in:
     // they go back as soon as it says it has finished, and nobody waits for it.
     let mut nest_lent: Vec<(wgpu::SubmissionIndex, Vec<u64>)> = Vec::new();
+    // Programs' buffers already destroyed that a window is still showing.
+    #[cfg(target_os = "linux")]
+    let mut nest_doomed: Vec<u64> = Vec::new();
 
     // `PLEAMAR_TIMING=1`: where a frame's time goes, section by section, without the waits.
     let profiling = crate::gpu::timing_enabled();
@@ -757,6 +760,16 @@ pub fn run(
                                 w.geometry = geometry;
                                 nest_changed = true;
                             }
+                            // The buffers kept for a window that has now moved on go.
+                            #[cfg(target_os = "linux")]
+                            if !nest_doomed.is_empty() {
+                                let shown: Vec<u64> = nest_windows.iter().flat_map(|w| w.pieces.iter().filter_map(|p| p.buffer)).collect();
+                                let (still, gone): (Vec<u64>, Vec<u64>) = std::mem::take(&mut nest_doomed).into_iter().partition(|b| shown.contains(b));
+                                nest_doomed = still;
+                                if let Some(g) = gpu.as_mut() {
+                                    g.forget_dmabufs(&gone);
+                                }
+                            }
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.width"), geometry[2] as f32);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.height"), geometry[3] as f32);
                         }
@@ -775,10 +788,17 @@ pub fn run(
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.focus"), which.map_or(-1.0, |k| k as f32));
                         }
                         NestEvent::Cursor(kind) => nest_cursor = kind,
+                        // A buffer a window is still showing is kept until it shows
+                        // another: a program that resizes destroys the old one before
+                        // the new frame arrives, and a copy asked for in between —the
+                        // texture grew, the scene reloaded— found nothing to copy.
                         #[cfg(target_os = "linux")]
                         NestEvent::Forget(buffers) => {
+                            let shown: Vec<u64> = nest_windows.iter().flat_map(|w| w.pieces.iter().filter_map(|p| p.buffer)).collect();
+                            let (kept, gone): (Vec<u64>, Vec<u64>) = buffers.into_iter().partition(|b| shown.contains(b));
+                            nest_doomed.extend(kept);
                             if let Some(g) = gpu.as_mut() {
-                                g.forget_dmabufs(&buffers);
+                                g.forget_dmabufs(&gone);
                             }
                         }
                         #[cfg(not(target_os = "linux"))]
