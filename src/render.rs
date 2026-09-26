@@ -248,6 +248,14 @@ pub fn run(
     let mut nest_layers: Vec<bool> = Vec::new();
     let mut nest_gpu_told = false;
 
+    // `PLEAMAR_TIMING=1`: where a frame's time goes, section by section, without the waits.
+    let profiling = crate::gpu::timing_enabled();
+    let mut prof = [0f64; 7];
+    let mut prof_frames = 0u32;
+    let mut prof_t = Instant::now();
+    let mut prof_since = Instant::now();
+    let mut prof_window_frames = 0u32;
+    let mut prof_painted = 0u32;
     loop {
         // ── 1. what has arrived ─────────────────────────────────
         let mut block = None;
@@ -267,10 +275,14 @@ pub fn run(
             // Still: not a single frame. Only a message or the next appointment wakes it
             // up: a delay that expires, a blink, a claim that runs out.
             let until = next_appointment.unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
-            if incoming.is_empty() {
+            // The compositor's notice that a frame was shown does not wake it:
+            // resting, there is nothing to paint after it. It woke it once per
+            // frame of a window in the scene —a round for nothing, every time—.
+            while incoming.is_empty() {
                 match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
+                    Ok(ToRender::Frame(id)) => frame_ready |= frame_requested == Some(id),
                     Ok(m) => incoming.push(m),
-                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Timeout) => break,
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
             }
@@ -669,6 +681,7 @@ pub fn run(
                         NestEvent::Title(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.title"), t),
                         NestEvent::App(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), t),
                         NestEvent::Frame { slot, geometry, pieces } => {
+                            prof_window_frames += 1;
                             if let Some(w) = nest_windows.get_mut(slot) {
                                 let mut old = std::mem::take(&mut w.pieces);
                                 for p in pieces {
@@ -757,6 +770,9 @@ pub fn run(
                 }
             }
         }
+        if profiling {
+            prof_t = Instant::now();
+        }
         // The key that is still held down counts again.
         if let Some((name, typed, mods, when)) = &mut repeat {
             if Instant::now() >= *when {
@@ -841,6 +857,11 @@ pub fn run(
             }
         }
 
+        if profiling {
+            let n = Instant::now();
+            prof[0] += (n - prof_t).as_secs_f64() * 1000.0;
+            prof_t = n;
+        }
         // ── 2. advance time ─────────────────────────────────────
         let now = Instant::now();
         let dt = (now - last).as_secs_f32();
@@ -1703,6 +1724,11 @@ pub fn run(
             }
         }
 
+        if profiling {
+            let n = Instant::now();
+            prof[1] += (n - prof_t).as_secs_f64() * 1000.0;
+            prof_t = n;
+        }
         // ── 3. paint ────────────────────────────────────────────
         let blocked = logic_blocked.load(Ordering::Relaxed);
         let c = Ctx { props: &props, facts: &facts };
@@ -1734,6 +1760,11 @@ pub fn run(
         draw.reduced_motion = op.reduced_motion;
         if draw.signal_times.len() != scene.signals.len() {
             draw.signal_times = vec![-1.0; scene.signals.len()];
+        }
+        if profiling {
+            let n = Instant::now();
+            prof[2] += (n - prof_t).as_secs_f64() * 1000.0;
+            prof_t = n;
         }
         if nest.is_some() {
             // What the windows drew, to the card; and where each one is in it.
@@ -1871,6 +1902,11 @@ pub fn run(
         g.upload(&draw);
         // What has changed, and where. The frame graph always changes.
         // The light of a click changes the glass without changing the list: everything is painted.
+        if profiling {
+            let n = Instant::now();
+            prof[3] += (n - prof_t).as_secs_f64() * 1000.0;
+            prof_t = n;
+        }
         let all_changed = !previous.changed_rects(&draw, &mut changed) || op.hud || finger_light > 0.0 || ripple.is_some() || std::mem::take(&mut nest_changed);
 
         // Where the mouse comes in: the active zones, and nothing else. The rest of
@@ -2054,6 +2090,11 @@ pub fn run(
             assign_pace(g, &mut sheets, size, op.no_vsync);
             sheets.sort_by_key(|l| l.drives_pace);
         }
+        if profiling {
+            let n = Instant::now();
+            prof[4] += (n - prof_t).as_secs_f64() * 1000.0;
+            prof_t = n;
+        }
         // The step. With mailbox the render sets it: an absolute deadline per period of the
         // monitor that sets the pace, so that the error of each wait does not
         // accumulate; if it arrives late —a rest, a long frame— it starts again
@@ -2152,6 +2193,9 @@ pub fn run(
                     std::thread::sleep(minimum - since);
                 }
             }
+        }
+        if profiling {
+            prof_t = Instant::now();
         }
         let before_painting = last_presented;
         last_presented = Instant::now();
@@ -2252,6 +2296,12 @@ pub fn run(
                 sheet_counts = (0, 0, 0);
             }
         }
+        if profiling {
+            let n = Instant::now();
+            prof[5] += (n - prof_t).as_secs_f64() * 1000.0;
+            prof_t = n;
+        }
+        prof_painted += painted;
         // What the windows drew has been shown: they may draw the next one.
         if painted > 0 {
             if let Some(send) = &nest {
@@ -2325,6 +2375,26 @@ pub fn run(
                 })
                 .collect();
             println!("{:.1}\t{}", t_total * 1000.0, values.join("\t"));
+        }
+        if profiling {
+            let n = Instant::now();
+            prof[6] += (n - prof_t).as_secs_f64() * 1000.0;
+            prof_t = n;
+        }
+        if profiling {
+            prof_frames += 1;
+            if prof_frames >= 300 {
+                let f = prof_frames as f64;
+                println!(
+                    "timing · {:.0} rounds, {:.0} windows' frames and {:.0} paintings a second · per round: input {:.2} · rules and springs {:.2} · other windows {:.2} · compose {:.2} · regions {:.2} · paint {:.2} · rest {:.2} ms",
+                    f / prof_since.elapsed().as_secs_f64(), prof_window_frames as f64 / prof_since.elapsed().as_secs_f64(), prof_painted as f64 / prof_since.elapsed().as_secs_f64(), prof[0] / f, prof[1] / f, prof[2] / f, prof[3] / f, prof[4] / f, prof[5] / f, prof[6] / f
+                );
+                prof_since = Instant::now();
+                prof_window_frames = 0;
+                prof_painted = 0;
+                prof = [0.0; 7];
+                prof_frames = 0;
+            }
         }
         let ms = dt * 1000.0;
         // A permanent telltale: any frame that goes over two periods, with its time.

@@ -779,7 +779,22 @@ impl DrawList {
                             mode: fx.mode,
                             affine,
                         };
-                        OpacityGroup::Layer { alpha: a, index: self.offscreen_groups.len(), first_element: self.element_count(), fx: Some(fx) }
+                        // Effects that, right now, do nothing —a window with the
+                        // keyboard at full colour, a glow that has gone out— need
+                        // no layer of their own: what is inside is painted as it is.
+                        let neutral = fx.blur < 0.01
+                            && (fx.glow.0 < 0.01 || fx.glow.1 < 0.001)
+                            && (fx.tone[0] - 1.0).abs() < 0.001
+                            && (fx.tone[1] - 1.0).abs() < 0.001
+                            && (fx.tone[2] - 1.0).abs() < 0.001
+                            && fx.tone[3].abs() < 0.001
+                            && fx.mask.0 == 0.0
+                            && fx.mode == 0;
+                        if neutral && a >= 0.999 {
+                            OpacityGroup::Multiply(1.0)
+                        } else {
+                            OpacityGroup::Layer { alpha: a, index: self.offscreen_groups.len(), first_element: self.element_count(), fx: Some(fx) }
+                        }
                     });
                     if let Some(OpacityGroup::Layer { first_element, .. }) = opacity_groups.last() {
                         self.offscreen_groups.push((*first_element as u32..*first_element as u32, 0));
