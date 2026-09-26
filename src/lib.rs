@@ -23,7 +23,7 @@ mod permissions;
 mod platform;
 mod render;
 
-pub use platform::{host_keymap, provide_platform, provide_windows, set_host_keymap, NestSender, Platform, PlatformWindow};
+pub use platform::{host_keymap, provide_layer_hooks, provide_platform, provide_windows, set_host_keymap, LayerHooks, NestSender, Platform, PlatformWindow};
 pub use gpu::{Frames, NewSheet, Target, View};
 /// The same wgpu the render paints with, for a platform that lends it textures.
 pub use wgpu;

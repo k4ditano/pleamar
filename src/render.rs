@@ -475,12 +475,16 @@ pub fn run(
                     if (scene.surface().height == 0 || is_window) && its_own {
                         size.1 = n.size.1 as f32;
                     }
-                    let height = if is_window || scene.surface().height == 0 { n.size.1 as f32 } else { scene.surface().height as f32 };
-                    for (k, (name, _)) in scene.facts.iter().enumerate() {
-                        match *name {
-                            "screen.width" => facts[k] = size.0,
-                            "screen.height" => facts[k] = height,
-                            _ => {}
+                    // Only the scene's own surface says what the screen measures: a
+                    // named one —a corner of 120 px— said it was the screen's height.
+                    if its_own {
+                        let height = if is_window || scene.surface().height == 0 { n.size.1 as f32 } else { scene.surface().height as f32 };
+                        for (k, (name, _)) in scene.facts.iter().enumerate() {
+                            match *name {
+                                "screen.width" => facts[k] = size.0,
+                                "screen.height" => facts[k] = height,
+                                _ => {}
+                            }
                         }
                     }
                     // With `screens: each`, each copy knows which monitor it belongs to: its name and

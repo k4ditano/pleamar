@@ -213,15 +213,34 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32))>) {
 /// repositioning its AppBar, and on macOS moving the `NSPanel`.
 /// A surface changes level while running: `level: top, overlay while open`.
 pub fn relayer(which: usize, level: crate::scene::Level) {
+    if let Some(h) = LAYER_HOOKS.get() {
+        return (h.relayer)(which, level);
+    }
     #[cfg(target_os = "linux")]
     wayland::relayer(which, level);
     let _ = (which, level);
 }
 
 pub fn reanchor(which: usize, anchor: crate::scene::SurfaceAnchor) {
+    if let Some(h) = LAYER_HOOKS.get() {
+        return (h.reanchor)(which, anchor);
+    }
     #[cfg(target_os = "linux")]
     wayland::reanchor(which, anchor);
     let _ = (which, anchor);
+}
+
+/// What a platform handed over does when a surface changes level or edge
+/// while running (`level: top, overlay while …`, an anchor from a fact).
+pub struct LayerHooks {
+    pub relayer: Box<dyn Fn(usize, crate::scene::Level) + Send + Sync>,
+    pub reanchor: Box<dyn Fn(usize, crate::scene::SurfaceAnchor) + Send + Sync>,
+}
+
+static LAYER_HOOKS: std::sync::OnceLock<LayerHooks> = std::sync::OnceLock::new();
+
+pub fn provide_layer_hooks(h: LayerHooks) {
+    let _ = LAYER_HOOKS.set(h);
 }
 
 /// That a process we launch does not outlive us, not even if we're killed
