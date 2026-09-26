@@ -143,6 +143,8 @@ pub fn run(
     let mut finger_down = false;
     // The ring a press sends through the glass: where, and since when.
     let mut ripple: Option<((f32, f32), Instant)> = None;
+    // The mouse on the whole desktop, and the monitors, when the system says.
+    let mut cursor: Option<((f32, f32), Vec<(String, [i32; 4])>)> = None;
     // What is being dragged: which zone, and where the mouse was when pressed.
     let mut drag: Option<(usize, (f32, f32), Instant)> = None;
     let mut cursor_set = Cursor::Normal;
@@ -227,6 +229,7 @@ pub fn run(
                 }
                 ToRender::Scene(fresh) => {
                     crate::platform::release_memory();
+                    crate::platform::CURSOR_WANTED.store(fresh.wants_cursor, std::sync::atomic::Ordering::Relaxed);
                     // The properties with the same name survive the change.
                     let old: Vec<(&str, Animated)> =
                         scene.props.iter().map(|p| p.0).zip(props.iter().copied()).collect();
@@ -498,6 +501,7 @@ pub fn run(
                     Some(i) => gestures_asked.push(i),
                     None => eprintln!("render · I don't know the gesture '{name}'"),
                 },
+                ToRender::Cursor(at, monitors) => cursor = Some((at, monitors)),
                 ToRender::Pointer(p) => {
                     pointer = p;
                     last_activity = Instant::now();
@@ -698,12 +702,40 @@ pub fn run(
         {
             let focus = drag.map(|a| a.0).or(hovered);
             let (px, py) = pointer.unwrap_or((0.0, 0.0));
+            // The mouse wherever it is, in the plane of the scene. It is placed
+            // against a surface that is open —the one on the mouse's monitor if
+            // there is one, else the first—: from there on it is just a sum, even
+            // if it is on another monitor. Over the scene, the pointer itself.
+            let seen_cursor = match (pointer, scene.wants_cursor, &cursor) {
+                (Some(p), _, _) => p,
+                (None, true, Some(((gx, gy), monitors))) => {
+                    let on = |m: &[i32; 4]| *gx >= m[0] as f32 && *gy >= m[1] as f32 && *gx < (m[0] + m[2]) as f32 && *gy < (m[1] + m[3]) as f32;
+                    let under = monitors.iter().find(|m| on(&m.1)).map(|m| m.0.as_str());
+                    let placed: Vec<(bool, (f32, f32))> = sheets.iter().filter(|l| l.open && l.view.popup.is_none()).filter_map(|l| {
+                        let (name, at) = l.desktop_place()?;
+                        let m = monitors.iter().find(|m| m.0 == name)?.1;
+                        let corner = ((m[0] + at.0) as f32, (m[1] + at.1) as f32);
+                        Some((under == Some(name.as_str()), (l.view.origin.0 + gx - corner.0, l.view.origin.1 + gy - corner.1)))
+                    }).collect();
+                    placed.iter().find(|p| p.0).or(placed.first()).map_or((f32::NAN, f32::NAN), |p| p.1)
+                }
+                _ => (f32::NAN, f32::NAN),
+            };
+            // Unknown, it stays where it was.
+            let seen_cursor = if seen_cursor.0.is_nan() {
+                let k = |n: &str| scene.facts.iter().position(|f| f.0 == n).map_or(0.0, |k| facts[k]);
+                (k("cursor.x"), k("cursor.y"))
+            } else {
+                seen_cursor
+            };
             let local = focus.and_then(|k| scene.zones.get(k)).map_or((px, py), |z| z.to_local(Ctx { props: &props, facts: &facts }, px, py));
             let (dx, dy) = drag.map_or((0.0, 0.0), |(_, o, _)| (px - o.0, py - o.1));
             for (k, (name, _)) in scene.facts.iter().enumerate() {
                 match *name {
                     "pointer.x" => facts[k] = px,
                     "pointer.y" => facts[k] = py,
+                    "cursor.x" => facts[k] = seen_cursor.0,
+                    "cursor.y" => facts[k] = seen_cursor.1,
                     "local.x" => facts[k] = local.0,
                     "local.y" => facts[k] = local.1,
                     "drag.dx" => facts[k] = dx,

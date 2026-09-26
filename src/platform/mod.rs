@@ -394,6 +394,11 @@ pub trait PlatformWindow: Send {
     }
     /// Forget the capture that's on the way: it won't arrive anymore.
     fn cancel_backdrop(&self) {}
+    /// On which monitor it is, by name, and where on it: its top left corner,
+    /// logical. `None` where that is not known.
+    fn desktop_place(&self) -> Option<(String, (i32, i32))> {
+        None
+    }
 }
 
 /// A capture of what was seen on screen in a box of a window.
@@ -409,6 +414,24 @@ pub struct Backdrop {
     pub opacity: f32,
     /// The pixels, where the compositor left them, without copying them. `None` if the capture failed.
     pub data: Option<std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>>,
+}
+
+/// Whether the scene running wants to know where the mouse is on the whole
+/// desktop (`cursor.x`): the render says so every time a scene arrives.
+pub static CURSOR_WANTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Where the mouse is when it is not over us. Wayland does not tell a surface
+/// that —on purpose—, so it is asked of whoever knows: Hyprland, through its
+/// socket, about thirty times a second and only while a scene wants it. It
+/// reaches the render as `ToRender::Cursor` when it moves. Elsewhere nothing
+/// arrives, and `cursor.x` is only known over the scene, like `pointer.x`.
+pub fn watch_cursor(to_render: std::sync::mpsc::Sender<crate::scene::ToRender>) {
+    #[cfg(target_os = "linux")]
+    if hyprland::is_present() && std::env::var_os("PLEAMAR_GENERIC").is_none() {
+        hyprland::watch_cursor(to_render);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = to_render;
 }
 
 #[cfg(target_os = "linux")]

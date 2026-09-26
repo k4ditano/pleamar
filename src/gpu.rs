@@ -1958,6 +1958,11 @@ impl Sheet {
     /// Request the capture of what is behind: after presenting, the one from
     /// the next time the compositor paints; otherwise, the one from when
     /// something changes behind.
+    /// On which monitor it is and where on it, if the system says.
+    pub fn desktop_place(&self) -> Option<(String, (i32, i32))> {
+        self.window.desktop_place()
+    }
+
     pub fn request_backdrop(&mut self, on_change: bool) {
         let Some(bounds) = self.glass_box else { return };
         if self.window.capture_backdrop(bounds, on_change) {

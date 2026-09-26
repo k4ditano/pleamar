@@ -321,6 +321,13 @@ impl PlatformWindow for WaylandWindow {
         self.wl.frame(&self.qh, FrameFor(self.id));
     }
 
+    fn desktop_place(&self) -> Option<(String, (i32, i32))> {
+        let d = self.backdrop.as_ref()?;
+        let (_, at) = d.output_and_position()?;
+        let name = d.output.lock().unwrap().as_ref()?.1.clone();
+        Some((name, at))
+    }
+
     fn capture_backdrop(&self, bounds: [i32; 4], on_change: bool) -> bool {
         let (Some(d), Some((manager, _))) = (&self.backdrop, SCREENCOPY.get()) else { return false };
         if d.in_flight.load(Ordering::Relaxed) {

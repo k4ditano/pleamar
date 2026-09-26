@@ -1394,6 +1394,9 @@ pub struct Scene {
     /// of them may act, or a `n = n + 1` counts once per monitor, an `emit` is
     /// heard twice and a `toggle` undoes itself. Empty: every rule is its own.
     pub twin_of: Vec<usize>,
+    /// Whether it names `cursor.x` or `cursor.y`: only then is the system asked
+    /// where the mouse is when it is not over the scene.
+    pub wants_cursor: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1676,6 +1679,10 @@ pub enum ToRender {
     ExternalSignal(&'static str, Option<f32>),
     Gesture(&'static str),
     Pointer(Option<(f32, f32)>),
+    /// Where the mouse is on the whole desktop, wherever it is, and the
+    /// monitors as they are placed on it: name, x, y, width, height. Only
+    /// where the system can say it (Hyprland) and the scene asks for it.
+    Cursor((f32, f32), Vec<(String, [i32; 4])>),
     /// 0 is the left one, 1 the right one, 2 the middle one.
     Button(u8, bool),
     /// Wheel notches: positive, upwards.

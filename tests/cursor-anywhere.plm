@@ -1,0 +1,7 @@
+// expect: ok
+scene CursorAnywhere {
+    surface { size: 100, 100 }
+    prop a = 0 ~gentle
+    follow a = atan2(cursor.y - 50, cursor.x - 50)
+    ellipse { at: 50, 50; radius: 10; color: #ffffff; glass: 100%; shine: cursor.x, cursor.y }
+}

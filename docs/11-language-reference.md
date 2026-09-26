@@ -194,6 +194,27 @@ A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `po
 
 **Names that always exist**, read like facts: `screen.width`, `screen.height` (what the real surface measures), `screen.index` (which monitor copy this is, with `screens: each`; 0 otherwise), and during a rule, the mouse's: `pointer.x`, `pointer.y` (on the surface), `local.x`, `local.y` (inside the zone), `drag.dx`, `drag.dy` (since the press), `wheel` (notches; positive is upwards). And the `demo` event, which `--demo` fires.
 
+**`cursor.x`, `cursor.y` are the mouse wherever it is**: over another window, on
+another monitor, far from the scene. They are in the scene's own coordinates,
+like `pointer.x`, so a pair of eyes computes the same way whether the mouse is
+over them or across the desk: `atan2(cursor.y - cy, cursor.x - cx)`. A surface
+on Wayland is not told where the mouse is when it is not over it —on purpose—,
+so pleamar asks whoever knows: on Hyprland, its socket, about thirty times a
+second and **only if the scene names them**. Elsewhere they are the pointer's
+while it is over the scene, and keep their last value when it leaves.
+
+```plm
+scene Watching {
+    surface { size: 120, 120 }
+    prop gaze.x = 0 ~gentle
+    prop gaze.y = 0 ~gentle
+    //  With the mouse near, the eyes follow it; far, they rest looking at it.
+    let far = max(length(cursor.x - 60, cursor.y - 60), 1)
+    look gaze.x, gaze.y at 60, 60 reach 6, 4 within 200 rest 6 * (cursor.x - 60) / far, 4 * (cursor.y - 60) / far
+    ellipse { at: 60 + gaze.x, 60 + gaze.y; radius: 8; color: #f5f7f5 }
+}
+```
+
 ## 6. Declarations
 
 | Statement | What it declares |

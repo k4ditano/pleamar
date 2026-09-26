@@ -208,6 +208,7 @@ fn main() {
         a.stall
     );
     let _ = to_render.send(ToRender::Scene(scene));
+    crate::platform::watch_cursor(to_render.clone());
     if std::path::Path::new(&a.scene).is_file() {
         scenes::from_file::watch(a.scene.clone(), to_render.clone(), to_logic.clone());
     }

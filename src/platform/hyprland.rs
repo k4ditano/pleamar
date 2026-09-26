@@ -74,6 +74,46 @@ pub fn window_position(size: (u32, u32)) -> Option<(String, (i32, i32), f32)> {
     })
 }
 
+/// The mouse on the whole desktop, and the monitors as they are placed. The
+/// monitors are asked again every two seconds; the mouse, every 33 ms, and it
+/// is only told when it has moved.
+pub fn watch_cursor(to_render: std::sync::mpsc::Sender<crate::scene::ToRender>) {
+    use std::sync::atomic::Ordering;
+    let _ = std::thread::Builder::new().name("hyprland·cursor".into()).spawn(move || {
+        let mut last = (f32::NAN, f32::NAN);
+        let mut monitors: Vec<(String, [i32; 4])> = Vec::new();
+        let mut asked = std::time::Instant::now() - std::time::Duration::from_secs(10);
+        loop {
+            if !super::CURSOR_WANTED.load(Ordering::Relaxed) {
+                last = (f32::NAN, f32::NAN);
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                continue;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(33));
+            if asked.elapsed().as_secs() >= 2 {
+                asked = std::time::Instant::now();
+                monitors = json("j/monitors").and_then(|v| v.as_array().cloned()).unwrap_or_default().iter().filter_map(|m| {
+                    let scale = m["scale"].as_f64().unwrap_or(1.0).max(0.1);
+                    // Width and height come in real pixels; the plane is logical.
+                    let (w, h) = ((m["width"].as_f64()? / scale) as i32, (m["height"].as_f64()? / scale) as i32);
+                    let (w, h) = if m["transform"].as_i64().unwrap_or(0) % 2 == 1 { (h, w) } else { (w, h) };
+                    Some((m["name"].as_str()?.to_owned(), [m["x"].as_i64()? as i32, m["y"].as_i64()? as i32, w, h]))
+                }).collect();
+            }
+            let Some(v) = json("j/cursorpos") else { continue };
+            let (Some(x), Some(y)) = (v["x"].as_f64(), v["y"].as_f64()) else { continue };
+            let now = (x as f32, y as f32);
+            if now == last {
+                continue;
+            }
+            last = now;
+            if to_render.send(crate::scene::ToRender::Cursor(now, monitors.clone())).is_err() {
+                return;
+            }
+        }
+    });
+}
+
 fn workspaces() -> SysValue {
     let active = json("j/activeworkspace").and_then(|v| v["id"].as_f64()).unwrap_or(0.0);
     // Each monitor has its own: it's what a bar per screen needs.

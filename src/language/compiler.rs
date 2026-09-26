@@ -341,7 +341,8 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
     // …and what a rule can read from the mouse while it fires.
-    for n in ["screen.width", "screen.height", "screen.index", "pointer.x", "pointer.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "lock.held"] {
+    // `cursor.x`, `cursor.y`: the mouse wherever it is, even far from the scene.
+    for n in ["screen.width", "screen.height", "screen.index", "pointer.x", "pointer.y", "cursor.x", "cursor.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "lock.held"] {
         let h = o.e.fact(n, 0.0);
         o.facts.insert(n.into(), h);
     }
@@ -360,6 +361,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     if mentions(body, "time") && !declares(body, "time") {
         o.time_prop();
     }
+    o.e.wants_cursor = mentions(body, "cursor");
     // The translations first of all: the texts are read already knowing them,
     // wherever the block is —at the end, or in an imported library—.
     o.read_translations(body);
