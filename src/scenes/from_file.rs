@@ -177,7 +177,10 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
                 loop {
                     std::thread::sleep(Duration::from_millis(60));
                     let after = date(&watched);
-                    let empty = watched.iter().any(|r| std::fs::metadata(r).map_or(true, |m| m.len() == 0));
+                    // Only what is on disk: a library of pleamar's own
+                    // (`pleamar:ui`) has no file, and taking it for one half
+                    // saved left this waiting forever —no reload ever again—.
+                    let empty = watched.iter().any(|r| std::fs::metadata(r).is_ok_and(|m| m.len() == 0));
                     if after == now && !empty {
                         break;
                     }
