@@ -316,9 +316,16 @@ impl PlatformWindow for WaylandWindow {
     }
 
     /// Takes effect with the next frame presented, like the input region.
+    /// Committed now, like the input region: a surface that has just closed
+    /// paints no more frames, and a keyboard it was lent stayed lent —what
+    /// was typed after closing Marea's calendar kept going to her—.
     fn keyboard(&self, t: Keyboard) {
         if let Some(layer) = &self.layer {
             layer.set_keyboard_interactivity(keyboard_interactivity(t));
+            self.wl.commit();
+            if let Some(c) = MOVABLE_LAYERS.get() {
+                let _ = c.connection.flush();
+            }
         }
     }
 
