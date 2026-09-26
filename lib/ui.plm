@@ -60,17 +60,20 @@ library Ui {
     //      Tile("Language", "English", open_language, cell.w) { text "Aa" { size: 16 } }
     component Tile(title: text, value: text, press: event, w: number, h: number = 106, accent: color = #9ed6bd) {
         size: w, h
+        //  The badge, the title and the value are one block, 84 high, with the
+        //  same air above and below it.
+        let pad = (h - 84) / 2
         box { at: w / 2, h / 2; size: w, h; corner: 18; color: mix(#25282b, #2c3033, touch.hover); opacity: 1 - 0.1 * touch.pressed }
         box { at: w / 2, h / 2; size: w, h; corner: 18; stroke: 1.2; color: accent; opacity: touch.hover * 45% }
-        ellipse { at: 42, h / 2 - 12; radius: 24; color: #ffffff; opacity: 7% + touch.hover * 5% }
+        ellipse { at: 40, pad + 22; radius: 22; color: #ffffff; opacity: 7% + touch.hover * 5% }
         column badge {
-            at: 42, h / 2 - 12
+            at: 40, pad + 22
             anchor: center middle
             children
         }
-        text title { at: 18, h - 27; anchor: left center; size: 13; weight: 600; width: w - 52; lines: 1; color: #f5f7f5 }
-        text value { at: 18, h - 11; anchor: left center; size: 11; width: w - 52; lines: 1; color: accent }
-        path { at: w - 22, h - 29; color: #f5f7f5; stroke: 1.8; opacity: 40% + touch.hover * 50%
+        text title { at: 18, pad + 60; anchor: left center; size: 13; weight: 600; width: w - 52; lines: 1; color: #f5f7f5 }
+        text value { at: 18, pad + 77; anchor: left center; size: 11; width: w - 52; lines: 1; color: accent }
+        path { at: w - 22, pad + 55; color: #f5f7f5; stroke: 1.8; opacity: 40% + touch.hover * 50%
                move 0, 0; line 5, 5; line 0, 10 }
         zone box touch { at: w / 2, h / 2; size: w, h; corner: 18; cursor: pointer }
         on press touch { emit press }
