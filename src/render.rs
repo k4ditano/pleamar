@@ -241,7 +241,8 @@ pub fn run(
     let mut nest_keys: Vec<u32> = Vec::new();
     let mut nest_size: (i32, i32) = (0, 0);
     // A window drew something new: what it covers is painted again.
-    let mut nest_changed = false;
+    // Which windows drew something new this round: what they cover is painted again.
+    let mut nest_changed: Vec<usize> = Vec::new();
     let mut nest_cursor = Cursor::Normal;
     // Which layers of the windows' texture are taken, and whether the
     // compositor already knows what the card can read straight from a program.
@@ -758,7 +759,7 @@ pub fn run(
                                     nest_layers[gone.layer as usize] = false;
                                 }
                                 w.geometry = geometry;
-                                nest_changed = true;
+                                nest_changed.push(slot);
                             }
                             // The buffers kept for a window that has now moved on go.
                             #[cfg(target_os = "linux")]
@@ -1970,7 +1971,14 @@ pub fn run(
             prof[3] += (n - prof_t).as_secs_f64() * 1000.0;
             prof_t = n;
         }
-        let all_changed = !previous.changed_rects(&draw, &mut changed) || op.hud || finger_light > 0.0 || ripple.is_some() || std::mem::take(&mut nest_changed);
+        let all_changed = !previous.changed_rects(&draw, &mut changed) || op.hud || finger_light > 0.0 || ripple.is_some();
+        // A window that drew something new changes what its box covers, and nothing else.
+        for slot in std::mem::take(&mut nest_changed) {
+            changed.extend(draw.windows_drawn.iter().filter(|w| w.0 == slot).map(|(_, d, affine)| {
+                let b = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
+                [b[0] - 1.0, b[1] - 1.0, b[2] + 1.0, b[3] + 1.0]
+            }));
+        }
 
         // Where the mouse comes in: the active zones, and nothing else. The rest of
         // the surface is transparent for the click too.
@@ -2310,7 +2318,7 @@ pub fn run(
             }
             // The one that sets the pace asks the compositor to notify when it wants another.
             let asks = l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive;
-            let was_painted = g.paint(l, &draw, &uniforms, asks);
+            let was_painted = g.paint(l, &draw, &uniforms, asks, (!all_changed && l.painted == Some(where_)).then_some(&changed[..]));
             // With a lens, what was presented is captured to keep track of what is behind.
             // Not on every frame: for Hyprland each capture costs reading the screen
             // back from the card, and at 60 per second that was 14 points of a core.

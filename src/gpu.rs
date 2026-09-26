@@ -1327,7 +1327,7 @@ pub trait Frames: Send {
     /// `modifiers`: the layouts of the card's memory it can paint in.
     fn acquire(&mut self, device: &wgpu::Device, modifiers: &[u64]) -> Option<(usize, wgpu::Texture)>;
     /// That one is painted, in that work: to the monitor once it is done.
-    fn present(&mut self, which: usize, done: wgpu::SubmissionIndex, device: &wgpu::Device);
+    fn present(&mut self, which: usize, done: wgpu::SubmissionIndex, device: &wgpu::Device, queue: &wgpu::Queue);
 }
 
 /// What the platform hands the render thread for each surface.
@@ -1382,6 +1382,11 @@ pub enum BackdropCapture {
 /// with its layers and its uniforms.
 pub struct Sheet {
     pub id: u32,
+    /// For lent frames: a count of the frames painted, which one each buffer
+    /// last got, and what changed in the last ones (their box; `None`, all).
+    frame_no: u64,
+    painted_as: Vec<Option<u64>>,
+    damage_log: std::collections::VecDeque<(u64, Option<[f32; 4]>)>,
     #[allow(dead_code)]
     pub name: String,
     pub mhz: i32,
@@ -1793,7 +1798,7 @@ impl Gpu {
         });
         let (layer_views, layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
         let mut l = Sheet {
-            id: n.id, name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, cleared: false, view: n.view,
+            id: n.id, frame_no: 0, painted_as: Vec::new(), damage_log: Default::default(), name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, cleared: false, view: n.view,
             target: n.target, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: long_ago(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], keyboard_mode: None,
         };
         self.reconfigure(&mut l, size);
@@ -2146,7 +2151,11 @@ impl Gpu {
     }
 
     /// Paints the draw list on a sheet. Returns whether it got to be presented.
-    pub fn paint(&self, l: &mut Sheet, d: &DrawList, uniforms: &[f32], request_frame: bool) -> bool {
+    /// `damage`: what has changed since the last frame, in the scene's plane
+    /// (`None`, everything). A sheet whose frames are lent by the platform
+    /// knows what each of them holds, and only what changed since that one was
+    /// last painted is painted again; a swapchain's are unknown, and are painted whole.
+    pub fn paint(&self, l: &mut Sheet, d: &DrawList, uniforms: &[f32], request_frame: bool, damage: Option<&[[f32; 4]]>) -> bool {
         // Only the layers of the groups that fall on this surface: the one
         // fading on another monitor costs this one neither memory nor a pass.
         // What blends the layer takes up the union of what is inside, so if
@@ -2190,6 +2199,45 @@ impl Gpu {
             Frame::Surface(f) => &f.texture,
             Frame::Lent(_, t) => t,
         };
+        // Only for lent frames: which piece of it has to be painted again —what
+        // changed now, and since that buffer was last painted— in pixels.
+        let scissor: Option<[u32; 4]> = match &frame {
+            Frame::Surface(_) => None,
+            // `PLEAMAR_FULL_REPAINT=1`: every frame whole, to compare.
+            Frame::Lent(_, _) if std::env::var_os("PLEAMAR_FULL_REPAINT").is_some() => None,
+            Frame::Lent(which, _) => {
+                let v = l.view.bounds();
+                let now: Option<[f32; 4]> = damage.map(|rects| {
+                    rects
+                        .iter()
+                        .filter(|b| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1])
+                        .map(|b| [((b[0] - v[0]) * l.scale).floor().max(0.0), ((b[1] - v[1]) * l.scale).floor().max(0.0), ((b[2] - v[0]) * l.scale).ceil().min(l.px.0 as f32), ((b[3] - v[1]) * l.scale).ceil().min(l.px.1 as f32)])
+                        .fold([f32::MAX, f32::MAX, f32::MIN, f32::MIN], |a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
+                });
+                let frame_no = l.frame_no;
+                l.frame_no += 1;
+                if l.painted_as.len() <= *which {
+                    l.painted_as.resize(*which + 1, None);
+                }
+                let since = l.painted_as[*which];
+                l.painted_as[*which] = Some(frame_no);
+                l.damage_log.push_back((frame_no, now));
+                while l.damage_log.len() > 8 {
+                    l.damage_log.pop_front();
+                }
+                // Everything, unless every frame since that buffer was painted is known.
+                let region = since.and_then(|p| {
+                    let complete = l.damage_log.front().is_some_and(|(n, _)| *n <= p + 1);
+                    complete.then(|| l.damage_log.iter().filter(|(n, _)| *n > p).try_fold([f32::MAX, f32::MAX, f32::MIN, f32::MIN], |a, (_, b)| b.map(|b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])))?
+                });
+                match region {
+                    // Nothing changed for this buffer: it is shown as it is.
+                    Some(r) if r[2] <= r[0] || r[3] <= r[1] => Some([0, 0, 0, 0]),
+                    Some(r) => Some([r[0] as u32, r[1] as u32, (r[2] - r[0]) as u32, (r[3] - r[1]) as u32]),
+                    None => None,
+                }
+            }
+        };
         let view = frame_texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
         #[cfg(target_os = "linux")]
@@ -2200,7 +2248,7 @@ impl Gpu {
             lens.prepare(self, &self.lens, &mut encoder, scale);
         }
         let backdrop_group = l.lens.as_ref().and_then(|x| x.group.as_ref()).unwrap_or(&self.no_backdrop_group);
-        let pass_to = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, layers: &wgpu::BindGroup, spans: &[Range<u32>], keep: bool| {
+        let pass_to = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, layers: &wgpu::BindGroup, spans: &[Range<u32>], keep: bool, scissor: Option<[u32; 4]>| {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2214,6 +2262,9 @@ impl Gpu {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            if let Some([x, y, w, h]) = scissor {
+                pass.set_scissor_rect(x, y, w.max(1), h.max(1));
+            }
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.scene_group, &[]);
             pass.set_bind_group(1, layers, &[]);
@@ -2270,24 +2321,27 @@ impl Gpu {
         let total = if l.open { d.element_count() as u32 } else { 0 };
         let groups: &[(Range<u32>, usize)] = if l.open { &d.offscreen_groups } else { &[] };
         let mut from = 0u32;
-        let mut keep = false;
+        // Painting a piece of it, the rest of what it held stays.
+        let mut keep = scissor.is_some();
+        // Nothing to paint again: what that buffer holds is already this frame.
+        let (total, groups): (u32, &[(Range<u32>, usize)]) = if scissor == Some([0, 0, 0, 0]) { (0, &[]) } else { (total, groups) };
         for (span, layer) in groups {
             // The element that blends it comes right after its span: if that one
             // falls in view, the layer is needed, even if what is inside does not.
             let with_blend = span.start..(span.end + 1).min(total);
             if l.layers as usize > *layer && d.touches_view(&with_blend, l.view.bounds()) {
                 if span.start > from || !keep {
-                    pass_to(&mut encoder, target, &l.layer_group, &[from..span.start], keep);
+                    pass_to(&mut encoder, target, &l.layer_group, &[from..span.start], keep, scissor);
                     keep = true;
                 }
-                pass_to(&mut encoder, &l.layer_views[*layer], &self.no_layers_group, std::slice::from_ref(span), false);
+                pass_to(&mut encoder, &l.layer_views[*layer], &self.no_layers_group, std::slice::from_ref(span), false, None);
             } else {
-                pass_to(&mut encoder, target, &l.layer_group, &[from..span.start], keep);
+                pass_to(&mut encoder, target, &l.layer_group, &[from..span.start], keep, scissor);
                 keep = true;
             }
             from = span.end;
         }
-        pass_to(&mut encoder, target, &l.layer_group, &[from..total], keep);
+        pass_to(&mut encoder, target, &l.layer_group, &[from..total], keep, scissor);
         if let Some(lens) = &mut l.lens {
             lens.copy_to(&mut encoder, frame_texture);
         }
@@ -2297,6 +2351,22 @@ impl Gpu {
         let index = self.queue.submit(Some(commands));
         self.last_submission.replace(Some(index.clone()));
         let t3 = timing.then(std::time::Instant::now);
+        // `PLEAMAR_GPU_TIME=1`: how long the card takes to paint it, waiting for it
+        // (only to measure: it holds the render meanwhile).
+        if gpu_time_enabled() {
+            let _ = self.device.poll(wgpu::PollType::Wait { submission_index: Some(index.clone()), timeout: Some(std::time::Duration::from_secs(1)) });
+            let ms = t3.map_or(0.0, |t| t.elapsed().as_secs_f32() * 1000.0);
+            GPU_TIME.with(|c| {
+                let (sum, n) = c.get();
+                let (sum, n) = (sum + ms, n + 1);
+                if n >= 120 {
+                    println!("timing · the card takes {:.2} ms to paint a frame of {}×{}", sum / n as f32, l.px.0, l.px.1);
+                    c.set((0.0, 0));
+                } else {
+                    c.set((sum, n));
+                }
+            });
+        }
         match frame {
             Frame::Surface(frame) => {
                 if request_frame {
@@ -2306,7 +2376,7 @@ impl Gpu {
             }
             Frame::Lent(which, _) => {
                 if let Target::Frames(frames) = &mut l.target {
-                    frames.present(which, index, &self.device);
+                    frames.present(which, index, &self.device, &self.queue);
                 }
             }
         }
@@ -2338,6 +2408,15 @@ impl Gpu {
 enum Frame {
     Surface(wgpu::SurfaceTexture),
     Lent(usize, wgpu::Texture),
+}
+
+fn gpu_time_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("PLEAMAR_GPU_TIME").is_some() && timing_enabled())
+}
+
+thread_local! {
+    static GPU_TIME: std::cell::Cell<(f32, u32)> = const { std::cell::Cell::new((0.0, 0)) };
 }
 
 /// `PLEAMAR_TIMING=1`: read once, not on every frame of every sheet.
