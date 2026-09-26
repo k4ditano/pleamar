@@ -7,7 +7,7 @@ use crate::text::{LayoutKey, AtlasSlot, Texts, ATLAS_SIZE};
 use std::ops::Range;
 
 const PER_SHAPE: usize = 20;
-const PER_ELEMENT: usize = 52;
+const PER_ELEMENT: usize = 60;
 /// How many groups with opacity or effects can be blending in the same frame.
 /// They all share ONE layer: each one is painted into it right before it is
 /// blended (see `paint`), so this is not memory, only a sanity limit.
@@ -267,6 +267,24 @@ pub fn content_text<'t>(content: &'t Content, c: Ctx, texts: &'t [String]) -> st
             content_text(&versions[k], c, texts)
         }
     }
+}
+
+/// What a glass says besides being glass, in its slots: how thick it is
+/// (`uv.w`), towards its light and its dome (`glass2`), and its dispersion,
+/// its ripple and its centre (`glass3`). The light goes as a direction from
+/// the centre of the shape, which is what the shader wants: one per shape.
+fn glass_options(e: &mut [f32], g: Option<&crate::scene::Glass>, b: [f32; 4], c: Ctx) {
+    let Some(g) = g else { return };
+    let centre = ((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5);
+    e[43] = g.refraction.eval(c);
+    if let Some((x, y)) = &g.shine {
+        let (dx, dy) = (x.eval(c) - centre.0, y.eval(c) - centre.1);
+        let l = (dx * dx + dy * dy).sqrt();
+        let (dx, dy) = if l > 1.0 { (dx / l, dy / l) } else { (0.0, -1.0) };
+        e[52..55].copy_from_slice(&[dx, dy, 1.0]);
+    }
+    e[55] = g.dome.eval(c);
+    e[56..60].copy_from_slice(&[g.dispersion.eval(c), g.ripple.eval(c), centre.0, centre.1]);
 }
 
 /// The width of a glass's bevel: a third of its short side, not going over 30 px.
@@ -935,6 +953,7 @@ impl DrawList {
                         e[40] = v;
                         e[41] = bevel_for(shape_only);
                         e[42] = lens as u8 as f32;
+                        glass_options(e, glass_spec.as_ref(), shape_only, c);
                         if let Some(l) = light {
                             e[20..23].copy_from_slice(&[l.amount, l.from_y.eval(c), l.height]);
                         }
@@ -975,6 +994,7 @@ impl DrawList {
                         e[40] = v;
                         e[41] = bevel_for(b);
                         e[42] = lens as u8 as f32;
+                        glass_options(e, glass_spec.as_ref(), b, c);
                     });
                 }
                 Instr::Image { image, target, alpha, tint } => {
@@ -1965,7 +1985,7 @@ impl Sheet {
 }
 
 /// Header, frame history and, at the end, the lens: whether there is a background to show.
-pub const N_UNIFORMS: usize = 8 + 120 + 4;
+pub const N_UNIFORMS: usize = 8 + 120 + 4 + 4;
 
 #[cfg(test)]
 mod tests {

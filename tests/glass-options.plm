@@ -1,0 +1,19 @@
+// expect: ok
+scene GlassOptions {
+    surface { size: 400, 200 }
+    prop press = 0 ~calm
+    body {
+        color: #1b2127
+        glass: 100%
+        shine: pointer
+        refraction: 140%
+        dispersion: 250%
+        dome: 40% * press
+        ripple: 60%
+        box { at: 120, 100; size: 200, 140; corner: 20 }
+    }
+    box { at: 300, 100; size: 120, 80; corner: 16; color: #e8eef2; glass: 80%; shine: 400, 0; ripple: 0 }
+    column { at: 20, 20; fill: #1b2127; glass: 100%; dome: 30%; padding: 8
+        text "a plate" { size: 12; color: #f5f7f5 }
+    }
+}

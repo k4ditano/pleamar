@@ -598,6 +598,17 @@ pub type Translations = Vec<(String, std::collections::HashMap<String, String>)>
 pub struct Glass {
     pub amount: Expr,
     pub lens: Expr,
+    /// `shine: x, y`: where the light it catches comes from, a point in the
+    /// scene. Without it, from the top left.
+    pub shine: Option<(Expr, Expr)>,
+    /// `refraction:` how thick the glass is: how much it bends (1 = as it came).
+    pub refraction: Expr,
+    /// `dispersion:` how far red, green and blue come apart at the edge.
+    pub dispersion: Expr,
+    /// `dome:` how much the middle magnifies (0 = flat).
+    pub dome: Expr,
+    /// `ripple:` how much a press ripples it (0 = not at all).
+    pub ripple: Expr,
 }
 
 /// A vertical gradient of lightness, so the body is not flat.

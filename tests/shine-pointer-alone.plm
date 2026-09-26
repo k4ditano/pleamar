@@ -1,0 +1,5 @@
+// expect: error «`shine: pointer` goes alone»
+scene ShinePointer {
+    surface { size: 200, 100 }
+    box { at: 100, 50; size: 120, 60; color: #333333; glass: 100%; shine: pointer, 10 }
+}

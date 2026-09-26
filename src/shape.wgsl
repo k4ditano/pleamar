@@ -16,6 +16,7 @@ struct U {
     hud: vec4<f32>,      // origin x, period in ms, logic stalled, origin y: where this surface looks at the scene from
     times: array<vec4<f32>, 30>,
     backdrop: vec4<f32>, // x: there is an unmixed background to read (the lens) · yz: where it was pressed · w: how much light it lets through
+    ripple: vec4<f32>,   // where it was last pressed (x, y), seconds since, and whether it still runs
 };
 
 struct Shape {
@@ -40,6 +41,8 @@ struct Element {
     uv: vec4<f32>,
     t0: vec4<f32>,        // from screen to local, as in the shapes
     t1: vec4<f32>,
+    glass2: vec4<f32>,    // glass: towards its light (x, y), whether it has one, dome
+    glass3: vec4<f32>,    // glass: dispersion, ripple, centre (x, y)
 };
 
 const ELLIPSE: u32 = 0u;
@@ -100,6 +103,28 @@ fn displacement(inside: f32, bevel: f32) -> f32 {
     let incoming = atan(slope);
     let outgoing = asin(sin(incoming) / 1.5);
     return height * bevel * LENS_THICKNESS * tan(incoming - outgoing);
+}
+
+// How deep a point is inside a rounded box, measured so the bevel has no
+// crease. The distance to the edge draws, going in, boxes with ever sharper
+// corners, and a bevel that follows them folds on the diagonal: a seam at 45°
+// in what the corner bends. Here the contour at depth d is the box brought in
+// by d with a corner of r + d —ever rounder—, so the bevel turns the corner
+// the way a polished edge does. In the corner that is |a + 2d| = r + d, a
+// quadratic in d; along the sides, the plain distance. (The idea is
+// HyprGlass's, by hyprnux.)
+fn crease_free_depth(p: vec2<f32>, half: vec2<f32>, radius: f32) -> f32 {
+    let r = min(radius, min(half.x, half.y));
+    let a = abs(p) - half + vec2<f32>(r);
+    var d = min(r - a.x, r - a.y);
+    let b = 4.0 * (a.x + a.y) - 2.0 * r;
+    let c = dot(a, a) - r * r;
+    let disc = b * b - 28.0 * c;
+    if (disc >= 0.0) {
+        let dc = (-b + sqrt(disc)) / 14.0;
+        if (a.x + 2.0 * dc >= 0.0 && a.y + 2.0 * dc >= 0.0) { d = dc; }
+    }
+    return d;
 }
 
 struct VertexOut {
@@ -350,29 +375,72 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
     let g = vec2<f32>(dpdx(d), dpdy(d));
     let normal = g / max(length(g), 1e-6);
     let inside = max(-d, 0.0);
+    // A box alone —the usual card— has two better measures than its distance.
+    // What the lens bends follows a bevel without a crease, and the light
+    // reads a rounder box: with a tight corner the normal turns 90° in three
+    // pixels and the highlight pinches into a bright dot there, while a
+    // rounder one turns it gently and the lit edge stays an even stroke.
+    var lens_inside = inside;
+    var lens_normal = normal;
+    var light_normal = normal;
+    let lone = shapes[first];
+    if (n == 1u && u32(lone.a.x) == RECT && lone.a.z <= 0.0 && lone.b.z >= 0.5 && lone.b.w >= 0.5) {
+        let lp = rotate_point(to_local(p, lone.t0, lone.t1), lone.b.xy, lone.c.y) - lone.b.xy;
+        let depth = crease_free_depth(lp, lone.b.zw, lone.c.x) * lone.t1.z;
+        let gd = -vec2<f32>(dpdx(depth), dpdy(depth));
+        if (depth > 0.0) {
+            lens_inside = depth;
+            lens_normal = gd / max(length(gd), 1e-6);
+        }
+        let round = rounded_rect(lp, lone.b.zw, max(lone.c.x, min(18.0, min(lone.b.z, lone.b.w)))) * lone.t1.z;
+        let gl = vec2<f32>(dpdx(round), dpdy(round));
+        light_normal = gl / max(length(gl), 1e-6);
+    }
     // The light of the glass, the same with a lens or without it. It comes from
     // the top left: the edge that faces it shines thin and strong; the opposite
     // one, weaker, is the light coming out. The closer to the edge, the
     // brighter —the glass seen edge-on—. And when pressed it lights up from the
     // finger.
-    let to_light = normalize(vec2<f32>(-0.55, -0.83));
+    // With `shine:` the light is a point in the scene, and it comes from it:
+    // one direction per shape, from its centre —like the sun— or a light near
+    // the edge would fan out into a cone.
+    let to_light = select(normalize(vec2<f32>(-0.55, -0.83)), el.glass2.xy, el.glass2.z > 0.5);
     let rim = 1.0 - smoothstep(0.4, 3.0, inside);
-    let facing = pow(max(dot(normal, to_light), 0.0), 1.6);
-    let away = pow(max(-dot(normal, to_light), 0.0), 1.6);
+    let facing = pow(max(dot(light_normal, to_light), 0.0), 1.6);
+    let away = pow(max(-dot(light_normal, to_light), 0.0), 1.6);
     let fresnel = exp(-inside / 10.0);
     let shine = rim * (0.85 * facing + 0.4 * away + 0.12) + 0.14 * fresnel;
     let finger_dist = distance(p, u.backdrop.yz);
-    let finger_light = u.backdrop.w * exp(-finger_dist * finger_dist / (2.0 * 70.0 * 70.0)) * 0.3;
+    var finger_light = u.backdrop.w * exp(-finger_dist * finger_dist / (2.0 * 70.0 * 70.0)) * 0.3;
+    // A press sends a ring of light through the glass that spreads and fades,
+    // and flexes the glass outwards as it goes by.
+    var ripple_push = vec2<f32>(0.0);
+    if (u.ripple.w > 0.5 && el.glass3.y > 0.0) {
+        let progress = clamp(u.ripple.z / 0.9, 0.0, 1.0);
+        let dist = distance(p, u.ripple.xy);
+        let reach = 150.0 * (1.0 - pow(1.0 - progress, 3.0));
+        let fade = pow(1.0 - progress, 2.0);
+        let ring = exp(-pow((dist - reach) / 16.0, 2.0));
+        let fill = exp(-pow(dist / (reach * 0.6 + 1.0), 2.0)) * 0.5;
+        finger_light += (ring + fill) * fade * 0.3 * el.glass3.y;
+        ripple_push = (p - u.ripple.xy) / max(dist, 0.5) * ring * fade * 9.0 * el.glass3.y;
+    }
     if (glass > 0.0 && u.backdrop.x > 0.5 && el.uv.z > 0.5) {
         // With what is behind at hand, the glass is that background bent by
         // the bevel, frosted, with a little of its tint. Red, green and blue
         // bend a hair differently: the colour fringe of a glass edge.
         let bevel = select(16.0, el.uv.y, el.uv.y > 0.5);
         // A glass that appears does not fade in: it starts bending the light.
-        let shift = displacement(inside, bevel) * u.header.w * glass;
+        // `refraction:` is how thick it is.
+        let shift = displacement(lens_inside, bevel) * u.header.w * glass * el.uv.w;
         let size = u.header.xy * u.header.w;
-        let q = e.pos.xy - normal * shift;
-        let tq = normal * shift * 0.06;
+        // `dome:` a magnifying glass in the middle: towards the centre, it
+        // shows what is behind a little bigger. It fades out in the bevel,
+        // which already bends its own way.
+        let flat = clamp(lens_inside / bevel, 0.0, 1.0);
+        let dome = (el.glass3.zw - p) * el.glass2.w * 0.14 * flat * u.header.w * glass;
+        let q = e.pos.xy - lens_normal * shift + dome + ripple_push * u.header.w;
+        let tq = lens_normal * shift * 0.06 * el.glass3.x;
         // What is behind comes in premultiplied alpha —what is unknown, under
         // a text, has alpha 0 and weighs nothing—: it is divided by it.
         let br = textureSampleLevel(backdrop_blurred, backdrop_sampler, (q - tq) / size, 0.0);
@@ -385,7 +453,7 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
         let sharp = vec3<f32>(nr.r / max(nr.a, 0.001), ng.g / max(ng.a, 0.001), nb.b / max(nb.a, 0.001));
         let known = min(nr.a, min(ng.a, nb.a));
         // In the bevel what is bent looks fairly sharp; further in, frosted.
-        let in_bevel = 1.0 - clamp(inside / bevel, 0.0, 1.0);
+        let in_bevel = 1.0 - clamp(lens_inside / bevel, 0.0, 1.0);
         let background = mix(frosted, sharp, smoothstep(0.0, 0.6, in_bevel) * 0.85 * known);
         // A glass livens up a little what it lets through.
         let gray = dot(background, vec3<f32>(0.299, 0.587, 0.114));

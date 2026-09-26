@@ -20,13 +20,13 @@ pub const LIBRARY_STATEMENTS: &[&str] = &["let", "spring", "component", "permiss
 pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title", "rate"]),
     ("permissions", &["run", "services"]),
-    ("shape", &["rotate", "stroke", "color", "opacity", "blend", "glass", "lens", "active", "show", "cursor", "grow"]),
+    ("shape", &["rotate", "stroke", "color", "opacity", "blend", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "active", "show", "cursor", "grow"]),
     ("ellipse", &["at", "radius", "scale"]),
     ("box", &["at", "from", "size", "corner"]),
     ("arc", &["at", "radius", "span", "width"]),
     ("line", &["from", "to", "width"]),
     ("path", &["at", "size"]),
-    ("body", &["color", "gradient", "rim", "light", "shadow", "border", "glass", "lens", "opacity", "show"]),
+    ("body", &["color", "gradient", "rim", "light", "shadow", "border", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "opacity", "show"]),
     ("text", &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show", "grow", "gradient", "outline", "shadow", "letter_move", "letter_opacity", "letter_scale"]),
     ("image", &["at", "size", "opacity", "tint", "show", "grow"]),
     ("figure", &["at", "size", "scale", "rotate", "pivot", "color", "opacity", "blend", "stroke", "show", "grow"]),
@@ -36,7 +36,7 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show", "grow", "blur", "glow", "saturation", "brightness", "contrast", "hue", "mask", "mode"]),
     ("popup", &["at", "size", "open"]),
     ("children", &["move"]),
-    ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "glass", "lens", "corner", "show", "opacity", "cursor", "view", "step", "content", "wrap", "size", "grow"]),
+    ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "corner", "show", "opacity", "cursor", "view", "step", "content", "wrap", "size", "grow"]),
 ];
 
 pub const FUNCTIONS: &[&str] = &["min", "max", "abs", "floor", "ceil", "sin", "cos", "clamp", "smooth", "mix", "if", "vel", "sqrt", "pow", "fract", "mod", "sign", "round", "exp", "log", "tan", "atan2", "length", "noise", "random"];

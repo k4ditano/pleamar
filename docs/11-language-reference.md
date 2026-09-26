@@ -492,6 +492,39 @@ body {
 }
 ```
 
+**And how it is made is yours.** Five things go next to `glass` —on a body, a
+loose shape or the `fill` of a layout—, all of them expressions, so they can
+follow a fact, a spring or the pointer:
+
+| | |
+| --- | --- |
+| `shine: x, y` | where the light comes from: a point in the scene. The edge that faces it lights up, and moving the shape or the point moves the highlight round the rim. `shine: pointer` is the light in your hand. Without it, from the top left |
+| `refraction: 100%` | how thick the glass is: how much its edge bends what is behind. `0` is flat glass, `200%` a thick lens |
+| `dispersion: 100%` | how far red, green and blue come apart where it bends: the rainbow on the edge. `0` is none |
+| `dome: 0%` | the middle as a magnifying glass: what is behind looks bigger towards the centre (negative, smaller) |
+| `ripple: 100%` | pressing the glass sends a ring of light through it that spreads and fades, flexing it as it goes by. `0` is none; with reduced motion there is none either |
+
+A single `box` also bends without a crease: the bevel turns its corners the
+way a polished edge does, and its highlight stays an even stroke there
+instead of pinching into a dot. Without `glass`, any of the five is an error:
+there is nothing for it to do.
+
+```plm
+scene Lens {
+    surface { size: 420, 240 }
+    prop held = 0 ~calm
+    body {
+        color: #1b2127
+        glass: 100%
+        shine: pointer
+        refraction: 150%
+        dispersion: 250%
+        dome: 40% * held
+        box { at: 210, 120; size: 320, 180; corner: 28 }
+    }
+}
+```
+
 **A figure is an svg read as geometry, not as a stamp.** An image is rasterised
 into an atlas: it shows, but it is a sticker —it melts into nothing, it cannot
 be tinted by parts nor animated by layers, and scaling it is pixels—. `figure
@@ -1044,13 +1077,13 @@ statements: surface permissions model service spring prop pose fact event text i
 library: let spring component permissions fact text model service event image figure shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate
 properties.permissions: run services
-properties.shape: rotate stroke color opacity blend glass lens active show cursor grow
+properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple active show cursor grow
 properties.ellipse: at radius scale
 properties.box: at from size corner
 properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
-properties.body: color gradient rim light shadow border glass lens opacity show
+properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple opacity show
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale
 properties.image: at size opacity tint show grow
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow
@@ -1060,7 +1093,7 @@ properties.input: at width size weight color opacity family placeholder selectio
 properties.group: pivot rotate scale move opacity size show grow blur glow saturation brightness contrast hue mask mode
 properties.popup: at size open
 properties.children: move
-properties.layout: at anchor gap padding align fill glass lens corner show opacity cursor view step content wrap size grow
+properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple corner show opacity cursor view step content wrap size grow
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change still

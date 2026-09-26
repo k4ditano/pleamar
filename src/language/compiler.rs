@@ -1260,6 +1260,7 @@ impl<'a> Compiler<'a> {
         let valid: Vec<&str> = own_props.iter().chain(common.iter()).copied().collect();
         let mut p = self.properties(n, &valid)?;
         let missing = |what: &str| CompileError::at(n.line, n.col, format!("this '{class}' is missing '{what}'"));
+        let glass_spec = self.glass_spec(&mut p, n)?;
         let mut one = |o: &Compiler, k: &str| -> R<Option<Expr>> {
             match p.get_mut(k) {
                 Some(c) => {
@@ -1271,7 +1272,6 @@ impl<'a> Compiler<'a> {
             }
         };
         let (rotate, stroke, opacity, blend, active) = (one(self, "rotate")?, one(self, "stroke")?, one(self, "opacity")?, one(self, "blend")?, one(self, "active")?);
-        let glass_spec = self.glass_spec(one(self, "glass")?, one(self, "lens")?, n)?;
         // `show:` is "there or not there": it switches off entirely, and its zone with it. Pressing
         // what cannot be seen is worse than not being able to press it.
         let visible = one(self, "show")?;
@@ -2097,15 +2097,7 @@ impl<'a> Compiler<'a> {
             Some(c) => c.num()?,
             None => 0.0,
         };
-        let glass = match p.get_mut("glass") {
-            Some(c) => Some(self.expr(c)?),
-            None => None,
-        };
-        let lens = match p.get_mut("lens") {
-            Some(c) => Some(self.expr(c)?),
-            None => None,
-        };
-        let glass_spec = self.glass_spec(glass, lens, n)?;
+        let glass_spec = self.glass_spec(&mut p, n)?;
         let alpha = match p.get_mut("opacity") {
             Some(c) => self.expr(c)?,
             None => Expr::K(1.0),
@@ -2120,13 +2112,53 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    /// `glass` and `lens`, together: without glass there is nothing to bend the light.
-    fn glass_spec(&self, glass: Option<Expr>, lens: Option<Expr>, n: &Node) -> R<Option<Glass>> {
-        match (glass, lens) {
-            (Some(g), l) => Ok(Some(Glass { amount: g.clamp(0.0, 1.0), lens: l.unwrap_or(Expr::K(1.0)) })),
-            (None, Some(_)) => Err(CompileError::at(n.line, n.col, "`lens` says whether glass bends what is behind it, and here there is no `glass`: `glass: 100%; lens: false`")),
-            (None, None) => Ok(None),
-        }
+    /// `glass` and what goes with it: `lens`, `shine`, `refraction`,
+    /// `dispersion`, `dome` and `ripple`. Without glass there is nothing for
+    /// any of them to do.
+    fn glass_spec(&self, p: &mut HashMap<&str, Cur>, n: &Node) -> R<Option<Glass>> {
+        let mut one = |k: &str| -> R<Option<Expr>> {
+            match p.get_mut(k) {
+                Some(c) => {
+                    let e = self.expr(c)?;
+                    c.expect_end()?;
+                    Ok(Some(e))
+                }
+                None => Ok(None),
+            }
+        };
+        let (glass, lens, refraction, dispersion, dome, ripple) = (one("glass")?, one("lens")?, one("refraction")?, one("dispersion")?, one("dome")?, one("ripple")?);
+        // `shine: pointer` is the light in your hand; otherwise, a point.
+        let shine = match p.get_mut("shine") {
+            Some(c) => {
+                let at = if c.word("pointer") {
+                    if !c.at_end() {
+                        return c.error("`shine: pointer` goes alone; for a point near it, `shine: pointer.x + 40, pointer.y`");
+                    }
+                    (self.facts["pointer.x"].e(), self.facts["pointer.y"].e())
+                } else {
+                    self.point(c)?
+                };
+                c.expect_end()?;
+                Some(at)
+            }
+            None => None,
+        };
+        let Some(g) = glass else {
+            let loose = [("lens", lens.is_some()), ("shine", shine.is_some()), ("refraction", refraction.is_some()), ("dispersion", dispersion.is_some()), ("dome", dome.is_some()), ("ripple", ripple.is_some())];
+            return match loose.iter().find(|w| w.1) {
+                Some((w, _)) => Err(CompileError::at(n.line, n.col, format!("`{w}` is something glass does, and here there is no `glass`: `glass: 100%; {w}: …`"))),
+                None => Ok(None),
+            };
+        };
+        Ok(Some(Glass {
+            amount: g.clamp(0.0, 1.0),
+            lens: lens.unwrap_or(Expr::K(1.0)),
+            shine,
+            refraction: refraction.map_or(Expr::K(1.0), |e| e.max(0.0)),
+            dispersion: dispersion.map_or(Expr::K(1.0), |e| e.max(0.0)),
+            dome: dome.map_or(Expr::K(0.0), |e| e.clamp(-1.0, 1.0)),
+            ripple: ripple.map_or(Expr::K(1.0), |e| e.max(0.0)),
+        }))
     }
 
     // ── texts with holes ────────────────────────────────────────
@@ -3883,15 +3915,7 @@ impl<'a> Compiler<'a> {
             None => (None, Expr::K(1.0)),
         };
         // And its background can be glass, like a loose shape.
-        let glass = match p.get_mut("glass") {
-            Some(c) => Some(self.expr(c)?),
-            None => None,
-        };
-        let lens = match p.get_mut("lens") {
-            Some(c) => Some(self.expr(c)?),
-            None => None,
-        };
-        let fill_glass = self.glass_spec(glass, lens, n)?;
+        let fill_glass = self.glass_spec(&mut p, n)?;
         // `size: 164, 66`: what the stack measures. It is needed so that a child
         // can ask for "whatever is left over": without saying how much is being shared, there is no remainder.
         let given_size = match p.get_mut("size") {

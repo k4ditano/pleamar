@@ -141,6 +141,8 @@ pub fn run(
     let mut finger = (0.0f32, 0.0f32);
     let mut finger_light = 0.0f32;
     let mut finger_down = false;
+    // The ring a press sends through the glass: where, and since when.
+    let mut ripple: Option<((f32, f32), Instant)> = None;
     // What is being dragged: which zone, and where the mouse was when pressed.
     let mut drag: Option<(usize, (f32, f32), Instant)> = None;
     let mut cursor_set = Cursor::Normal;
@@ -507,6 +509,9 @@ pub fn run(
                         if let (true, Some(p)) = (down, pointer) {
                             finger = p;
                             finger_light = 1.0;
+                            if !op.reduced_motion {
+                                ripple = Some((p, Instant::now()));
+                            }
                         }
                     }
                     last_activity = Instant::now();
@@ -1337,7 +1342,7 @@ pub fn run(
         g.upload(&draw);
         // What has changed, and where. The frame graph always changes.
         // The light of a click changes the glass without changing the list: everything is painted.
-        let all_changed = !previous.changed_rects(&draw, &mut changed) || op.hud || finger_light > 0.0;
+        let all_changed = !previous.changed_rects(&draw, &mut changed) || op.hud || finger_light > 0.0 || ripple.is_some();
 
         // Where the mouse comes in: the active zones, and nothing else. The rest of
         // the surface is transparent for the click too.
@@ -1423,6 +1428,14 @@ pub fn run(
             finger_light = 0.0;
         }
         uniforms[129..132].copy_from_slice(&[finger.0, finger.1, finger_light]);
+        // It lasts 0.9 s, and while it lasts there are frames.
+        if ripple.is_some_and(|(_, t)| t.elapsed().as_secs_f32() > 0.9) {
+            ripple = None;
+        }
+        uniforms[132..136].copy_from_slice(&match ripple {
+            Some(((x, y), t)) => [x, y, t.elapsed().as_secs_f32(), 1.0],
+            None => [0.0; 4],
+        });
         // The one that sets the pace goes last: it is the one that waits for the screen.
         sheets.sort_by_key(|l| l.drives_pace);
         // Has any surface decided to attach itself to another edge? The corner that
@@ -1765,7 +1778,7 @@ pub fn run(
         if op.no_vsync && cycle.dts.len() >= 600 {
             cycle.close();
         }
-        if !op.no_vsync && !alive && !something_happened && finger_light == 0.0 && !blocked && !region_changes && !measure_changed && !keyboard_changed && props.iter().all(Animated::at_rest) {
+        if !op.no_vsync && !alive && !something_happened && finger_light == 0.0 && ripple.is_none() && !blocked && !region_changes && !measure_changed && !keyboard_changed && props.iter().all(Animated::at_rest) {
             for a in &mut props {
                 a.settle();
             }
