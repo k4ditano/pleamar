@@ -453,6 +453,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` · and its **effects**: `blur` · `glow` · `saturation` · `brightness` · `contrast` · `hue` · `mask` · `mode` (§8.2) |
 | `popup` | `at` (inside the surface) · `size` · `open:` a fact |
 | `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `size: w, h` · `view: w, h` · `step` · `content` · `wrap: n` |
+| `grid` | `at` · `columns` · `width` · `gap` · `row` (the height of every row) · `show` · `opacity`; and on its children, `span`. What it is: below |
 
 `anchor` of a text: `left` `center` `right` and `top` `center` `bottom`, one or both (`anchor: left center`). Of a layout: `left` `center` `right` and `top` `middle` `bottom` —with no anchor, `at` is its top left corner—. `cursor:` `default` `pointer` `text` `grab` `grabbing`.
 
@@ -606,6 +607,42 @@ row card { size: 164, 66; gap: 10; padding: 12; fill: #1b1b1c; corner: 14
 ```
 
 **`wrap: 5`** turns a layout into a **grid**: five per line and on to the next. The cell is as big as the largest child, and **what is not seen leaves no gap**, so the rest move up, with the layout's spring if it has one. It is what a `Flow` is in Quickshell.
+
+**`grid` is a grid of cells you design with.** It shares its `width` among its
+`columns`, with `gap` between them, and places its children left to right
+and then down. A child takes one cell, or several with **`span:`** —a number,
+which inside a `repeat` may depend on it—. It does not have to say its size:
+inside it **`cell.w` and `cell.h`** are the size of its cell, so it is drawn
+in its own coordinates, from its corner. With `row:` every row is that tall;
+without it, each child says its height (`group { size: cell.w, 90 }`) and a
+row is as tall as its tallest child. Its zones go where it goes.
+
+And **inside any layout —`row`, `column`, `grid`— a `prop`, a `let`, a
+`fact` or a rule is not a child**: it is read where it is written, with the
+names of the `repeat` around it. That is what lets each tile carry its own
+spring and its own `on press` beside its drawing.
+
+```plm
+scene Tiles {
+    surface { size: 480, 300 }
+    fact chosen = -1
+    grid {
+        at: 12, 12; columns: 2; gap: 12; width: 456; row: 80
+        repeat t in 0..5 {
+            group {
+                span: if(t == 4, 2, 1)
+                on press tile.$t { chosen = t }
+                box { at: cell.w / 2, cell.h / 2; size: cell.w, cell.h; corner: 14
+                      color: mix(#25282b, #2f3a37, tile.$t.hover) }
+                box { at: cell.w / 2, cell.h / 2; size: cell.w, cell.h; corner: 14; stroke: 1.2; color: #9ed6bd
+                      opacity: if(chosen == t, 0.9, 0) }
+                text pick(t, "Home", "Look", "Language", "Lock", "Wardrobe") { at: 16, 30; anchor: left center; size: 13; color: #f5f7f5 }
+                zone box tile.$t { at: cell.w / 2, cell.h / 2; size: cell.w, cell.h; corner: 14; cursor: pointer }
+            }
+        }
+    }
+}
+```
 
 `examples/long-list` is five thousand rows in sixteen copies: 0.49 ms per frame, and the same sixteen groups and nineteen zones however many there are.
 
@@ -1120,7 +1157,7 @@ This is the output of `pleamar --grammar`, copied. It is not a second list: thes
 
 ```vocabulary
 language: 0.1
-statements: surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture translations
+statements: surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid space between layer on every blink wave spin follow look gesture posture translations
 library: let spring component permissions fact text model service event image figure shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate
 properties.permissions: run services
@@ -1137,9 +1174,10 @@ properties.figure: at size scale rotate pivot color opacity blend stroke show gr
 properties.shader: at size corner opacity show values colors grow
 properties.particles: at area count life speed direction spread gravity drag size colors opacity shape emit burst show
 properties.input: at width size weight color opacity family placeholder selection secret show
-properties.group: pivot rotate scale move opacity size show grow blur glow saturation brightness contrast hue mask mode
+properties.group: pivot rotate scale move opacity size show grow span blur glow saturation brightness contrast hue mask mode
 properties.popup: at size open
 properties.children: move
+properties.grid: at columns gap width row show opacity
 properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple corner show opacity cursor view step content wrap size grow
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
 text_functions: upper lower
@@ -1152,7 +1190,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row column space between layer on every blink wave spin follow look gesture posture import scene library language
+documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid column space between layer on every blink wave spin follow look gesture posture import scene library language
 services: clock clock.seconds audio battery brightness network media window
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date

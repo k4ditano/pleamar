@@ -1,27 +1,20 @@
 // expect: ok
-language 0.1
-// `wrap`: a grid. Five per line, and what is not shown leaves no gap.
 scene Grid {
-    surface { size: 340, 300 }
-    let ink = #f5f7f5
-    fact everything = true
-    box { from: 0, 0; size: 340, 300; color: #151616 }
-
-    row tiles ~calm {
-        at: 20, 20
-        gap: 10
-        wrap: 5
-        repeat i in 1..15 {
+    surface { size: 480, 300 }
+    fact chosen = -1
+    grid {
+        at: 12, 12; columns: 2; gap: 12; width: 456; row: 80
+        repeat t in 0..5 {
             group {
-                size: 50, 50
-                zone box hit { from: 0, 0; size: 50, 50; cursor: pointer }
-                show: everything or i <= 6
-                box { from: 0, 0; size: 50, 50; corner: 12; color: mix(#9ed6bd, #e8c07a, i / 14) }
-                text "{i}" { at: 25, 25; anchor: center; size: 13; weight: 600; color: #151616 }
+                span: if(t == 4, 2, 1)
+                prop lift.$t = 0 ~lively
+                on press tile.$t { chosen = t; impulse lift.$t 6 }
+                box { at: cell.w / 2, cell.h / 2 - lift.$t; size: cell.w, cell.h; corner: 14
+                      color: mix(#25282b, #2f3a37, tile.$t.hover); opacity: 1 - 0.2 * tile.$t.pressed }
+                box { at: cell.w / 2, cell.h / 2; size: cell.w, cell.h; corner: 14; stroke: 1.2; color: #9ed6bd; opacity: if(chosen == t, 0.9, 0) }
+                text pick(t, "Home", "Look", "Language", "Lock", "Wardrobe") { at: 16, 30; anchor: left center; size: 13; weight: 600; color: #f5f7f5 }
+                zone box tile.$t { at: cell.w / 2, cell.h / 2; size: cell.w, cell.h; corner: 14; cursor: pointer }
             }
         }
     }
-    text "wrap: 5 · {tiles.count} tiles" { at: 20, 260; size: 11; color: ink; opacity: 45% }
-    zone box all { from: 0, 250; size: 340, 50 }
-    on press all { toggle everything }
 }

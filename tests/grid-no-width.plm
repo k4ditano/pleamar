@@ -1,0 +1,7 @@
+// expect: error «a grid says how wide it is»
+scene GridNoWidth {
+    surface { size: 200, 100 }
+    grid { columns: 2
+        group { box { at: 10, 10; size: 10, 10; color: #ffffff } }
+    }
+}

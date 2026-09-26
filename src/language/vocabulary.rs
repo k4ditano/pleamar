@@ -8,7 +8,7 @@
 pub const STATEMENTS: &[&str] = &[
     "surface", "permissions", "model", "service", "spring", "prop", "pose", "fact", "event", "text", "image", "figure", "shader", "particles", "measure", "let", "zone",
     "body", "ellipse", "box", "arc", "line", "path", "input", "clip", "group", "popup",
-    "component", "children", "repeat", "for", "row", "column", "space", "between",
+    "component", "children", "repeat", "for", "row", "column", "grid", "space", "between",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
     "translations",
 ];
@@ -33,9 +33,10 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("shader", &["at", "size", "corner", "opacity", "show", "values", "colors", "grow"]),
     ("particles", &["at", "area", "count", "life", "speed", "direction", "spread", "gravity", "drag", "size", "colors", "opacity", "shape", "emit", "burst", "show"]),
     ("input", &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "secret", "show"]),
-    ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show", "grow", "blur", "glow", "saturation", "brightness", "contrast", "hue", "mask", "mode"]),
+    ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show", "grow", "span", "blur", "glow", "saturation", "brightness", "contrast", "hue", "mask", "mode"]),
     ("popup", &["at", "size", "open"]),
     ("children", &["move"]),
+    ("grid", &["at", "columns", "gap", "width", "row", "show", "opacity"]),
     ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "corner", "show", "opacity", "cursor", "view", "step", "content", "wrap", "size", "grow"]),
 ];
 
@@ -90,6 +91,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("repeat", "`repeat i in 1..10 { … }` — the same thing several times, with `$i` to build names."),
     ("for", "`for r in rows { … }` · `for r in rows from first { … }` — once per record of a model."),
     ("row", "`row { gap: 8; align: center }` — children side by side, with gap, padding, fill and scroll (`view:`)."),
+    ("grid", "`grid { columns: 2; gap: 12; width: 456; row: 106 }` — children in cells, left to right and down; `span: 2` takes two. Inside each, `cell.w` and `cell.h` are its cell."),
     ("column", "`column { gap: 8 }` — children one under the other. Same properties as `row`."),
     ("space", "`space 12` — a gap of that size inside a layout."),
     ("between", "`between i { … }` — what goes between every two children of a layout, with its position."),

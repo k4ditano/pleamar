@@ -643,6 +643,11 @@ fn declares(entries: &[Entry], word: &str) -> bool {
     })
 }
 
+/// What inside a layout is not a child that takes room: declarations and rules.
+fn is_declaration(n: &Node) -> bool {
+    matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if matches!(p.as_str(), "prop" | "pose" | "let" | "fact" | "on" | "every" | "follow" | "spin" | "wave" | "blink" | "look"))
+}
+
 fn pass_of(e: &Entry) -> u8 {
     let Entry::Node(n) = e else { return 2 };
     let is_assignment = matches!(n.head.get(2).map(|x| &x.kind), Some(TokenKind::Sym("=")));
@@ -1900,6 +1905,7 @@ impl<'a> Compiler<'a> {
                 "repeat" => self.repeat(n, &mut c)?,
                 "for" => self.for_loop(n, &mut c)?,
                 "row" | "column" => self.stack(n, &mut c, word == "row")?,
+                "grid" => self.grid(n, &mut c)?,
                 "space" => {
                     let v = self.expr(&mut c)?;
                     self.last_size = Some((v.clone(), v));
@@ -4641,10 +4647,166 @@ impl<'a> Compiler<'a> {
                     self.unroll(n.body.as_deref().unwrap_or(&[]).iter().collect(), scope, children)?;
                     scope.pop();
                 }
+            } else if is_declaration(n) {
+                // A `prop`, a `let`, a rule… inside a layout is not a child that
+                // takes room: it is what it is, read where it is written, with
+                // the names of the `repeat`s around it.
+                let depth = scope.len();
+                self.scopes.extend(scope.iter().cloned());
+                let mut no_clips = 0;
+                let r = self.statement(n, &mut no_clips);
+                self.scopes.truncate(self.scopes.len() - depth);
+                r?;
             } else {
                 children.push((n, scope.clone()));
             }
         }
+        Ok(())
+    }
+
+    /// `grid { at: x, y; columns: 2; gap: 12; width: 456; row: 106 }`: its
+    /// children in cells, left to right and then down. A child takes one cell,
+    /// or several with `span:`; inside it, `cell.w` and `cell.h` are the size of
+    /// its cell, to draw in without writing a coordinate from outside. It does
+    /// not have to say its size; if it says it, and the grid has no `row:`,
+    /// each row is as tall as its tallest child. Its zones go where it goes.
+    fn grid(&mut self, n: &'a Node, c: &mut Cur) -> R<()> {
+        c.expect_end()?;
+        let mut p = self.properties(n, vocab::properties("grid"))?;
+        let origin = match p.get_mut("at") {
+            Some(c) => self.point(c)?,
+            None => (0.0.into(), 0.0.into()),
+        };
+        let columns = match p.get_mut("columns") {
+            Some(c) => {
+                let k = c.num()? as usize;
+                c.expect_end()?;
+                if !(1..=24).contains(&k) {
+                    return Err(CompileError::at(n.line, n.col, "`columns` goes from 1 to 24"));
+                }
+                k
+            }
+            None => return Err(CompileError::at(n.line, n.col, "a grid says how many columns it has: `columns: 2`")),
+        };
+        let width = match p.get_mut("width") {
+            Some(c) => self.expr(c)?,
+            None => return Err(CompileError::at(n.line, n.col, "a grid says how wide it is, to share it among its columns: `width: 456`")),
+        };
+        let gap = match p.get_mut("gap") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(0.0),
+        };
+        let row_given = match p.get_mut("row") {
+            Some(c) => Some(self.expr(c)?),
+            None => None,
+        };
+        let opacity = match p.get_mut("opacity") {
+            Some(o) => Some(self.expr(o)?),
+            None => None,
+        };
+        let opacity = match p.get_mut("show") {
+            Some(c) => {
+                let v = self.expr(c)?.clamp(0.0, 1.0);
+                Some(opacity.map_or(v.clone(), |o| o * v))
+            }
+            None => opacity,
+        };
+        let base = Transform::at((0.0.into(), 0.0.into())).translate(origin.0.clone(), origin.1.clone());
+        self.e.paint(Instr::Transform(Some(base.clone())));
+        self.under.push(base);
+        if let Some(o) = &opacity {
+            self.e.paint(Instr::Opacity(Some(o.clone())));
+        }
+        let mut children: Vec<(&'a Node, Vec<Scope>)> = Vec::new();
+        self.unroll(n.body.as_deref().unwrap_or(&[]).iter().collect(), &mut Vec::new(), &mut children)?;
+        let cell_w = (width.clone() - gap.clone() * (columns as f32 - 1.0)) / Expr::K(columns as f32);
+        let level = self.under.len();
+        struct Cell {
+            instr: usize,
+            candidates: std::ops::Range<usize>,
+            row: usize,
+            height: Expr,
+        }
+        let mut cells: Vec<Cell> = Vec::new();
+        let (mut col, mut row) = (0usize, 0usize);
+        for (child, scopes) in children {
+            let mark = self.rules.len();
+            let extra = scopes.len() + 1;
+            self.scopes.extend(scopes);
+            // How many columns it takes: a number known when reading the scene,
+            // which inside a `repeat` may depend on it (`span: if(t == 4, 2, 1)`).
+            let mut span = 1usize;
+            for e in child.body.as_deref().unwrap_or(&[]) {
+                if let Entry::Prop { name, value, line, col: pc } = e {
+                    if name == "span" {
+                        let mut c = Cur::new(value, *line, *pc);
+                        span = match self.expr(&mut c)? {
+                            Expr::K(k) => (k.round().max(1.0) as usize).min(columns),
+                            _ => return Err(CompileError::at(*line, *pc, "`span` is a number known when reading the scene: how many columns the child takes")),
+                        };
+                    }
+                }
+            }
+            if col + span > columns {
+                row += 1;
+                col = 0;
+            }
+            let w = cell_w.clone() * span as f32 + gap.clone() * (span as f32 - 1.0);
+            let x = (cell_w.clone() + gap.clone()) * col as f32;
+            let mut here = Scope::default();
+            here.exprs.insert("cell.w".into(), w.clone());
+            here.exprs.insert("cell.h".into(), row_given.clone().unwrap_or(Expr::K(0.0)));
+            self.scopes.push(here);
+            let instr = self.e.instrs.len();
+            let slot = Transform::at((0.0.into(), 0.0.into())).translate(x, Expr::K(0.0));
+            self.e.paint(Instr::Transform(Some(slot.clone())));
+            self.under.push(slot);
+            let from = self.candidates.len();
+            self.in_slot = true;
+            self.last_size = None;
+            let mut no_clips = 0;
+            let r = self.statement(child, &mut no_clips);
+            self.in_slot = false;
+            self.under.pop();
+            self.e.paint(Instr::Transform(None));
+            for _ in 0..extra {
+                self.close_scope(mark);
+            }
+            r?;
+            let height = match (self.last_size.take(), &row_given) {
+                (Some((_, h)), None) => h,
+                (_, Some(h)) => h.clone(),
+                (None, None) => return Err(CompileError::at(child.line, child.col, "in a grid without `row:`, each child says how tall it is: `group { size: cell.w, 90; … }`, or the grid gives the height of its rows")),
+            };
+            cells.push(Cell { instr, candidates: from..self.candidates.len(), row, height });
+            col += span;
+        }
+        // Each row as tall as its tallest child (or as `row:` says), and each
+        // child at the top of its own.
+        let rows = cells.last().map_or(0, |c| c.row + 1);
+        let mut tops: Vec<Expr> = Vec::with_capacity(rows);
+        let mut running = Expr::K(0.0);
+        for r in 0..rows {
+            tops.push(running.clone());
+            let tallest = cells.iter().filter(|c| c.row == r).fold(Expr::K(0.0), |m, c| m.max(c.height.clone()));
+            running = running + tallest + gap.clone();
+        }
+        for c in &cells {
+            let y = tops[c.row].clone();
+            if let Instr::Transform(Some(t)) = &mut self.e.instrs[c.instr] {
+                t.translate.1 = y.clone();
+            }
+            for k in &mut self.candidates[c.candidates.clone()] {
+                k.under[level].translate.1 = y.clone();
+            }
+        }
+        if opacity.is_some() {
+            self.e.paint(Instr::Opacity(None));
+        }
+        self.under.pop();
+        self.e.paint(Instr::Transform(None));
+        let total_h = if rows > 0 { running - gap } else { Expr::K(0.0) };
+        self.last_size = Some((width, total_h));
         Ok(())
     }
 
