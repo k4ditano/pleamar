@@ -370,15 +370,27 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn cursor(&self, c: Cursor) {
+        let shape = shape_of(c);
+        CURSOR_SHAPE.store(c as u8, Ordering::Relaxed);
         if let Some(d) = self.cursors.lock().unwrap().as_ref() {
-            d.set_shape(self.serial.load(Ordering::Relaxed), match c {
-                Cursor::Normal => Shape::Default,
-                Cursor::Hand => Shape::Pointer,
-                Cursor::Text => Shape::Text,
-                Cursor::Grab => Shape::Grab,
-                Cursor::Grabbing => Shape::Grabbing,
-            });
+            d.set_shape(self.serial.load(Ordering::Relaxed), shape);
         }
+    }
+}
+
+/// The cursor the scene last asked for. A client has to say which cursor it
+/// wants every time the pointer ENTERS one of its surfaces, or the compositor
+/// draws none: over a transparent full-screen surface that is a mouse that has
+/// vanished. So it is kept here and said again on every entry.
+static CURSOR_SHAPE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+fn shape_of(c: Cursor) -> Shape {
+    match c {
+        Cursor::Normal => Shape::Default,
+        Cursor::Hand => Shape::Pointer,
+        Cursor::Text => Shape::Text,
+        Cursor::Grab => Shape::Grab,
+        Cursor::Grabbing => Shape::Grabbing,
     }
 }
 
@@ -1191,6 +1203,16 @@ impl PointerHandler for State {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                     if let PointerEventKind::Enter { serial } = e.kind {
                         self.serial.store(serial, Ordering::Relaxed);
+                        if let Some(d) = self.cursors.lock().unwrap().as_ref() {
+                            let c = match CURSOR_SHAPE.load(Ordering::Relaxed) {
+                                1 => Cursor::Hand,
+                                2 => Cursor::Text,
+                                3 => Cursor::Grab,
+                                4 => Cursor::Grabbing,
+                                _ => Cursor::Normal,
+                            };
+                            d.set_shape(serial, shape_of(c));
+                        }
                     }
                     // The mouse goes to the render, which is the one that knows what's underneath;
                     // it reaches the logic already with a name.

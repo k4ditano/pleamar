@@ -1414,12 +1414,18 @@ pub fn run(
 
         // Where the mouse comes in: the active zones, and nothing else. The rest of
         // the surface is transparent for the click too.
-        // Nothing can be clicked on a closed surface.
-        let closed: Vec<[f32; 4]> = scene
-            .surfaces
+        // Nothing can be clicked on a closed surface. Its piece of the plane is
+        // the one its sheet really covers, not the size written in the scene:
+        // `size: full, full` is written as 0 × 0, and a closed full-screen
+        // surface kept its zones —a transparent wall over the whole desktop
+        // that took every click, and with no cursor of its own, the mouse
+        // vanished—.
+        let closed: Vec<[f32; 4]> = sheets
             .iter()
-            .filter(|s| s.open.as_ref().is_some_and(|e| !e.is_true(c)))
-            .map(|s| [s.origin.0, s.origin.1, s.origin.0 + s.width.max(1) as f32, s.origin.1 + s.height as f32])
+            .filter(|l| l.view.popup.is_none())
+            .filter(|l| scene.surfaces.get(l.view.surface).is_some_and(|s| s.open.as_ref().is_some_and(|e| !e.is_true(c))))
+            .map(|l| l.view.bounds())
+            .chain(scene.surfaces.iter().filter(|s| s.open.as_ref().is_some_and(|e| !e.is_true(c))).map(|s| [s.origin.0, s.origin.1, s.origin.0 + s.width.max(1) as f32, s.origin.1 + s.height.max(1) as f32]))
             .collect();
         let boxes: Vec<[i32; 4]> = scene
             .zones
@@ -1441,6 +1447,12 @@ pub fn run(
                     .filter(|b| (b[0] as f32) < v[2] && (b[2] as f32) > v[0] && (b[1] as f32) < v[3] && (b[3] as f32) > v[1])
                     .map(|b| [b[0] - dx, b[1] - dy, b[2] - dx, b[3] - dy])
                     .collect();
+                // `PLEAMAR_REGIONS=1`: where each surface takes the mouse, when it
+                // changes. What answers «why does this not click» —or «why does
+                // everything click here»—.
+                if std::env::var_os("PLEAMAR_REGIONS").is_some() {
+                    eprintln!("regions · surface {} ({}): {:?}", l.view.surface, scene.surfaces.get(l.view.surface).map_or("", |s| s.name.as_str()), its_own);
+                }
                 l.update_input_region(&its_own);
             }
             region = boxes;
