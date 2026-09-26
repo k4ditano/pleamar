@@ -702,6 +702,13 @@ pub fn run(
             }
         }
 
+        // Each zone's own springs: over it, and pressed on it.
+        for (z, hover, pressed) in &scene.zone_springs {
+            let k = z.0 as usize;
+            props[hover.0 as usize].target = if inside.get(k).copied().unwrap_or(false) { 1.0 } else { 0.0 };
+            props[pressed.0 as usize].target = if drag.is_some_and(|d| d.0 == k) { 1.0 } else { 0.0 };
+        }
+
         // What a rule can read from the mouse: where it is, where inside the zone
         // it is dealing with, how far it has dragged and how much the wheel has turned.
         {

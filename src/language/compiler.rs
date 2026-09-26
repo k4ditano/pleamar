@@ -217,6 +217,10 @@ struct Compiler<'a> {
     row_scrolls: std::collections::HashSet<String>,
     /// Surfaces whose `open:` is resolved at the end: (which one, the fact, where it is written).
     pending_surfaces: Vec<(usize, &'a [Token], (usize, usize))>,
+    /// The zones the scene names with `.hover` or `.pressed`, as written
+    /// (`tile.$t`), and the springs made for them, to tie to their zones at the end.
+    hover_mentions: std::collections::HashSet<String>,
+    zone_springs: Vec<(String, PropId, PropId)>,
     /// `level: top, overlay while …`: read at the end, when every fact is known.
     pending_levels: Vec<(usize, Level, &'a [Token], (usize, usize))>,
     /// `anchor: corner`, with `corner` a fact: which surface, which name and where.
@@ -342,7 +346,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -368,6 +372,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         o.time_prop();
     }
     o.e.wants_cursor = mentions(body, "cursor") || mentions_part(body, "cursor");
+    hover_mentions(body, &mut o.hover_mentions);
     // The translations first of all: the texts are read already knowing them,
     // wherever the block is —at the end, or in an imported library—.
     o.read_translations(body);
@@ -591,6 +596,33 @@ fn mentions(entries: &[Entry], word: &str) -> bool {
     })
 }
 
+/// The zones named with `.hover` or `.pressed` anywhere in the scene, as they
+/// are written: only those get their springs.
+fn hover_mentions(entries: &[Entry], out: &mut std::collections::HashSet<String>) {
+    let scan = |t: &[crate::language::tokens::Token], out: &mut std::collections::HashSet<String>| {
+        for t in t {
+            if let TokenKind::Id(w) = &t.kind {
+                for end in [".hover", ".pressed"] {
+                    if let Some(z) = w.strip_suffix(end) {
+                        out.insert(z.to_owned());
+                    }
+                }
+            }
+        }
+    };
+    for e in entries {
+        match e {
+            Entry::Prop { value, .. } => scan(value, out),
+            Entry::Node(n) => {
+                scan(&n.head, out);
+                if let Some(b) = &n.body {
+                    hover_mentions(b, out);
+                }
+            }
+        }
+    }
+}
+
 /// Whether any name has that part in the middle: `nook.cursor.x`.
 fn mentions_part(entries: &[Entry], part: &str) -> bool {
     let named = |t: &[crate::language::tokens::Token]| t.iter().any(|t| matches!(&t.kind, TokenKind::Id(w) if w.split('.').skip(1).any(|p| p == part)));
@@ -754,6 +786,42 @@ impl<'a> Compiler<'a> {
         match self.screen_mark() {
             Some(mark) if local.contains('$') => format!("{g}{mark}"),
             _ => g,
+        }
+    }
+
+    /// `hit.hover` and `hit.pressed` for a zone about to be declared here: the
+    /// same name the zone will have (see `declare_zone`), and from here they
+    /// are reached as written.
+    fn zone_springs_for(&mut self, local: &str) {
+        let interpolated = self.interpolate(local);
+        let suffix = self.scopes.last().map(|e| e.suffix.clone()).unwrap_or_default();
+        let mut g = if !suffix.is_empty() && !local.contains('$') { format!("{interpolated}{suffix}") } else { interpolated.clone() };
+        if local.contains('$') {
+            if let Some(mark) = self.screen_mark() {
+                g = format!("{g}{mark}");
+            }
+        }
+        let spring = Spring::at(0.14);
+        let mut made = Vec::new();
+        for part in ["hover", "pressed"] {
+            let name = format!("{g}.{part}");
+            let p = match self.props.get(&name) {
+                Some(p) => *p,
+                None => {
+                    let p = self.e.prop_with(interned(&name), 0.0, spring);
+                    self.props.insert(name.clone(), p);
+                    p
+                }
+            };
+            if g != interpolated {
+                if let Some(e) = self.scopes.last_mut() {
+                    e.alias.insert(format!("{interpolated}.{part}"), name);
+                }
+            }
+            made.push(p);
+        }
+        if !self.zone_springs.iter().any(|z| z.0 == g) {
+            self.zone_springs.push((g, made[0], made[1]));
         }
     }
 
@@ -1444,6 +1512,18 @@ impl<'a> Compiler<'a> {
 
     /// A group: its properties (transform, opacity) and its children in order.
     fn group(&mut self, entries: impl Iterator<Item = &'a Entry>) {
+        let entries: Vec<&'a Entry> = entries.collect();
+        // The zones of this group that are named with `.hover` or `.pressed`
+        // get their springs before anything is read: a zone goes after what it
+        // lights —the press belongs to the one declared last—, so its `.hover`
+        // is used above it.
+        for e in &entries {
+            let Entry::Node(n) = e else { continue };
+            let (Some(TokenKind::Id(w)), Some(TokenKind::Id(local))) = (n.head.first().map(|t| &t.kind), n.head.get(2).map(|t| &t.kind)) else { continue };
+            if w == "zone" && self.hover_mentions.contains(local.as_str()) {
+                self.zone_springs_for(local);
+            }
+        }
         let mut clips = 0;
         for e in entries {
             let Entry::Node(n) = e else { continue };
@@ -4911,6 +4991,12 @@ impl<'a> Compiler<'a> {
                 let z = self.e.zone_under(interned(&k.name), k.shape, active, k.under);
                 self.e.zones[z.0 as usize].cursor = k.cursor;
                 self.zones.insert(k.name, z);
+            }
+        }
+        // The zones' own springs, now that the zones exist.
+        for (name, hover, pressed) in std::mem::take(&mut self.zone_springs) {
+            if let Some(z) = self.zones.get(&name) {
+                self.e.zone_springs.push((*z, hover, pressed));
             }
         }
         // And the rules of the stacks that scroll, now that their zones exist.

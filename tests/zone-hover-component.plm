@@ -1,0 +1,10 @@
+// expect: ok
+scene ZoneHoverComponent {
+    surface { size: 300, 100 }
+    component Chip(x: number) {
+        box { at: x, 50; size: 80, 40; corner: 20; color: mix(#303030, #9ed6bd, touch.hover) }
+        zone box touch { at: x, 50; size: 80, 40; corner: 20; cursor: pointer }
+    }
+    Chip(60)
+    Chip(160)
+}

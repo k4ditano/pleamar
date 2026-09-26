@@ -1,0 +1,8 @@
+// expect: ok
+scene ZoneHover {
+    surface { size: 200, 100 }
+    repeat k in 0..2 {
+        box { at: 50 + k * 100, 50; size: 80, 60; corner: 10; color: mix(#303030, #9ed6bd, hit.$k.hover); opacity: 1 - 0.3 * hit.$k.pressed }
+        zone box hit.$k { at: 50 + k * 100, 50; size: 80, 60; corner: 10; cursor: pointer }
+    }
+}

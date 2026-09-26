@@ -621,6 +621,26 @@ gradient: radial 100, 160 radius 60, ink, mint 40%, coal // from a center outwar
 
 **A named shape is a zone** if some rule names it, if it carries `active`, or if it was declared with `zone`. A name put there only to read better does not stop a click. A zone inherits the transforms of the groups it is in, and **what is not there —a false `show:`, an `opacity:` that has reached zero, a record that does not exist— is not a zone**: what cannot be seen cannot be pressed. A `row` or `column` with a name is one too: its whole box, underneath those of its children.
 
+**A zone declared with `zone` brings its own two springs**: `hit.hover` goes
+from 0 to 1 while the pointer is over it, and `hit.pressed` while it is
+pressed on it, each in 140 ms. They are read like any property, without a
+rule: `color: mix(ink, mint, hit.hover)`. Only the zones whose `.hover` or
+`.pressed` is named get them, and they can be used above the zone —which is
+where what it lights goes, since the press belongs to the zone declared last—.
+Inside a component or a `repeat` each copy has its own: `touch.hover`,
+`hit.$k.hover`.
+
+```plm
+scene Chips {
+    surface { size: 300, 80 }
+    repeat k in 0..3 {
+        box { at: 60 + k * 90, 40; size: 80, 34; corner: 17
+              color: mix(#2a2d30, #9ed6bd, chip.$k.hover); opacity: 1 - 0.25 * chip.$k.pressed }
+        zone box chip.$k { at: 60 + k * 90, 40; size: 80, 34; corner: 17; cursor: pointer }
+    }
+}
+```
+
 ### 8.1. The scene's own shaders
 
 What the language did not foresee can still be drawn: a scene can bring its own

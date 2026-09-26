@@ -1375,6 +1375,9 @@ pub struct Scene {
     pub instrs: Vec<Instr>,
     pub behaviors: Vec<Behavior>,
     pub zones: Vec<Zone>,
+    /// `hit.hover` and `hit.pressed`: springs the render moves by itself, from
+    /// 0 to 1 while the pointer is over the zone and while it is pressed.
+    pub zone_springs: Vec<(ZoneId, PropId, PropId)>,
     /// Name and initial value of each live text.
     pub texts: Vec<(&'static str, String)>,
     /// Each image, and the largest logical size it is painted at.
