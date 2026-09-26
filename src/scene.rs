@@ -1818,6 +1818,8 @@ pub enum ToRender {
     Dropped(String, String),
     /// What the compositor inside the scene has to say.
     Nest(NestEvent),
+    /// What was on screen has been lost —back from another TTY—: everything is painted again.
+    Repaint,
     Quit,
 }
 

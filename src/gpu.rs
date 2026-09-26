@@ -1310,10 +1310,30 @@ impl DrawList {
 
 // ── the device and the sheets ───────────────────────────────────
 
-/// What the Wayland thread hands the render thread for each surface.
+/// Where a sheet's frames go.
+pub enum Target {
+    /// A window of the system's compositor: wgpu's own swapchain.
+    Surface(wgpu::Surface<'static>),
+    /// A monitor driven by the platform itself (pleamar-wm's own session): it
+    /// lends a texture to paint each frame in, and shows it once painted.
+    Frames(Box<dyn Frames>),
+}
+
+/// Frames the platform shows itself. The textures are made on the render's
+/// card, so they are asked for with it at hand.
+pub trait Frames: Send {
+    /// A texture to paint the next frame in, BGRA and the monitor's size, and
+    /// which one it is; none if they are all still on screen or on their way.
+    /// `modifiers`: the layouts of the card's memory it can paint in.
+    fn acquire(&mut self, device: &wgpu::Device, modifiers: &[u64]) -> Option<(usize, wgpu::Texture)>;
+    /// That one is painted, in that work: to the monitor once it is done.
+    fn present(&mut self, which: usize, done: wgpu::SubmissionIndex, device: &wgpu::Device);
+}
+
+/// What the platform hands the render thread for each surface.
 pub struct NewSheet {
     pub id: u32,
-    pub surface: wgpu::Surface<'static>,
+    pub target: Target,
     pub window: Box<dyn PlatformWindow>,
     pub scale: f32,
     /// The logical size the compositor has given it.
@@ -1375,7 +1395,7 @@ pub struct Sheet {
     pub open: bool,
     pub cleared: bool,
     pub view: View,
-    surface: wgpu::Surface<'static>,
+    target: Target,
     window: Box<dyn PlatformWindow>,
     px: (u32, u32),
     uniforms: wgpu::Buffer,
@@ -1465,6 +1485,9 @@ pub struct Gpu {
     #[cfg(target_os = "linux")]
     copies: std::cell::RefCell<Vec<(u64, u32, wgpu::Extent3d)>>,
     last_submission: std::cell::RefCell<Option<wgpu::SubmissionIndex>>,
+    /// The layouts of the card's memory it can paint BGRA in, for a platform
+    /// that lends its own textures (a monitor driven directly).
+    render_modifiers: Vec<u64>,
     sampler: wgpu::Sampler,
     /// How many floats fit now in each store, and how many at most on this card.
     capacity: (usize, usize, usize, usize),
@@ -1477,9 +1500,12 @@ pub struct Gpu {
 impl Gpu {
     /// It is created with the first surface that arrives: one is needed to know
     /// which adapter and which format are valid.
-    pub fn new(instance: &wgpu::Instance, first: &wgpu::Surface<'static>) -> Gpu {
+    /// With the first sheet's surface, if it has one: the card chosen has to be
+    /// able to show on it. Without —a monitor driven by the platform itself—,
+    /// the card is whatever there is.
+    pub fn new(instance: &wgpu::Instance, first: Option<&wgpu::Surface<'static>>) -> Gpu {
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            compatible_surface: Some(first),
+            compatible_surface: first,
             power_preference: wgpu::PowerPreference::LowPower,
             ..Default::default()
         }))
@@ -1497,17 +1523,26 @@ impl Gpu {
                 required_features: adapter.features() & wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF,
                 ..Default::default()
             })).expect("there is no device");
-        let caps = first.get_capabilities(&adapter);
-        // No sRGB: the compositor blends the bytes as they are, and premultiplied
-        // alpha only works out if nobody re-encodes them along the way.
-        let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
-        let alpha = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
-            wgpu::CompositeAlphaMode::PreMultiplied
-        } else {
-            eprintln!("warning: no premultiplied alpha ({:?}); the background will come out opaque", caps.alpha_modes);
-            wgpu::CompositeAlphaMode::Auto
+        let (format, alpha, non_blocking) = match first {
+            Some(first) => {
+                let caps = first.get_capabilities(&adapter);
+                // No sRGB: the compositor blends the bytes as they are, and premultiplied
+                // alpha only works out if nobody re-encodes them along the way.
+                let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
+                let alpha = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
+                    wgpu::CompositeAlphaMode::PreMultiplied
+                } else {
+                    eprintln!("warning: no premultiplied alpha ({:?}); the background will come out opaque", caps.alpha_modes);
+                    wgpu::CompositeAlphaMode::Auto
+                };
+                let non_blocking = [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate].into_iter().find(|m| caps.present_modes.contains(m));
+                (format, alpha, non_blocking)
+            }
+            // A monitor driven directly: BGRA as the monitor takes it (XRGB8888),
+            // and the pace set like with mailbox —the platform says when a frame
+            // has been shown—.
+            None => (wgpu::TextureFormat::Bgra8Unorm, wgpu::CompositeAlphaMode::Opaque, Some(wgpu::PresentMode::Mailbox)),
         };
-        let non_blocking = [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate].into_iter().find(|m| caps.present_modes.contains(m));
         let info = adapter.get_info();
         println!("render · {} ({:?}) · {:?} · {:?}", info.name, info.backend, format, alpha);
 
@@ -1551,7 +1586,7 @@ impl Gpu {
         let limit = device.limits().max_storage_buffer_binding_size as usize / 4;
         let no_layers_group = Self::make_layers(&device, &pipeline, format, 1, 1, 1).1;
         let lens = crate::lens::Pipelines::new(&device);
-        let can_copy = caps.usages.contains(wgpu::TextureUsages::COPY_DST);
+        let can_copy = first.is_none_or(|f| f.get_capabilities(&adapter).usages.contains(wgpu::TextureUsages::COPY_DST));
         let nothing = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("no backdrop"),
             size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
@@ -1563,7 +1598,13 @@ impl Gpu {
             view_formats: &[],
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
-        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), last_submission: Default::default(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
+        #[allow(unused_mut)]
+        let mut g = Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
+        #[cfg(target_os = "linux")]
+        if first.is_none() {
+            g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
+        }
+        g
     }
 
     /// The four groups the shapes shader reads, written out. See `shape.wgsl`.
@@ -1753,7 +1794,7 @@ impl Gpu {
         let (layer_views, layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
         let mut l = Sheet {
             id: n.id, name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, cleared: false, view: n.view,
-            surface: n.surface, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: long_ago(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], keyboard_mode: None,
+            target: n.target, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: long_ago(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], keyboard_mode: None,
         };
         self.reconfigure(&mut l, size);
         l
@@ -1800,7 +1841,8 @@ impl Gpu {
 
     fn configure_surface(&self, l: &Sheet, px: (u32, u32)) {
         let _ = &self.adapter;
-        l.surface.configure(
+        let Target::Surface(surface) = &l.target else { return };
+        surface.configure(
             &self.device,
             &wgpu::SurfaceConfiguration {
                 // With COPY_DST the lens canvas can be copied onto it.
@@ -1883,43 +1925,13 @@ impl Gpu {
     /// `buffer` is which of the program's buffers; `fresh`, if it has come
     /// now, what it takes to read it (a buffer already read is not read again).
     pub fn copy_dmabuf(&mut self, layer: u32, size: (u32, u32), buffer: u64, fresh: Option<crate::scene::DmabufPiece>) -> Result<bool, String> {
-        use wgpu::hal::api::Vulkan;
-        let extent = wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 };
         if let Some(d) = fresh.filter(|_| !self.dmabufs.contains_key(&buffer)) {
             // ARGB8888 and XRGB8888 are BGRA in memory, like the windows' texture.
             if d.fourcc != u32::from_le_bytes(*b"AR24") && d.fourcc != u32::from_le_bytes(*b"XR24") {
                 return Err(format!("the format {:#x} is not read yet", d.fourcc));
             }
-            let hal_desc = wgpu::hal::TextureDescriptor {
-                label: Some("a program's frame"),
-                size: extent,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Bgra8Unorm,
-                usage: wgpu::TextureUses::COPY_SRC,
-                memory_flags: wgpu::hal::MemoryFlags::empty(),
-                view_formats: Vec::new(),
-            };
-            // SAFETY: the fd is a dmabuf of that size, format and layout, as the
-            // program declared it through linux-dmabuf; Vulkan takes it.
-            let hal_texture = unsafe {
-                let hal = self.device.as_hal::<Vulkan>().ok_or("the card is not driven with Vulkan")?;
-                hal.texture_from_dmabuf_fd(d.fd, &hal_desc, d.modifier, d.stride as u64, d.offset as u64).map_err(|e| format!("{e:?}"))?
-            };
-            let desc = wgpu::TextureDescriptor {
-                label: Some("a program's frame"),
-                size: extent,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Bgra8Unorm,
-                usage: wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            };
-            // SAFETY: made on this device, as `desc` says; its content is the
-            // program's, already there: no layout to clear it from.
-            let texture = unsafe { self.device.create_texture_from_hal::<Vulkan>(hal_texture, &desc, wgpu::TextureUses::COPY_SRC) };
+            // Its content is the program's, already there: `COPY_SRC` from the start, nothing to clear.
+            let texture = Self::import_dmabuf(&self.device, d.fd, size, d.modifier, d.stride, d.offset, wgpu::TextureUses::COPY_SRC, wgpu::TextureUsages::COPY_SRC, wgpu::TextureUses::COPY_SRC)?;
             self.dmabufs.insert(buffer, texture);
         }
         let remade = self.window_room(layer, size);
@@ -1963,6 +1975,20 @@ impl Gpu {
         self.last_submission.borrow().clone()
     }
 
+    /// The card as wgpu has it, for a platform that makes its own textures on it.
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    /// The layouts it can paint BGRA in, when it was made without a surface.
+    pub fn render_modifiers(&self) -> &[u64] {
+        &self.render_modifiers
+    }
+
     /// Whether the card has finished that work, without waiting for it.
     pub fn is_done(&self, index: &wgpu::SubmissionIndex) -> bool {
         self.device.poll(wgpu::PollType::Wait { submission_index: Some(index.clone()), timeout: Some(std::time::Duration::ZERO) }).is_ok()
@@ -1998,6 +2024,26 @@ impl Gpu {
                 return None;
             }
             let device = libc::makedev(drm.render_major as u32, drm.render_minor as u32);
+            let mut formats = Vec::new();
+            for m in self.bgra_modifiers(vk::FormatFeatureFlags::TRANSFER_SRC) {
+                for fourcc in [*b"AR24", *b"XR24"] {
+                    formats.push((u32::from_le_bytes(fourcc), m));
+                }
+            }
+            (!formats.is_empty()).then_some((device, formats))
+        }
+    }
+
+    /// The single-plane layouts (modifiers) of BGRA the card can do that with.
+    #[cfg(target_os = "linux")]
+    fn bgra_modifiers(&self, need: ash::vk::FormatFeatureFlags) -> Vec<u64> {
+        use ash::vk;
+        use wgpu::hal::api::Vulkan;
+        // SAFETY: only reading properties of the physical device wgpu uses.
+        unsafe {
+            let Some(hal) = self.adapter.as_hal::<Vulkan>() else { return Vec::new() };
+            let instance = hal.shared_instance().raw_instance();
+            let pd = hal.raw_physical_device();
             let mut list = vk::DrmFormatModifierPropertiesListEXT::default();
             let mut fp = vk::FormatProperties2::default().push_next(&mut list);
             instance.get_physical_device_format_properties2(pd, vk::Format::B8G8R8A8_UNORM, &mut fp);
@@ -2006,14 +2052,47 @@ impl Gpu {
             let mut list = vk::DrmFormatModifierPropertiesListEXT::default().drm_format_modifier_properties(&mut mods);
             let mut fp = vk::FormatProperties2::default().push_next(&mut list);
             instance.get_physical_device_format_properties2(pd, vk::Format::B8G8R8A8_UNORM, &mut fp);
-            let mut formats = Vec::new();
-            for m in mods.iter().filter(|m| m.drm_format_modifier_plane_count == 1 && m.drm_format_modifier_tiling_features.contains(vk::FormatFeatureFlags::TRANSFER_SRC)) {
-                for fourcc in [*b"AR24", *b"XR24"] {
-                    formats.push((u32::from_le_bytes(fourcc), m.drm_format_modifier));
-                }
-            }
-            (!formats.is_empty()).then_some((device, formats))
+            mods.iter().filter(|m| m.drm_format_modifier_plane_count == 1 && m.drm_format_modifier_tiling_features.contains(need)).map(|m| m.drm_format_modifier).collect()
         }
+    }
+
+    /// A program's —or the monitor's— buffer on the card as a texture of this
+    /// device, for the uses asked. Single plane.
+    #[cfg(target_os = "linux")]
+    /// `initial`: what its content is taken to be ready for (`UNINITIALIZED` if nothing of it matters).
+    #[allow(clippy::too_many_arguments)]
+    pub fn import_dmabuf(device: &wgpu::Device, fd: std::os::fd::OwnedFd, size: (u32, u32), modifier: u64, stride: u32, offset: u32, uses: wgpu::TextureUses, usage: wgpu::TextureUsages, initial: wgpu::TextureUses) -> Result<wgpu::Texture, String> {
+        use wgpu::hal::api::Vulkan;
+        let extent = wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 };
+        let hal_desc = wgpu::hal::TextureDescriptor {
+            label: Some("a buffer on the card"),
+            size: extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            usage: uses,
+            memory_flags: wgpu::hal::MemoryFlags::empty(),
+            view_formats: Vec::new(),
+        };
+        // SAFETY: the fd is a dmabuf of that size, BGRA, and that layout, as
+        // whoever made it says; Vulkan takes it.
+        let hal_texture = unsafe {
+            let hal = device.as_hal::<Vulkan>().ok_or("the card is not driven with Vulkan")?;
+            hal.texture_from_dmabuf_fd(fd, &hal_desc, modifier, stride as u64, offset as u64).map_err(|e| format!("{e:?}"))?
+        };
+        let desc = wgpu::TextureDescriptor {
+            label: Some("a buffer on the card"),
+            size: extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            usage,
+            view_formats: &[],
+        };
+        // SAFETY: made on this device, as `desc` says.
+        Ok(unsafe { device.create_texture_from_hal::<Vulkan>(hal_texture, &desc, initial) })
     }
 
     /// How big the windows' texture is: what a window's corners are measured against.
@@ -2093,15 +2172,25 @@ impl Gpu {
         // because of waiting for the monitor.
         let timing = timing_enabled();
         let t0 = timing.then(std::time::Instant::now);
-        let frame = match l.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.configure_surface(l, l.px);
-                return false;
-            }
-            _ => return false,
+        let frame = match &mut l.target {
+            Target::Surface(surface) => match surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Frame::Surface(t),
+                wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                    self.configure_surface(l, l.px);
+                    return false;
+                }
+                _ => return false,
+            },
+            Target::Frames(frames) => match frames.acquire(&self.device, &self.render_modifiers) {
+                Some((which, texture)) => Frame::Lent(which, texture),
+                None => return false,
+            },
         };
-        let view = frame.texture.create_view(&Default::default());
+        let frame_texture = match &frame {
+            Frame::Surface(f) => &f.texture,
+            Frame::Lent(_, t) => t,
+        };
+        let view = frame_texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
         #[cfg(target_os = "linux")]
         self.record_copies(&mut encoder);
@@ -2200,17 +2289,27 @@ impl Gpu {
         }
         pass_to(&mut encoder, target, &l.layer_group, &[from..total], keep);
         if let Some(lens) = &mut l.lens {
-            lens.copy_to(&mut encoder, &frame.texture);
+            lens.copy_to(&mut encoder, frame_texture);
         }
         let t1 = timing.then(std::time::Instant::now);
         let commands = encoder.finish();
         let t2 = timing.then(std::time::Instant::now);
-        self.last_submission.replace(Some(self.queue.submit(Some(commands))));
+        let index = self.queue.submit(Some(commands));
+        self.last_submission.replace(Some(index.clone()));
         let t3 = timing.then(std::time::Instant::now);
-        if request_frame {
-            l.window.request_frame();
+        match frame {
+            Frame::Surface(frame) => {
+                if request_frame {
+                    l.window.request_frame();
+                }
+                self.queue.present(frame);
+            }
+            Frame::Lent(which, _) => {
+                if let Target::Frames(frames) = &mut l.target {
+                    frames.present(which, index, &self.device);
+                }
+            }
         }
-        self.queue.present(frame);
         if let (Some(t0), Some(t1), Some(t2), Some(t3)) = (t0, t1, t2, t3) {
             let ms = |a: std::time::Instant, b: std::time::Instant| b.duration_since(a).as_secs_f32() * 1000.0;
             TIMING.with(|c| {
@@ -2233,6 +2332,12 @@ impl Gpu {
         }
         true
     }
+}
+
+/// The texture a frame is painted in: the swapchain's, or one lent by the platform.
+enum Frame {
+    Surface(wgpu::SurfaceTexture),
+    Lent(usize, wgpu::Texture),
 }
 
 /// `PLEAMAR_TIMING=1`: read once, not on every frame of every sheet.

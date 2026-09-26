@@ -13,7 +13,7 @@ mod scenes;
 mod shaders;
 mod shapes;
 mod lsp;
-mod gpu;
+pub mod gpu;
 mod lens;
 mod language;
 mod logic;
@@ -23,7 +23,10 @@ mod permissions;
 mod platform;
 mod render;
 
-pub use platform::{host_keymap, provide_windows, NestSender};
+pub use platform::{host_keymap, provide_platform, provide_windows, set_host_keymap, NestSender, Platform, PlatformWindow};
+pub use gpu::{Frames, NewSheet, Target, View};
+/// The same wgpu the render paints with, for a platform that lends it textures.
+pub use wgpu;
 mod text;
 
 use scene::*;
@@ -78,9 +81,9 @@ struct Args {
     record: Vec<String>,
 }
 
-fn args() -> Args {
+fn args(given: Vec<String>) -> Args {
     let mut a = Args { scene: String::new(), screen: None, stall: 600, naive: false, demo: false, mouse: None, seconds: None, margin: None, hud: true, reduced: false, no_vsync: false, record: Vec::new() };
-    let mut it = std::env::args().skip(1);
+    let mut it = given.into_iter();
     while let Some(op) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| { eprintln!("{HELP}"); std::process::exit(2) });
         match op.as_str() {
@@ -154,8 +157,13 @@ fn args() -> Args {
 
 /// The program: reads the command line and runs what it asks for.
 pub fn run() {
+    run_with(std::env::args().skip(1).collect());
+}
+
+/// The same, with the options given instead of the command line's.
+pub fn run_with(options: Vec<String>) {
     let start_time = std::time::Instant::now();
-    let a = args();
+    let a = args(options);
     let blocked = Arc::new(AtomicBool::new(false));
     let (to_render, from_render) = channel();
     let (to_logic, from_logic) = channel();
@@ -357,7 +365,10 @@ pub fn run() {
     // From here on this thread belongs to the platform: it puts up the windows and attends
     // to the system until someone closes.
     let extra_height = if a.hud { gpu::HUD_HEIGHT as u32 } else { 0 };
-    platform::run_event_loop(wanted, extra_height, instance, to_render.clone());
+    match platform::provided_platform() {
+        Some(p) => p.run(wanted, extra_height, instance, to_render.clone()),
+        None => platform::run_event_loop(wanted, extra_height, instance, to_render.clone()),
+    }
     let _ = to_render.send(ToRender::Quit);
     let _ = render.join();
     quit();

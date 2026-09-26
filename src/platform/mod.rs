@@ -15,7 +15,6 @@
 //! the logic asks for by a name that is the same on every system. What a
 //! system doesn't have, it says it doesn't have, and the scene decides what to do without it.
 
-#[cfg(not(target_os = "linux"))]
 use crate::scene::{Surface, ToRender};
 #[cfg(not(target_os = "linux"))]
 use std::sync::mpsc::Sender;
@@ -428,6 +427,27 @@ pub fn watch_cursor(to_render: std::sync::mpsc::Sender<crate::scene::ToRender>) 
     }
     #[cfg(not(target_os = "linux"))]
     let _ = to_render;
+}
+
+/// Where the scene is shown and the input comes from. pleamar's own is a
+/// client of the system's compositor (Wayland); whoever builds on pleamar can
+/// hand over another —pleamar-wm drives the monitors itself— with
+/// `provide_platform`, before `run`.
+pub trait Platform: Send {
+    /// Puts up the surfaces the scene asks for, hands them to the render as
+    /// sheets (`ToRender::Sheet`), and tells it the input, until the end.
+    fn run(self: Box<Self>, surfaces: Vec<Surface>, extra_height: u32, instance: wgpu::Instance, to_render: std::sync::mpsc::Sender<ToRender>);
+}
+
+static PLATFORM: std::sync::Mutex<Option<Box<dyn Platform>>> = std::sync::Mutex::new(None);
+
+pub fn provide_platform(p: Box<dyn Platform>) {
+    *PLATFORM.lock().unwrap() = Some(p);
+}
+
+/// The platform handed over, if there is one.
+pub fn provided_platform() -> Option<Box<dyn Platform>> {
+    PLATFORM.lock().unwrap().take()
 }
 
 /// The keyboard layout pleamar's own window was given, as xkb text.

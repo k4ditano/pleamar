@@ -422,7 +422,12 @@ pub fn run(
                     }
                 }
                 ToRender::Sheet(n) => {
-                    let g = gpu.get_or_insert_with(|| Gpu::new(&instance, &n.surface));
+                    let g = gpu.get_or_insert_with(|| {
+                        Gpu::new(&instance, match &n.target {
+                            crate::gpu::Target::Surface(s) => Some(s),
+                            crate::gpu::Target::Frames(_) => None,
+                        })
+                    });
                     g.set_shaders(&scene.shaders);
                     // A scene that asks for "the full width" measures whatever its monitor measures, and it
                     // can know it: `screen.width`.
@@ -792,6 +797,11 @@ pub fn run(
                     last_key = Instant::now();
                 }
                 ToRender::Dropped(kind, data) => drops.push((kind, data)),
+                ToRender::Repaint => {
+                    for l in &mut sheets {
+                        l.painted = None;
+                    }
+                }
                 ToRender::Quit => {
                     cycle.close();
                     return;

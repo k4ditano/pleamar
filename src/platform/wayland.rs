@@ -949,7 +949,7 @@ impl PopupHandler for State {
         if let Some(surface) = a.pending.take() {
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: a.id,
-                surface,
+                target: gpu::Target::Surface(surface),
                 window: Box::new(WaylandWindow { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursors: e.cursors.clone(), serial: e.serial.clone(), layer: None, qh: e.qh.clone(), id: a.id, effect: Mutex::new(None), backdrop: a.backdrop.clone() }),
                 scale: a.parent.scale,
                 size: a.size,
@@ -1109,7 +1109,7 @@ impl State {
             }
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: p.id,
-                surface,
+                target: gpu::Target::Surface(surface),
                 window: Box::new(WaylandWindow { wl: p.role.wl().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: p.role.layer().cloned(), qh: self.qh.clone(), id: p.id, effect: Mutex::new(None), backdrop: p.backdrop.clone() }),
                 scale: p.scale,
                 size,
@@ -1164,7 +1164,7 @@ impl smithay_client_toolkit::session_lock::SessionLockHandler for State {
         if let Some(paints) = face.pending.take() {
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: face.id,
-                surface: paints,
+                target: gpu::Target::Surface(paints),
                 window: Box::new(WaylandWindow { wl: face.surface.wl_surface().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: None, qh: self.qh.clone(), id: face.id, effect: Mutex::new(None), backdrop: None }),
                 scale: 1.0,
                 size,
