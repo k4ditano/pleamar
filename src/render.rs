@@ -247,10 +247,12 @@ pub fn run(
     // compositor already knows what the card can read straight from a program.
     let mut nest_layers: Vec<bool> = Vec::new();
     let mut nest_gpu_told = false;
+    // The buffers copied this round, and the copy to wait for before handing them back.
+    let mut nest_copied: (Vec<u64>, Option<wgpu::SubmissionIndex>) = (Vec::new(), None);
 
     // `PLEAMAR_TIMING=1`: where a frame's time goes, section by section, without the waits.
     let profiling = crate::gpu::timing_enabled();
-    let mut prof = [0f64; 7];
+    let mut prof = [0f64; 8];
     let mut prof_frames = 0u32;
     let mut prof_t = Instant::now();
     let mut prof_since = Instant::now();
@@ -1778,7 +1780,7 @@ pub fn run(
                     }
                 }
                 let mut released: Vec<u64> = Vec::new();
-                let mut last_copy = None;
+                let mut last_copy: Option<wgpu::SubmissionIndex> = None;
                 let mut again = true;
                 while again {
                     again = false;
@@ -1833,12 +1835,11 @@ pub fn run(
                         }
                     }
                 }
-                // The programs' buffers go back once they have been copied.
-                if let (Some(index), Some(send)) = (last_copy, &nest) {
-                    g.wait_for(index);
-                    if !released.is_empty() {
-                        send(ToNest::Released(released));
-                    }
+                // The programs' buffers go back once the card has copied them:
+                // that is waited for after painting, when it is long done.
+                if let Some(index) = last_copy {
+                    nest_copied.0.extend(released);
+                    nest_copied.1 = Some(index);
                 }
                 let (dw, dh) = g.windows_dims();
                 draw.window_tex = nest_windows
@@ -1879,6 +1880,11 @@ pub fn run(
                     send(ToNest::Size(own.0, own.1));
                 }
             }
+        }
+        if profiling {
+            let n = Instant::now();
+            prof[7] += (n - prof_t).as_secs_f64() * 1000.0;
+            prof_t = n;
         }
         draw.compose(to_paint, c, &texts, &mut letters, view, size, op.hud);
         // Particles carry themselves: while one is alive, the scene does not rest.
@@ -2302,6 +2308,15 @@ pub fn run(
             prof_t = n;
         }
         prof_painted += painted;
+        if let (Some(index), Some(g)) = (nest_copied.1.take(), &gpu) {
+            g.wait_for(index);
+            if let Some(send) = &nest {
+                let done = std::mem::take(&mut nest_copied.0);
+                if !done.is_empty() {
+                    send(ToNest::Released(done));
+                }
+            }
+        }
         // What the windows drew has been shown: they may draw the next one.
         if painted > 0 {
             if let Some(send) = &nest {
@@ -2386,13 +2401,13 @@ pub fn run(
             if prof_frames >= 300 {
                 let f = prof_frames as f64;
                 println!(
-                    "timing · {:.0} rounds, {:.0} windows' frames and {:.0} paintings a second · per round: input {:.2} · rules and springs {:.2} · other windows {:.2} · compose {:.2} · regions {:.2} · paint {:.2} · rest {:.2} ms",
-                    f / prof_since.elapsed().as_secs_f64(), prof_window_frames as f64 / prof_since.elapsed().as_secs_f64(), prof_painted as f64 / prof_since.elapsed().as_secs_f64(), prof[0] / f, prof[1] / f, prof[2] / f, prof[3] / f, prof[4] / f, prof[5] / f, prof[6] / f
+                    "timing · {:.0} rounds, {:.0} windows' frames and {:.0} paintings a second · per round: input {:.2} · rules and springs {:.2} · windows' frames to the card {:.2} · compose {:.2} · regions {:.2} · paint {:.2} · rest {:.2} ms",
+                    f / prof_since.elapsed().as_secs_f64(), prof_window_frames as f64 / prof_since.elapsed().as_secs_f64(), prof_painted as f64 / prof_since.elapsed().as_secs_f64(), prof[0] / f, prof[1] / f, prof[7] / f, prof[3] / f, prof[4] / f, prof[5] / f, prof[6] / f
                 );
                 prof_since = Instant::now();
                 prof_window_frames = 0;
                 prof_painted = 0;
-                prof = [0.0; 7];
+                prof = [0.0; 8];
                 prof_frames = 0;
             }
         }
