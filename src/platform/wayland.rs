@@ -545,12 +545,7 @@ impl State {
                 continue;
             }
             let wl = self.compositor.create_surface(qh);
-            let level = match p.level {
-                Level::Background => Layer::Background,
-                Level::Below => Layer::Bottom,
-                Level::Above => Layer::Top,
-                Level::Overlay => Layer::Overlay,
-            };
+            let level = layer_of(p.level);
             // `kind: window`: one of the normal windows, with its title and its frame.
             if let (Some(title), Some(pp)) = (&p.window, POPUPS.get()) {
                 let window = pp.xdg.create_window(wl, WindowDecorations::RequestServer, qh);
@@ -576,7 +571,7 @@ impl State {
             let margin = [m[0] + k as i32 * (height as i32 + 12), m[1], m[2], m[3]];
             layer.set_margin(margin[0], margin[1], margin[2], margin[3]);
             // Noted down, in case the scene decides to move it to another edge while running.
-            if p.anchor_from.is_some() {
+            if p.anchor_from.is_some() || p.level_while.is_some() {
                 if let Some(c) = MOVABLE_LAYERS.get() {
                     c.placed.lock().unwrap().push((which, layer.clone(), margin, (p.width == 0, p.height == 0)));
                 }
@@ -798,6 +793,30 @@ struct MovableLayers {
     placed: Mutex<Vec<(usize, LayerSurface, [i32; 4], (bool, bool))>>,
 }
 static MOVABLE_LAYERS: std::sync::OnceLock<MovableLayers> = std::sync::OnceLock::new();
+
+fn layer_of(level: Level) -> Layer {
+    match level {
+        Level::Background => Layer::Background,
+        Level::Below => Layer::Bottom,
+        Level::Above => Layer::Top,
+        Level::Overlay => Layer::Overlay,
+    }
+}
+
+pub fn relayer(which: usize, level: Level) {
+    let Some(c) = MOVABLE_LAYERS.get() else { return };
+    let mut any = false;
+    for (k, layer, _, _) in c.placed.lock().unwrap().iter() {
+        if *k == which {
+            layer.set_layer(layer_of(level));
+            layer.commit();
+            any = true;
+        }
+    }
+    if any {
+        let _ = c.connection.flush();
+    }
+}
 
 pub fn reanchor(which: usize, anchor: SurfaceAnchor) {
     let Some(c) = MOVABLE_LAYERS.get() else { return };

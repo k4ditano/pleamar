@@ -1,0 +1,6 @@
+// expect: ok
+scene LevelWhile {
+    surface { size: 200, 60; level: top, overlay while open }
+    fact open = false
+    box { from: 0, 0; size: 200, 60; color: #202020 }
+}

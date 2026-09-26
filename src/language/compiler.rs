@@ -217,6 +217,8 @@ struct Compiler<'a> {
     row_scrolls: std::collections::HashSet<String>,
     /// Surfaces whose `open:` is resolved at the end: (which one, the fact, where it is written).
     pending_surfaces: Vec<(usize, &'a [Token], (usize, usize))>,
+    /// `level: top, overlay while …`: read at the end, when every fact is known.
+    pending_levels: Vec<(usize, Level, &'a [Token], (usize, usize))>,
     /// `anchor: corner`, with `corner` a fact: which surface, which name and where.
     pending_anchors: Vec<(usize, String, (usize, usize))>,
     /// The names of the files it is made of, to say where something is.
@@ -340,7 +342,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -477,6 +479,19 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             if per_copy {
                 o.scopes.pop();
             }
+        }
+    }
+    for (which, raised, tokens, (l, col)) in std::mem::take(&mut o.pending_levels) {
+        o.scopes.clear();
+        let mut c = Cur::new(tokens, l, col);
+        match o.expr(&mut c) {
+            Ok(e) => {
+                let owner = o.e.surfaces[which].name.clone();
+                for s in o.e.surfaces.iter_mut().filter(|s| s.name == owner) {
+                    s.level_while = Some((raised, e.clone()));
+                }
+            }
+            Err(f) => o.errors.push(f),
         }
     }
     // A lock surface without `open:` would be locked from the start: it is required.
@@ -3303,13 +3318,23 @@ impl<'a> Compiler<'a> {
             }
         }
         if let Some(c) = p.get_mut("level") {
-            s.level = match c.one_of(vocab::LEVELS, "a level")?.as_str() {
-                "background" => Level::Background,
-                "bottom" => Level::Below,
-                "top" => Level::Above,
-                "overlay" => Level::Overlay,
-                _ => unreachable!(),
+            let level = |c: &mut Cur| -> R<Level> {
+                Ok(match c.one_of(vocab::LEVELS, "a level")?.as_str() {
+                    "background" => Level::Background,
+                    "bottom" => Level::Below,
+                    "top" => Level::Above,
+                    "overlay" => Level::Overlay,
+                    _ => unreachable!(),
+                })
             };
+            s.level = level(c)?;
+            // `level: top, overlay while open`: another one while that holds.
+            if c.sym(",") {
+                let raised = level(c)?;
+                c.expect_word("while")?;
+                self.pending_levels.push((which, raised, &c.tokens[c.i..], c.pos()));
+                c.i = c.tokens.len();
+            }
         }
         // `kind: window`: a normal window, which the compositor decorates and places. What
         // belongs to a panel —anchor, level, reserve, monitor— does not apply to it.

@@ -129,6 +129,9 @@ pub struct Surface {
     /// picks the one that falls outside what is being recorded— does not need four
     /// surfaces, one per corner.
     pub anchor_from: Option<(FactId, Vec<SurfaceAnchor>)>,
+    /// `level: top, overlay while open`: the level it goes up to while that
+    /// holds. Layer-shell lets a live surface change level.
+    pub level_while: Option<(Level, Expr)>,
     /// Top, right, bottom, left.
     pub margin: [i32; 4],
     pub level: Level,
@@ -168,7 +171,7 @@ pub enum Keyboard {
 impl Default for Surface {
     fn default() -> Self {
         // Neutral: full width, at the top, on all monitors. Whatever the scene asks for wins.
-        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, max_fps: 0, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true }
+        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, max_fps: 0, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true }
     }
 }
 

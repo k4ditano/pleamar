@@ -1,0 +1,5 @@
+// expect: error «expected 'while' here»
+scene LevelWhileWrong {
+    surface { size: 200, 60; level: top, overlay }
+    box { from: 0, 0; size: 200, 60; color: #202020 }
+}

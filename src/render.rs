@@ -171,6 +171,7 @@ pub fn run(
     let mut period_ms = 16.7f32;
     let mut last_presented = Instant::now();
     // Which edge each surface is attached to right now, so as not to ask for it twice.
+    let mut levels_set: Vec<crate::scene::Level> = Vec::new();
     let mut anchors_set: Vec<crate::scene::SurfaceAnchor> = Vec::new();
     // The "this does not compile" banner, and the good scene with it on top.
     let mut warning: Option<Vec<Instr>> = None;
@@ -1510,6 +1511,19 @@ pub fn run(
         // changed without creating anything again.
         if anchors_set.len() != scene.surfaces.len() {
             anchors_set = scene.surfaces.iter().map(|s| s.anchor).collect();
+        }
+        // And a level of its own while something holds: above the rest while
+        // it has something open, where it belongs the rest of the time.
+        if levels_set.len() != scene.surfaces.len() {
+            levels_set = scene.surfaces.iter().map(|s| s.level).collect();
+        }
+        for (k, sup) in scene.surfaces.iter().enumerate() {
+            let Some((raised, when)) = &sup.level_while else { continue };
+            let wants = if when.is_true(Ctx { props: &props, facts: &facts }) { *raised } else { sup.level };
+            if levels_set[k] != wants {
+                levels_set[k] = wants;
+                crate::platform::relayer(k, wants);
+            }
         }
         for (k, sup) in scene.surfaces.iter().enumerate() {
             let Some((fact, anchors)) = &sup.anchor_from else { continue };

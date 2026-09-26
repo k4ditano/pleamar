@@ -212,6 +212,13 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32))>) {
 /// layer-shell request —`set_anchor` and `set_margin` work on a live
 /// surface, without creating it again—; on Windows it will be moving the window and
 /// repositioning its AppBar, and on macOS moving the `NSPanel`.
+/// A surface changes level while running: `level: top, overlay while open`.
+pub fn relayer(which: usize, level: crate::scene::Level) {
+    #[cfg(target_os = "linux")]
+    wayland::relayer(which, level);
+    let _ = (which, level);
+}
+
 pub fn reanchor(which: usize, anchor: crate::scene::SurfaceAnchor) {
     #[cfg(target_os = "linux")]
     wayland::reanchor(which, anchor);
