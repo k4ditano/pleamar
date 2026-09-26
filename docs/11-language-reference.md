@@ -203,6 +203,11 @@ so pleamar asks whoever knows: on Hyprland, its socket, about thirty times a
 second and **only if the scene names them**. Elsewhere they are the pointer's
 while it is over the scene, and keep their last value when it leaves.
 
+A named surface draws from its own corner, so it has its own pair:
+**`nook.cursor.x`, `nook.cursor.y`** are the same mouse in the coordinates the
+surface `nook` draws with. That is what a camera in a corner needs to point at
+the mouse: `atan2(nook.cursor.y - cy, nook.cursor.x - cx)`.
+
 ```plm
 scene Watching {
     surface { size: 120, 120 }

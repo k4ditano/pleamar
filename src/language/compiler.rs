@@ -365,7 +365,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     if mentions(body, "time") && !declares(body, "time") {
         o.time_prop();
     }
-    o.e.wants_cursor = mentions(body, "cursor");
+    o.e.wants_cursor = mentions(body, "cursor") || mentions_part(body, "cursor");
     // The translations first of all: the texts are read already knowing them,
     // wherever the block is —at the end, or in an imported library—.
     o.read_translations(body);
@@ -573,6 +573,15 @@ fn mentions(entries: &[Entry], word: &str) -> bool {
     entries.iter().any(|e| match e {
         Entry::Prop { value, .. } => named(value),
         Entry::Node(n) => named(&n.head) || n.body.as_ref().is_some_and(|b| mentions(b, word)),
+    })
+}
+
+/// Whether any name has that part in the middle: `nook.cursor.x`.
+fn mentions_part(entries: &[Entry], part: &str) -> bool {
+    let named = |t: &[crate::language::tokens::Token]| t.iter().any(|t| matches!(&t.kind, TokenKind::Id(w) if w.split('.').skip(1).any(|p| p == part)));
+    entries.iter().any(|e| match e {
+        Entry::Prop { value, .. } => named(value),
+        Entry::Node(n) => named(&n.head) || n.body.as_ref().is_some_and(|b| mentions_part(b, part)),
     })
 }
 
@@ -3239,7 +3248,19 @@ impl<'a> Compiler<'a> {
                     Some((w, h))
                 }
             };
-            self.e.surfaces.push(Surface { origin: (0.0, self.next_origin), size_props, ..fresh });
+            // And where the mouse is, in this surface's own coordinates:
+            // `cursor.x` is the scene surface's, and a surface of its own draws
+            // from its own corner.
+            let cursor_props = match self.props.get(&format!("{name}.cursor.x")) {
+                Some(x) => Some((*x, self.props[&format!("{name}.cursor.y")])),
+                None => {
+                    let (x, y) = self.e.surface_cursor(interned(&name));
+                    self.props.insert(format!("{name}.cursor.x"), x);
+                    self.props.insert(format!("{name}.cursor.y"), y);
+                    Some((x, y))
+                }
+            };
+            self.e.surfaces.push(Surface { origin: (0.0, self.next_origin), size_props, cursor_props, ..fresh });
         }
         let which = self.e.surfaces.iter().position(|s| s.name == name).unwrap();
         let mut pending_open = None;

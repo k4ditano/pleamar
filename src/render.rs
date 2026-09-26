@@ -713,21 +713,49 @@ pub fn run(
             // against a surface that is open —the one on the mouse's monitor if
             // there is one, else the first—: from there on it is just a sum, even
             // if it is on another monitor. Over the scene, the pointer itself.
-            let seen_cursor = match (pointer, scene.wants_cursor, &cursor) {
-                (Some(p), _, _) => p,
-                (None, true, Some(((gx, gy), monitors))) => {
+            // Each open sheet placed on the desktop: which surface it is, whether
+            // the mouse is on its monitor, and the mouse from its own corner.
+            let placed: Vec<(usize, bool, (f32, f32))> = match (scene.wants_cursor, &cursor) {
+                (true, Some(((gx, gy), monitors))) => {
                     let on = |m: &[i32; 4]| *gx >= m[0] as f32 && *gy >= m[1] as f32 && *gx < (m[0] + m[2]) as f32 && *gy < (m[1] + m[3]) as f32;
                     let under = monitors.iter().find(|m| on(&m.1)).map(|m| m.0.as_str());
-                    let placed: Vec<(bool, (f32, f32))> = sheets.iter().filter(|l| l.open && l.view.popup.is_none()).filter_map(|l| {
+                    sheets.iter().filter(|l| l.open && l.view.popup.is_none()).filter_map(|l| {
                         let (name, at) = l.desktop_place()?;
                         let m = monitors.iter().find(|m| m.0 == name)?.1;
                         let corner = ((m[0] + at.0) as f32, (m[1] + at.1) as f32);
-                        Some((under == Some(name.as_str()), (l.view.origin.0 + gx - corner.0, l.view.origin.1 + gy - corner.1)))
-                    }).collect();
-                    placed.iter().find(|p| p.0).or(placed.first()).map_or((f32::NAN, f32::NAN), |p| p.1)
+                        Some((l.view.surface, under == Some(name.as_str()), (gx - corner.0, gy - corner.1)))
+                    }).collect()
                 }
-                _ => (f32::NAN, f32::NAN),
+                _ => Vec::new(),
             };
+            // Of a set of sheets, the one on the mouse's monitor, or else the first.
+            let pick = |of: &dyn Fn(usize) -> bool| placed.iter().filter(|p| of(p.0)).fold(None, |best: Option<&(usize, bool, (f32, f32))>, p| match best { Some(b) if b.1 || !p.1 => Some(b), _ => Some(p) });
+            // `cursor.x` belongs to the scene's surface: its plane is the one the
+            // loose drawing uses. The named ones have their own, below.
+            let seen_cursor = match pointer {
+                Some(p) => p,
+                None => match pick(&|k| scene.surfaces.get(k).is_some_and(|s| s.name.is_empty())).or_else(|| pick(&|_| true)) {
+                    // From its corner to the plane: plus where the sheet looks from.
+                    Some(&(k, _, (x, y))) => {
+                        let origin = sheets.iter().find(|l| l.view.surface == k && l.open).map_or((0.0, 0.0), |l| l.view.origin);
+                        (origin.0 + x, origin.1 + y)
+                    }
+                    None => (f32::NAN, f32::NAN),
+                },
+            };
+            // `panel.cursor.x`: from that surface's corner, which is what it draws from.
+            for (k, s) in scene.surfaces.iter().enumerate() {
+                let Some((px_, py_)) = s.cursor_props else { continue };
+                if scene.surfaces.iter().position(|o| o.cursor_props == s.cursor_props) != Some(k) {
+                    continue;
+                }
+                let same = |j: usize| scene.surfaces.get(j).is_some_and(|o| o.cursor_props == s.cursor_props);
+                if let Some(p) = pick(&same) {
+                    for (id, v) in [(px_, p.2 .0), (py_, p.2 .1)] {
+                        props[id.0 as usize] = Animated { x: v, v: 0.0, target: v, spring: props[id.0 as usize].spring };
+                    }
+                }
+            }
             // Unknown, it stays where it was.
             let seen_cursor = if seen_cursor.0.is_nan() {
                 let k = |n: &str| scene.facts.iter().position(|f| f.0 == n).map_or(0.0, |k| facts[k]);

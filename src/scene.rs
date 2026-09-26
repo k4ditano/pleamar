@@ -119,6 +119,9 @@ pub struct Surface {
     pub height: u32,
     /// A named one publishes what it really measures: `name.width`, `name.height`.
     pub size_props: Option<(PropId, PropId)>,
+    /// A named surface's `name.cursor.x`, `name.cursor.y`: the mouse wherever it
+    /// is, in the coordinates this surface draws with.
+    pub cursor_props: Option<(PropId, PropId)>,
     pub anchor: SurfaceAnchor,
     /// If the edge it attaches to is decided by a fact: which one, and which anchor
     /// each of its values corresponds to. Layer-shell lets it change on the
@@ -165,7 +168,7 @@ pub enum Keyboard {
 impl Default for Surface {
     fn default() -> Self {
         // Neutral: full width, at the top, on all monitors. Whatever the scene asks for wins.
-        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, lock_screen: false, width: 0, size_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, max_fps: 0, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true }
+        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, max_fps: 0, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true }
     }
 }
 
@@ -1561,6 +1564,10 @@ impl Scene {
     pub fn measured(&mut self, name: &'static str) -> (PropId, PropId) {
         let n = |suffix: &str| intern(&format!("{name}.{suffix}"));
         (self.prop(n("width"), 0.0), self.prop(n("height"), 0.0))
+    }
+    pub fn surface_cursor(&mut self, name: &'static str) -> (PropId, PropId) {
+        let n = |suffix: &str| intern(&format!("{name}.cursor.{suffix}"));
+        (self.prop(n("x"), 0.0), self.prop(n("y"), 0.0))
     }
     pub fn live_text(&mut self, name: &'static str, initial: &str) -> TextId {
         self.texts.push((name, initial.to_owned()));

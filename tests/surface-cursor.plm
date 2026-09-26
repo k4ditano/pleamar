@@ -1,0 +1,11 @@
+// expect: ok
+scene SurfaceCursor {
+    surface { size: 100, 100 }
+    surface corner {
+        size: 120, 60
+        anchor: top_right
+        prop turn = 0 ~gentle
+        follow turn = atan2(corner.cursor.y - 30, corner.cursor.x - 30)
+        box { at: 30, 30; size: 30, 10; rotate: turn * 1deg; color: #ffffff }
+    }
+}
