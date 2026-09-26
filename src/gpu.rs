@@ -1474,6 +1474,9 @@ pub struct Gpu {
     /// screen` or `mode: multiply` is drawn with one of these. See `BLENDS`.
     screen: wgpu::RenderPipeline,
     multiply: wgpu::RenderPipeline,
+    /// Transparent over whatever is there, blending nothing: what empties the
+    /// piece painted again before painting it (a clear ignores the scissor).
+    erase: wgpu::RenderPipeline,
     pipeline_layout: wgpu::PipelineLayout,
     /// The scene's own shaders, as they went into `pipeline`.
     user_code: String,
@@ -1596,6 +1599,7 @@ impl Gpu {
         let scene_group = Self::build_scene_group(&device, &pipeline, &shapes_buffer, &elements_buffer, &points_buffer, &stops_buffer, &atlas_view, &sampler, &windows_view);
         let limit = device.limits().max_storage_buffer_binding_size as usize / 4;
         let no_layers_group = Self::make_layers(&device, &pipeline, format, 1, 1, 1).1;
+        let erase = Self::erase_pipeline(&device, format);
         let lens = crate::lens::Pipelines::new(&device);
         let can_copy = first.is_none_or(|f| f.get_capabilities(&adapter).usages.contains(wgpu::TextureUsages::COPY_DST));
         let nothing = device.create_texture(&wgpu::TextureDescriptor {
@@ -1610,7 +1614,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
+        let mut g = Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -1645,6 +1649,33 @@ impl Gpu {
         }]);
         let backdrop = group("backdrop", &[texture(0, wgpu::TextureViewDimension::D2), texture(1, wgpu::TextureViewDimension::D2), sampler(2)]);
         d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("elements"), bind_group_layouts: &[Some(&scene), Some(&layers), Some(&uniforms), Some(&backdrop)], immediate_size: 0 })
+    }
+
+    fn erase_pipeline(d: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+        const SOURCE: &str = "
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+}
+@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(0.0); }
+";
+        let module = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("erase"), source: wgpu::ShaderSource::Wgsl(SOURCE.into()) });
+        d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("erase"),
+            layout: None,
+            vertex: wgpu::VertexState { module: &module, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
     }
 
     /// pleamar's shader with the scene's own ones added. An error comes back as
@@ -2262,7 +2293,7 @@ impl Gpu {
             lens.prepare(self, &self.lens, &mut encoder, scale);
         }
         let backdrop_group = l.lens.as_ref().and_then(|x| x.group.as_ref()).unwrap_or(&self.no_backdrop_group);
-        let pass_to = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, layers: &wgpu::BindGroup, spans: &[Range<u32>], keep: bool, scissor: Option<[u32; 4]>| {
+        let pass_to = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, layers: &wgpu::BindGroup, spans: &[Range<u32>], keep: bool, scissor: Option<[u32; 4]>, erase: bool| {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2278,6 +2309,13 @@ impl Gpu {
             });
             if let Some([x, y, w, h]) = scissor {
                 pass.set_scissor_rect(x, y, w.max(1), h.max(1));
+            }
+            // The piece painted again starts empty, as a whole frame does:
+            // drawing its translucent parts on top of what was there adds them
+            // up frame after frame (the edge of Marea, flickering).
+            if erase {
+                pass.set_pipeline(&self.erase);
+                pass.draw(0..3, 0..1);
             }
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.scene_group, &[]);
@@ -2337,6 +2375,8 @@ impl Gpu {
         let mut from = 0u32;
         // Painting a piece of it, the rest of what it held stays.
         let mut keep = scissor.is_some();
+        // The first pass onto the target empties the piece it paints.
+        let mut erase = keep;
         // Nothing to paint again: what that buffer holds is already this frame.
         let (total, groups): (u32, &[(Range<u32>, usize)]) = if scissor == Some([0, 0, 0, 0]) { (0, &[]) } else { (total, groups) };
         for (span, layer) in groups {
@@ -2345,17 +2385,19 @@ impl Gpu {
             let with_blend = span.start..(span.end + 1).min(total);
             if l.layers as usize > *layer && d.touches_view(&with_blend, l.view.bounds()) {
                 if span.start > from || !keep {
-                    pass_to(&mut encoder, target, &l.layer_group, &[from..span.start], keep, scissor);
+                    pass_to(&mut encoder, target, &l.layer_group, &[from..span.start], keep, scissor, erase);
                     keep = true;
+                    erase = false;
                 }
-                pass_to(&mut encoder, &l.layer_views[*layer], &self.no_layers_group, std::slice::from_ref(span), false, None);
+                pass_to(&mut encoder, &l.layer_views[*layer], &self.no_layers_group, std::slice::from_ref(span), false, None, false);
             } else {
-                pass_to(&mut encoder, target, &l.layer_group, &[from..span.start], keep, scissor);
+                pass_to(&mut encoder, target, &l.layer_group, &[from..span.start], keep, scissor, erase);
                 keep = true;
+                erase = false;
             }
             from = span.end;
         }
-        pass_to(&mut encoder, target, &l.layer_group, &[from..total], keep, scissor);
+        pass_to(&mut encoder, target, &l.layer_group, &[from..total], keep, scissor, erase);
         if let Some(lens) = &mut l.lens {
             lens.copy_to(&mut encoder, frame_texture);
         }
