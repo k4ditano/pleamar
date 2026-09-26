@@ -38,7 +38,8 @@ const HELP: &str = "pleamar [options]
   --highlight EDITOR  writes the syntax file for 'vim' or 'vscode', made from the vocabulary
   --version           the version of the program and of the language it understands
   --say [SCENE] CMD   says something to a running scene and exits. Commands:
-                      «emit event [n]», «fact name value», «text name whatever it says», «focus input», «get name» (answers), «quit»
+                      «emit event [n]», «fact name value», «text name whatever it says», «submit input what»
+                      (as if typed there and Enter pressed), «focus input», «get name» (answers), «quit»
   --screen NAMES      «all», or monitors separated by commas (by default, whatever the scene asks for).
                       A repeated name gives two surfaces on the same monitor.
   --stall MS          how long the logic blocks after every decision (600)
@@ -256,10 +257,17 @@ fn main() {
                     tx.send(ToRender::Text(scene::intern(who), rest.to_owned()))
                 }
                 "focus" => tx.send(ToRender::FocusField(Some(scene::intern(who)))),
+                // As if it had been typed into that field and Enter pressed: the
+                // logic hears the text and then the submit, in that order.
+                "submit" => {
+                    let _ = to_logic.send(Event::Text(scene::intern(who), rest.to_owned()));
+                    let _ = to_logic.send(Event::Submit(scene::intern(who), rest.to_owned()));
+                    tx.send(ToRender::Text(scene::intern(who), rest.to_owned()))
+                }
                 "quit" => quit(),
                 _ => {
                     eprintln!("orders · I don't understand '{line}'");
-                    return Some(format!("? I don't understand '{}': emit, fact, text, focus, get, quit", line.trim()));
+                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, quit", line.trim()));
                 }
             };
             None
