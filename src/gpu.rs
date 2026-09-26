@@ -792,7 +792,9 @@ impl DrawList {
                     let burst = pp.burst.map_or(-1.0, |s| self.signal_times.get(s.0 as usize).copied().unwrap_or(-1.0));
                     let alive = st.on || now - st.stop < life_max || (burst >= 0.0 && now - burst < life_max + 0.1);
                     let a = pp.alpha.eval(c).clamp(0.0, 1.0) * mult;
-                    if !alive || a <= 0.001 {
+                    // Inside a group that is not shown, it is not shown either. Its
+                    // emitter kept count above, so it does not burst late on appearing.
+                    if !alive || a <= 0.001 || hidden {
                         continue;
                     }
                     self.particles_alive = true;
