@@ -1,0 +1,90 @@
+// pleamar's own pieces: `import "pleamar:ui"`.
+//
+// Each one answers the mouse by itself —it lights up under the pointer and
+// gives a little when pressed— and says what happened through the event it
+// is given: the scene decides what that does. They are drawn from their own
+// corner, so they fit in a `row`, a `column` or a cell of a `grid`.
+language 0.1
+library Ui {
+
+    //  A switch. `on` is whether it is on (an expression: `following`),
+    //  and `press` the event fired when it is pressed: the scene toggles.
+    //
+    //      Switch(following, flip)          on flip { toggle following }
+    component Switch(on: number, press: event, accent: color = #9ed6bd) {
+        size: 44, 24
+        prop pos = 0 ~200ms
+        follow pos = if(on > 0.5, 1, 0)
+        box { at: 22, 12; size: 44, 24; corner: 12; color: mix(#3a3d40, accent, pos); opacity: 1 - 0.15 * touch.pressed }
+        ellipse { at: 12 + 20 * pos, 12; radius: 9 + touch.hover; color: #f6f6f5 }
+        zone box touch { at: 22, 12; size: 56, 34; corner: 17; cursor: pointer }
+        on press touch { emit press }
+    }
+
+    //  A round choice: the ring, and the dot when it is the chosen one.
+    component Radio(on: number, press: event, accent: color = #9ed6bd) {
+        size: 20, 20
+        prop pos = 0 ~180ms
+        follow pos = if(on > 0.5, 1, 0)
+        ellipse { at: 10, 10; radius: 9 + touch.hover; stroke: 1.6; color: mix(#8b8f95, accent, pos) }
+        ellipse { at: 10, 10; radius: 5 * pos; color: accent }
+        zone box touch { at: 10, 10; size: 30, 30; corner: 15; cursor: pointer }
+        on press touch { emit press }
+    }
+
+    //  Two or three choices in a pill, with the chosen one's background
+    //  sliding to it. `value` is which one (0, 1, 2); `press` carries the one
+    //  pressed: `on pick { mode = pick }`… or whatever the scene makes of it.
+    component Segmented(value: number, a: text, b: text, press: event, c: text = "", count: number = 2, width: number = 184) {
+        size: width, 30
+        prop pos = 0 ~quick
+        follow pos = value
+        let seg = width / count
+        box { at: width / 2, 15; size: width, 30; corner: 15; color: #ffffff; opacity: 8% }
+        box { at: seg / 2 + pos * seg, 15; size: seg - 4, 24; corner: 12; color: #ffffff; opacity: 16% }
+        repeat i in 0..3 {
+            group {
+                show: i < count
+                text pick(i, a, b, c) { at: seg / 2 + i * seg, 15; anchor: center; size: 11.5; weight: 500; color: #f6f6f5
+                                        opacity: 55% + max(0, 1 - abs(pos - i)) * 45% + seg.$i.hover * 20% }
+                zone box seg.$i { at: seg / 2 + i * seg, 15; size: seg, 30; corner: 15; cursor: pointer }
+            }
+            on press seg.$i { emit press(i) }
+        }
+    }
+
+    //  A tile: a plate that answers the mouse, its name and its value, and a
+    //  › that says it opens something. What goes in its round badge on the
+    //  left is the scene's: whatever it puts inside.
+    //
+    //      Tile("Language", "English", open_language, cell.w) { text "Aa" { size: 16 } }
+    component Tile(title: text, value: text, press: event, w: number, h: number = 106, accent: color = #9ed6bd) {
+        size: w, h
+        box { at: w / 2, h / 2; size: w, h; corner: 18; color: mix(#25282b, #2c3033, touch.hover); opacity: 1 - 0.1 * touch.pressed }
+        box { at: w / 2, h / 2; size: w, h; corner: 18; stroke: 1.2; color: accent; opacity: touch.hover * 45% }
+        ellipse { at: 42, h / 2 - 12; radius: 24; color: #ffffff; opacity: 7% + touch.hover * 5% }
+        column badge {
+            at: 42, h / 2 - 12
+            anchor: center middle
+            children
+        }
+        text title { at: 18, h - 27; anchor: left center; size: 13; weight: 600; width: w - 52; lines: 1; color: #f5f7f5 }
+        text value { at: 18, h - 11; anchor: left center; size: 11; width: w - 52; lines: 1; color: accent }
+        path { at: w - 22, h - 29; color: #f5f7f5; stroke: 1.8; opacity: 40% + touch.hover * 50%
+               move 0, 0; line 5, 5; line 0, 10 }
+        zone box touch { at: w / 2, h / 2; size: w, h; corner: 18; cursor: pointer }
+        on press touch { emit press }
+    }
+
+    //  A plate to put things on, with its padding: what goes inside is the
+    //  scene's, in a column.
+    component Card(w: number, h: number, padding: number = 16) {
+        size: w, h
+        box { at: w / 2, h / 2; size: w, h; corner: 16; color: #25282b }
+        column inside {
+            at: padding, padding
+            gap: 8
+            children
+        }
+    }
+}

@@ -1,0 +1,38 @@
+// expect: ok
+import "pleamar:ui"
+scene UiLibrary {
+    surface { size: 480, 310 }
+    fact following = false
+    fact choice = 0
+    fact mode = 1
+    event flip
+    event pick_one
+    event pick_two
+    event pick_mode
+    event opened
+    on flip { toggle following }
+    on pick_one { choice = 0 }
+    on pick_two { choice = 1 }
+    on pick_mode(v) { mode = v }
+    grid {
+        at: 12, 12; columns: 2; gap: 12; width: 456; row: 106
+        Tile("Where she lives", "Follows you", opened, cell.w) {
+            box { size: 22, 14; corner: 3; stroke: 1.6; color: #f5f7f5 }
+        }
+        Tile("Language", pick(mode, "System", "English", "Español"), opened, cell.w) {
+            text "Aa" { size: 16; weight: 700; color: #f5f7f5 }
+        }
+    }
+    Card(456, 160) {
+        move: 12, 130
+        row { gap: 12; align: center
+            Switch(following, flip)
+            text "Follow me" { size: 13; color: #f5f7f5 }
+        }
+        row { gap: 12; align: center
+            Radio(choice == 0, pick_one)
+            Radio(choice == 1, pick_two)
+        }
+        Segmented(mode, "System", "English", pick_mode, c: "Español", count: 3, width: 240)
+    }
+}

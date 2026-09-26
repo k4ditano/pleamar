@@ -245,6 +245,9 @@ pub enum Expr {
     /// `pick(i, a, b, c)`: the one at place `i` (0 is the first), rounded and
     /// kept within the list. Only the chosen one is evaluated.
     Pick(Box<Expr>, Vec<Expr>),
+    /// `on chosen(v) { … }`: the value the event arrived with. The render puts
+    /// it in when it picks up the rule (`with_payload`); anywhere else it is 0.
+    Payload,
 }
 
 thread_local! {
@@ -403,6 +406,7 @@ impl Expr {
             Bin(f, a, b) => f.apply(a.eval(c), b.eval(c)),
             Letter(k) => LETTER.with(|l| if *k == 0 { l.get().0 } else { l.get().1 }),
             Pick(i, options) => options.get(pick_index(i.eval(c), options.len())).map_or(0.0, |e| e.eval(c)),
+            Payload => 0.0,
         }
     }
     pub fn is_true(&self, c: Ctx) -> bool {
@@ -415,7 +419,7 @@ impl Expr {
     pub fn reads(&self, f: impl Fn(FactId) -> bool + Copy) -> bool {
         use Expr::*;
         match self {
-            K(_) | P(_) | Vel(_) | Letter(_) => false,
+            K(_) | P(_) | Vel(_) | Letter(_) | Payload => false,
             H(h) => f(*h),
             Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => a.reads(f),
             Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) | Bin(_, a, b) => a.reads(f) || b.reads(f),
@@ -426,7 +430,7 @@ impl Expr {
     pub fn node_count(&self) -> usize {
         use Expr::*;
         match self {
-            K(_) | P(_) | H(_) | Vel(_) | Letter(_) => 1,
+            K(_) | P(_) | H(_) | Vel(_) | Letter(_) | Payload => 1,
             Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => 1 + a.node_count(),
             Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) | Bin(_, a, b) => 1 + a.node_count() + b.node_count(),
             Mix(a, b, t) => 1 + a.node_count() + b.node_count() + t.node_count(),
@@ -447,7 +451,7 @@ impl Expr {
         use Expr::*;
         let k = |e: &Expr| e.constant();
         let constant_children = match &self {
-            K(_) | P(_) | H(_) | Vel(_) | Letter(_) => return self,
+            K(_) | P(_) | H(_) | Vel(_) | Letter(_) | Payload => return self,
             Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => k(a).is_some(),
             Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) | Bin(_, a, b) => k(a).is_some() && k(b).is_some(),
             Mix(a, b, t) => k(a).is_some() && k(b).is_some() && k(t).is_some(),
@@ -473,6 +477,35 @@ impl Expr {
                 _ => Mix(a, b, t),
             },
             other => other,
+        }
+    }
+    /// The same expression with the event's value in place of `Payload`.
+    pub fn with_payload(&self, v: f32) -> Expr {
+        use Expr::*;
+        let b = |e: &Expr| Box::new(e.with_payload(v));
+        match self {
+            Payload => K(v),
+            K(_) | P(_) | H(_) | Vel(_) | Letter(_) => self.clone(),
+            Add(a, c) => Add(b(a), b(c)),
+            Sub(a, c) => Sub(b(a), b(c)),
+            Mul(a, c) => Mul(b(a), b(c)),
+            Div(a, c) => Div(b(a), b(c)),
+            Min(a, c) => Min(b(a), b(c)),
+            Max(a, c) => Max(b(a), b(c)),
+            Gt(a, c) => Gt(b(a), b(c)),
+            And(a, c) => And(b(a), b(c)),
+            Or(a, c) => Or(b(a), b(c)),
+            Bin(f, a, c) => Bin(*f, b(a), b(c)),
+            Abs(a) => Abs(b(a)),
+            Floor(a) => Floor(b(a)),
+            Sin(a) => Sin(b(a)),
+            Cos(a) => Cos(b(a)),
+            Ceil(a) => Ceil(b(a)),
+            Not(a) => Not(b(a)),
+            Un(f, a) => Un(*f, b(a)),
+            Smoothstep(x, y, a) => Smoothstep(*x, *y, b(a)),
+            Mix(a, c, t) => Mix(b(a), b(c), b(t)),
+            Pick(i, o) => Pick(b(i), o.iter().map(|e| e.with_payload(v)).collect()),
         }
     }
     /// The same folding, for whoever builds a node by hand (`pick`).
@@ -1354,6 +1387,19 @@ pub enum Effect {
     Gesture(GestureId),
     /// Put the text cursor in a field, or take it away.
     FocusField(Option<TextId>),
+}
+
+impl Effect {
+    /// The same effect with the event's value in place (see `Expr::Payload`).
+    pub fn with_payload(&self, v: f32) -> Effect {
+        match self {
+            Effect::Animate(t) => Effect::Animate(Transition { to: t.to.with_payload(v), ..t.clone() }),
+            Effect::Fact(h, e) => Effect::Fact(*h, e.with_payload(v)),
+            Effect::Signal(s, e) => Effect::Signal(*s, e.as_ref().map(|e| e.with_payload(v))),
+            Effect::Impulse(p, e) => Effect::Impulse(*p, e.with_payload(v)),
+            other => other.clone(),
+        }
+    }
 }
 
 /// Everything here is executed by the render, whatever state the logic is in.

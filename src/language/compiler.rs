@@ -2603,6 +2603,48 @@ impl<'a> Compiler<'a> {
         Ok(Piece::Number(e, 0))
     }
 
+    /// `pick(i, "a", b, c)` where a text goes: the one at place `i`. Each
+    /// option is a quoted text (translated like any other), a live text of the
+    /// scene, or a component's text parameter.
+    fn text_pick(&self, c: &mut Cur) -> R<Content> {
+        c.i += 2;
+        let i = self.expr(c)?;
+        let mut options = Vec::new();
+        while c.sym(",") {
+            let option = match c.peek() {
+                Some(TokenKind::Str(s)) => {
+                    let s = s.clone();
+                    let at = c.i;
+                    c.i += 1;
+                    self.content_of(&s, &c.tokens[at])?
+                }
+                Some(TokenKind::Id(name)) => {
+                    let name = name.clone();
+                    c.i += 1;
+                    if let Some(k) = self.scopes.iter().rev().find_map(|e| e.contents.get(&name)) {
+                        k.clone()
+                    } else if let Some(t) = self.scopes.iter().rev().find_map(|e| e.strings.get(&name)).cloned() {
+                        match (self.e.locale, self.versions_of(&t)) {
+                            (Some(locale), Some(v)) => Content::Translated { locale, versions: v.into_iter().map(Content::Literal).collect() },
+                            _ => Content::Literal(t),
+                        }
+                    } else if let Some(t) = self.texts.get(&self.global(&name)) {
+                        Content::Live(*t)
+                    } else {
+                        return c.error(format!("in a text's `pick`, '{name}' is not a text: each option is a quoted text, a live text or a component's text"));
+                    }
+                }
+                _ => return c.error("in a text's `pick`, each option is a quoted text, a live text or a component's text"),
+            };
+            options.push(option);
+        }
+        c.expect_sym(")")?;
+        if options.is_empty() {
+            return c.error("`pick` needs a place and texts to choose from: `pick(i, \"a\", \"b\")`");
+        }
+        Ok(Content::Pick(i, options))
+    }
+
     /// `text notice.title { at: …; size: 20 }` or `text "Dismiss" { … }`
     fn text(&mut self, n: &Node) -> R<()> {
         let mut c = Cur::new(&n.head[1..], n.line, n.col);
@@ -2619,34 +2661,7 @@ impl<'a> Compiler<'a> {
             }
             // `text pick(skin, "Liquid", "Light liquid", "Classic")`: the one at
             // that place; each is a text like any other, and is translated.
-            Some(TokenKind::Id(n)) if n == "pick" && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => {
-                c.i += 2;
-                let i = self.expr(&mut c)?;
-                let mut options = Vec::new();
-                while c.sym(",") {
-                    options.push(match c.peek() {
-                        Some(TokenKind::Str(s)) => {
-                            let s = s.clone();
-                            let at = c.i;
-                            c.i += 1;
-                            self.content_of(&s, &c.tokens[at])?
-                        }
-                        Some(TokenKind::Id(name)) => match self.texts.get(&self.global(name)) {
-                            Some(t) => {
-                                c.i += 1;
-                                Content::Live(*t)
-                            }
-                            None => return c.error("in a text's `pick`, each option is a quoted text or the name of a live text"),
-                        },
-                        _ => return c.error("in a text's `pick`, each option is a quoted text or the name of a live text"),
-                    });
-                }
-                c.expect_sym(")")?;
-                if options.is_empty() {
-                    return c.error("`pick` needs a place and texts to choose from: `pick(i, \"a\", \"b\")`");
-                }
-                Content::Pick(i, options)
-            }
+            Some(TokenKind::Id(n)) if n == "pick" && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => self.text_pick(&mut c)?,
             // A component parameter that is worth a quoted text.
             Some(TokenKind::Id(name)) if self.scopes.iter().any(|e| e.contents.contains_key(name)) => {
                 self.scopes.iter().rev().find_map(|e| e.contents.get(name)).unwrap().clone()
@@ -3791,6 +3806,11 @@ impl<'a> Compiler<'a> {
                     env.alias.insert(name.clone(), self.global(x));
                     c.i += 1;
                 }
+                // `Tile("Language", pick(mode, "System", "English"), …)`: a text chosen by place.
+                Some(TokenKind::Id(x)) if x == "pick" && matches!(c.tokens.get(c.i + 1).map(|t| &t.kind), Some(TokenKind::Sym("("))) => {
+                    let k = self.text_pick(c)?;
+                    env.contents.insert(name.clone(), k);
+                }
                 Some(TokenKind::Id(x)) if self.scopes.iter().any(|e| e.strings.contains_key(x)) => {
                     let from_outside = self.scopes.iter().rev().find(|e| e.strings.contains_key(x)).unwrap();
                     env.strings.insert(name.clone(), from_outside.strings[x].clone());
@@ -3799,7 +3819,7 @@ impl<'a> Compiler<'a> {
                     }
                     c.i += 1;
                 }
-                _ => return Err(expected(c, "a text: quoted, or the name of a live text")),
+                _ => return Err(expected(c, "a text: quoted, the name of a live text, or pick(…)")),
             },
             Some("record") => {
                 let Some(TokenKind::Id(x)) = c.peek() else { return Err(expected(c, "a record of a model")) };
@@ -3886,8 +3906,15 @@ impl<'a> Compiler<'a> {
     /// whole scope: that way they can name a shape that was declared later.
     fn close_scope(&mut self, from: usize) {
         let now = self.scopes.clone();
+        // The rules of THIS scope: the same chain of marks, not just the same
+        // depth. A component given as another's child is read with the scope of
+        // whoever wrote it, so it is as deep as the component it goes into; by
+        // depth alone, closing `Card` took the rules of the `Switch` inside it
+        // as its own, and `on press touch` looked for `touch` in `Card`.
+        let marks = |v: &[Scope]| v.iter().map(|e| e.suffix.clone()).collect::<Vec<_>>();
+        let ours = marks(&now);
         for r in &mut self.rules[from..] {
-            if r.1.len() == now.len() {
+            if r.1.len() == now.len() && marks(&r.1) == ours {
                 r.1 = now.clone();
             }
         }
@@ -5180,6 +5207,15 @@ impl<'a> Compiler<'a> {
     // ── rules ───────────────────────────────────────────────────
 
     fn rule(&mut self, n: &Node, word: &str, c: &mut Cur) -> R<()> {
+        let mut payload_name: Option<String> = None;
+        let r = self.rule_inner(n, word, c, &mut payload_name);
+        if payload_name.is_some() {
+            self.scopes.pop();
+        }
+        r
+    }
+
+    fn rule_inner(&mut self, n: &Node, word: &str, c: &mut Cur, payload_name: &mut Option<String>) -> R<()> {
         let while_cond = |o: &Compiler, c: &mut Cur| -> R<Expr> { if c.word("while") { o.expr(c) } else { Ok(Expr::K(1.0)) } };
         let when = if word == "every" {
             let a = c.dur()?.as_secs_f32();
@@ -5250,10 +5286,23 @@ impl<'a> Compiler<'a> {
                 other if vocab::TRIGGERS.contains(&other) => unreachable!("'{other}' is in the vocabulary, but `rule` does not handle it"),
                 _ => {
                     c.i -= 1;
-                    Trigger::On(self.signal(c)?)
+                    let s = self.signal(c)?;
+                    // `on chosen(v) { … }`: inside, `v` is the value it arrived with.
+                    if c.sym("(") {
+                        let v = c.id("a name for the event's value: `on chosen(v) { … }`")?;
+                        c.expect_sym(")")?;
+                        *payload_name = Some(v);
+                    }
+                    Trigger::On(s)
                 }
             }
         };
+        // The event's value, by the name it was given, for the guard and the effects.
+        if let Some(v) = payload_name.as_ref() {
+            let mut here = Scope::default();
+            here.exprs.insert(v.clone(), Expr::Payload);
+            self.scopes.push(here);
+        }
         // `while` works in any rule: it is checked at the moment of firing.
         // (`idle` and `every` have already taken it: in them it also decides whether the time counts.)
         let guard = if c.word("while") { Some(self.expr(c)?) } else { None };

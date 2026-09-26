@@ -1067,8 +1067,15 @@ pub fn run(
                     if scene.twin_of.get(k).is_some_and(|&t| t != k) {
                         continue;
                     }
-                    if matches!(&r.when, Trigger::On(x) if *x == id) && r.guard.as_ref().is_none_or(|guard| guard.is_true(Ctx { props: &props, facts: &facts })) {
-                        effects.extend(r.effects.iter().cloned());
+                    if !matches!(&r.when, Trigger::On(x) if *x == id) {
+                        continue;
+                    }
+                    // `on chosen(v)`: the value it arrived with, put in now —the
+                    // effects are applied later, mixed with other events'—.
+                    let v = payload.unwrap_or(0.0);
+                    let guard_ok = r.guard.as_ref().is_none_or(|guard| guard.with_payload(v).is_true(Ctx { props: &props, facts: &facts }));
+                    if guard_ok {
+                        effects.extend(r.effects.iter().map(|e| if payload.is_some() { e.with_payload(v) } else { e.clone() }));
                     }
                 }
                 let (name, goes_out) = scene.signals[s];

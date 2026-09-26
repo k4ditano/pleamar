@@ -102,9 +102,23 @@ impl Reader {
             let (Some(TokenKind::Str(which)), 2, None) = (n.head.get(1).map(|f| &f.kind), n.head.len(), &n.body) else {
                 return Err(CompileError::at(n.line, n.col, "an import is `import \"path/to/the/library.plm\"`"));
             };
-            // Paths are relative to the importing file, not to where it is launched from.
-            let target = path.parent().unwrap_or(Path::new(".")).join(which);
-            let target = target.canonicalize().map_err(|e| CompileError::at(n.line, n.head[1].col, format!("cannot find '{which}' (looking in {}): {e}", target.display())))?;
+            // `pleamar:ui` is one of pleamar's own libraries: it comes inside the
+            // program, so it is there wherever the scene is and whoever runs it.
+            // Anything else is a path, relative to the importing file, not to
+            // where it is launched from.
+            let target = if let Some(name) = which.strip_prefix("pleamar:") {
+                let Some(source) = builtin_library(name) else {
+                    return Err(CompileError::at(n.line, n.head[1].col, format!("pleamar has no library '{name}': there is {}", BUILTIN_LIBRARIES.iter().map(|(n, _)| format!("pleamar:{n}")).collect::<Vec<_>>().join(", "))));
+                };
+                let t = PathBuf::from(format!("pleamar:{name}.plm"));
+                if !self.unsaved.iter().any(|(r, _)| *r == t) {
+                    self.unsaved.push((t.clone(), source.to_owned()));
+                }
+                t
+            } else {
+                let target = path.parent().unwrap_or(Path::new(".")).join(which);
+                target.canonicalize().map_err(|e| CompileError::at(n.line, n.head[1].col, format!("cannot find '{which}' (looking in {}): {e}", target.display())))?
+            };
             if self.open_stack.contains(&target) {
                 return Err(CompileError::at(n.line, n.head[1].col, format!("'{which}' ends up importing itself: {}", self.open_stack.iter().chain([&target]).map(|p| p.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(" → "))));
             }
@@ -148,6 +162,13 @@ impl Reader {
         }
         Ok(rest)
     }
+}
+
+/// pleamar's own libraries, inside the program: `import "pleamar:ui"`.
+const BUILTIN_LIBRARIES: &[(&str, &str)] = &[("ui", include_str!("../../lib/ui.plm"))];
+
+fn builtin_library(name: &str) -> Option<&'static str> {
+    BUILTIN_LIBRARIES.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
 }
 
 /// `language 0.1`, if present, is the first thing in the file. It is checked and removed.

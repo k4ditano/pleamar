@@ -924,6 +924,56 @@ An error **inside** a component also says where it was used from —`(inside 'Ba
 
 `for r in rows { … }` unfolds one turn per record that fits in the model. Inside, `r.field` is the field of that record —a text wherever a live text goes, a number in any expression— and `r.index` its position from 0. **Each turn only exists if the list reaches that far.** Valid inside a layout, loose, and inside a `popup`.
 
+### 10.1. The pieces that come with pleamar: `pleamar:ui`
+
+`import "pleamar:ui"` brings pleamar's own library, which comes inside the
+program: it is there wherever the scene is and whoever runs it. Each piece
+answers the mouse by itself —it lights up under the pointer and gives a little
+when pressed— and says what happened through the event it is given: what that
+does is the scene's business. They are drawn from their own corner, so they go
+in a `row`, a `column` or a cell of a `grid`.
+
+| | |
+| --- | --- |
+| `Switch(on, press)` | a switch: `on` is whether it is on (an expression), `press` the event it fires. `on flip { toggle following }` |
+| `Radio(on, press)` | a round choice: the ring, and the dot when `on` |
+| `Segmented(value, a, b, press, c: "…", count: 3, width: 240)` | two or three choices in a pill, with the chosen one's background sliding to it; `press` carries which one: `on pick_mode(v) { mode = v }` |
+| `Tile(title, value, press, w, h: 106)` | a plate that answers the mouse, with its name, its value and a ›; what goes in its round badge is whatever is put inside it |
+| `Card(w, h, padding: 16)` | a plate, and in a column inside it whatever is put inside it |
+
+All of them take `accent:` (the colour of what is on), except `Card`.
+
+```plm
+import "pleamar:ui"
+scene Pieces {
+    surface { size: 480, 300 }
+    fact following = false
+    fact mode = 1
+    event flip
+    event pick_mode
+    event opened
+    on flip { toggle following }
+    on pick_mode(v) { mode = v }
+    grid {
+        at: 12, 12; columns: 2; gap: 12; width: 456; row: 106
+        Tile("Where she lives", pick(following, "Home", "Follows you"), opened, cell.w) {
+            box { size: 22, 14; corner: 3; stroke: 1.6; color: #f5f7f5 }
+        }
+        Tile("Language", pick(mode, "System", "English", "Español"), opened, cell.w) {
+            text "Aa" { size: 16; weight: 700; color: #f5f7f5 }
+        }
+    }
+    Card(456, 120) {
+        move: 12, 130
+        row { gap: 12; align: center
+            Switch(following, flip)
+            text "Follow me" { size: 13; color: #f5f7f5 }
+        }
+        Segmented(mode, "System", "English", pick_mode, c: "Español", count: 3, width: 240)
+    }
+}
+```
+
 ## 11. Text with slots
 
 Inside a text in quotes that is the content of a `text` or the argument of a component:
@@ -982,7 +1032,7 @@ fact of its own called `locale`, are errors.
 
 | Trigger | When |
 | --- | --- |
-| `press zone` · `press right zone` · `press middle zone` | it is pressed. Where a scene uses `right`, the prototype's emergency exit (the right button closes) only fires where the click lands on no zone at all |
+| `press zone` · `press right zone` · `press middle zone` | it is pressed. A scene that uses `right` for anything is never closed by a right click: the prototype's emergency exit is only for scenes that do not use it |
 | `release zone` | what was pressed there is released, wherever the mouse is by then |
 | `hold zone for 500ms` | it has been held down that long |
 | `enter zone` · `leave zone` | the mouse enters or leaves |
@@ -997,6 +1047,7 @@ fact of its own called `locale`, are errors.
 | `drop zone` | something dragged from another application is dropped on it |
 | `idle for 14s` | nobody touches anything for that long. In a scene that names `cursor.x`, moving the mouse anywhere on the desktop counts as touching |
 | `event_name` | that event happens: the logic emits it, or another rule, or a gesture, or it comes from outside |
+| `event_name(v)` | the same, and inside the rule —in its `while` and its effects— `v` is the value it arrived with: `on chosen(v) { mode = v }`. It is how a component that says *which* (a segment, a row) is answered without logic |
 
 **Any rule accepts `while expr`** at the end of its header: it is looked at at the moment of firing — **at the state the frame began with**, so two rules that fire in the same frame both see the same one, and the one declared last is the one whose value stays. In `idle` and `every` it also decides whether the wait counts.
 
@@ -1005,7 +1056,7 @@ fact of its own called `locale`, are errors.
 | `prop: value ~spring after 70ms` | that property heads there. Without `~`, **with its own spring**: the one it was declared with |
 | `fact = expr` | evaluated on firing |
 | `toggle fact` | |
-| `emit event` · `emit event(expr)` | with a payload, which reaches the logic |
+| `emit event` · `emit event(expr)` | with a payload, which reaches the logic and the rules that read it with `on event(v)` |
 | `impulse prop -620` · `impulse pop left * 5` | a shove: it adds to the velocity of the spring. The amount is evaluated on firing, so it can depend on what is going on: a countdown's bounce shrinks with the number left |
 | `play gesture` | it asks for it; it will be granted or not, depending on its class |
 | `focus field` · `blur` | gives the writing cursor to an `input`, or takes it away |
