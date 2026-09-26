@@ -51,6 +51,24 @@ struct NestPiece {
     uploaded: bool,
 }
 
+/// Each window's turn in the layout of its own monitor, how many there are on
+/// each, and the order of all of them.
+fn nest_places(scene: &Scene, facts: &mut [f32], to_logic: &Sender<Event>, n: &crate::scene::Nest, order: &[usize], screens: &[usize]) {
+    let name = &n.name;
+    let screen_of = |slot: usize| screens.get(slot).copied().unwrap_or(0);
+    for k in 0..n.max {
+        let place = order.iter().position(|s| *s == k).map_or(-1.0, |_| order.iter().take_while(|s| **s != k).filter(|s| screen_of(**s) == screen_of(k)).count() as f32);
+        nest_fact(scene, facts, to_logic, &format!("{name}.{k}.place"), place);
+    }
+    for p in 0..n.max {
+        nest_fact(scene, facts, to_logic, &format!("{name}.order.{p}"), order.get(p).map_or(-1.0, |s| *s as f32));
+    }
+    for s in 0..4 {
+        nest_fact(scene, facts, to_logic, &format!("{name}.on.{s}"), order.iter().filter(|k| screen_of(**k) == s).count() as f32);
+    }
+    nest_fact(scene, facts, to_logic, &format!("{name}.count"), order.len() as f32);
+}
+
 /// A fact of the scene's windows, by name: set, and told to the logic.
 fn nest_fact(scene: &Scene, facts: &mut [f32], to_logic: &Sender<Event>, name: &str, v: f32) {
     if let Some(k) = scene.facts.iter().position(|h| h.0 == name) {
@@ -248,6 +266,10 @@ pub fn run(
     // compositor already knows what the card can read straight from a program.
     let mut nest_layers: Vec<bool> = Vec::new();
     let mut nest_gpu_told = false;
+    // The order of the windows, which monitor each one is on, and which one the pointer is on.
+    let mut nest_order: Vec<usize> = Vec::new();
+    let mut nest_screens: Vec<usize> = Vec::new();
+    let mut nest_on_screen: Option<usize> = None;
     // The buffers copied this round, and the copy to wait for before handing them back.
     let mut nest_copied: (Vec<u64>, bool) = (Vec::new(), false);
     // Programs' buffers the card is still copying, by the work they went in:
@@ -706,7 +728,12 @@ pub fn run(
                     let name = &n.name;
                     match e {
                         NestEvent::Socket(socket) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.socket"), socket),
-                        NestEvent::Opened { slot, title, app } => {
+                        NestEvent::Opened { slot, title, app, screen } => {
+                            if nest_screens.len() < n.max {
+                                nest_screens.resize(n.max, 0);
+                            }
+                            nest_screens[slot] = screen;
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.screen"), screen as f32);
                             // What the slot showed before —a window closing, still fading— is no longer it.
                             if let Some(w) = nest_windows.get_mut(slot) {
                                 for p in w.pieces.drain(..) {
@@ -804,15 +831,20 @@ pub fn run(
                         }
                         #[cfg(not(target_os = "linux"))]
                         NestEvent::Forget(_) => {}
+                        NestEvent::Screen(slot, screen) => {
+                            if nest_screens.len() < n.max {
+                                nest_screens.resize(n.max, 0);
+                            }
+                            nest_screens[slot] = screen;
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.screen"), screen as f32);
+                            nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens);
+                        }
                         NestEvent::Order(order) => {
-                            for k in 0..n.max {
-                                let place = order.iter().position(|s| *s == k).map_or(-1.0, |p| p as f32);
-                                nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{k}.place"), place);
+                            nest_order = order;
+                            if nest_screens.len() < n.max {
+                                nest_screens.resize(n.max, 0);
                             }
-                            for p in 0..n.max {
-                                nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.order.{p}"), order.get(p).map_or(-1.0, |s| *s as f32));
-                            }
-                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.count"), order.len() as f32);
+                            nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens);
                         }
                     }
                 }
@@ -1010,6 +1042,26 @@ pub fn run(
             props[pressed.0 as usize].target = if drag.is_some_and(|d| d.0 == k) { 1.0 } else { 0.0 };
         }
 
+        // The monitor the pointer is on —which copy of the scene it is over—:
+        // new windows open there.
+        if let (Some(send), Some((x, y))) = (&nest, pointer) {
+            let screen = sheets
+                .iter()
+                .filter(|l| l.view.popup.is_none())
+                .find(|l| {
+                    let v = l.view.bounds();
+                    x >= v[0] && x < v[2] && y >= v[1] && y < v[3]
+                })
+                .and_then(|l| scene.surfaces.get(l.view.surface))
+                .map(|s| match s.screens {
+                    Screens::Number(k) => k,
+                    _ => 0,
+                });
+            if let Some(screen) = screen.filter(|s| nest_on_screen != Some(*s)) {
+                nest_on_screen = Some(screen);
+                send(ToNest::OnScreen(screen));
+            }
+        }
         // The windows of the scene's compositor: the one under the pointer —or
         // the one a button was pressed on, while it is held— gets the pointer,
         // in its own pixels, and the buttons and the wheel.
@@ -1403,6 +1455,13 @@ pub fn run(
                                 WindowAction::Close => ToNest::Close(slot),
                                 WindowAction::Promote => ToNest::Promote(slot),
                             });
+                        }
+                    }
+                    Effect::WindowTo(which, to) => {
+                        let c = Ctx { props: &props, facts: &facts };
+                        let (slot, screen) = (which.eval(c).round(), to.eval(c).round());
+                        if let (Some(send), true) = (&nest, slot >= 0.0 && screen >= 0.0) {
+                            send(ToNest::Send(slot as usize, screen as usize));
                         }
                     }
                     Effect::Launch(command) => {
@@ -1922,7 +1981,12 @@ pub fn run(
             if let Some(send) = &nest {
                 // The size each window is told to have: only when it changes.
                 for i in to_paint {
-                    let Instr::Window { slot, ask, .. } = i else { continue };
+                    let Instr::Window { slot, ask, alpha, .. } = i else { continue };
+                    // Only where it is shown: with a copy of the scene per monitor,
+                    // the copies where it is not would ask it for another size.
+                    if alpha.eval(c) <= 0.001 {
+                        continue;
+                    }
                     let wanted = (ask.0.eval(c).round().max(1.0) as i32, ask.1.eval(c).round().max(1.0) as i32);
                     if let Some(w) = nest_windows.get_mut(*slot) {
                         if w.ask != Some(wanted) {

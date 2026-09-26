@@ -5138,6 +5138,7 @@ impl<'a> Compiler<'a> {
             fact(self, format!("{name}.{k}.width"), 0.0, false);
             fact(self, format!("{name}.{k}.height"), 0.0, false);
             fact(self, format!("{name}.{k}.place"), -1.0, false);
+            fact(self, format!("{name}.{k}.screen"), 0.0, false);
             for field in ["title", "app"] {
                 let full = format!("{name}.{k}.{field}");
                 let id = self.e.live_text(interned(&full), "");
@@ -5149,6 +5150,10 @@ impl<'a> Compiler<'a> {
             fact(self, format!("{name}.order.{k}"), -1.0, false);
         }
         fact(self, format!("{name}.count"), 0.0, false);
+        // How many are on each monitor: `win.on.$screen` in a copy per monitor.
+        for s in 0..4 {
+            fact(self, format!("{name}.on.{s}"), 0.0, false);
+        }
         fact(self, format!("{name}.focus"), -1.0, false);
         let full = format!("{name}.socket");
         let id = self.e.live_text(interned(&full), "");
@@ -5591,6 +5596,12 @@ impl<'a> Compiler<'a> {
                         "focus" if self.names_window(&c) => Effect::Window(WindowAction::Focus, self.which_window(&mut c)?),
                         "close" => Effect::Window(WindowAction::Close, self.which_window(&mut c)?),
                         "promote" => Effect::Window(WindowAction::Promote, self.which_window(&mut c)?),
+                        // `send win(win.focus) to 1`: to that monitor's copy of the scene.
+                        "send" => {
+                            let which = self.which_window(&mut c)?;
+                            c.expect_word("to")?;
+                            Effect::WindowTo(which, self.expr(&mut c)?)
+                        }
                         "launch" => {
                             if self.e.nest.is_none() {
                                 return c.error("`launch` opens a program among the scene's windows: declare them first, `windows win max 6`");

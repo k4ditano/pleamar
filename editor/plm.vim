@@ -7,7 +7,7 @@ syn keyword plmKeyword in max while for after from until at by reach within rest
 syn keyword plmFunction min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
 syn keyword plmFunction upper lower
 syn keyword plmTrigger press release scroll drag hold enter leave hover away idle key submit focus blur drop change still
-syn keyword plmEffect toggle emit impulse play focus blur close promote launch
+syn keyword plmEffect toggle emit impulse play focus blur close promote launch send
 syn keyword plmStep move line curve close
 syn keyword plmConstant true false lively calm quick slow gentle pose linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier text number bool image
 syn match plmProperty "\<\w\+\ze\s*:"

@@ -12,4 +12,6 @@ scene Windows {
     on key Alt+Return { launch "kitty" }
     on key Alt+q { close win(win.focus) }
     on key Alt+m { promote win(win.order.1) }
+    on key Alt+s { send win(win.focus) to 1 - pick(win.focus, win.0.screen, win.1.screen, win.2.screen) }
+    text "{win.on.0} here, {win.on.1} there" { at: 10, 30; size: 11; color: #fff }
 }

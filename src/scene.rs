@@ -1397,6 +1397,8 @@ pub enum Effect {
     Window(WindowAction, Expr),
     /// A program started inside the scene's compositor: `launch "kitty"`.
     Launch(String),
+    /// A window to another monitor: `send win(win.focus) to 1`.
+    WindowTo(Expr, Expr),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1418,6 +1420,7 @@ impl Effect {
             Effect::Signal(s, e) => Effect::Signal(*s, e.as_ref().map(|e| e.with_payload(v))),
             Effect::Impulse(p, e) => Effect::Impulse(*p, e.with_payload(v)),
             Effect::Window(a, e) => Effect::Window(*a, e.with_payload(v)),
+            Effect::WindowTo(w, to) => Effect::WindowTo(w.with_payload(v), to.with_payload(v)),
             other => other.clone(),
         }
     }
@@ -1834,7 +1837,10 @@ pub struct Nest {
 pub enum NestEvent {
     /// Where programs connect: `WAYLAND_DISPLAY`.
     Socket(String),
-    Opened { slot: usize, title: String, app: String },
+    /// A window opened, on that monitor (the copy of the scene the pointer was on).
+    Opened { slot: usize, title: String, app: String, screen: usize },
+    /// A window went to another monitor.
+    Screen(usize, usize),
     Title(usize, String),
     App(usize, String),
     /// What a window shows now: its pieces —its surface, its subsurfaces, its
@@ -1906,6 +1912,10 @@ pub enum ToNest {
     Focus(usize),
     Close(usize),
     Promote(usize),
+    /// That window, to that monitor.
+    Send(usize, usize),
+    /// The monitor the pointer is on: where new windows open.
+    OnScreen(usize),
     Launch(String),
     /// The render has painted: the programs may draw their next frame.
     FrameDone,

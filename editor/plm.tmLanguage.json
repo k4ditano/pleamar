@@ -49,7 +49,7 @@
       "name": "entity.name.tag.plm"
     },
     {
-      "match": "\\b(toggle|emit|impulse|play|focus|blur|close|promote|launch)\\b",
+      "match": "\\b(toggle|emit|impulse|play|focus|blur|close|promote|launch|send)\\b",
       "name": "keyword.operator.plm"
     },
     {

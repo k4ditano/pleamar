@@ -1013,9 +1013,11 @@ reloads on save while the programs in it keep running.
 | `win.$i.open` · `win.$i.focused` | whether there is a window in it, and whether it has the keyboard |
 | `win.$i.title` · `win.$i.app` | texts: what the window calls itself, and its program (`kitty`) |
 | `win.$i.width` · `win.$i.height` | the size it has drawn itself at |
-| `win.$i.place` | its turn in the layout: 0 leads, −1 if there is none. `promote` changes it |
+| `win.$i.place` | its turn in the layout of its monitor: 0 leads, −1 if there is none. `promote` changes it |
+| `win.$i.screen` | the monitor it is on: which copy of a `screens: each` scene lays it out |
 | **for all of them** | |
 | `win.count` · `win.focus` | how many are open, and which slot has the keyboard (−1, none) |
+| `win.on.$s` | how many are on monitor `s` (0 to 3) |
 | `win.order.$p` | which slot is at each place: `win.order.0` leads |
 | `win.socket` | where programs connect |
 
@@ -1036,6 +1038,12 @@ that holds), which are the scene's.
 | `focus win.$i` · `focus win(expr)` | the keyboard goes to that window |
 | `close win.$i` · `close win(win.focus)` | asks it to close, as its own close button would |
 | `promote win.$i` | it goes first in the layout: `place` 0 |
+| `send win.$i to 1` · `send win(win.focus) to 0` | to that monitor |
+
+With a copy of the scene per monitor (`screens: each`), a window opens on the
+monitor the pointer is on, and each copy draws the ones whose `screen` is its
+own (`show: win.$i.screen == screen.index`); a window is only asked for a size
+by the copy that shows it.
 
 A window that closes leaves its last image in its slot: the scene can see it
 leave, fading on a spring, instead of vanishing. Programs that draw with the
@@ -1317,7 +1325,7 @@ properties.layout: at anchor gap padding align fill glass lens shine refraction 
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change still
-effects: toggle emit impulse play focus blur close promote launch
+effects: toggle emit impulse play focus blur close promote launch send
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
 classes: ambient reflex asked state
