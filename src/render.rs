@@ -1439,7 +1439,7 @@ pub fn run(
         if region_changes {
             // Each surface gets the zones that fall on ITS piece of the plane, in its
             // coordinates. A popup is all its own, and carries no region.
-            for l in sheets.iter().filter(|l| l.view.popup.is_none()) {
+            for l in sheets.iter_mut().filter(|l| l.view.popup.is_none()) {
                 let v = l.view.bounds();
                 let (dx, dy) = (l.view.origin.0 as i32, l.view.origin.1 as i32);
                 let its_own: Vec<[i32; 4]> = boxes
@@ -1450,10 +1450,18 @@ pub fn run(
                 // `PLEAMAR_REGIONS=1`: where each surface takes the mouse, when it
                 // changes. What answers «why does this not click» —or «why does
                 // everything click here»—.
-                if std::env::var_os("PLEAMAR_REGIONS").is_some() {
-                    eprintln!("regions · surface {} ({}): {:?}", l.view.surface, scene.surfaces.get(l.view.surface).map_or("", |s| s.name.as_str()), its_own);
+                // Only if it changed for THIS surface, and then with a frame: the
+                // region is committed with the next frame presented, and a
+                // surface that draws nothing —a full-screen catcher— may never
+                // present another, leaving its new region pending for ever.
+                if l.input_region != its_own {
+                    if std::env::var_os("PLEAMAR_REGIONS").is_some() {
+                        eprintln!("regions · surface {} ({}): {:?}", l.view.surface, scene.surfaces.get(l.view.surface).map_or("", |s| s.name.as_str()), its_own);
+                    }
+                    l.update_input_region(&its_own);
+                    l.input_region = its_own;
+                    l.painted = None;
                 }
-                l.update_input_region(&its_own);
             }
             region = boxes;
         }

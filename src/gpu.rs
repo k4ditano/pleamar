@@ -1333,6 +1333,8 @@ pub struct Sheet {
     /// shows is up to date. With another place, another scale or nothing (just
     /// made, reconfigured), it is painted even if the scene has not changed.
     pub painted: Option<([f32; 4], f32)>,
+    /// The input region last given to the compositor, in its coordinates.
+    pub input_region: Vec<[i32; 4]>,
 }
 
 /// A moment far enough back that «the last capture» never counts against the
@@ -1658,7 +1660,7 @@ impl Gpu {
         let (layer_views, layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
         let mut l = Sheet {
             id: n.id, name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, cleared: false, view: n.view,
-            surface: n.surface, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: long_ago(), painted_now: false, painted: None,
+            surface: n.surface, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: long_ago(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]],
         };
         self.reconfigure(&mut l, size);
         l
