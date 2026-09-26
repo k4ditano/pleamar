@@ -26,6 +26,9 @@ wgpu = "30"
 libc = "0.2"
 zbus = "5"
 raw-window-handle = "0.6"
+# To ask the card which layouts of a program's memory it can read (dmabuf
+# modifiers): the same ash wgpu speaks Vulkan with.
+ash = "0.38"
 smithay-client-toolkit = "0.21"
 wayland-client = { version = "0.31", features = ["system"] }
 # The protocols every compositor understands: windows and desktops.

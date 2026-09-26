@@ -1835,15 +1835,55 @@ pub enum NestEvent {
     Opened { slot: usize, title: String, app: String },
     Title(usize, String),
     App(usize, String),
-    /// What a window drew: BGRA, premultiplied, `size` pixels, and where the
-    /// window itself is inside it (a program may draw its shadow around it).
-    Image { slot: usize, size: (u32, u32), geometry: [i32; 4], pixels: Vec<u8> },
+    /// What a window shows now: its pieces —its surface, its subsurfaces, its
+    /// menus— in the order they are drawn, placed from the corner of its main
+    /// surface, and where the window itself is in that surface (a program may
+    /// draw its shadow around it).
+    Frame { slot: usize, geometry: [i32; 4], pieces: Vec<WindowPiece> },
+    /// Buffers of the programs that no longer exist: what the render kept of them goes.
+    Forget(Vec<u64>),
     Closed(usize),
     Focused(Option<usize>),
     /// The slots in the order the scene lays them out in.
     Order(Vec<usize>),
     /// The cursor the window under the pointer asks for.
     Cursor(Cursor),
+}
+
+/// One surface of a window: which one (it keeps its place on the card from
+/// frame to frame), where from the main surface's corner, and how big.
+#[derive(Debug)]
+pub struct WindowPiece {
+    pub id: u64,
+    pub at: (i32, i32),
+    pub size: (u32, u32),
+    pub content: PieceContent,
+}
+
+#[derive(Debug)]
+pub enum PieceContent {
+    /// The same as last time.
+    Kept,
+    /// BGRA, premultiplied, opaque if the program said so.
+    Pixels(Vec<u8>),
+    /// Already on the card: a program that draws with the GPU hands it over
+    /// as it is, and it is copied there without passing through here.
+    #[cfg(unix)]
+    Dmabuf(DmabufPiece),
+}
+
+/// A single-plane dmabuf: what it takes to read it.
+#[cfg(unix)]
+#[derive(Debug)]
+pub struct DmabufPiece {
+    /// Which buffer of the program: the render keeps it read once, and the
+    /// compositor hands it back to the program once it has been copied.
+    pub buffer: u64,
+    pub fd: std::os::fd::OwnedFd,
+    pub fourcc: u32,
+    pub modifier: u64,
+    pub stride: u32,
+    pub offset: u32,
 }
 
 /// What the render tells the compositor inside the scene. Pointer positions
@@ -1867,6 +1907,12 @@ pub enum ToNest {
     Launch(String),
     /// The render has painted: the programs may draw their next frame.
     FrameDone,
+    /// The card the scene is painted on, and what it can read straight from a
+    /// program's memory on the card: its render node, and the (fourcc,
+    /// modifier) pairs it takes.
+    Gpu { device: u64, formats: Vec<(u32, u64)> },
+    /// These buffers have been copied: they can go back to their program.
+    Released(Vec<u64>),
     Quit,
 }
 

@@ -82,10 +82,20 @@ pub struct DrawList {
     /// The windows of the scene's compositor that have an image: for each slot,
     /// where it is in the windows' texture (its layer, and the corners of the
     /// window itself inside it). The render sets it before composing.
-    pub window_tex: Vec<Option<(u32, [f32; 4], (f32, f32))>>,
+    pub window_tex: Vec<Option<WindowTex>>,
     /// Where each window was drawn this frame: its slot, its box and what it
     /// lives under. It is what a click on it is measured against.
     pub windows_drawn: Vec<(usize, [f32; 4], Affine)>,
+}
+
+/// A window of the scene's compositor as the card has it: where the window
+/// itself is in its main surface (x, y, width, height), and each of its pieces
+/// —its layer of the windows' texture, its corners in it, where it goes from
+/// the main surface's corner (x, y, width, height), and whether it is opaque—.
+#[derive(Clone, Debug, Default)]
+pub struct WindowTex {
+    pub geometry: [f32; 4],
+    pub pieces: Vec<(u32, [f32; 4], [f32; 4], bool)>,
 }
 
 /// The draw list of the previous frame, to know **where** something has changed.
@@ -1031,25 +1041,37 @@ impl DrawList {
                     if a <= 0.001 {
                         continue;
                     }
-                    let Some(Some((layer, uv, (gw, gh)))) = self.window_tex.get(*slot).copied() else { continue };
+                    let Some(Some(tex)) = self.window_tex.get(*slot).cloned() else { continue };
                     // Scaled as much as its box is from the size it was asked to
                     // have, from its corner: a window that could not be that
                     // small —a minimum of its own— comes out cut, not squashed.
                     let b = [target.0.eval(c), target.1.eval(c), target.2.eval(c).max(1.0), target.3.eval(c).max(1.0)];
                     let (sx, sy) = (b[2] / ask.0.eval(c).max(1.0), b[3] / ask.1.eval(c).max(1.0));
-                    let d = [b[0], b[1], (gw * sx).max(1.0), (gh * sy).max(1.0)];
+                    let g = tex.geometry;
+                    let d = [b[0], b[1], (g[2] * sx).max(1.0), (g[3] * sy).max(1.0)];
                     self.windows_drawn.push((*slot, d, affine));
-                    // Only what falls inside its box is painted.
-                    let bounds = affine.bounds([d[0], d[1], d[0] + d[2].min(b[2]), d[1] + d[3].min(b[3])]);
-                    self.element(1.0, bounds, &clips, |e| {
-                        affine.encode(&mut e[44..52]);
-                        // −1: from the windows' texture, not the atlas; which layer, in the second slot.
-                        e[1] = layer as f32;
-                        e[2] = -1.0;
-                        e[3] = a;
-                        e[36..40].copy_from_slice(&d);
-                        e[40..44].copy_from_slice(&uv);
-                    });
+                    // Each piece in its place, and only what falls inside the box is painted.
+                    for (layer, uv, r, opaque) in &tex.pieces {
+                        let p = [b[0] + (r[0] - g[0]) * sx, b[1] + (r[1] - g[1]) * sy, r[2] * sx, r[3] * sy];
+                        let x0 = p[0].max(b[0]);
+                        let y0 = p[1].max(b[1]);
+                        let x1 = (p[0] + p[2]).min(b[0] + b[2]);
+                        let y1 = (p[1] + p[3]).min(b[1] + b[3]);
+                        if x1 <= x0 || y1 <= y0 {
+                            continue;
+                        }
+                        let bounds = affine.bounds([x0, y0, x1, y1]);
+                        self.element(1.0, bounds, &clips, |e| {
+                            affine.encode(&mut e[44..52]);
+                            // −1: from the windows' texture, not the atlas (−2 if its
+                            // alpha means nothing); which layer, in the second slot.
+                            e[1] = *layer as f32;
+                            e[2] = if *opaque { -2.0 } else { -1.0 };
+                            e[3] = a;
+                            e[36..40].copy_from_slice(&p);
+                            e[40..44].copy_from_slice(uv);
+                        });
+                    }
                 }
                 Instr::Shader { shader, target, corner, alpha, values, colors, time, pointer, behind } => {
                     let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
@@ -1419,6 +1441,10 @@ pub struct Gpu {
     windows: wgpu::Texture,
     windows_view: wgpu::TextureView,
     windows_dims: (u32, u32, u32),
+    /// The programs' buffers already read from their memory on the card, by
+    /// buffer: a program cycles through two or three, and each is imported once.
+    #[cfg(target_os = "linux")]
+    dmabufs: std::collections::HashMap<u64, wgpu::Texture>,
     sampler: wgpu::Sampler,
     /// How many floats fit now in each store, and how many at most on this card.
     capacity: (usize, usize, usize, usize),
@@ -1446,6 +1472,9 @@ impl Gpu {
                 // Asking for memory is rare here —growing a store, a layer—, so
                 // what is lost in speed is not noticed.
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
+                // To read a program's frames straight from its memory on the
+                // card (the scene's `windows`), where the card can.
+                required_features: adapter.features() & wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF,
                 ..Default::default()
             })).expect("there is no device");
         let caps = first.get_capabilities(&adapter);
@@ -1514,7 +1543,7 @@ impl Gpu {
             view_formats: &[],
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
-        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
+        Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group }
     }
 
     /// The four groups the shapes shader reads, written out. See `shape.wgsl`.
@@ -1788,25 +1817,33 @@ impl Gpu {
         (t, v)
     }
 
-    /// What a window of the scene's compositor drew, to its layer. If it does
-    /// not fit —a bigger window, more of them— the texture grows, and what the
-    /// others had is lost: returns true, and the render uploads them again.
+    /// Room in the windows' texture for a piece of that size in that layer. If
+    /// it does not fit —a bigger window, more of them— the texture grows, and
+    /// what the others had is lost: returns true, and the render uploads them again.
+    fn window_room(&mut self, layer: u32, (w, h): (u32, u32)) -> bool {
+        let max = self.device.limits().max_texture_dimension_2d;
+        let (w, h) = (w.min(max), h.min(max));
+        let (dw, dh, dn) = self.windows_dims;
+        if w <= dw && h <= dh && layer < dn {
+            return false;
+        }
+        // Grown with room to spare, so that a window being stretched does not remake it every frame.
+        let grow = |have: u32, want: u32| if want > have { want.div_ceil(256) * 256 } else { have }.min(max);
+        let dims = (grow(dw.max(1), w), grow(dh.max(1), h), (layer + 1).max(dn));
+        let (t, v) = Self::windows_texture(&self.device, dims);
+        self.windows = t;
+        self.windows_view = v;
+        self.windows_dims = dims;
+        self.scene_group = Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.sampler, &self.windows_view);
+        true
+    }
+
+    /// What a window of the scene's compositor drew, to its layer. Returns true
+    /// if the texture had to grow and the other layers were lost.
     pub fn upload_window(&mut self, layer: u32, size: (u32, u32), pixels: &[u8]) -> bool {
         let max = self.device.limits().max_texture_dimension_2d;
         let (w, h) = (size.0.min(max), size.1.min(max));
-        let mut remade = false;
-        let (dw, dh, dn) = self.windows_dims;
-        if w > dw || h > dh || layer >= dn {
-            // Grown with room to spare, so that a window being stretched does not remake it every frame.
-            let grow = |have: u32, want: u32| if want > have { want.div_ceil(256) * 256 } else { have }.min(max);
-            let dims = (grow(dw.max(1), w), grow(dh.max(1), h), (layer + 1).max(dn));
-            let (t, v) = Self::windows_texture(&self.device, dims);
-            self.windows = t;
-            self.windows_view = v;
-            self.windows_dims = dims;
-            self.scene_group = Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.sampler, &self.windows_view);
-            remade = true;
-        }
+        let remade = self.window_room(layer, size);
         if w > 0 && h > 0 && pixels.len() >= (size.0 * size.1 * 4) as usize {
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo { texture: &self.windows, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: 0, z: layer }, aspect: wgpu::TextureAspect::All },
@@ -1816,6 +1853,120 @@ impl Gpu {
             );
         }
         remade
+    }
+
+    /// A program's frame that is already on the card, copied to its layer
+    /// there without passing through here. Returns whether the texture grew
+    /// (as `upload_window`), and the submission the copy went in, for whoever
+    /// has to wait for it before handing the buffer back.
+    #[cfg(target_os = "linux")]
+    /// `buffer` is which of the program's buffers; `fresh`, if it has come
+    /// now, what it takes to read it (a buffer already read is not read again).
+    pub fn copy_dmabuf(&mut self, layer: u32, size: (u32, u32), buffer: u64, fresh: Option<crate::scene::DmabufPiece>) -> Result<(bool, wgpu::SubmissionIndex), String> {
+        use wgpu::hal::api::Vulkan;
+        let extent = wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 };
+        if let Some(d) = fresh.filter(|_| !self.dmabufs.contains_key(&buffer)) {
+            // ARGB8888 and XRGB8888 are BGRA in memory, like the windows' texture.
+            if d.fourcc != u32::from_le_bytes(*b"AR24") && d.fourcc != u32::from_le_bytes(*b"XR24") {
+                return Err(format!("the format {:#x} is not read yet", d.fourcc));
+            }
+            let hal_desc = wgpu::hal::TextureDescriptor {
+                label: Some("a program's frame"),
+                size: extent,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Bgra8Unorm,
+                usage: wgpu::TextureUses::COPY_SRC,
+                memory_flags: wgpu::hal::MemoryFlags::empty(),
+                view_formats: Vec::new(),
+            };
+            // SAFETY: the fd is a dmabuf of that size, format and layout, as the
+            // program declared it through linux-dmabuf; Vulkan takes it.
+            let hal_texture = unsafe {
+                let hal = self.device.as_hal::<Vulkan>().ok_or("the card is not driven with Vulkan")?;
+                hal.texture_from_dmabuf_fd(d.fd, &hal_desc, d.modifier, d.stride as u64, d.offset as u64).map_err(|e| format!("{e:?}"))?
+            };
+            let desc = wgpu::TextureDescriptor {
+                label: Some("a program's frame"),
+                size: extent,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Bgra8Unorm,
+                usage: wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            };
+            // SAFETY: made on this device, as `desc` says; its content is the
+            // program's, already there: no layout to clear it from.
+            let texture = unsafe { self.device.create_texture_from_hal::<Vulkan>(hal_texture, &desc, wgpu::TextureUses::COPY_SRC) };
+            self.dmabufs.insert(buffer, texture);
+        }
+        let remade = self.window_room(layer, size);
+        let source = self.dmabufs.get(&buffer).ok_or("that buffer was never read")?;
+        let max = self.device.limits().max_texture_dimension_2d;
+        let copy = wgpu::Extent3d { width: size.0.min(max).max(1), height: size.1.min(max).max(1), depth_or_array_layers: 1 };
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo { texture: source, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::TexelCopyTextureInfo { texture: &self.windows, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: 0, z: layer }, aspect: wgpu::TextureAspect::All },
+            copy,
+        );
+        let index = self.queue.submit(Some(encoder.finish()));
+        Ok((remade, index))
+    }
+
+    /// Waits until that copy is done: then its buffer can go back to its program.
+    pub fn wait_for(&self, index: wgpu::SubmissionIndex) {
+        let _ = self.device.poll(wgpu::PollType::Wait { submission_index: Some(index), timeout: Some(std::time::Duration::from_millis(100)) });
+    }
+
+    /// Buffers of programs that no longer exist: what was kept of them goes.
+    #[cfg(target_os = "linux")]
+    pub fn forget_dmabufs(&mut self, buffers: &[u64]) {
+        for b in buffers {
+            self.dmabufs.remove(b);
+        }
+    }
+
+    /// The card's render node and the (fourcc, modifier) pairs of BGRA it can
+    /// read from a program's memory: what the scene's compositor offers the
+    /// programs, so that they hand over their frames on the card.
+    #[cfg(target_os = "linux")]
+    pub fn dmabuf_formats(&self) -> Option<(u64, Vec<(u32, u64)>)> {
+        use ash::vk;
+        use wgpu::hal::api::Vulkan;
+        if !self.device.features().contains(wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF) {
+            return None;
+        }
+        // SAFETY: only reading properties of the physical device wgpu uses.
+        unsafe {
+            let hal = self.adapter.as_hal::<Vulkan>()?;
+            let instance = hal.shared_instance().raw_instance();
+            let pd = hal.raw_physical_device();
+            let mut drm = vk::PhysicalDeviceDrmPropertiesEXT::default();
+            let mut props = vk::PhysicalDeviceProperties2::default().push_next(&mut drm);
+            instance.get_physical_device_properties2(pd, &mut props);
+            if drm.has_render == 0 {
+                return None;
+            }
+            let device = libc::makedev(drm.render_major as u32, drm.render_minor as u32);
+            let mut list = vk::DrmFormatModifierPropertiesListEXT::default();
+            let mut fp = vk::FormatProperties2::default().push_next(&mut list);
+            instance.get_physical_device_format_properties2(pd, vk::Format::B8G8R8A8_UNORM, &mut fp);
+            let n = list.drm_format_modifier_count as usize;
+            let mut mods = vec![vk::DrmFormatModifierPropertiesEXT::default(); n];
+            let mut list = vk::DrmFormatModifierPropertiesListEXT::default().drm_format_modifier_properties(&mut mods);
+            let mut fp = vk::FormatProperties2::default().push_next(&mut list);
+            instance.get_physical_device_format_properties2(pd, vk::Format::B8G8R8A8_UNORM, &mut fp);
+            let mut formats = Vec::new();
+            for m in mods.iter().filter(|m| m.drm_format_modifier_plane_count == 1 && m.drm_format_modifier_tiling_features.contains(vk::FormatFeatureFlags::TRANSFER_SRC)) {
+                for fourcc in [*b"AR24", *b"XR24"] {
+                    formats.push((u32::from_le_bytes(fourcc), m.drm_format_modifier));
+                }
+            }
+            (!formats.is_empty()).then_some((device, formats))
+        }
     }
 
     /// How big the windows' texture is: what a window's corners are measured against.

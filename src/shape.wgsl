@@ -322,7 +322,10 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
         if (uv01.x < 0.0 || uv01.x > 1.0 || uv01.y < 0.0 || uv01.y > 1.0) { discard; }
         // Another program's window: its layer of the windows' texture, as it drew it.
         if (el.header.z < -0.5) {
-            return textureSampleLevel(windows, atlas_sampler, mix(el.uv.xy, el.uv.zw, uv01), i32(el.header.y), 0.0) * alpha;
+            let w = textureSampleLevel(windows, atlas_sampler, mix(el.uv.xy, el.uv.zw, uv01), i32(el.header.y), 0.0);
+            // −2: its alpha means nothing (XRGB); it covers.
+            if (el.header.z < -1.5) { return vec4<f32>(w.rgb, 1.0) * alpha; }
+            return w * alpha;
         }
         let t = textureSampleLevel(atlas, atlas_sampler, mix(el.uv.xy, el.uv.zw, uv01), 0.0);
         // Tinted: the piece is a mask —a letter (2), a symbolic icon (1)— and the element provides the colour.

@@ -25,16 +25,30 @@ pub struct Options {
     pub to_self: std::sync::mpsc::Sender<ToRender>,
 }
 
-/// A window of the compositor inside the scene, as the render knows it: what
-/// it last drew and where the window itself is in it, whether that is already
-/// on the card, and the size it was last told to have.
+/// A window of the compositor inside the scene, as the render knows it: where
+/// the window itself is in its main surface, its pieces, and the size it was
+/// last told to have.
 #[derive(Default)]
 struct NestWindow {
-    size: (u32, u32),
     geometry: [i32; 4],
-    pixels: Vec<u8>,
-    uploaded: bool,
+    pieces: Vec<NestPiece>,
     ask: Option<(i32, i32)>,
+}
+
+/// One surface of a window: its layer of the windows' texture, where it goes,
+/// and what it shows —pixels kept here, or a buffer of the program's on the
+/// card—, and whether that is already on its layer.
+struct NestPiece {
+    id: u64,
+    layer: u32,
+    at: (i32, i32),
+    size: (u32, u32),
+    opaque: bool,
+    pixels: Vec<u8>,
+    buffer: Option<u64>,
+    #[cfg(unix)]
+    fresh: Option<crate::scene::DmabufPiece>,
+    uploaded: bool,
 }
 
 /// A fact of the scene's windows, by name: set, and told to the logic.
@@ -229,6 +243,10 @@ pub fn run(
     // A window drew something new: what it covers is painted again.
     let mut nest_changed = false;
     let mut nest_cursor = Cursor::Normal;
+    // Which layers of the windows' texture are taken, and whether the
+    // compositor already knows what the card can read straight from a program.
+    let mut nest_layers: Vec<bool> = Vec::new();
+    let mut nest_gpu_told = false;
 
     loop {
         // ── 1. what has arrived ─────────────────────────────────
@@ -341,7 +359,9 @@ pub fn run(
                         }
                         nest_windows.resize_with(nest_windows.len().max(n.max), NestWindow::default);
                         for w in &mut nest_windows {
-                            w.uploaded = false;
+                            for p in &mut w.pieces {
+                                p.uploaded = false;
+                            }
                             w.ask = None;
                         }
                         nest_size = (0, 0);
@@ -637,7 +657,10 @@ pub fn run(
                         NestEvent::Opened { slot, title, app } => {
                             // What the slot showed before —a window closing, still fading— is no longer it.
                             if let Some(w) = nest_windows.get_mut(slot) {
-                                *w = NestWindow { ask: w.ask, ..NestWindow::default() };
+                                for p in w.pieces.drain(..) {
+                                    nest_layers[p.layer as usize] = false;
+                                }
+                                w.geometry = [0; 4];
                             }
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.open"), 1.0);
                             nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.title"), title);
@@ -645,9 +668,44 @@ pub fn run(
                         }
                         NestEvent::Title(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.title"), t),
                         NestEvent::App(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), t),
-                        NestEvent::Image { slot, size: sz, geometry, pixels } => {
+                        NestEvent::Frame { slot, geometry, pieces } => {
                             if let Some(w) = nest_windows.get_mut(slot) {
-                                *w = NestWindow { size: sz, geometry, pixels, uploaded: false, ask: w.ask };
+                                let mut old = std::mem::take(&mut w.pieces);
+                                for p in pieces {
+                                    let kept = old.iter().position(|o| o.id == p.id).map(|k| old.remove(k));
+                                    let mut piece = kept.unwrap_or_else(|| {
+                                        // The first free layer, or one more.
+                                        let layer = nest_layers.iter().position(|used| !used).unwrap_or(nest_layers.len());
+                                        if layer == nest_layers.len() {
+                                            nest_layers.push(true);
+                                        }
+                                        nest_layers[layer] = true;
+                                        NestPiece { id: p.id, layer: layer as u32, at: p.at, size: p.size, opaque: false, pixels: Vec::new(), buffer: None, #[cfg(unix)] fresh: None, uploaded: false }
+                                    });
+                                    piece.at = p.at;
+                                    piece.size = p.size;
+                                    match p.content {
+                                        PieceContent::Kept => {}
+                                        PieceContent::Pixels(px) => {
+                                            piece.pixels = px;
+                                            piece.buffer = None;
+                                            piece.uploaded = false;
+                                        }
+                                        #[cfg(unix)]
+                                        PieceContent::Dmabuf(d) => {
+                                            piece.opaque = d.fourcc == u32::from_le_bytes(*b"XR24");
+                                            piece.pixels = Vec::new();
+                                            piece.buffer = Some(d.buffer);
+                                            piece.fresh = Some(d);
+                                            piece.uploaded = false;
+                                        }
+                                    }
+                                    w.pieces.push(piece);
+                                }
+                                for gone in old {
+                                    nest_layers[gone.layer as usize] = false;
+                                }
+                                w.geometry = geometry;
                                 nest_changed = true;
                             }
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.width"), geometry[2] as f32);
@@ -668,6 +726,14 @@ pub fn run(
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.focus"), which.map_or(-1.0, |k| k as f32));
                         }
                         NestEvent::Cursor(kind) => nest_cursor = kind,
+                        #[cfg(target_os = "linux")]
+                        NestEvent::Forget(buffers) => {
+                            if let Some(g) = gpu.as_mut() {
+                                g.forget_dmabufs(&buffers);
+                            }
+                        }
+                        #[cfg(not(target_os = "linux"))]
+                        NestEvent::Forget(_) => {}
                         NestEvent::Order(order) => {
                             for k in 0..n.max {
                                 let place = order.iter().position(|s| *s == k).map_or(-1.0, |p| p as f32);
@@ -1672,36 +1738,93 @@ pub fn run(
         if nest.is_some() {
             // What the windows drew, to the card; and where each one is in it.
             if let Some(g) = gpu.as_mut() {
+                #[cfg(target_os = "linux")]
+                if !nest_gpu_told {
+                    nest_gpu_told = true;
+                    if let (Some(send), Some((device, formats))) = (&nest, g.dmabuf_formats()) {
+                        println!("windows · programs can hand over their frames on the card: {} layouts", formats.len());
+                        send(ToNest::Gpu { device, formats });
+                    }
+                }
+                let mut released: Vec<u64> = Vec::new();
+                let mut last_copy = None;
                 let mut again = true;
                 while again {
                     again = false;
-                    for (slot, w) in nest_windows.iter_mut().enumerate() {
-                        if w.uploaded || w.pixels.is_empty() {
-                            continue;
-                        }
-                        w.uploaded = true;
-                        if g.upload_window(slot as u32, w.size, &w.pixels) {
-                            // The texture grew and the others' images were lost with it.
-                            again = true;
-                            break;
+                    'windows: for w in nest_windows.iter_mut() {
+                        for p in w.pieces.iter_mut() {
+                            if p.uploaded {
+                                continue;
+                            }
+                            p.uploaded = true;
+                            let grew = if let Some(buffer) = p.buffer {
+                                #[cfg(target_os = "linux")]
+                                {
+                                    let fresh = p.fresh.take();
+                                    let was_fresh = fresh.is_some();
+                                    match g.copy_dmabuf(p.layer, p.size, buffer, fresh) {
+                                        Ok((grew, index)) => {
+                                            if was_fresh {
+                                                released.push(buffer);
+                                            }
+                                            last_copy = Some(index);
+                                            grew
+                                        }
+                                        Err(e) => {
+                                            eprintln!("windows · a frame on the card could not be read: {e}");
+                                            if was_fresh {
+                                                released.push(buffer);
+                                            }
+                                            false
+                                        }
+                                    }
+                                }
+                                #[cfg(not(target_os = "linux"))]
+                                {
+                                    let _ = buffer;
+                                    false
+                                }
+                            } else if !p.pixels.is_empty() {
+                                g.upload_window(p.layer, p.size, &p.pixels)
+                            } else {
+                                false
+                            };
+                            if grew {
+                                // The texture grew and the others' images were lost with it.
+                                again = true;
+                                break 'windows;
+                            }
                         }
                     }
                     if again {
-                        for w in nest_windows.iter_mut() {
-                            w.uploaded = false;
+                        for p in nest_windows.iter_mut().flat_map(|w| w.pieces.iter_mut()) {
+                            p.uploaded = false;
                         }
+                    }
+                }
+                // The programs' buffers go back once they have been copied.
+                if let (Some(index), Some(send)) = (last_copy, &nest) {
+                    g.wait_for(index);
+                    if !released.is_empty() {
+                        send(ToNest::Released(released));
                     }
                 }
                 let (dw, dh) = g.windows_dims();
                 draw.window_tex = nest_windows
                     .iter()
-                    .enumerate()
-                    .map(|(slot, w)| {
-                        (!w.pixels.is_empty()).then(|| {
-                            let gm = w.geometry;
-                            let (x0, y0) = (gm[0].max(0) as f32, gm[1].max(0) as f32);
-                            let (x1, y1) = (((gm[0] + gm[2]) as f32).min(w.size.0 as f32), ((gm[1] + gm[3]) as f32).min(w.size.1 as f32));
-                            (slot as u32, [x0 / dw as f32, y0 / dh as f32, x1 / dw as f32, y1 / dh as f32], (x1 - x0, y1 - y0))
+                    .map(|w| {
+                        let pieces: Vec<(u32, [f32; 4], [f32; 4], bool)> = w
+                            .pieces
+                            .iter()
+                            .filter(|p| p.buffer.is_some() || !p.pixels.is_empty())
+                            .map(|p| {
+                                let (pw, ph) = (p.size.0 as f32, p.size.1 as f32);
+                                (p.layer, [0.0, 0.0, pw / dw as f32, ph / dh as f32], [p.at.0 as f32, p.at.1 as f32, pw, ph], p.opaque)
+                            })
+                            .collect();
+                        (!pieces.is_empty()).then(|| {
+                            let g = w.geometry;
+                            crate::gpu::WindowTex { geometry: [g[0] as f32, g[1] as f32, g[2] as f32, g[3] as f32], pieces }
                         })
                     })
                     .collect();
