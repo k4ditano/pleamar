@@ -8,7 +8,7 @@
 pub const STATEMENTS: &[&str] = &[
     "surface", "permissions", "model", "service", "spring", "prop", "pose", "fact", "event", "text", "image", "figure", "shader", "particles", "measure", "let", "zone",
     "body", "ellipse", "box", "arc", "line", "path", "input", "clip", "group", "popup",
-    "component", "children", "repeat", "for", "row", "column", "grid", "space", "between",
+    "component", "children", "repeat", "for", "row", "column", "grid", "pages", "space", "between",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
     "translations",
 ];
@@ -92,6 +92,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("for", "`for r in rows { … }` · `for r in rows from first { … }` — once per record of a model."),
     ("row", "`row { gap: 8; align: center }` — children side by side, with gap, padding, fill and scroll (`view:`)."),
     ("grid", "`grid { columns: 2; gap: 12; width: 456; row: 106 }` — children in cells, left to right and down; `span: 2` takes two. Inside each, `cell.w` and `cell.h` are its cell."),
+    ("pages", "`pages settings { header: 20, 45; page menu \"Settings\" { … } page look \"Her look\" { … } }` — one page at a time, sliding in; `settings` is a fact with the pages' names (`settings = look`), and with `header:` comes the ← and the title, and Esc goes back."),
     ("column", "`column { gap: 8 }` — children one under the other. Same properties as `row`."),
     ("space", "`space 12` — a gap of that size inside a layout."),
     ("between", "`between i { … }` — what goes between every two children of a layout, with its position."),

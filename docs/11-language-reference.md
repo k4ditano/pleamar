@@ -924,7 +924,30 @@ An error **inside** a component also says where it was used from —`(inside 'Ba
 
 `for r in rows { … }` unfolds one turn per record that fits in the model. Inside, `r.field` is the field of that record —a text wherever a live text goes, a number in any expression— and `r.index` its position from 0. **Each turn only exists if the list reaches that far.** Valid inside a layout, loose, and inside a `popup`.
 
-### 10.1. The pieces that come with pleamar: `pleamar:ui`
+### 10.1. Pages: `pages`
+
+A panel with several pages shows one at a time: `pages` says so.
+
+```
+pages settings {
+    header: 20, 45                       // where the title goes; optional
+    page menu "Settings" { … }           // the first is where it starts
+    page look "Her look" { … }
+    page language "Language" { … }
+}
+```
+
+**`settings` is a fact** with the pages' names —`menu | look | language`—,
+declared from the start wherever the `pages` is written, so anything reads it
+and sets it: `on press tile { settings = look }`, or the logic
+(`fact.settings = "look"`). Each page **slides in** as it becomes the one —the
+first from the left, the others from the right— and fades out as it goes, and
+what is not seen is not pressed: its zones are only there while it is. With
+**`header: x, y`**, at that point comes the page's title —the one written after
+its name, translated like any other text— and, on any page but the first, a
+**←** beside it that goes back to the first; **Esc** goes back too.
+
+### 10.2. The pieces that come with pleamar: `pleamar:ui`
 
 `import "pleamar:ui"` brings pleamar's own library, which comes inside the
 program: it is there wherever the scene is and whoever runs it. Each piece
@@ -1208,7 +1231,7 @@ This is the output of `pleamar --grammar`, copied. It is not a second list: thes
 
 ```vocabulary
 language: 0.1
-statements: surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid space between layer on every blink wave spin follow look gesture posture translations
+statements: surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations
 library: let spring component permissions fact text model service event image figure shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate
 properties.permissions: run services
@@ -1241,7 +1264,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid column space between layer on every blink wave spin follow look gesture posture import scene library language
+documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid pages column space between layer on every blink wave spin follow look gesture posture import scene library language
 services: clock clock.seconds audio battery brightness network media window
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date

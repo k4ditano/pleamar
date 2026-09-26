@@ -5,7 +5,7 @@
 use super::tokens::{Token, TokenKind};
 use super::CompileError;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Node {
     /// What goes before the brace: `layer card ~calm`, `on hover orb for 320ms`.
     pub head: Vec<Token>,
@@ -14,7 +14,7 @@ pub struct Node {
     pub col: usize,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Entry {
     Prop { name: String, value: Vec<Token>, line: usize, col: usize },
     Node(Node),

@@ -379,6 +379,11 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     // Four passes: declarations; names and layers; drawing; rules.
     for pass in 0..3 {
         o.pass = pass;
+        // The pages' facts, wherever they are written: from the start, so that
+        // anything can read them and set them (`settings = look`).
+        if pass == 1 {
+            o.declare_pages_early(body);
+        }
         // The surfaces are already known: if any is repeated per monitor, its named
         // stacks have one measure per copy (`desks#screen1.width`).
         if pass == 1 {
@@ -1906,6 +1911,7 @@ impl<'a> Compiler<'a> {
                 "for" => self.for_loop(n, &mut c)?,
                 "row" | "column" => self.stack(n, &mut c, word == "row")?,
                 "grid" => self.grid(n, &mut c)?,
+                "pages" => self.pages(n)?,
                 "space" => {
                     let v = self.expr(&mut c)?;
                     self.last_size = Some((v.clone(), v));
@@ -4689,6 +4695,155 @@ impl<'a> Compiler<'a> {
             }
         }
         Ok(())
+    }
+
+/// The pages written anywhere in these entries: their name, their pages'
+    /// names and titles, and where each `pages` node is.
+    fn pages_of(n: &Node) -> R<(String, Vec<(String, String, &Node)>, Option<(Vec<Token>, usize, usize)>)> {
+        let Some(TokenKind::Id(name)) = n.head.get(1).map(|t| &t.kind) else {
+            return Err(CompileError::at(n.line, n.col, "`pages` needs a name, which is the fact that says which one is shown: `pages settings { … }`"));
+        };
+        let mut pages = Vec::new();
+        let mut header = None;
+        for e in n.body.as_deref().unwrap_or(&[]) {
+            match e {
+                Entry::Prop { name: p, value, line, col } if p == "header" => header = Some((value.clone(), *line, *col)),
+                Entry::Prop { name: p, line, col, .. } => return Err(CompileError::at(*line, *col, format!("`pages` only takes `header: x, y`, and '{p}' is not that"))),
+                Entry::Node(x) => {
+                    let (Some(TokenKind::Id(w)), Some(TokenKind::Id(id)), Some(TokenKind::Str(title))) = (x.head.first().map(|t| &t.kind), x.head.get(1).map(|t| &t.kind), x.head.get(2).map(|t| &t.kind)) else {
+                        return Err(CompileError::at(x.line, x.col, "inside `pages` go its pages: `page look \"Her look\" { … }`"));
+                    };
+                    if w != "page" || x.head.len() != 3 {
+                        return Err(CompileError::at(x.line, x.col, "inside `pages` go its pages: `page look \"Her look\" { … }`"));
+                    }
+                    pages.push((id.clone(), title.clone(), x));
+                }
+            }
+        }
+        if pages.is_empty() {
+            return Err(CompileError::at(n.line, n.col, "`pages` without a single `page` shows nothing"));
+        }
+        Ok((name.clone(), pages, header))
+    }
+
+    fn declare_pages_early(&mut self, entries: &'a [Entry]) {
+        for e in entries {
+            let Entry::Node(n) = e else { continue };
+            if matches!(n.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "pages") {
+                match Self::pages_of(n) {
+                    Ok((name, pages, _)) => {
+                        let ids: Vec<&str> = pages.iter().map(|p| p.0.as_str()).collect();
+                        let source = format!("fact {name}: {} = {}", ids.join(" | "), ids[0]);
+                        if let Err(f) = self.expand(&source, n.line, n.col).and_then(|nodes| {
+                            let mut no_clips = 0;
+                            nodes.iter().try_for_each(|x| self.statement(x, &mut no_clips))
+                        }) {
+                            self.push_error(f);
+                        }
+                    }
+                    Err(f) => self.push_error(f),
+                }
+            }
+            if let Some(b) = &n.body {
+                self.declare_pages_early(b);
+            }
+        }
+    }
+
+    /// Source written by the compiler itself, read as if it were the scene's:
+    /// its tokens carry the place of whatever it stands for, so an error in it
+    /// points there. It lives as long as the scene being read, like the rest.
+    fn expand(&self, source: &str, line: usize, col: usize) -> R<Vec<&'a Node>> {
+        let mut tokens = crate::language::tokens::tokenize(source)?;
+        for t in &mut tokens {
+            t.line = line;
+            t.col = col;
+        }
+        let entries: &'a [Entry] = Box::leak(crate::language::tree::parse(&tokens)?.into_boxed_slice());
+        Ok(entries.iter().filter_map(|e| if let Entry::Node(x) = e { Some(x) } else { None }).collect())
+    }
+
+    /// `pages settings { header: 20, 45; page menu "Settings" { … } page look "Her look" { … } }`:
+    /// one page at a time. `settings` is a fact with the pages' names, which
+    /// anything sets (`settings = look`); each page slides in as it becomes
+    /// the one —the first from the left, the others from the right— and its
+    /// zones are only there while it is seen. With `header:` comes, at that
+    /// point, the page's title and, on any but the first, a ← that goes back
+    /// to it; Esc goes back too.
+    fn pages(&mut self, n: &'a Node) -> R<()> {
+        let (name, pages, header) = Self::pages_of(n)?;
+        let first = pages[0].0.clone();
+        for (k, (id, _, page)) in pages.iter().enumerate() {
+            let shown = format!("{name}.{id}.shown");
+            let slide = if k == 0 { -24 } else { 24 };
+            let source = format!(
+                "prop {shown} = {initial} ~260ms\nfollow {shown} = if({name} == {name}.{id}, 1, 0)\ngroup {{ opacity: {shown}; move: (1 - {shown}) * {slide}, 0 }}",
+                initial = if k == 0 { 1 } else { 0 }
+            );
+            let nodes = self.expand(&source, page.line, page.col)?;
+            let mut no_clips = 0;
+            self.statement(nodes[0], &mut no_clips)?;
+            self.statement(nodes[1], &mut no_clips)?;
+            // The page's own content goes inside its group, as it was written.
+            let mut group = nodes[2].clone();
+            group.body.get_or_insert_with(Vec::new).extend(page.body.clone().unwrap_or_default());
+            let group: &'a Node = Box::leak(Box::new(group));
+            self.statement(group, &mut no_clips)?;
+        }
+        if let Some((value, line, col)) = header {
+            // `header: x, y`: two expressions, which become `settings.hx` and
+            // `settings.hy` with their own tokens —and their own place, for errors—.
+            let mut depth = 0i32;
+            let comma = value.iter().position(|t| match t.kind {
+                TokenKind::Sym("(") => { depth += 1; false }
+                TokenKind::Sym(")") => { depth -= 1; false }
+                TokenKind::Sym(",") => depth == 0,
+                _ => false,
+            }).ok_or_else(|| CompileError::at(line, col, "`header:` is where the title goes: `header: x, y`"))?;
+            let (hx, hy) = (format!("{name}.hx"), format!("{name}.hy"));
+            for (let_name, part) in [(&hx, &value[..comma]), (&hy, &value[comma + 1..])] {
+                let mut head = vec![
+                    Token { kind: TokenKind::Id("let".into()), line, col },
+                    Token { kind: TokenKind::Id(let_name.clone()), line, col },
+                    Token { kind: TokenKind::Sym("="), line, col },
+                ];
+                head.extend(part.iter().cloned());
+                let node: &'a Node = Box::leak(Box::new(Node { head, body: None, line, col }));
+                let mut no_clips = 0;
+                self.statement(node, &mut no_clips)?;
+            }
+            let titles: Vec<String> = pages.iter().map(|p| format!("{:?}", p.1)).collect();
+            let back = format!("{name}.back");
+            self.hover_mentions.insert(back.clone());
+            let first_shown = format!("{name}.{first}.shown");
+            let source = format!(
+                "group {{ opacity: 1 - {first_shown}\n  path {{ at: {hx}, {hy} - 5; color: #f5f7f5; stroke: 1.8; opacity: 70% + {back}.hover * 30%; move 5, 0; line 0, 5; line 5, 10 }}\n}}\n\
+                 text pick({name}, {titles}) {{ at: {hx} + 20 * (1 - {first_shown}), {hy}; anchor: left center; size: 18; weight: 500; color: #f5f7f5 }}\n\
+                 zone box {back} {{ at: {hx} + 3, {hy}; size: 30, 30; corner: 15; cursor: pointer; active: {name} != {name}.{first} }}\n\
+                 on press {back} {{ {name} = {first} }}\n\
+                 on key Escape while {name} != {name}.{first} {{ {name} = {first} }}",
+                titles = titles.join(", ")
+            );
+            let nodes = self.expand(&source, line, col)?;
+            for x in &nodes {
+                self.zone_springs_prescan(x);
+            }
+            let mut no_clips = 0;
+            for x in nodes {
+                self.statement(x, &mut no_clips)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A zone about to be declared outside `group` —an expansion—: its springs.
+    fn zone_springs_prescan(&mut self, n: &Node) {
+        if let (Some(TokenKind::Id(w)), Some(TokenKind::Id(local))) = (n.head.first().map(|t| &t.kind), n.head.get(2).map(|t| &t.kind)) {
+            if w == "zone" && self.hover_mentions.contains(local.as_str()) {
+                let local = local.clone();
+                self.zone_springs_for(&local);
+            }
+        }
     }
 
     /// `grid { at: x, y; columns: 2; gap: 12; width: 456; row: 106 }`: its

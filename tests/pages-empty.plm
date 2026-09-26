@@ -1,0 +1,5 @@
+// expect: error «`pages` without a single `page` shows nothing»
+scene PagesEmpty {
+    surface { size: 200, 100 }
+    pages nav { header: 10, 10 }
+}

@@ -1,0 +1,44 @@
+// expect: ok
+import "pleamar:ui"
+scene Pages {
+    surface { size: 480, 320 }
+    fact following = false
+    fact mode = 1
+    event flip
+    event pick_mode
+    event to_home
+    event to_language
+    on flip { toggle following }
+    on pick_mode(v) { mode = v }
+    on to_home { settings = home }
+    on to_language { settings = language }
+    pages settings {
+        header: 20, 28
+        page menu "Settings" {
+            grid {
+                at: 12, 60; columns: 2; gap: 12; width: 456; row: 106
+                Tile("Where she lives", pick(following, "Home", "Follows you"), to_home, cell.w) {
+                    box { size: 22, 14; corner: 3; stroke: 1.6; color: #f5f7f5 }
+                }
+                Tile("Language", pick(mode, "System", "English", "Español"), to_language, cell.w) {
+                    text "Aa" { size: 16; weight: 700; color: #f5f7f5 }
+                }
+            }
+        }
+        page home "Where she lives" {
+            Card(456, 80) {
+                move: 12, 60
+                row { gap: 12; align: center
+                    Switch(following, flip)
+                    text "Follow me" { size: 13; color: #f5f7f5 }
+                }
+            }
+        }
+        page language "Language" {
+            Card(456, 80) {
+                move: 12, 60
+                Segmented(mode, "System", "English", pick_mode, c: "Español", count: 3, width: 300)
+            }
+        }
+    }
+}
