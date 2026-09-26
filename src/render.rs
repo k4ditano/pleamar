@@ -443,10 +443,13 @@ pub fn run(
                     if (scene.surface().width == 0 || is_window) && its_own {
                         size.0 = n.size.0 as f32;
                     }
-                    if is_window && its_own {
+                    // And the whole height too: `size: full, full` measures its monitor
+                    // both ways. It used to take only the width, and a scene laid out
+                    // with `screen.height` —a whole desktop— got 0 for it.
+                    if (scene.surface().height == 0 || is_window) && its_own {
                         size.1 = n.size.1 as f32;
                     }
-                    let height = if is_window { n.size.1 as f32 } else { scene.surface().height as f32 };
+                    let height = if is_window || scene.surface().height == 0 { n.size.1 as f32 } else { scene.surface().height as f32 };
                     for (k, (name, _)) in scene.facts.iter().enumerate() {
                         match *name {
                             "screen.width" => facts[k] = size.0,
