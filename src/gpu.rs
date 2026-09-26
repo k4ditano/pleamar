@@ -86,6 +86,10 @@ pub struct DrawList {
     /// Where each window was drawn this frame: its slot, its box and what it
     /// lives under. It is what a click on it is measured against.
     pub windows_drawn: Vec<(usize, [f32; 4], Affine)>,
+    /// Something is shown that moves without its elements changing —particles,
+    /// a shader that reads the time, an image that moves—: comparing elements
+    /// cannot say where the frame changed, so it is painted whole.
+    pub timed: bool,
 }
 
 /// A window of the scene's compositor as the card has it: where the window
@@ -701,6 +705,7 @@ impl DrawList {
         self.wake_at = None;
         self.glass_regions.clear();
         self.windows_drawn.clear();
+        self.timed = false;
         let mut clips: Vec<(usize, [f32; 4])> = Vec::new();
         // Each entry is already the product of all those above it.
         let mut transforms: Vec<Affine> = Vec::new();
@@ -1093,6 +1098,7 @@ impl DrawList {
                     if a <= 0.001 {
                         continue;
                     }
+                    self.timed |= time.is_some();
                     let d = [target.0.eval(c), target.1.eval(c), target.2.eval(c).max(0.0), target.3.eval(c).max(0.0)];
                     let b = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
                     // What is behind it is captured like a lens's: its box.
@@ -2205,6 +2211,14 @@ impl Gpu {
             Frame::Surface(_) => None,
             // `PLEAMAR_FULL_REPAINT=1`: every frame whole, to compare.
             Frame::Lent(_, _) if std::env::var_os("PLEAMAR_FULL_REPAINT").is_some() => None,
+            // Closed, it is cleared whole: a piece left of what it showed stayed
+            // in one of its frames, and the monitor alternated it with the empty one.
+            Frame::Lent(which, _) if !l.open => {
+                l.painted_as.clear();
+                l.damage_log.clear();
+                let _ = which;
+                None
+            }
             Frame::Lent(which, _) => {
                 let v = l.view.bounds();
                 let now: Option<[f32; 4]> = damage.map(|rects| {

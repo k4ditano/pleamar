@@ -2386,7 +2386,10 @@ pub fn run(
             }
             // The one that sets the pace asks the compositor to notify when it wants another.
             let asks = l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive;
-            let was_painted = g.paint(l, &draw, &uniforms, asks, (!all_changed && l.painted == Some(where_)).then_some(&changed[..]));
+            // Painting only where something changed needs to know where: not with
+            // particles, a shader that reads the time or an image that moves.
+            let knows_where = !all_changed && !draw.timed && !draw.particles_alive && draw.particle_marks.is_empty() && draw.wake_at.is_none();
+            let was_painted = g.paint(l, &draw, &uniforms, asks, (knows_where && l.painted == Some(where_)).then_some(&changed[..]));
             // With a lens, what was presented is captured to keep track of what is behind.
             // Not on every frame: for Hyprland each capture costs reading the screen
             // back from the card, and at 60 per second that was 14 points of a core.
