@@ -1,0 +1,16 @@
+// expect: ok
+// A colour from three numbers: facts, a property, a sum. It is how the logic hands the scene a colour that did not exist when the scene was read.
+scene ColorRgb {
+    surface { size: 100, 100 }
+    fact tint_r = 0.9
+    fact tint_g = 0.5
+    fact tint_b = 0.1
+    let tint = rgb(tint_r, tint_g, tint_b)
+    let dim = mix(rgb(tint_r, 0.2, 0.3), #000000, 0.5)
+    ellipse { at: 50, 50; radius: 10; color: tint }
+    box { at: 50, 80; size: 40, 10; color: dim }
+    body {
+        color: rgb(tint_r * 0.5, 1 - tint_g, 0.25)
+        box { at: 50, 20; size: 40, 10 }
+    }
+}

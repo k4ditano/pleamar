@@ -1328,6 +1328,8 @@ impl<'a> Compiler<'a> {
                     None => x.un(Un::Noise),
                 }
             }
+            // A colour, not a number: it is read where a colour is wanted (see `color`).
+            "rgb" => return Err(CompileError::at(l, col, "`rgb(r, g, b)` makes a colour, not a number: it goes where a colour does, `color: rgb(r, g, b)` or `let tint = rgb(r, g, b)`")),
             other => unreachable!("'{other}' is in the vocabulary, but `function` cannot compute it"),
         })
     }
@@ -1365,6 +1367,20 @@ impl<'a> Compiler<'a> {
                 let [b0, b1, b2] = b;
                 Ok([a0.mix(b0, t.clone()), a1.mix(b1, t.clone()), a2.mix(b2, t)])
             }
+            // `rgb(r, g, b)`: a colour from three numbers, 0 to 1 each, which can be anything that is
+            // a number: a fact, a property, a sum. It is how the logic gives the scene a colour (a
+            // palette taken from a wallpaper) without writing a file for the scene to reload.
+            Some(TokenKind::Id(m)) if m == "rgb" && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => {
+                c.i += 1;
+                c.expect_sym("(")?;
+                let r = self.expr(c)?;
+                c.expect_sym(",")?;
+                let g = self.expr(c)?;
+                c.expect_sym(",")?;
+                let b = self.expr(c)?;
+                c.expect_sym(")")?;
+                Ok([r, g, b])
+            }
             // `pick(i, #a, #b, #c)`: the one at place i, channel by channel.
             Some(TokenKind::Id(m)) if m == "pick" => {
                 c.i += 1;
@@ -1395,7 +1411,7 @@ impl<'a> Compiler<'a> {
                 let [b0, b1, b2] = b;
                 Ok([b0.mix(a0, cond.clone()), b1.mix(a1, cond.clone()), b2.mix(a2, cond)])
             }
-            _ => c.error("expected a colour here: #151616, the name of one, mix(#a, #b, how much) or if(condition, #a, #b)"),
+            _ => c.error("expected a colour here: #151616, the name of one, mix(#a, #b, how much), if(condition, #a, #b) or rgb(r, g, b)"),
         }
     }
 
@@ -1874,6 +1890,7 @@ impl<'a> Compiler<'a> {
                         }
                         match c.tokens.get(k).map(|x| &x.kind) {
                             Some(TokenKind::Color(_)) => true,
+                            Some(TokenKind::Id(n)) if n == "rgb" && matches!(c.tokens.get(k + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => true,
                             Some(TokenKind::Id(n)) => self.colors.contains_key(n) || self.scopes.iter().any(|e| e.colors.contains_key(n)),
                             _ => false,
                         }
@@ -4028,6 +4045,9 @@ impl<'a> Compiler<'a> {
                 env.colors.insert(p.clone(), self.color(c)?);
             }
             Some(TokenKind::Id(x)) if x == "mix" && matches!(c.tokens.get(c.i + 2).map(|y| &y.kind), Some(TokenKind::Color(_))) => {
+                env.colors.insert(p.clone(), self.color(c)?);
+            }
+            Some(TokenKind::Id(x)) if x == "rgb" && matches!(c.tokens.get(c.i + 1).map(|y| &y.kind), Some(TokenKind::Sym("("))) => {
                 env.colors.insert(p.clone(), self.color(c)?);
             }
             Some(TokenKind::Id(x)) if alone && (self.colors.contains_key(x) || self.scopes.iter().any(|e| e.colors.contains_key(x))) => {
