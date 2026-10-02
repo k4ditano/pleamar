@@ -357,6 +357,11 @@ impl PlatformWindow for WaylandWindow {
             return false;
         }
         let Some((output, (x, y))) = d.output_and_position() else { return false };
+        // A monitor that went away (sleep, unplugged) leaves its handle behind, and asking
+        // the compositor to photograph it is a fatal protocol error ("invalid output").
+        if !output.is_alive() || !OUTPUTS.lock().unwrap().values().any(|o| o == &output) {
+            return false;
+        }
         if d.in_flight.swap(true, Ordering::Relaxed) {
             return false;
         }
@@ -631,6 +636,7 @@ impl State {
     }
 
     fn remove_from(&mut self, output: &wl_output::WlOutput) {
+        OUTPUTS.lock().unwrap().retain(|_, o| o != output);
         if let Some(c) = LOCKS.get() {
             c.monitors.lock().unwrap().retain(|(s, _, _)| s != output);
         }
