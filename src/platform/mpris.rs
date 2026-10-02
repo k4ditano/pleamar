@@ -1,8 +1,10 @@
 //! What is playing, through MPRIS: the D-Bus agreement that players and browsers
 //! follow on Linux. On Windows it will be SMTC; on macOS, MediaRemote.
 //!
-//! `{ playing, title, artist, album, length, position, rate, art, player }`. If there are several, the one
-//! that is playing is reported; if none is playing, the first. With no players, `player = ""`.
+//! `{ playing, title, artist, album, length, position, rate, art, player, players }`. If there are
+//! several, the one chosen with `media.choose` is reported, while it is there; otherwise the one
+//! that is playing, or if none is, the first. With no players, `player = ""`. `players` is all of
+//! them, `{ id, name, playing, chosen }`, to choose from.
 //!
 //! MPRIS does not signal `Position` as it moves, so it is read whenever something
 //! else is reported, and on `Seeked`. Between reports the scene carries it on with
@@ -10,6 +12,8 @@
 
 use super::SysValue;
 use std::collections::HashMap;
+use std::sync::mpsc::Sender;
+use std::sync::Mutex;
 use zbus::blocking::{fdo::DBusProxy, Connection, MessageIterator, Proxy};
 use zbus::zvariant::OwnedValue;
 use zbus::MatchRule;
@@ -17,6 +21,16 @@ use zbus::MatchRule;
 const PREFIX: &str = "org.mpris.MediaPlayer2.";
 const PATH: &str = "/org/mpris/MediaPlayer2";
 const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
+
+/// The player `media.choose` pinned, by its bus name without the prefix; "" is none. It is the
+/// process's, like the default output is the system's: every scene reports the same one.
+static CHOSEN: Mutex<String> = Mutex::new(String::new());
+/// The running services, to report again at once when the choice changes.
+static WAKE: Mutex<Vec<Sender<()>>> = Mutex::new(Vec::new());
+
+fn chosen() -> String {
+    CHOSEN.lock().map(|c| c.clone()).unwrap_or_default()
+}
 
 fn players(c: &Connection) -> Vec<String> {
     let Ok(bus) = DBusProxy::new(c) else { return Vec::new() };
@@ -29,16 +43,42 @@ fn player(c: &Connection, name: &str) -> Option<Proxy<'static>> {
     Proxy::new(c, name.to_owned(), PATH, PLAYER).ok()
 }
 
-/// The one that is playing, or the first.
+fn is_playing(p: &Proxy) -> bool {
+    p.get_property::<String>("PlaybackStatus").is_ok_and(|s| s == "Playing")
+}
+
+/// The chosen one if it is there; otherwise the one that is playing, or the first.
 fn active_player(c: &Connection) -> Option<(String, Proxy<'static>, bool)> {
+    let pinned = chosen();
+    let names = players(c);
+    if !pinned.is_empty() {
+        if let Some(n) = names.iter().find(|n| n.strip_prefix(PREFIX) == Some(pinned.as_str())) {
+            if let Some(p) = player(c, n) {
+                let playing = is_playing(&p);
+                return Some((n.clone(), p, playing));
+            }
+        }
+    }
     let mut first = None;
-    for n in players(c) {
+    for n in names {
         let Some(p) = player(c, &n) else { continue };
-        let playing = p.get_property::<String>("PlaybackStatus").is_ok_and(|s| s == "Playing");
-        if playing { return Some((n, p, true)) }
+        if is_playing(&p) { return Some((n, p, true)) }
         first.get_or_insert((n, p, false));
     }
     first
+}
+
+/// Every player, to choose from: `id` is what `media.choose` takes, `name` what the player
+/// calls itself (`Identity`), which tells two of the same program apart where `player` cannot
+/// —two phones through KDE Connect are both `kdeconnect`—.
+fn all_players(c: &Connection) -> SysValue {
+    let pinned = chosen();
+    SysValue::List(players(c).into_iter().map(|n| {
+        let id = n.trim_start_matches(PREFIX).to_owned();
+        let name = Proxy::new(c, n.clone(), PATH, "org.mpris.MediaPlayer2").ok().and_then(|r| r.get_property::<String>("Identity").ok()).unwrap_or_else(|| id.clone());
+        let playing = player(c, &n).is_some_and(|p| is_playing(&p));
+        SysValue::Map(vec![("id".into(), SysValue::Text(id.clone())), ("name".into(), SysValue::Text(name)), ("playing".into(), SysValue::Bool(playing)), ("chosen".into(), SysValue::Bool(id == pinned))])
+    }).collect())
 }
 
 fn text(v: &OwnedValue) -> String {
@@ -62,7 +102,7 @@ fn position(p: &Proxy) -> f64 {
 fn now(c: &Connection) -> SysValue {
     let field = |k: &str, v: SysValue| (k.to_owned(), v);
     let Some((name, p, playing)) = active_player(c) else {
-        return SysValue::Map(vec![field("playing", SysValue::Bool(false)), field("title", SysValue::Text(String::new())), field("artist", SysValue::Text(String::new())), field("album", SysValue::Text(String::new())), field("length", SysValue::Num(0.0)), field("position", SysValue::Num(0.0)), field("rate", SysValue::Num(1.0)), field("art", SysValue::Text(String::new())), field("player", SysValue::Text(String::new()))]);
+        return SysValue::Map(vec![field("playing", SysValue::Bool(false)), field("title", SysValue::Text(String::new())), field("artist", SysValue::Text(String::new())), field("album", SysValue::Text(String::new())), field("length", SysValue::Num(0.0)), field("position", SysValue::Num(0.0)), field("rate", SysValue::Num(1.0)), field("art", SysValue::Text(String::new())), field("player", SysValue::Text(String::new())), field("players", SysValue::List(Vec::new()))]);
     };
     let metadata: HashMap<String, OwnedValue> = p.get_property("Metadata").unwrap_or_default();
     let from_metadata = |k: &str| SysValue::Text(metadata.get(k).map(text).unwrap_or_default());
@@ -77,6 +117,7 @@ fn now(c: &Connection) -> SysValue {
         field("rate", SysValue::Num(p.get_property::<f64>("Rate").unwrap_or(1.0))),
         field("art", from_metadata("mpris:artUrl")),
         field("player", SysValue::Text(name.trim_start_matches(PREFIX).split('.').next().unwrap_or_default().to_owned())),
+        field("players", all_players(c)),
     ])
 }
 
@@ -99,6 +140,7 @@ pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
             MatchRule::builder().msg_type(zbus::message::Type::Signal).interface("org.freedesktop.DBus").and_then(|b| b.member("NameOwnerChanged")).and_then(|b| b.arg0ns(PREFIX.trim_end_matches('.'))).map(|b| b.build()),
         ];
         let (tx, rx) = std::sync::mpsc::channel::<()>();
+        if let Ok(mut w) = WAKE.lock() { w.push(tx.clone()) }
         for rule in rules.into_iter().flatten() {
             let (c, tx) = (c.clone(), tx.clone());
             std::thread::spawn(move || {
@@ -117,12 +159,21 @@ pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
 }
 
 /// `media.toggle`, `media.next`, `media.previous`: to the one `now` is reporting.
-pub fn command(what: &str, _: &[SysValue]) -> Result<(), String> {
-    let method = match what {
-        "media.toggle" => "PlayPause",
-        "media.next" => "Next",
-        "media.previous" => "Previous",
-        _ => return Err(format!("'{what}' does not exist: media.toggle, media.next, media.previous")),
+/// `media.choose(id)`: report that one, and command it, while it is there; `""` goes back to
+/// whichever is playing.
+pub fn command(what: &str, args: &[SysValue]) -> Result<(), String> {
+    let method = match (what, args) {
+        ("media.toggle", _) => "PlayPause",
+        ("media.next", _) => "Next",
+        ("media.previous", _) => "Previous",
+        ("media.choose", [SysValue::Text(id)]) => {
+            if let Ok(mut c) = CHOSEN.lock() { c.clone_from(id) }
+            // A service whose thread has gone is dropped here.
+            if let Ok(mut w) = WAKE.lock() { w.retain(|tx| tx.send(()).is_ok()) }
+            return Ok(());
+        }
+        ("media.choose", _) => return Err("media.choose takes the `id` of one of `players`, or \"\" to let it choose".into()),
+        _ => return Err(format!("'{what}' does not exist: media.toggle, media.next, media.previous, media.choose(id)")),
     };
     let c = Connection::session().map_err(|e| e.to_string())?;
     let (_, p, _) = active_player(&c).ok_or("there is no player open")?;

@@ -337,6 +337,7 @@ service tray { list: icons }
 | `network` | `networks`: `{ ssid, strength, secure, known, active }`, the strongest first |
 | `bluetooth` | `devices`: `{ name, address, paired, connected, battery, icon }` |
 | `audio` | `outputs` · `inputs`: `{ id, name, default }` |
+| `media` | `players`: `{ id, name, playing, chosen }`, by bus name |
 | `window` | `list`: `{ id, title, class, monitor, active, minimized }` (compositors with wlr-foreign-toplevel) |
 | `workspaces` | `list`: `{ id, name, windows, monitor, active }` |
 | `apps` | `list`: `{ name, exec, icon, id, wmclass }` |
@@ -351,6 +352,13 @@ out. `nets.count` is how many fit, `nets.total` how many came.
 `{ id, name, default }`. `sys.call("audio.default", id)` switches to one, and the
 report comes back with the new `default` set. A desktop sound panel needs this:
 without it only the volume of whatever was already there can be moved.
+
+**Which player.** `media` reports one player: the one playing, or the first.
+`players`, above, is all of them, and `name` is what each calls itself, which
+tells two phones through KDE Connect apart where `player` cannot.
+`sys.call("media.choose", id)` pins one: it is reported, and `media.toggle`,
+`next` and `previous` go to it, while it is there; `sys.call("media.choose", "")`
+goes back to whichever is playing. The choice is the process's, not the scene's.
 
 **Saying goodbye.** `session` is commands only —it reports nothing— and it is
 what a desktop needs to close itself: `sys.call("session.lock")`, `"suspend"`,
@@ -1430,7 +1438,7 @@ services.battery: present percent charging
 services.brightness: present level
 services.network: online kind name strength wifi networks
 services.bluetooth: present powered discovering devices
-services.media: playing title artist album length position rate art player
+services.media: playing title artist album length position rate art player players
 services.window: title class monitor list
 services.thumbnails: list capturing
 services.workspaces: active list

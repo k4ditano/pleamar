@@ -5,7 +5,7 @@ language 0.1
 // that are only a list.
 scene ServiceLists {
     surface { size: 300, 200 }
-    permissions { services: "network", "bluetooth", "audio", "window", "workspaces", "apps", "tray", "notifications", "notification_history" }
+    permissions { services: "network", "bluetooth", "audio", "window", "workspaces", "apps", "tray", "notifications", "notification_history", "media" }
 
     model nets max 12 { ssid: text; strength: number; secure: bool; known: bool; active: bool }
     model gadgets max 8 { name: text; address: text; connected: bool; battery: number = -1 }
@@ -17,6 +17,7 @@ scene ServiceLists {
     model icons max 12 { key: text; title: text; icon: image 18, 18 }
     model notices max 14 { app: text; title: text; body: text; image: image 32, 32; time: number }
     model missed max 20 { app: text; title: text }
+    model choices max 8 { id: text; name: text; playing: bool; chosen: bool }
 
     service network as net { online: bool; networks: nets }
     service bluetooth as bt { powered: bool; devices: gadgets }
@@ -27,6 +28,7 @@ scene ServiceLists {
     service tray { list: icons }
     service notifications { list: notices }
     service notification_history { list: missed }
+    service media as song { players: choices }
 
     for n in nets { text n.ssid { at: 10, 40; size: 12; color: #fff } }
 }
