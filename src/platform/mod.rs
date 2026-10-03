@@ -16,12 +16,12 @@
 //! system doesn't have, it says it doesn't have, and the scene decides what to do without it.
 
 use crate::scene::{Surface, ToRender};
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use std::sync::mpsc::Sender;
 
 /// A piece of system data, shaped like JSON: it's what a service tells
 /// the logic, which receives it as a table.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SysValue {
     Null,
     Bool(bool),
@@ -66,7 +66,9 @@ struct Hub {
 static HUBS: std::sync::Mutex<Vec<((String, String, String), std::sync::Arc<std::sync::Mutex<Hub>>)>> = std::sync::Mutex::new(Vec::new());
 
 pub fn service(from: &str, name: &str, tag: &str, notify: Box<dyn Fn(SysValue) + Send>) -> bool {
-    // (Read once and done, in a thread that ends: nothing is left behind.)
+    // Linux reads apps once. Windows keeps its catalog current, so it also
+    // needs listener replacement when a plugin is removed and added again.
+    #[cfg(not(target_os = "windows"))]
     if name == "apps" {
         return start_service(from, name, notify);
     }
@@ -97,6 +99,9 @@ pub fn service(from: &str, name: &str, tag: &str, notify: Box<dyn Fn(SysValue) +
     started
 }
 
+#[cfg(test)]
+mod service_tests;
+
 fn start_service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -> bool {
     // The time, without calling anyone.
     if name == "clock" || name == "clock.seconds" {
@@ -106,6 +111,8 @@ fn start_service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -
     if let Some(which) = name.strip_prefix("files:") {
         return files::watch(from, which, notify);
     }
+    #[cfg(target_os = "windows")]
+    { return windows_system::service(name, notify); }
     #[cfg(target_os = "linux")]
     if name == "apps" {
         // Reading hundreds of files is not a matter of an instant: in its own thread.
@@ -140,8 +147,8 @@ fn start_service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -
     if matches!(name, "window" | "workspaces") {
         return compositor::service(name, notify);
     }
-    let _ = (name, notify);
-    false
+    #[cfg(not(target_os = "windows"))]
+    { let _ = (name, notify); false }
 }
 
 /// Ask a service to do something: `workspaces.focus`, 3.
@@ -150,8 +157,13 @@ pub fn command(from: &str, name: &str, args: &[SysValue]) -> Result<(), String> 
         return files::command(from, name, args);
     }
     if let ("clipboard.set", [SysValue::Text(t)]) = (name, args) {
+        #[cfg(target_os = "windows")]
+        return arboard::Clipboard::new().and_then(|mut c| c.set_text(t)).map_err(|e| e.to_string());
+        #[cfg(not(target_os = "windows"))]
+        {
         clipboard_write(t);
         return Ok(());
+        }
     }
     #[cfg(target_os = "linux")]
     if let ("apps.launch", [SysValue::Text(o)]) = (name, args) {
@@ -201,8 +213,10 @@ pub fn command(from: &str, name: &str, args: &[SysValue]) -> Result<(), String> 
     if name.starts_with("workspaces.") || name.starts_with("window.") {
         return compositor::command(name, args);
     }
-    let _ = args;
-    Err(format!("this system cannot do '{name}' yet"))
+    #[cfg(target_os = "windows")]
+    return windows_system::command(name, args);
+    #[cfg(not(target_os = "windows"))]
+    { let _ = args; Err(format!("this system cannot do '{name}' yet")) }
 }
 
 /// Where pleamar keeps what it has to remember from one run to the next —which
@@ -244,8 +258,10 @@ pub fn query(from: &str, name: &str, args: &[SysValue]) -> Result<SysValue, Stri
     if name.starts_with("tray.") {
         return tray::query(name, args);
     }
-    let _ = args;
-    Err(format!("this system cannot answer '{name}' yet"))
+    #[cfg(target_os = "windows")]
+    return windows_system::query(name, args);
+    #[cfg(not(target_os = "windows"))]
+    { let _ = args; Err(format!("this system cannot answer '{name}' yet")) }
 }
 
 /// Opens or closes the scene's popup number `k`: a child surface of the
@@ -258,6 +274,8 @@ pub fn query(from: &str, name: &str, args: &[SysValue]) -> Result<SysValue, Stri
 pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
     #[cfg(target_os = "linux")]
     wayland::popup(k, what);
+    #[cfg(target_os = "windows")]
+    windows::popup(k, what);
     let _ = (k, what);
 }
 
@@ -286,6 +304,8 @@ pub fn relayer(which: usize, level: crate::scene::Level) {
     }
     #[cfg(target_os = "linux")]
     wayland::relayer(which, level);
+    #[cfg(target_os = "windows")]
+    windows::relayer(which, level);
     let _ = (which, level);
 }
 
@@ -293,12 +313,14 @@ pub fn relayer(which: usize, level: crate::scene::Level) {
 /// Something dragged out of the scene (a zone with `carries:`), from the
 /// press that began it: whether a drag could start.
 pub fn start_drag(text: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    { return windows::start_drag(text); }
     #[cfg(target_os = "linux")]
     if LAYER_HOOKS.get().is_none() {
         return wayland::start_drag(text);
     }
-    let _ = text;
-    false
+    #[cfg(not(target_os = "windows"))]
+    { let _ = text; false }
 }
 
 /// What a text dragged out offers, kind by kind. Addresses —a file's path, a
@@ -333,6 +355,8 @@ pub fn rezone(which: usize, zone: i32) {
     }
     #[cfg(target_os = "linux")]
     wayland::rezone(which, zone);
+    #[cfg(target_os = "windows")]
+    windows::rezone(which, zone);
     let _ = (which, zone);
 }
 
@@ -342,6 +366,8 @@ pub fn reanchor(which: usize, anchor: crate::scene::SurfaceAnchor) {
     }
     #[cfg(target_os = "linux")]
     wayland::reanchor(which, anchor);
+    #[cfg(target_os = "windows")]
+    windows::reanchor(which, anchor);
     let _ = (which, anchor);
 }
 
@@ -359,8 +385,14 @@ pub fn provide_layer_hooks(h: LayerHooks) {
 }
 
 /// That a process we launch does not outlive us, not even if we're killed
-/// forcibly. On Linux we ask the kernel; on Windows it will be a Job Object.
+/// forcibly. Linux requests a death signal; Windows children inherit our Job
+/// Object. Suppress a console window for helpers, not their GUI windows.
 pub fn die_with_parent(command: &mut std::process::Command) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(::windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+    }
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::process::CommandExt;
@@ -449,7 +481,7 @@ pub fn running_scenes() -> Vec<String> {
     });
     alive
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, target_os = "windows")))]
 pub fn running_scenes() -> Vec<String> {
     Vec::new()
 }
@@ -467,7 +499,7 @@ pub fn ask(scene: &str, command: &str, wait: std::time::Duration) -> Result<Stri
     let _ = std::io::Read::read_to_string(&mut s, &mut answer);
     Ok(answer)
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, target_os = "windows")))]
 pub fn ask(_: &str, _: &str, _: std::time::Duration) -> Result<String, String> {
     Err("this system has nowhere to receive commands yet".into())
 }
@@ -501,9 +533,9 @@ pub fn send(scene: Option<&str>, command: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, target_os = "windows")))]
 pub fn listen_for_commands(_: &str, _: Box<dyn Fn(String) -> Option<String> + Send>) {}
-#[cfg(not(unix))]
+#[cfg(not(any(unix, target_os = "windows")))]
 pub fn send(_: Option<&str>, _: &str) -> Result<(), String> {
     Err("this system has nowhere to receive commands yet: the named pipe is missing".into())
 }
@@ -515,6 +547,14 @@ pub fn clipboard_read() -> Option<String> {
 }
 
 pub fn clipboard_write(text: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_text(text)) {
+            eprintln!("clipboard · {e}");
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
     // On Wayland whoever copies has to stay alive to serve what was copied: a
     // thread that holds on to it until someone else copies something else.
     let text = text.to_owned();
@@ -529,14 +569,23 @@ pub fn clipboard_write(text: &str) {
             let _ = c.set_text(text);
         }
     });
+    }
+}
+
+/// Windows captures Ctrl+V before the render queue; Wayland's typed value is
+/// key text, not a clipboard snapshot, and keeps its existing clipboard path.
+pub fn clipboard_for_paste(typed: Option<&str>) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    if let Some(text) = typed { return Some(text.to_owned()); }
+    let _ = typed;
+    clipboard_read()
 }
 
 /// Give back to the system the memory that was used to read a scene. Compiling
 /// Marea (3 700 instructions) goes through 128 MB for a moment to settle at 9,
 /// and glibc keeps what was freed in each thread's arenas: the process
 /// stayed at 355 MB of RSS forever. It's done a while later, when the
-/// workshop and the logic have already done their thing with it. On other systems, or with
-/// another libc, it's not needed or we don't know how to ask: it does nothing.
+/// workshop and the logic have already done their thing with it.
 pub fn release_memory() {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     std::thread::Builder::new()
@@ -561,6 +610,9 @@ pub trait PlatformWindow: Send {
     /// That the system report (`ToRender::Frame`) when it wants the frame after
     /// the one about to be presented. Where that's unknown, it doesn't report, and the clock sets the pace.
     fn request_frame(&self) {}
+    /// Keep the existing callback contract for embedding backends. A backend
+    /// without callbacks must opt out so the renderer uses its timer instead.
+    fn has_frame_callbacks(&self) -> bool { true }
     /// What the system blurs behind the window: rectangles in logical
     /// pixels, those of its glass. Empty, nothing. Where it can't be asked for, it does nothing.
     fn update_blur_region(&self, _boxes: &[[i32; 4]]) {}
@@ -604,8 +656,8 @@ pub static CURSOR_WANTED: std::sync::atomic::AtomicBool = std::sync::atomic::Ato
 /// Where the mouse is when it is not over us. Wayland does not tell a surface
 /// that —on purpose—, so it is asked of whoever knows: Hyprland, through its
 /// socket, about thirty times a second and only while a scene wants it. It
-/// reaches the render as `ToRender::Cursor` when it moves. Elsewhere nothing
-/// arrives, and `cursor.x` is only known over the scene, like `pointer.x`.
+/// reaches the render as `ToRender::Cursor` when it moves. Windows supplies it
+/// from its native event loop. Other backends only know it over the scene.
 pub fn watch_cursor(to_render: std::sync::mpsc::Sender<crate::scene::ToRender>) {
     #[cfg(target_os = "linux")]
     if hyprland::is_present() && std::env::var_os("PLEAMAR_GENERIC").is_none() {
@@ -694,6 +746,7 @@ pub fn json_decode(text: &str) -> Result<SysValue, String> {
 pub fn json_encode(v: &SysValue) -> String {
     files::to_json(v).to_string()
 }
+pub(crate) mod paths;
 mod clock;
 #[cfg(target_os = "linux")]
 mod desktop;
@@ -714,9 +767,125 @@ mod wayland;
 #[cfg(target_os = "linux")]
 pub use wayland::run_event_loop;
 
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use windows::run_event_loop;
+
+pub fn graphics_instance(flags: wgpu::InstanceFlags) -> wgpu::Instance {
+    let descriptor = wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, flags, ..wgpu::InstanceDescriptor::new_without_display_handle() };
+    #[cfg(target_os = "windows")]
+    let descriptor = {
+        let mut d = descriptor;
+        // HWND swapchains are opaque; DirectComposition supplies premultiplied alpha.
+        d.backends = wgpu::Backends::DX12;
+        d.backend_options.dx12.presentation_system = wgpu::Dx12SwapchainKind::DxgiFromVisual;
+        d
+    };
+    wgpu::Instance::new(descriptor)
+}
+
+#[cfg(target_os = "windows")]
+mod windows_ipc;
+#[cfg(target_os = "windows")]
+mod windows_system;
+#[cfg(target_os = "windows")]
+mod windows_tray;
+#[cfg(target_os = "windows")]
+mod windows_tray_actions;
+#[cfg(target_os = "windows")]
+mod windows_notifications;
+#[cfg(target_os = "windows")]
+mod windows_toasts;
+#[cfg(target_os = "windows")]
+pub(crate) use windows_toasts::register_shortcut as register_notification_shortcut;
+#[cfg(target_os = "windows")]
+mod windows_windows;
+#[cfg(target_os = "windows")]
+mod windows_search;
+#[cfg(target_os = "windows")]
+mod windows_hotkeys;
+#[cfg(target_os = "windows")]
+mod windows_wallpaper;
+#[cfg(target_os = "windows")]
+mod windows_audio;
+#[cfg(target_os = "windows")]
+mod windows_wifi;
+#[cfg(target_os = "windows")]
+mod windows_bluetooth;
+#[cfg(target_os = "windows")]
+mod windows_brightness;
+#[cfg(target_os = "windows")]
+mod windows_brightness_wmi;
+#[cfg(target_os = "windows")]
+mod windows_backdrop;
+#[cfg(target_os = "windows")]
+mod windows_capture;
+#[cfg(target_os = "windows")]
+mod windows_recording;
+#[cfg(target_os = "windows")]
+pub(crate) use windows_recording::shutdown as finish_recordings;
+#[cfg(target_os = "windows")]
+pub(crate) use windows_capture::set_service_lifetime;
+#[cfg(target_os = "windows")]
+mod windows_media;
+#[cfg(target_os = "windows")]
+mod windows_shell;
+#[cfg(target_os = "windows")]
+pub use windows_ipc::{ask, listen_for_commands, running_scenes, send};
+
+#[cfg(target_os = "windows")]
+pub(crate) mod windows_diagnostics;
+
+pub fn prepare_runtime() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    windows_system::contain_children()?;
+    Ok(())
+}
+
+/// An explicitly authored autostart command uses the host's shell.
+pub fn shell_command(line: &str) -> std::process::Command {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        let mut command = std::process::Command::new(std::path::PathBuf::from(root).join("System32/WindowsPowerShell/v1.0/powershell.exe"));
+        command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", line]);
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW: autostart needs no terminal.
+        command
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", line]);
+        command
+    }
+}
+
+pub fn signal_child(child: &std::process::Child, signal: &str) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let signal = if signal == "int" { libc::SIGINT } else { libc::SIGTERM };
+        if unsafe { libc::kill(child.id() as libc::pid_t, signal) } != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    { let _ = child; Err(format!("this system cannot send '{signal}'; kill(id) terminates the process")) }
+}
+
+/// Windows must release AppBars and HWNDs on their owning thread before exit.
+pub fn request_quit() -> bool {
+    #[cfg(target_os = "windows")]
+    { windows::request_quit(); return true; }
+    #[cfg(not(target_os = "windows"))]
+    false
+}
+
 /// No platform yet: the core compiles —it's the guard that it stays
 /// portable— but there's nowhere to paint.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn run_event_loop(_: Vec<Surface>, _: u32, _: wgpu::Instance, _: Sender<ToRender>) {
     eprintln!("pleamar cannot put windows on this system yet: its src/platform/ is missing");
     std::process::exit(1);
@@ -725,7 +894,9 @@ pub fn run_event_loop(_: Vec<Surface>, _: u32, _: wgpu::Instance, _: Sender<ToRe
 /// Where an icon's file is, by its name.
 #[cfg(target_os = "linux")]
 pub use wayland::icon;
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+pub use windows_shell::icon;
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn icon(_: &str) -> Option<std::path::PathBuf> {
     None
 }

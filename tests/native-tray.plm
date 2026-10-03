@@ -1,0 +1,21 @@
+// expect: ok
+// Start `cargo run --example tray-fixture` before this interactive probe.
+scene NativeTray {
+    permissions { services: "tray", "tray.*" }
+    surface { kind: window; title: "pleamar tray validation"; size: 620, 300; keyboard: on_demand }
+    fact present = false
+    fact count = 0
+    fact ticks = 0
+    text status = "Waiting for the owned tray fixture"
+    event activate ->
+    event context ->
+    box { from: 0, 0; size: screen.width, screen.height; color: #142224 }
+    text "Native tray · {count} live icons · ticks {ticks}" { at: 24, 24; size: 21; color: #ffffff }
+    box activate_button { from: 24, 82; size: 240, 52; corner: 10; color: #80dcc2 }
+    text "Activate test icon" { at: 40, 99; size: 18; color: #142224 }
+    box context_button { from: 290, 82; size: 300, 52; corner: 10; color: #80dcc2 }
+    text "Open test icon menu" { at: 304, 99; size: 18; color: #142224 }
+    text "{status}" { at: 24, 161; width: 565; lines: 5; size: 16; color: #ffffff }
+    on press activate_button { emit activate }
+    on press context_button { emit context }
+}

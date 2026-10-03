@@ -1,0 +1,13 @@
+// expect: ok
+scene NativePanels {
+    surface { size: 520, 340; kind: window; title: "pleamar panel validation" }
+    fact clicks = 0
+    box background { from: 0, 0; size: screen.width, screen.height; color: #351f4f }
+    text "Background window · {clicks}" { at: 20, 20; size: 22; color: #ffffff }
+    on press background { clicks = clicks + 1 }
+    surface overlay { size: 360, 210; anchor: center; level: overlay
+        box button { from: 0, 0; size: 180, 210; color: #328469 }
+        text "Panel · {clicks}" { at: 20, 30; size: 22; color: #ffffff }
+        on press button { clicks = clicks + 1 }
+    }
+}

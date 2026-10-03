@@ -10,6 +10,10 @@ mod figure;
 mod tokens;
 mod tree;
 pub mod vocabulary;
+#[cfg(test)]
+mod viewport_tests;
+#[cfg(test)]
+mod surface_tests;
 
 use crate::scene::Scene;
 use std::path::{Path, PathBuf};

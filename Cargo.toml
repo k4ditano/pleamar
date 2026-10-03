@@ -7,14 +7,14 @@ description = "A desktop shell language and runtime where animation does not dep
 repository = "https://github.com/k4ditano/pleamar"
 
 [dependencies]
-arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
+arboard = { version = "3.6.1", default-features = false }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 cosmic-text = { version = "0.19.0", default-features = false, features = ["std", "swash"] }
 # The scenes' own shaders are read and checked with the same compiler wgpu
 # uses, already in the tree: a mistake is reported with its line, never a crash.
 naga = { version = "30", features = ["wgsl-in"] }
-image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
 mlua = { version = "0.12", features = ["luau", "send"], optional = true }
 pollster = "1.0.1"
 resvg = { version = "0.48.1", default-features = false }
@@ -24,6 +24,7 @@ wgpu = "30"
 
 # What belongs to each system, only on that system. The core depends on none of this.
 [target.'cfg(target_os = "linux")'.dependencies]
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 libc = "0.2"
 zbus = "5"
 # Sound, spoken to directly: PulseAudio's protocol, which PipeWire speaks too
@@ -42,9 +43,43 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # on Windows and macOS, fontdb reads the font folders directly.
 cosmic-text = { version = "0.19.0", default-features = false, features = ["fontconfig"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+arboard = { version = "3.6.1", default-features = false, features = ["image-data"] }
+raw-window-handle = "0.6"
+windows-core = "0.62"
+windows-collections = "0.3"
+windows = { version = "0.62", features = [
+    "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_JobObjects",
+    "Win32_System_Pipes", "Win32_Storage_Packaging_Appx", "Win32_Storage_FileSystem", "Win32_Security",
+    "Win32_System_IO", "Win32_System_Power", "Win32_System_Console",
+    "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant",
+    "Win32_System_Wmi", "Win32_System_Ole", "Win32_System_Rpc",
+    "Win32_System_Memory", "Win32_System_SystemServices", "Win32_UI_Shell_Common",
+    "Win32_System_ProcessStatus", "Win32_System_SystemInformation",
+    "Win32_System_WinRT", "Win32_System_Shutdown", "Win32_Media_Audio", "Win32_Media_Audio_Endpoints",
+    "Win32_Devices_FunctionDiscovery", "Win32_UI_Shell_PropertiesSystem",
+    "Media_Control", "Networking_Connectivity", "Foundation_Collections",
+    "Win32_NetworkManagement_WiFi", "Win32_NetworkManagement_Ndis", "Win32_Devices_Bluetooth", "Devices_Radios",
+    "Devices_Bluetooth", "Devices_Enumeration",
+    "Win32_Devices_Display",
+    "Win32_Media_KernelStreaming",
+    "Graphics_Capture", "Graphics_DirectX_Direct3D11",
+    "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common",
+    "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture",
+    "Win32_Media_MediaFoundation", "Win32_System_Performance",
+    "UI_Notifications_Management", "ApplicationModel", "Data_Xml_Dom",
+    "Win32_UI_Accessibility", "Win32_System_Registry", "Win32_System_Environment",
+] }
+
 # The Luau logic brings a C++ compiler with it: Luau is built from its
 # sources. It is a feature so that the core can be checked against other
 # systems even without a cross compiler here. See portable.sh.
 [features]
 default = ["luau"]
 luau = ["dep:mlua"]
+
+[[example]]
+name = "luau-test"
+required-features = ["luau"]

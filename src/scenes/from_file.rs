@@ -63,6 +63,18 @@ fn logic_path_for(path: &str) -> String {
     std::path::Path::new(path).with_extension("luau").to_string_lossy().into_owned()
 }
 
+fn publish_reload(scene: Scene, to_render: &Sender<ToRender>, notify_logic: impl FnOnce(Event)) -> bool {
+    let event = Event::NewScene(scene.facts.clone(), scene.texts.clone(), scene.permissions.clone(),
+        scene.models.clone(), scene.types.clone(), scene.plugins.clone(),
+        scene.signals.iter().map(|s| s.0).collect(), scene.services.clone(), scene.translations.clone());
+    // A service can replay its cached values as soon as logic is notified.
+    // Queue their field definitions first, or the render discards those values
+    // and a quiet service may never send the unchanged snapshot again.
+    if to_render.send(ToRender::Scene(scene)).is_err() { return false; }
+    notify_logic(event);
+    true
+}
+
 /// Hot reload: it checks the file's date four times per second —which
 /// works the same on any system— and, if it changed, reads it again. If it is
 /// fine, the new scene replaces the old one without losing what was moving; if not,
@@ -78,6 +90,12 @@ fn logic_path_for(path: &str) -> String {
 /// `PLEAMAR_NO_RELAUNCH=1` turns it off, for whoever does not want updating the
 /// package to restart their bar.
 fn watch_binary() {
+    // Windows locks a running executable. Stop it before replacing it; scene
+    // and Luau reload remain available and do not replace the executable.
+    #[cfg(target_os = "windows")]
+    return;
+    #[cfg(not(target_os = "windows"))]
+    {
     if std::env::var_os("PLEAMAR_NO_RELAUNCH").is_some() || super::STAY_ON_UPDATE.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
@@ -115,6 +133,7 @@ fn watch_binary() {
             std::process::exit(0);
         }
     });
+    }
 }
 
 pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>) {
@@ -194,8 +213,7 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
                         watched = files;
                         watched.extend(e.attachments.iter().cloned());
                         let _ = to_render.send(ToRender::ReloadError(None));
-                        let _ = to_the_logic.send(Event::NewScene(e.facts.clone(), e.texts.clone(), e.permissions.clone(), e.models.clone(), e.types.clone(), e.plugins.clone(), e.signals.iter().map(|s| s.0).collect(), e.services.clone(), e.translations.clone()));
-                        if to_render.send(ToRender::Scene(e)).is_err() {
+                        if !publish_reload(e, &to_render, |event| { let _ = to_the_logic.send(event); }) {
                             return;
                         }
                     }
@@ -213,6 +231,34 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
 #[cfg(test)]
 mod tests {
     use crate::scene::{Rule, Trigger};
+
+    #[test]
+    fn scene_definition_precedes_synchronous_logic_snapshot() {
+        use super::*;
+        let (render, queued) = std::sync::mpsc::channel();
+        let mut scene = Scene::default();
+        scene.facts.push(("now.year", -1.0));
+        scene.texts.push(("now.label", String::new()));
+        // Exercise the fastest possible service replay: before the notifier
+        // returns. Slow or absent rendering must preserve the same ordering.
+        assert!(publish_reload(scene, &render, |event| {
+            assert!(matches!(event, Event::NewScene(..)));
+            render.send(ToRender::Fact("now.year", 2026.0)).unwrap();
+            render.send(ToRender::Text("now.label", "cached snapshot".into())).unwrap();
+        }));
+        let ToRender::Scene(mut current) = queued.recv().unwrap() else {
+            panic!("a service value arrived before its field existed");
+        };
+        for message in queued.try_iter() {
+            match message {
+                ToRender::Fact(name, value) => current.facts.iter_mut().find(|f| f.0 == name).unwrap().1 = value,
+                ToRender::Text(name, value) => current.texts.iter_mut().find(|f| f.0 == name).unwrap().1 = value,
+                _ => panic!("unexpected reload message"),
+            }
+        }
+        assert_eq!(current.facts[0].1, 2026.0);
+        assert_eq!(current.texts[0].1, "cached snapshot");
+    }
 
     /// A zone made in a `repeat` of a scene with one copy per monitor: each copy
     /// has its own, and each copy's rule presses its own. Both used to be one

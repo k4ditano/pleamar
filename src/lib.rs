@@ -58,6 +58,7 @@ const HELP: &str = "pleamar [options]
                       each word means. For any editor that speaks LSP
   --highlight EDITOR  writes the syntax file for 'vim' or 'vscode', made from the vocabulary
   --version           the version of the program and of the language it understands
+  --register-notification-shortcut PATH   Windows: assign toast identity to an existing Start menu .lnk
   --report [SCENES]   measures the scenes running (all of them, or those named) for a while
                       —use the desktop as usual meanwhile— and writes what it saw, with the
                       machine's details, to a file to send us when something stutters.
@@ -70,8 +71,8 @@ const HELP: &str = "pleamar [options]
   --stall MS          how long the logic blocks after every decision (600)
   --naive             the logic blocks the painting thread, as in QtQuick
   --demo              opens and closes by itself, with no mouse
-  --mouse SCRIPT      fake mouse: «360,90@1000 click@2500 down@… up@… wheel+@… out@4000» (ms)
-  --seconds N         exits by itself after N seconds
+  --mouse SCRIPT      fake mouse after the first frame: «360,90@1000 click@2500 down@… up@…» (ms)
+  --seconds N         exits after N seconds (after the first frame with --mouse)
   --margin PX         top margin, instead of the scene\u{2019}s
   --no-hud            without the frame graph
   --record NAMES      prints what those properties, facts or texts are worth on every
@@ -125,6 +126,14 @@ fn args(given: Vec<String>) -> Args {
             "--version" => {
                 println!("pleamar {} · language {}.{}", env!("CARGO_PKG_VERSION"), language::VERSION.0, language::VERSION.1);
                 std::process::exit(0);
+            }
+            #[cfg(target_os = "windows")]
+            "--register-notification-shortcut" => {
+                let path = value();
+                std::process::exit(match platform::register_notification_shortcut(std::path::Path::new(&path)) {
+                    Ok(id) => { println!("Notification publisher registered: {id}"); 0 },
+                    Err(error) => { eprintln!("{error}"); 1 },
+                });
             }
             "--approve" => {
                 let scene = value();
@@ -203,6 +212,10 @@ pub fn run() {
 pub fn run_with(options: Vec<String>) {
     let start_time = std::time::Instant::now();
     let a = args(options);
+    if let Err(e) = platform::prepare_runtime() {
+        eprintln!("platform · cannot contain child processes: {e}");
+        std::process::exit(1);
+    }
     // The agents' skill, written again if this pleamar is not the one it speaks of.
     skill::refresh_quietly();
     let blocked = Arc::new(AtomicBool::new(false));
@@ -256,7 +269,7 @@ pub fn run_with(options: Vec<String>) {
     if std::env::var_os("PLEAMAR_VALIDATE").is_some() {
         flags = wgpu::InstanceFlags::VALIDATION | wgpu::InstanceFlags::DEBUG;
     }
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, flags, ..wgpu::InstanceDescriptor::new_without_display_handle() });
+    let instance = platform::graphics_instance(flags);
     let wanted = scene.surfaces.clone();
 
     println!(
@@ -277,8 +290,12 @@ pub fn run_with(options: Vec<String>) {
         std::thread::Builder::new()
             .name("render".into())
             .spawn(move || {
+                struct Finished;
+                impl Drop for Finished {
+                    fn drop(&mut self) { RENDER_DONE.store(true, std::sync::atomic::Ordering::SeqCst); }
+                }
+                let _finished = Finished;
                 render::run(instance, from_render, letters, to_logic, blocked, op);
-                RENDER_DONE.store(true, std::sync::atomic::Ordering::SeqCst);
             })
             .unwrap()
     };
@@ -333,7 +350,7 @@ pub fn run_with(options: Vec<String>) {
                     let _ = to_logic.send(Event::Submit(scene::intern(who), rest.to_owned()));
                     tx.send(ToRender::Text(scene::intern(who), rest.to_owned()))
                 }
-                "quit" => quit(),
+                "quit" => { if !platform::request_quit() { quit() } Ok(()) },
                 _ => {
                     eprintln!("orders · I don't understand '{line}'");
                     return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, probe, quit", line.trim()));
@@ -346,6 +363,7 @@ pub fn run_with(options: Vec<String>) {
         // To rehearse the zones without taking the mouse away from anyone.
         let tx = to_render.clone();
         std::thread::spawn(move || {
+            if !wait_for_first_frame() { return; }
             let start = std::time::Instant::now();
             for step in steps.split_whitespace() {
                 let (what, when) = step.split_once('@').expect("--mouse: @ms is missing");
@@ -407,8 +425,14 @@ pub fn run_with(options: Vec<String>) {
     }
     if let Some(s) = a.seconds {
         let tx = to_render.clone();
+        let scripted = a.mouse.is_some();
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs_f64(s));
+            // A scripted rehearsal's duration uses the same origin as its
+            // input. GPU startup must not consume the entire test interval.
+            if !scripted || wait_for_first_frame() {
+                std::thread::sleep(Duration::from_secs_f64(s));
+            }
+            if platform::request_quit() { return; }
             // Quitting goes through the render so that it closes its last measurement cycle.
             let _ = tx.send(ToRender::Quit);
             // Until the render has let the card go (a few seconds at most):
@@ -429,7 +453,11 @@ pub fn run_with(options: Vec<String>) {
         None => platform::run_event_loop(wanted, extra_height, instance, to_render.clone()),
     }
     let _ = to_render.send(ToRender::Quit);
-    let _ = render.join();
+    if render.join().is_err() {
+        #[cfg(target_os = "windows")]
+        platform::finish_recordings();
+        std::process::exit(1);
+    }
     quit();
 }
 
@@ -437,6 +465,8 @@ pub fn run_with(options: Vec<String>) {
 /// prototype—, but not without first stopping what the logic left running, nor
 /// what a platform handed over still has working with the card (`provide_before_quit`).
 fn quit() -> ! {
+    #[cfg(target_os = "windows")]
+    platform::finish_recordings();
     if let Some(f) = BEFORE_QUIT.lock().unwrap().take() {
         f();
     }
@@ -447,6 +477,21 @@ fn quit() -> ! {
 
 /// Whether the render has finished: nothing of it touches the card any more.
 static RENDER_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) static FIRST_FRAME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn wait_for_first_frame() -> bool {
+    use std::sync::atomic::Ordering;
+    let started = std::time::Instant::now();
+    while !FIRST_FRAME.load(Ordering::Acquire) {
+        if RENDER_DONE.load(Ordering::Acquire) { return false; }
+        if started.elapsed() > Duration::from_secs(60) {
+            eprintln!("mouse · no first frame within 60 seconds; rehearsal cancelled");
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
 static BEFORE_QUIT: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> = std::sync::Mutex::new(None);
 
 /// What to do right before the process goes away: a platform with threads of
@@ -461,8 +506,13 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
     if let Some(d) = std::env::var_os("PLEAMAR_CONFIG").filter(|v| !v.is_empty()) {
         return Some(d.into());
     }
+    #[cfg(target_os = "windows")]
+    return Some(platform::config_dir());
+    #[cfg(not(target_os = "windows"))]
+    {
     let base = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
     Some(base.join("pleamar"))
+    }
 }
 
 /// `pleamar --autostart`: what `autostart` says, each on its own and let go
@@ -474,8 +524,8 @@ fn autostart() -> i32 {
         return 1;
     };
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("wm:")) {
-        let mut c = std::process::Command::new("sh");
-        c.arg("-c").arg(line).stdin(std::process::Stdio::null());
+        let mut c = platform::shell_command(line);
+        c.stdin(std::process::Stdio::null());
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut c, 0);
         match c.spawn() {

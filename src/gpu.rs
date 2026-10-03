@@ -6,6 +6,9 @@ use crate::platform::PlatformWindow;
 use crate::text::{LayoutKey, AtlasSlot, Texts, ATLAS_SIZE};
 use std::ops::Range;
 
+pub(crate) mod composition;
+use composition::Composition;
+
 const PER_SHAPE: usize = 20;
 const PER_ELEMENT: usize = 60;
 /// How many groups with opacity or effects can be blending in the same frame.
@@ -95,6 +98,16 @@ pub struct DrawList {
     /// a shader that reads the time, an image that moves—: comparing elements
     /// cannot say where the frame changed, so it is painted whole.
     pub timed: bool,
+    scratch: ComposeScratch,
+}
+
+/// Kept by the draw list so animation does not allocate these stacks each frame.
+#[derive(Default)]
+struct ComposeScratch {
+    asleep: Vec<bool>,
+    clips: Vec<(usize, [f32; 4])>,
+    transforms: Vec<Affine>,
+    opacity_groups: Vec<OpacityGroup>,
 }
 
 /// A window of the scene's compositor as the card has it: where the window
@@ -122,6 +135,12 @@ pub struct PreviousFrame {
 }
 
 impl PreviousFrame {
+    fn upload_changes(&self, d: &DrawList) -> [bool; 4] {
+        let different = |a: &[f32], b: &[f32]| !self.valid || bytemuck::cast_slice::<f32, u32>(a) != bytemuck::cast_slice::<f32, u32>(b);
+        [different(&self.shapes, &d.shapes), different(&self.elements, &d.elements),
+            different(&self.points, &d.points), different(&self.stops, &d.stops)]
+    }
+
     /// The boxes —in the scene plane— of what has changed since the previous
     /// frame: the one from before and the one from now, because what leaves a
     /// surface also changes it. `false` if it cannot be known element by
@@ -694,7 +713,17 @@ impl DrawList {
         self.attached_edges = sides;
     }
 
+    pub(crate) fn reset_composition(&mut self) {
+        self.scratch = ComposeScratch::default();
+        self.stops = Vec::new();
+    }
+
     pub fn compose(&mut self, instrs: &[Instr], c: Ctx, texts: &[String], tip: &mut Texts, field: Option<FieldView>, size: (f32, f32), hud: bool) {
+        let composition = Composition::new(instrs, self.order.as_deref());
+        self.compose_prepared(instrs, &composition, c, texts, tip, field, size, hud);
+    }
+
+    pub(crate) fn compose_prepared(&mut self, instrs: &[Instr], composition: &Composition, c: Ctx, texts: &[String], tip: &mut Texts, field: Option<FieldView>, size: (f32, f32), hud: bool) {
         tip.begin_frame();
         self.measurements.clear();
         self.fields.clear();
@@ -703,7 +732,8 @@ impl DrawList {
         self.shapes.clear();
         self.points.clear();
         self.elements.clear();
-        let mut placed_stops: Vec<f32> = Vec::new();
+        let mut placed_stops = std::mem::take(&mut self.stops);
+        placed_stops.clear();
         // A text's effects, waiting for the text they belong to.
         let mut text_fx: Option<&TextFx> = None;
         self.offscreen_groups.clear();
@@ -714,10 +744,11 @@ impl DrawList {
         self.glass_regions.clear();
         self.windows_drawn.clear();
         self.timed = false;
-        let mut clips: Vec<(usize, [f32; 4])> = Vec::new();
+        let ComposeScratch { mut asleep, mut clips, mut transforms, mut opacity_groups } = std::mem::take(&mut self.scratch);
+        clips.clear();
         // Each entry is already the product of all those above it.
-        let mut transforms: Vec<Affine> = Vec::new();
-        let mut opacity_groups: Vec<OpacityGroup> = Vec::new();
+        transforms.clear();
+        opacity_groups.clear();
         let mut body: Option<OpenBody> = None;
         let flatten = |f: &Shape, transforms: &[Affine], pts: &mut Vec<f32>| {
             let mut p = f.flatten_into(c, pts);
@@ -729,45 +760,16 @@ impl DrawList {
 
         // What is not looked at this frame, by instruction; and in which order
         // (groups with `z:` drawn over their siblings as it says).
-        let mut asleep = vec![false; instrs.len()];
+        asleep.clear();
+        asleep.resize(instrs.len(), false);
         for r in &self.skip {
             let end = r.end.min(asleep.len());
             for k in r.start.min(end)..end {
                 asleep[k] = true;
             }
         }
-        let sequence: Vec<usize> = match &self.order {
-            Some(o) => o.clone(),
-            None => (0..instrs.len()).collect(),
-        };
-        // Where each group that opens in the sequence closes, and how many
-        // emitters come before each place: a group that is hidden is jumped
-        // over whole, instead of being looked at instruction by instruction
-        // (a window manager's sixteen slots, most of them empty, are most of
-        // its drawing). Not one with an emitter inside: an emitter keeps
-        // count of its own while hidden, so it does not burst late on appearing.
-        let mut closes = vec![usize::MAX; sequence.len()];
-        let mut emitters_before = vec![0u32; sequence.len() + 1];
-        {
-            let mut open: Vec<usize> = Vec::new();
-            for (p, idx) in sequence.iter().enumerate() {
-                emitters_before[p + 1] = emitters_before[p] + matches!(instrs[*idx], Instr::Particles(_)) as u32;
-                match &instrs[*idx] {
-                    Instr::Opacity(Some(_)) | Instr::Fade(_) | Instr::Effect(_) => open.push(p),
-                    Instr::Opacity(None) => {
-                        if let Some(o) = open.pop() {
-                            closes[o] = p;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        // Jumped over from `p` (an opening that turned out hidden): past its close.
-        let jump = |p: usize| -> Option<usize> {
-            let close = *closes.get(p)?;
-            (close != usize::MAX && emitters_before[close] == emitters_before[p]).then_some(close + 1)
-        };
+        let sequence = &composition.sequence;
+        let jump = |p: usize| (composition.jumps[p] != 0).then_some(composition.jumps[p]);
         // A hidden group's instructions, from its opening to its close: they
         // are one stretch of the scene, wherever `z:` puts it.
         self.hidden.clear();
@@ -1404,6 +1406,7 @@ impl DrawList {
             self.element(9.0, [0.0, size.1 - HUD_HEIGHT, size.0, size.1], &[], |e| Affine::IDENTITY.encode(&mut e[44..52]));
         }
         self.stops = placed_stops;
+        self.scratch = ComposeScratch { asleep, clips, transforms, opacity_groups };
         // An empty store can be neither bound nor written.
         if self.stops.is_empty() {
             self.stops.resize(4, 0.0);
@@ -1635,12 +1638,20 @@ impl Gpu {
     /// able to show on it. Without —a monitor driven by the platform itself—,
     /// the card is whatever there is.
     pub fn new(instance: &wgpu::Instance, first: Option<&wgpu::Surface<'static>>) -> Gpu {
+        Self::with_shaders(instance, first, &[])
+    }
+
+    /// The runtime already knows the first scene's shaders. Keep `new` for
+    /// embedding applications that start with the base pipeline.
+    pub fn with_shaders(instance: &wgpu::Instance, first: Option<&wgpu::Surface<'static>>, shaders: &[crate::shaders::UserShader]) -> Gpu {
+        let startup = std::time::Instant::now();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: first,
             power_preference: wgpu::PowerPreference::LowPower,
             ..Default::default()
         }))
         .expect("there is no graphics adapter");
+        let adapter_ready = std::time::Instant::now();
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 // By default, wgpu reserves blocks of 128 MB on the card and 64 in
@@ -1655,6 +1666,7 @@ impl Gpu {
                 required_features: adapter.features() & (wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF | wgpu::Features::TEXTURE_FORMAT_NV12),
                 ..Default::default()
             })).expect("there is no device");
+        let device_ready = std::time::Instant::now();
         let (format, alpha, non_blocking) = match first {
             Some(first) => {
                 let caps = first.get_capabilities(&adapter);
@@ -1699,8 +1711,17 @@ impl Gpu {
         // scene that brings its own shaders gets a new pipeline with the same
         // layout, and every bind group already made keeps being valid for it.
         let pipeline_layout = Self::pipeline_layout(&device);
-        let base = crate::shaders::generate(&[]);
-        let [pipeline, particles, screen, multiply] = Self::build_pipeline(&device, &pipeline_layout, format, &base).expect("pleamar's own shader does not compile");
+        // The first scene is already known. Compiling the base pipelines and
+        // immediately replacing all four with the scene's pipelines doubles
+        // driver compilation work before the first visible frame.
+        let base = crate::shaders::generate(shaders);
+        let pipelines_start = std::time::Instant::now();
+        let [pipeline, particles, screen, multiply] = Self::build_pipeline(&device, &pipeline_layout, format, &base).unwrap_or_else(|error| {
+            if shaders.is_empty() { panic!("pleamar's own shader does not compile: {error}"); }
+            eprintln!("shader · the scene's own shaders could not be built, and they are not painted: {error}");
+            Self::build_pipeline(&device, &pipeline_layout, format, &crate::shaders::generate(&[])).expect("pleamar's own shader does not compile")
+        });
+        let pipelines_ready = std::time::Instant::now();
         // A single atlas for glyphs and images. 2048² in RGBA is 16 MB.
         let atlas = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("atlas"),
@@ -1736,6 +1757,14 @@ impl Gpu {
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
+        }
+        if timing_enabled() {
+            println!("timing · GPU startup ms: adapter {:.1} · device {:.1} · resources {:.1} · shape pipelines {:.1} · remaining {:.1}",
+                (adapter_ready - startup).as_secs_f64() * 1000.0,
+                (device_ready - adapter_ready).as_secs_f64() * 1000.0,
+                (pipelines_start - device_ready).as_secs_f64() * 1000.0,
+                (pipelines_ready - pipelines_start).as_secs_f64() * 1000.0,
+                pipelines_ready.elapsed().as_secs_f64() * 1000.0);
         }
         g
     }
@@ -1802,9 +1831,12 @@ impl Gpu {
     fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str) -> Result<[wgpu::RenderPipeline; 4], String> {
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         let source = format!("{}{extra}", include_str!("shape.wgsl"));
+        let module_start = std::time::Instant::now();
         let module = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape"), source: wgpu::ShaderSource::Wgsl(source.into()) });
+        if timing_enabled() { println!("timing · shape module {:.1} ms", module_start.elapsed().as_secs_f64() * 1000.0); }
         let make = |label, vs, fs, blend: wgpu::BlendState| {
-            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            let start = std::time::Instant::now();
+            let pipeline = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
                 vertex: wgpu::VertexState { module: &module, entry_point: Some(vs), compilation_options: Default::default(), buffers: &[] },
@@ -1819,7 +1851,9 @@ impl Gpu {
                 }),
                 multiview_mask: None,
                 cache: None,
-            })
+            });
+            if timing_enabled() { println!("timing · {label} pipeline {:.1} ms", start.elapsed().as_secs_f64() * 1000.0); }
+            pipeline
         };
         let over = wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING;
         let pipelines = [
@@ -1981,6 +2015,7 @@ impl Gpu {
         let px = ((size.0 * l.scale).round().max(1.0) as u32, (size.1 * l.scale).round().max(1.0) as u32);
         self.configure_surface(l, px);
         l.painted = None;
+        l.cleared = false;
         if px != l.px {
             l.px = px;
             // A canvas of another size is no longer valid: another is made when needed.
@@ -2017,6 +2052,11 @@ impl Gpu {
     fn configure_surface(&self, l: &Sheet, px: (u32, u32)) {
         let _ = &self.adapter;
         let Target::Surface(surface) = &l.target else { return };
+        // DirectComposition retains every swapchain buffer even while hidden.
+        // Keep a transparent pixel until reopening; logical/window dimensions
+        // remain in l.px and are restored before any visible frame is drawn.
+        #[cfg(target_os = "windows")]
+        let px = if l.open { px } else { (1, 1) };
         surface.configure(
             &self.device,
             &wgpu::SurfaceConfiguration {
@@ -2395,16 +2435,24 @@ impl Gpu {
     /// What is going to be painted, to the card. If it does not fit, the
     /// stores grow to double —as many times as needed— and never shrink again.
     pub fn upload(&mut self, d: &DrawList) {
+        self.upload_buffers(d, [true; 4]);
+    }
+
+    pub(crate) fn upload_changed(&mut self, d: &DrawList, previous: &PreviousFrame) {
+        self.upload_buffers(d, previous.upload_changes(d));
+    }
+
+    fn upload_buffers(&mut self, d: &DrawList, mut changed: [bool; 4]) {
         let wants = (d.shapes.len(), d.elements.len(), d.points.len(), d.stops.len());
         if wants.0 > self.capacity.0 || wants.1 > self.capacity.1 || wants.2 > self.capacity.2 || wants.3 > self.capacity.3 {
             let grow = |fits: usize, wants: usize| if wants > fits { wants.next_power_of_two() } else { fits }.min(self.limit);
             let new = (grow(self.capacity.0, wants.0) / PER_SHAPE * PER_SHAPE, grow(self.capacity.1, wants.1) / PER_ELEMENT * PER_ELEMENT, grow(self.capacity.2, wants.2) / 2 * 2, grow(self.capacity.3, wants.3) / 4 * 4);
             if new != self.capacity {
                 let store = |label, floats: usize| self.device.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size: (floats * 4) as u64, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
-                if new.0 != self.capacity.0 { self.shapes_buffer = store("shapes", new.0) }
-                if new.1 != self.capacity.1 { self.elements_buffer = store("elements", new.1) }
-                if new.2 != self.capacity.2 { self.points_buffer = store("points", new.2) }
-                if new.3 != self.capacity.3 { self.stops_buffer = store("stops", new.3) }
+                if new.0 != self.capacity.0 { self.shapes_buffer = store("shapes", new.0); changed[0] = true; }
+                if new.1 != self.capacity.1 { self.elements_buffer = store("elements", new.1); changed[1] = true; }
+                if new.2 != self.capacity.2 { self.points_buffer = store("points", new.2); changed[2] = true; }
+                if new.3 != self.capacity.3 { self.stops_buffer = store("stops", new.3); changed[3] = true; }
                 self.scene_group = Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.sampler, &self.windows_view);
                 self.capacity = new;
                 println!("render · the scene has grown: now {} shapes and {} elements fit", new.0 / PER_SHAPE, new.1 / PER_ELEMENT);
@@ -2414,10 +2462,10 @@ impl Gpu {
             }
         }
         let (f, e, pt, pa) = (wants.0.min(self.capacity.0), wants.1.min(self.capacity.1), wants.2.min(self.capacity.2), wants.3.min(self.capacity.3));
-        self.queue.write_buffer(&self.shapes_buffer, 0, bytemuck::cast_slice(&d.shapes[..f]));
-        self.queue.write_buffer(&self.elements_buffer, 0, bytemuck::cast_slice(&d.elements[..e]));
-        self.queue.write_buffer(&self.points_buffer, 0, bytemuck::cast_slice(&d.points[..pt]));
-        self.queue.write_buffer(&self.stops_buffer, 0, bytemuck::cast_slice(&d.stops[..pa]));
+        if changed[0] { self.queue.write_buffer(&self.shapes_buffer, 0, bytemuck::cast_slice(&d.shapes[..f])); }
+        if changed[1] { self.queue.write_buffer(&self.elements_buffer, 0, bytemuck::cast_slice(&d.elements[..e])); }
+        if changed[2] { self.queue.write_buffer(&self.points_buffer, 0, bytemuck::cast_slice(&d.points[..pt])); }
+        if changed[3] { self.queue.write_buffer(&self.stops_buffer, 0, bytemuck::cast_slice(&d.stops[..pa])); }
     }
 
     /// Paints the draw list on a sheet. Returns whether it got to be presented.
@@ -2432,9 +2480,15 @@ impl Gpu {
         // that does not touch the view, the layer is not read.
         let v = l.view.bounds();
         let needed = d.offscreen_groups.iter().filter(|(t, _)| d.touches_view(t, v)).map(|(_, c)| *c as u32 + 1).max().unwrap_or(0);
-        self.ensure_layers(l, needed);
+        if l.open {
+            self.ensure_layers(l, needed);
+        } else if l.layers > 0 {
+            // A closed sheet is cleared once, then skipped by the renderer.
+            // It cannot reach the idle-frame threshold to free these textures.
+            self.release_layers(l);
+        }
         // The lens, if it shows glass and the screen lets a canvas be copied onto it.
-        if !l.wants_lens || !self.can_copy {
+        if !l.open || !l.wants_lens || !self.can_copy {
             l.lens = None;
         } else if l.lens.is_none() {
             l.lens = Some(crate::lens::Lens::new(&self.device, self.format, l.px));
@@ -2743,6 +2797,10 @@ impl Sheet {
         self.window.update_input_region(rects);
     }
 
+    pub fn has_frame_callbacks(&self) -> bool {
+        self.window.has_frame_callbacks()
+    }
+
     pub fn cursor(&self, c: Cursor) {
         self.window.cursor(c);
     }
@@ -2788,6 +2846,35 @@ pub const N_UNIFORMS: usize = 8 + 120 + 4 + 4;
 mod tests {
     use super::*;
     use crate::shapes::{Affine, FlatShape};
+
+    #[test]
+    fn uploads_follow_each_buffer_including_length_nan_and_invalidation() {
+        let mut previous = PreviousFrame::default();
+        let mut draw = DrawList::default();
+        draw.shapes = vec![0.0; PER_SHAPE];
+        draw.elements = vec![0.0; PER_ELEMENT];
+        draw.points = vec![0.0; 2];
+        draw.stops = vec![0.0; 4];
+        let mut damage = Vec::new();
+        assert_eq!(previous.upload_changes(&draw), [true; 4]);
+        previous.changed_rects(&draw, &mut damage);
+        assert_eq!(previous.upload_changes(&draw), [false; 4]);
+        for changed in 0..4 {
+            match changed {
+                0 => draw.shapes[0] = -0.0,
+                1 => draw.elements[4] = 5.0,
+                2 => draw.points.extend([1.0, 2.0]),
+                _ => draw.stops[0] = f32::NAN,
+            }
+            let mut expected = [false; 4];
+            expected[changed] = true;
+            assert_eq!(previous.upload_changes(&draw), expected);
+            previous.changed_rects(&draw, &mut damage);
+            assert_eq!(previous.upload_changes(&draw), [false; 4]);
+        }
+        previous.forget();
+        assert_eq!(previous.upload_changes(&draw), [true; 4]);
+    }
 
     fn area(f: &[[f32; 4]]) -> f32 {
         f.iter().map(|r| (r[2] - r[0]) * (r[3] - r[1])).sum()

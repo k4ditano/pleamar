@@ -30,6 +30,10 @@ fn path_in(owner: &str, name: &str) -> Result<PathBuf, String> {
     if !clean {
         return Err(format!("'{name}' is not a name inside this scene's folder: no `..`, no full paths"));
     }
+    #[cfg(target_os = "windows")]
+    if name.split('/').any(|part| !super::paths::storage_component(part)) {
+        return Err(format!("'{name}' contains a reserved Windows file name"));
+    }
     Ok(dir_for(owner).join(name))
 }
 

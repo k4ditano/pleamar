@@ -1163,6 +1163,15 @@ pub enum Cursor {
     Grabbing,
 }
 
+/// A scrolling layout's visible area, shared by its child zones.
+#[derive(Clone, Debug)]
+pub struct ViewportClip {
+    pub shape: Shape,
+    /// The zone's transform prefix up to the viewport, before its scroll offset.
+    /// Layout placement can still change that prefix after the child is compiled.
+    pub under: usize,
+}
+
 /// A sensitive region: a shape with a name. The render does the hit-test with
 /// the same formula it paints with.
 #[derive(Clone, Debug)]
@@ -1175,6 +1184,7 @@ pub struct Zone {
     /// The transforms it lives under, from outside in: what is seen
     /// rotated is pressed rotated.
     pub under: Vec<Transform>,
+    pub viewports: Vec<ViewportClip>,
     /// Where it was declared among the instructions, and the group with `z:`
     /// it is inside, if any: a zone is on top where what holds it is drawn.
     pub at: usize,
@@ -1263,7 +1273,17 @@ impl Zone {
     pub fn bounds(&self, c: Ctx) -> Option<[f32; 4]> {
         let mut p = self.shape.flatten_into(c, &mut Vec::new());
         p.affine = self.under.iter().fold(Affine::IDENTITY, |a, t| a.mul(t.affine(c)));
-        p.bounds()
+        let mut bounds = p.bounds()?;
+        for viewport in &self.viewports {
+            let mut clip = viewport.shape.flatten_into(c, &mut Vec::new());
+            clip.affine = self.under[..viewport.under].iter().fold(Affine::IDENTITY, |a, t| a.mul(t.affine(c)));
+            let clipped = clip.bounds()?;
+            bounds = [bounds[0].max(clipped[0]), bounds[1].max(clipped[1]), bounds[2].min(clipped[2]), bounds[3].min(clipped[3])];
+            if bounds[0] >= bounds[2] || bounds[1] >= bounds[3] {
+                return None;
+            }
+        }
+        Some(bounds)
     }
 
     /// A point on the screen, seen from inside: in a stack, (0, 0) is the
@@ -1276,6 +1296,14 @@ impl Zone {
     /// like an arrow is pressed where the arrow is seen, not in its box.
     pub fn contains(&self, c: Ctx, x: f32, y: f32) -> bool {
         let mut pts = Vec::new();
+        for viewport in &self.viewports {
+            let mut clip = viewport.shape.flatten_into(c, &mut pts);
+            clip.affine = self.under[..viewport.under].iter().fold(Affine::IDENTITY, |a, t| a.mul(t.affine(c)));
+            if clip.distance_with(x, y, &pts) >= 0.0 {
+                return false;
+            }
+        }
+        pts.clear();
         let mut p = self.shape.flatten_into(c, &mut pts);
         p.affine = self.under.iter().fold(Affine::IDENTITY, |a, t| a.mul(t.affine(c)));
         p.distance_with(x, y, &pts) < 0.0
@@ -1869,7 +1897,7 @@ impl Scene {
         self.zone_under(id, shape, active, vec![])
     }
     pub fn zone_under(&mut self, id: &'static str, shape: Shape, active: impl Into<Expr>, under: Vec<Transform>) -> ZoneId {
-        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, at: self.instrs.len(), zblock: None, carries: None });
+        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, viewports: Vec::new(), at: self.instrs.len(), zblock: None, carries: None });
         ZoneId(self.zones.len() as u16 - 1)
     }
     /// Claims go from more to less priority; the last one should be
@@ -2250,10 +2278,21 @@ pub enum Event {
     Fact(&'static str, f32),
     /// A command that was launched has finished: (which one, what it wrote, with what code).
     Process(u32, String, i32),
+    /// An asynchronous system query has finished, retaining its structured value.
+    Answer(u32, Result<crate::platform::SysValue, String>),
     /// A command that is still running has written a line.
     Line(u32, String),
     /// A system service has something new to tell.
     Data(String, crate::platform::SysValue),
+    /// A declarative service snapshot, valid only while its subscription lives.
+    ServiceData(String, std::sync::Weak<()>, crate::platform::SysValue),
+    /// A VM's service update, or its cached snapshot for one new listener.
+    WatchData {
+        name: String,
+        live: std::sync::Weak<()>,
+        listener: Option<usize>,
+        value: crate::platform::SysValue,
+    },
     /// The logic file has changed.
     ReloadLogic,
     /// The scene has been reloaded: these are now its facts and its texts.

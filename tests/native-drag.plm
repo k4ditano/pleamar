@@ -1,0 +1,24 @@
+// expect: ok
+// Manual OLE/Wayland transfer probe; the left cards are sources, right is a target.
+scene NativeDrag {
+    surface { size: 700, 360; kind: window; title: "pleamar drag validation"; keyboard: on_demand }
+    permissions { services: "env" }
+    text payload = "España ñ 世界 🚀"
+    text file = ""
+    text received = "Drop text or a file here"
+    text kind = ""
+    fact transfers = 0
+    fact ticks = 0
+    box { from: 0, 0; size: screen.width, screen.height; color: #142224 }
+    text "Native drag and drop · ticks {ticks}" { at: 24, 20; size: 22; color: #ffffff }
+    box { from: 24, 78; size: 260, 85; corner: 10; color: #375f66 }
+    text "{payload}" { at: 40, 101; size: 19; color: #ffffff }
+    zone box source { from: 24, 78; size: 260, 85; cursor: grab; carries: "{payload}" }
+    box { from: 24, 184; size: 260, 85; corner: 10; color: #375f66 }
+    text "Drag test file" { at: 40, 210; size: 19; color: #ffffff }
+    zone box source_file { from: 24, 184; size: 260, 85; cursor: grab; carries: "{file}" }
+    box { from: 316, 78; size: 360, 190; corner: 10; color: if(drag.over, #407f72, #2b4144) }
+    zone box target { from: 316, 78; size: 360, 190 }
+    text "{received}" { at: 334, 97; width: 325; lines: 5; size: 16; color: #ffffff }
+    text "Transfers: {transfers} · {kind}" { at: 24, 300; size: 16; color: #80dcc2 }
+}

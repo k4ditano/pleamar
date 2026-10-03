@@ -8,7 +8,7 @@
 //!
 //! `{ { key, id, title, status, icon, menu }, … }`. `icon` is an icon name
 //! or a path: it works as is for `image … = from`. `status`: Active, Passive,
-//! NeedsAttention. On Windows it will be `Shell_NotifyIcon`; on macOS, `NSStatusItem`
+//! NeedsAttention. Windows has a separate Explorer-backed adapter; on macOS, `NSStatusItem`
 //! does not let you see other apps' ones.
 
 use super::SysValue;

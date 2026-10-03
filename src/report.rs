@@ -100,14 +100,14 @@ pub fn run(args: Vec<String>, extra: Option<String>) -> i32 {
     let mut machine = Vec::new();
     let mut line = |k: &str, v: String| machine.push(format!("- **{k}:** {v}"));
     line("System", os_release().unwrap_or_else(|| "?".into()));
-    line("Kernel", read("/proc/sys/kernel/osrelease").unwrap_or_default());
+    if let Some(kernel) = read("/proc/sys/kernel/osrelease") { line("Kernel", kernel); }
     let threads = std::thread::available_parallelism().map_or(0, |n| n.get());
     line("CPU", format!("{} · {threads} threads", cpu_model().unwrap_or_else(|| "?".into())));
     let governor = read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor");
     let driver = read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver");
     let epp = read("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference");
     let profile = read("/sys/firmware/acpi/platform_profile");
-    line(
+    if governor.is_some() || driver.is_some() { line(
         "CPU frequency policy",
         format!(
             "{} governor · {} driver{}{}",
@@ -116,18 +116,29 @@ pub fn run(args: Vec<String>, extra: Option<String>) -> i32 {
             epp.as_ref().map_or(String::new(), |e| format!(" · EPP {e}")),
             profile.as_ref().map_or(String::new(), |p| format!(" · platform profile {p}"))
         ),
-    );
+    ); }
     if epp.as_deref() == Some("power") || matches!(profile.as_deref(), Some("low-power" | "quiet" | "cool")) {
         hints.push("the CPU is set to save power (EPP «power» or a low-power platform profile): try the balanced or performance profile".into());
     } else if governor.as_deref() == Some("powersave") && !driver.as_deref().is_some_and(|d| d.ends_with("-epp") || d == "intel_pstate") {
         hints.push("the CPU governor is «powersave» with a driver that then keeps the cores slow: try «schedutil» or «performance»".into());
     }
+    #[cfg(not(target_os = "windows"))]
     if let Some(m) = meminfo() {
         line("Memory", format!("{:.1} GB · {:.1} GB available · swap in use {:.1} GB", m.0, m.1, m.2));
         if m.1 < m.0 * 0.08 {
             hints.push("memory was nearly full: the system may have been swapping".into());
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some((total, available)) = crate::platform::windows_diagnostics::memory() {
+            line("Memory", format!("{total:.1} GB · {available:.1} GB available"));
+            if available < total * 0.08 { hints.push("memory was nearly full".into()); }
+        }
+        line("Session", "Windows desktop · Win32 / DirectComposition".into());
+        line("Unavailable counters", "system process ranking, CPU/GPU temperatures, core clocks and system GPU load; GPU and monitor details are reported by each scene".into());
+    }
+    #[cfg(not(target_os = "windows"))]
     line(
         "Session",
         format!(
@@ -138,8 +149,8 @@ pub fn run(args: Vec<String>, extra: Option<String>) -> i32 {
     );
     // Their values only if they are not paths: those carry the user's name.
     let vars: Vec<String> = std::env::vars()
-        .filter(|(k, _)| k.starts_with("PLEAMAR_") && k != "PLEAMAR_SOCKETS")
-        .map(|(k, v)| if v.contains('/') { format!("{k} (a path)") } else { format!("{k}={v}") })
+        .filter(|(k, _)| k.starts_with("PLEAMAR_") && k != "PLEAMAR_SOCKETS" && k != "PLEAMAR_SOCKET_DIR")
+        .map(|(k, v)| report_variable(&k, &v))
         .collect();
     if !vars.is_empty() {
         line("pleamar variables", vars.join(" "));
@@ -151,7 +162,7 @@ pub fn run(args: Vec<String>, extra: Option<String>) -> i32 {
     // What happened while measuring.
     let mut during = Vec::new();
     if let (Some(a), Some(b)) = (cpu0, cpu1) {
-        let (busy, total) = ((b.0 - a.0) as f64, (b.1 - a.1) as f64);
+        let (busy, total) = (b.0.saturating_sub(a.0) as f64, b.1.saturating_sub(a.1) as f64);
         if total > 0.0 {
             let pct = busy / total * 100.0;
             during.push(format!("- **CPU busy (whole system):** {pct:.0}%"));
@@ -229,7 +240,8 @@ pub fn run(args: Vec<String>, extra: Option<String>) -> i32 {
     }
 
     let path = out.unwrap_or_else(|| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        let home_var = if cfg!(target_os = "windows") { "USERPROFILE" } else { "HOME" };
+        let home = std::env::var(home_var).unwrap_or_else(|_| ".".into());
         format!("{home}/pleamar-report-{}.md", stamp("+%Y-%m-%d-%H%M"))
     });
     if let Err(e) = std::fs::write(&path, &md) {
@@ -260,6 +272,10 @@ struct Watch {
 }
 
 impl Watch {
+    #[cfg(target_os = "windows")]
+    fn sample(&mut self) {}
+
+    #[cfg(not(target_os = "windows"))]
     fn sample(&mut self) {
         // The cores' clock, averaged.
         let mut sum = 0.0;
@@ -299,6 +315,7 @@ impl Watch {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn push(list: &mut Vec<(String, Vec<f64>)>, key: &str, v: f64) {
     match list.iter_mut().find(|(k, _)| k == key) {
         Some((_, l)) => l.push(v),
@@ -314,17 +331,26 @@ fn read(path: &str) -> Option<String> {
     std::fs::read_to_string(path).ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn os_release() -> Option<String> {
     let s = std::fs::read_to_string("/etc/os-release").ok()?;
     s.lines().find_map(|l| l.strip_prefix("PRETTY_NAME=")).map(|v| v.trim_matches('"').to_owned())
 }
 
+#[cfg(target_os = "windows")]
+fn os_release() -> Option<String> { Some("Windows".into()) }
+
+#[cfg(target_os = "windows")]
+fn cpu_model() -> Option<String> { std::env::var("PROCESSOR_IDENTIFIER").ok() }
+
+#[cfg(not(target_os = "windows"))]
 fn cpu_model() -> Option<String> {
     let s = std::fs::read_to_string("/proc/cpuinfo").ok()?;
     s.lines().find_map(|l| l.strip_prefix("model name").map(|r| r.trim_start_matches([' ', '\t', ':']).to_owned()))
 }
 
 /// Total, available and swap in use, in GB.
+#[cfg(not(target_os = "windows"))]
 fn meminfo() -> Option<(f64, f64, f64)> {
     let s = std::fs::read_to_string("/proc/meminfo").ok()?;
     let kb = |k: &str| s.lines().find_map(|l| l.strip_prefix(k)).and_then(|r| r.trim().trim_end_matches("kB").trim().parse::<f64>().ok()).map(|v| v / 1024.0 / 1024.0);
@@ -359,6 +385,7 @@ fn gpus() -> Vec<String> {
 }
 
 /// (busy, total) jiffies of the whole system.
+#[cfg(not(target_os = "windows"))]
 fn cpu_times() -> Option<(u64, u64)> {
     let s = std::fs::read_to_string("/proc/stat").ok()?;
     let f: Vec<u64> = s.lines().next()?.split_whitespace().skip(1).filter_map(|v| v.parse().ok()).collect();
@@ -366,6 +393,9 @@ fn cpu_times() -> Option<(u64, u64)> {
     let idle = f.get(3)? + f.get(4).unwrap_or(&0);
     Some((total - idle, total))
 }
+
+#[cfg(target_os = "windows")]
+use crate::platform::windows_diagnostics::cpu_times;
 
 /// Every process's name and the CPU it has used, in ticks.
 fn process_times() -> HashMap<u32, (String, u64)> {
@@ -393,14 +423,23 @@ fn ticks_per_second() -> f64 {
     100.0
 }
 
-/// Now, as `date` writes it with that format.
+/// The same local timestamp on both systems, without an external utility.
 fn stamp(format: &str) -> String {
-    std::process::Command::new("date")
-        .arg(format)
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()).to_string())
+    chrono::Local::now().format(format.trim_start_matches('+')).to_string()
+}
+
+fn report_variable(key: &str, value: &str) -> String {
+    if value.contains(['/', '\\']) { format!("{key} (a path)") } else { format!("{key}={value}") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn report_paths_are_redacted_on_both_systems() {
+        assert_eq!(report_variable("PLEAMAR_CONFIG", r"C:\Users\Someone\config"), "PLEAMAR_CONFIG (a path)");
+        assert_eq!(report_variable("PLEAMAR_CONFIG", "/home/someone/config"), "PLEAMAR_CONFIG (a path)");
+        assert_eq!(report_variable("PLEAMAR_BACKEND", "dx12"), "PLEAMAR_BACKEND=dx12");
+        assert!(chrono::NaiveDateTime::parse_from_str(&stamp("+%Y-%m-%d %H:%M"), "%Y-%m-%d %H:%M").is_ok());
+    }
 }

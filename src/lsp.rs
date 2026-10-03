@@ -168,24 +168,11 @@ fn reply(id: Option<Value>, result: Value) {
 
 /// `file:///home/scene.plm` → the path, with the %20 undone.
 fn uri_to_path(uri: &str) -> Option<PathBuf> {
-    let rest = uri.strip_prefix("file://")?;
-    let mut s = String::with_capacity(rest.len());
-    let mut c = rest.chars();
-    while let Some(x) = c.next() {
-        if x == '%' {
-            let d: String = c.by_ref().take(2).collect();
-            if let Ok(b) = u8::from_str_radix(&d, 16) {
-                s.push(b as char);
-                continue;
-            }
-        }
-        s.push(x);
-    }
-    Some(PathBuf::from(s))
+    crate::platform::paths::uri_to_path(uri)
 }
 
 fn path_to_uri(path: &Path) -> String {
-    format!("file://{}", path.display())
+    crate::platform::paths::path_to_uri(path)
 }
 
 // ── the errors ──────────────────────────────────────────────────

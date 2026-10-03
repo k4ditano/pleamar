@@ -1,0 +1,24 @@
+// expect: ok
+scene NativeRecording {
+    surface { size: 640, 400; kind: window; title: "pleamar recording validation"; keyboard: on_demand }
+    permissions { services: "recording.*" }
+    event begin ->
+    event stop ->
+    fact ticks = 0
+    fact frames = 0
+    text phase = "idle"
+    text path = ""
+    text problem = ""
+    box { from: 0, 0; size: screen.width, screen.height; color: #16353d }
+    text "Native H.264 / AAC · España 世界" { at: 28, 25; size: 25; color: #ffffff }
+    text "Luau ticks {ticks} · Encoded frames {frames}" { at: 28, 75; size: 18; color: #b1e5cc }
+    text "{phase}" { at: 28, 110; size: 22; color: #ffffff }
+    ellipse { at: 320 + sin(ticks * 0.03) * 260, 200; radius: 24; color: #e8aa65 }
+    text "{problem}" { at: 28, 265; size: 15; width: 580; lines: 4; color: #ffbbbb }
+    box start_button { from: 28, 340; size: 160, 40; corner: 8; color: #b1e5cc }
+    text "Record" { at: 58, 350; size: 16; color: #102c30 }
+    box stop_button { from: 215, 340; size: 160, 40; corner: 8; color: #e8aa65 }
+    text "Stop" { at: 260, 350; size: 16; color: #102c30 }
+    on press start_button { emit begin }
+    on press stop_button { emit stop }
+}

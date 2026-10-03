@@ -22,28 +22,79 @@ use crate::logic::{Context, Script};
 use crate::platform::SysValue;
 use mlua::{Function, Lua, MultiValue, Table, Value, VmState};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 /// Everything the logic has left running. When the program exits it has to be
 /// stopped: a child does not die with its parent, and an orphaned `pactl subscribe`
 /// would stay there forever.
-static CHILDREN: Mutex<Vec<Arc<Mutex<Option<std::process::Child>>>>> = Mutex::new(Vec::new());
+type Child = Arc<Mutex<Option<std::process::Child>>>;
+static CHILDREN: Mutex<Vec<Weak<Mutex<Option<std::process::Child>>>>> = Mutex::new(Vec::new());
+
+fn track_child(child: std::process::Child) -> Child {
+    let child = Arc::new(Mutex::new(Some(child)));
+    let mut children = CHILDREN.lock().unwrap();
+    // The shutdown registry must not own finished commands. Also prune an
+    // abandoned worker's weak entry when another command starts.
+    children.retain(|child| child.strong_count() != 0);
+    children.push(Arc::downgrade(&child));
+    child
+}
+
+fn stop_child(child: &Child) {
+    let child = child.lock().unwrap().take();
+    if let Some(mut child) = child {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+fn wait_child(child: &Child) -> i32 {
+    loop {
+        {
+            let mut child = child.lock().unwrap();
+            let Some(process) = child.as_mut() else { return -1 };
+            match process.try_wait() {
+                Ok(Some(status)) => { child.take(); return status.code().unwrap_or(-1); }
+                Err(_) => {
+                    let _ = process.kill();
+                    let _ = process.wait();
+                    child.take();
+                    return -1;
+                }
+                Ok(None) => {}
+            }
+        }
+        // EOF is not process exit. Keep the handle available to kill/reload
+        // while a helper that has closed stdout continues to run.
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
 
 pub fn stop_children() {
-    for h in CHILDREN.lock().unwrap().drain(..) {
-        if let Some(mut h) = h.lock().unwrap().take() {
-            let _ = h.kill();
-            let _ = h.wait();
-        }
+    let children: Vec<_> = CHILDREN.lock().unwrap().drain(..).filter_map(|child| child.upgrade()).collect();
+    for child in children {
+        stop_child(&child);
     }
 }
 
 /// How long a handler may take before it gets cut off.
 const PATIENCE: Duration = Duration::from_secs(2);
 const MEMORY: usize = 64 << 20;
+// Marea uses audio, brightness, network, Bluetooth, media, hotkeys, files,
+// shell, wallpaper, screenshots and session workers in the same lifetime.
+const MAX_SERVICE_WORKERS: usize = 16;
+
+// Plugin positions can change while replies are in the shared mailbox.
+// Never recycle a callback identifier within this process.
+static NEXT_ID: AtomicU32 = AtomicU32::new(1);
+
+fn next_id() -> mlua::Result<u32> {
+    NEXT_ID.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        .map_err(|_| mlua::Error::runtime("this process has exhausted its timer and callback identifiers"))
+}
 
 struct Timer {
     id: u32,
@@ -52,15 +103,86 @@ struct Timer {
     f: Function,
 }
 
+struct ServiceRequest {
+    id: u32,
+    name: String,
+    args: Vec<SysValue>,
+    query: bool,
+}
+
+struct Callback {
+    f: Function,
+    query: Option<String>,
+}
+
+struct ServiceWorker {
+    sender: std::sync::mpsc::SyncSender<ServiceRequest>,
+    active: Arc<AtomicBool>,
+}
+
+impl ServiceWorker {
+    fn new(owner: String, to_logic: Sender<Event>, state: Weak<Mutex<Shared>>) -> std::io::Result<Self> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<ServiceRequest>(8);
+        let active = Arc::new(AtomicBool::new(true));
+        let alive = active.clone();
+        std::thread::Builder::new().name("service-command".into()).spawn(move || {
+            #[cfg(target_os = "windows")]
+            crate::platform::set_service_lifetime(alive.clone());
+            while let Ok(request) = receiver.recv() {
+                // A reload discards queued commands and callbacks. An OS call
+                // already in progress cannot be interrupted safely.
+                if !alive.load(Ordering::Acquire) { break; }
+                let permission = || {
+                    let c = state.upgrade().ok_or_else(|| "the logic is no longer running".to_owned())?;
+                    check_service_permission(&c, &request.name, !request.query).map_err(|e| e.to_string())
+                };
+                let access = permission();
+                // A reload may have retired this worker while the permission
+                // check waited for the logic's state lock.
+                if !alive.load(Ordering::Acquire) { break; }
+                let reply = if request.query {
+                    let result = access.and_then(|()| {
+                        let answer = crate::platform::query(&owner, &request.name, &request.args);
+                        permission().and(answer)
+                    });
+                    Event::Answer(request.id, result)
+                } else {
+                    let result = access.and_then(|()| crate::platform::command(&owner, &request.name, &request.args));
+                    let (error, code) = match result { Ok(()) => (String::new(), 0), Err(e) => (e, -1) };
+                    Event::Process(request.id, error, code)
+                };
+                if alive.load(Ordering::Acquire) {
+                    let _ = to_logic.send(reply);
+                }
+            }
+        })?;
+        Ok(Self { sender, active })
+    }
+}
+
+impl Drop for ServiceWorker {
+    fn drop(&mut self) { self.active.store(false, Ordering::Release); }
+}
+
+struct WatchHandler {
+    f: Function,
+    initialized: bool,
+}
+
 #[derive(Default)]
 struct Shared {
     handlers: HashMap<String, Vec<Function>>,
     timers: Vec<Timer>,
-    processes: HashMap<u32, Function>,
+    processes: HashMap<u32, Callback>,
+    service_workers: HashMap<String, ServiceWorker>,
     /// The commands still running: who gets told each line, and how to stop them.
     running: HashMap<u32, (Function, Arc<Mutex<Option<std::process::Child>>>)>,
-    watchers: HashMap<String, Vec<Function>>,
-    next: u32,
+    /// None reserves a run before its worker starts; reload cancels that reservation.
+    commands: HashMap<u32, Option<Child>>,
+    watchers: HashMap<String, Vec<WatchHandler>>,
+    /// Only this VM owns these subscriptions; the platform owns their workers.
+    watched: HashMap<String, Option<Arc<()>>>,
+    latest: HashMap<String, SysValue>,
     facts: HashMap<String, f64>,
     texts: HashMap<String, String>,
     permissions: crate::scene::Permissions,
@@ -72,8 +194,8 @@ struct Shared {
     translations: crate::scene::Translations,
     /// The services the scene asked for by name, and which fields it wants from each one.
     services: Vec<crate::scene::Service>,
-    /// Which ones already got a thread: reloading the scene does not start them twice.
-    subscribed: std::collections::HashSet<String>,
+    /// Current declarations own these lifetimes; queued snapshots only borrow them.
+    subscriptions: Vec<Arc<()>>,
     /// If it is a plugin's logic, what it is called: so that errors talk about it and not about the scene.
     plugin: Option<String>,
     /// It asks for permissions nobody has approved: it runs with none, and the errors say why.
@@ -82,12 +204,30 @@ struct Shared {
     deadline: Option<Instant>,
 }
 
+fn start_run(state: &Weak<Mutex<Shared>>, id: u32, name: &str, launch: &mut std::process::Command)
+    -> std::io::Result<Option<(Child, Option<std::process::ChildStdout>)>>
+{
+    let Some(state) = state.upgrade() else { return Ok(None) };
+    let mut c = state.lock().unwrap();
+    if !c.commands.contains_key(&id) { return Ok(None); }
+    if !c.permissions.commands.iter().any(|command| command == name) {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,
+            format!("permission to run '{name}' was removed before launch")));
+    }
+    // Spawn and registration share the release lock: a reload either cancels
+    // the reservation or sees the child, never an untracked process in between.
+    let mut child = launch.spawn()?;
+    let output = child.stdout.take();
+    let child = track_child(child);
+    c.commands.insert(id, Some(child.clone()));
+    Ok(Some((child, output)))
+}
+
 impl Shared {
     /// What a new logic starts from: what the scene is, and none of what the
     /// old one left running (its handlers, timers, processes and watchers).
     fn fresh(&self) -> Shared {
         Shared {
-            next: self.next,
             facts: self.facts.clone(),
             texts: self.texts.clone(),
             permissions: self.permissions.clone(),
@@ -96,7 +236,6 @@ impl Shared {
             signals: self.signals.clone(),
             translations: self.translations.clone(),
             services: self.services.clone(),
-            subscribed: self.subscribed.clone(),
             plugin: self.plugin.clone(),
             unapproved: self.unapproved,
             ..Default::default()
@@ -262,6 +401,21 @@ fn check_service_permission(c: &Mutex<Shared>, name: &str, commands: bool) -> ml
     Err(denied(c, &format!("use the '{service}' service"), &format!("services: \"{service}\"")))
 }
 
+fn subscribe_watch(c: &Mutex<Shared>, to_logic: &Sender<Event>, owner: &str, name: &str) -> bool {
+    let lifetime = Arc::new(());
+    let live = Arc::downgrade(&lifetime);
+    let (sender, service) = (Mutex::new(to_logic.clone()), name.to_owned());
+    let supported = crate::platform::service(owner, name, "watch", Box::new(move |value| {
+        if live.strong_count() != 0 {
+            let _ = sender.lock().unwrap().send(Event::WatchData {
+                name: service.clone(), live: live.clone(), listener: None, value,
+            });
+        }
+    }));
+    c.lock().unwrap().watched.insert(name.to_owned(), supported.then_some(lifetime));
+    supported
+}
+
 /// What the logic hands to the system: numbers, texts and tables. A table with
 /// keys 1..n is a list; any other, a map. Up to six levels: deeper than
 /// that, what is being passed is not data.
@@ -315,6 +469,260 @@ fn did_you_mean<'a>(k: &str, known: impl Iterator<Item = &'a String>) -> String 
     crate::language::closest_match(k, known).map_or(String::new(), |p| format!(". Did you mean '{p}'?"))
 }
 
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "subprocess entry point for spawn lifetime tests"]
+    fn spawn_process_probe() {
+        if !std::env::args().any(|arg| arg == "logic_luau::lifecycle_tests::spawn_process_probe") { return; }
+        use std::io::Write;
+        println!("CLOSING_STDOUT");
+        std::io::stdout().flush().unwrap();
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use windows::Win32::{Foundation::CloseHandle, System::Console::{GetStdHandle, STD_OUTPUT_HANDLE}};
+            CloseHandle(GetStdHandle(STD_OUTPUT_HANDLE).unwrap()).unwrap();
+        }
+        #[cfg(target_os = "linux")]
+        unsafe { libc::close(libc::STDOUT_FILENO); }
+        // Bounded even with the old blocking wait, so a regression fails
+        // instead of hanging the entire test runner.
+        std::thread::sleep(Duration::from_secs(4));
+        std::process::exit(23);
+    }
+
+    #[test]
+    fn spawn_reload_after_stdout_eof_stays_responsive() {
+        let path = std::env::temp_dir().join(format!("pleamar-spawn-reload-{}.luau", std::process::id()));
+        let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
+        let (tx, _render) = std::sync::mpsc::channel();
+        let (events, replies) = std::sync::mpsc::channel();
+        let blocked = Arc::new(AtomicBool::new(false));
+        let mut context = Context::for_plugin(tx.clone(), blocked.clone());
+        let mut script = LuauScript::new("spawn.plm", path.to_str().unwrap(), tx, events, blocked);
+        {
+            let mut state = script.c.lock().unwrap();
+            state.permissions.commands = vec![exe.clone()];
+            state.facts.insert("value".into(), 0.0);
+        }
+        std::fs::write(&path, format!(r#"
+            spawn([==[{exe}]==], {{"--ignored", "--exact", "logic_luau::lifecycle_tests::spawn_process_probe", "--nocapture"}},
+                function() end, function() fact.value = -1 end)
+        "#)).unwrap();
+        script.load_script();
+        assert!(script.lua.is_some());
+        loop {
+            if let Event::Line(_, line) = replies.recv_timeout(Duration::from_secs(10)).unwrap() {
+                if line == "CLOSING_STDOUT" { break; }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        std::fs::write(&path, "fact.value = 42").unwrap();
+        let started = Instant::now();
+        script.load_script();
+        let elapsed = started.elapsed();
+        loop {
+            let reply = replies.recv_timeout(Duration::from_secs(10)).unwrap();
+            let finished = matches!(reply, Event::Process(..));
+            script.on_event(reply, &mut context);
+            if finished { break; }
+        }
+        assert_eq!(script.c.lock().unwrap().facts["value"], 42.0, "a discarded handler ran after reload");
+        drop(script);
+        std::fs::remove_file(path).unwrap();
+        assert!(elapsed < Duration::from_secs(2), "reload waited for the stdout-closed child: {elapsed:?}");
+    }
+
+    #[test]
+    #[ignore = "subprocess entry point for spawn completion tests"]
+    fn spawn_exit_probe() {
+        if std::env::args().any(|arg| arg == "logic_luau::lifecycle_tests::spawn_exit_probe") {
+            std::process::exit(23);
+        }
+    }
+
+    #[test]
+    fn completed_spawns_release_tracking_and_deliver_exit_codes() {
+        let path = std::env::temp_dir().join(format!("pleamar-spawn-complete-{}.luau", std::process::id()));
+        let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
+        let (tx, _render) = std::sync::mpsc::channel();
+        let (events, replies) = std::sync::mpsc::channel();
+        let blocked = Arc::new(AtomicBool::new(false));
+        let mut context = Context::for_plugin(tx.clone(), blocked.clone());
+        let mut script = LuauScript::new("spawn.plm", path.to_str().unwrap(), tx, events, blocked);
+        {
+            let mut state = script.c.lock().unwrap();
+            state.permissions.commands = vec![exe.clone()];
+            state.facts.insert("exits".into(), 0.0);
+        }
+        std::fs::write(&path, format!(r#"
+            for _ = 1, 12 do
+                spawn([==[{exe}]==], {{"--ignored", "--exact", "logic_luau::lifecycle_tests::spawn_exit_probe"}},
+                    function() end, function(_, code) assert(code == 23); fact.exits += 1 end)
+            end
+        "#)).unwrap();
+        script.load_script();
+        assert!(script.lua.is_some());
+        let children: Vec<_> = script.c.lock().unwrap().running.values().map(|(_, child)| Arc::downgrade(child)).collect();
+        assert_eq!(children.len(), 12);
+        let mut finished = 0;
+        while finished < 12 {
+            let reply = replies.recv_timeout(Duration::from_secs(15)).unwrap();
+            finished += usize::from(matches!(reply, Event::Process(..)));
+            script.on_event(reply, &mut context);
+        }
+        assert_eq!(script.c.lock().unwrap().facts["exits"], 12.0);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while children.iter().any(|child| child.strong_count() != 0) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        drop(script);
+        std::fs::remove_file(path).unwrap();
+        assert!(children.iter().all(|child| child.upgrade().is_none()), "completed children remain owned by the shutdown registry");
+    }
+
+    #[test]
+    #[ignore = "subprocess entry point for the run cwd test"]
+    fn command_directory_probe() {
+        println!("CWD={}", std::env::current_dir().unwrap().display());
+        #[cfg(target_os = "windows")]
+        assert!(unsafe { windows::Win32::System::Console::GetConsoleWindow() }.is_invalid(), "helper created a console");
+    }
+
+    #[test]
+    fn run_resolves_explicit_cwd_against_logic_without_changing_the_parent() {
+        let original = std::env::current_dir().unwrap();
+        let folder = std::env::temp_dir().join(format!("pleamar helper ñ 世界 {}", std::process::id()));
+        let nested = folder.join("nested space");
+        std::fs::create_dir_all(&nested).unwrap();
+        let path = folder.join("cwd.luau");
+        let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
+        let (tx, _render) = std::sync::mpsc::channel();
+        let (events, replies) = std::sync::mpsc::channel();
+        let mut script = LuauScript::new("cwd.plm", path.to_str().unwrap(), tx, events, Arc::default());
+        script.c.lock().unwrap().permissions.commands = vec![exe.clone()];
+        let args = r#"{"--ignored", "--exact", "logic_luau::lifecycle_tests::command_directory_probe", "--nocapture"}"#;
+        let source = format!(r#"
+            local exe = [==[{exe}]==]
+            local args = {args}
+            assert(not pcall(run, exe, args, nil, {{ cwd = {{}} }}))
+            run(exe, args, function() end, {{ cwd = "nested space" }})
+            run(exe, args, function() end)
+            run(exe, args, function() end, {{ cwd = "missing folder" }})
+        "#);
+        std::fs::write(&path, source).unwrap();
+        script.load_script();
+        assert!(script.lua.is_some());
+        let mut outputs = Vec::new();
+        for _ in 0..3 {
+            let Event::Process(_, text, code) = replies.recv_timeout(Duration::from_secs(15)).unwrap() else { panic!("wrong event") };
+            outputs.push((text, code));
+        }
+        assert_eq!(outputs.iter().filter(|(_, code)| *code == 0).count(), 2, "{outputs:?}");
+        assert!(outputs.iter().any(|(text, code)| *code == 0 && text.contains(&format!("CWD={}", nested.display()))));
+        assert!(outputs.iter().any(|(text, code)| *code == 0 && text.contains(&format!("CWD={}", original.display()))));
+        assert_eq!(std::env::current_dir().unwrap(), original);
+        drop(script);
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(nested).unwrap();
+        std::fs::remove_dir(folder).unwrap();
+    }
+
+    #[test]
+    fn desktop_service_families_do_not_exhaust_workers_and_reload_expires_replies() {
+        let path = std::env::temp_dir().join(format!("pleamar-async-lua-{}.luau", std::process::id()));
+        let (tx, _render) = std::sync::mpsc::channel();
+        let (events, replies) = std::sync::mpsc::channel();
+        let blocked = Arc::new(AtomicBool::new(false));
+        let mut context = Context::for_plugin(tx.clone(), blocked.clone());
+        let mut script = LuauScript::new("async.plm", path.to_str().unwrap(), tx, events, blocked);
+        {
+            let mut shared = script.c.lock().unwrap();
+            shared.facts.insert("answers".into(), 0.0);
+            // Deliberately unsupported names exercise the actual async error
+            // route without reading hardware, creating windows or using IPC.
+            shared.permissions.services = (1..=17).map(|n| format!("testservice{n}")).collect();
+        }
+        std::fs::write(&path, r#"
+            for n = 1, 16 do
+                sys.ask_async("testservice" .. n .. ".state", {}, function(value, error)
+                    assert(value == nil and type(error) == "string")
+                    fact.answers += 1
+                end)
+            end
+            assert(not pcall(sys.call_async, "testservice1.write", {}, function() end))
+            assert(not pcall(sys.ask_async, "testservice17.state", {}, function() end))
+        "#).unwrap();
+        script.load_script();
+        assert!(script.lua.is_some());
+        let alive: Vec<_> = script.c.lock().unwrap().service_workers.values().map(|w| w.active.clone()).collect();
+        assert_eq!(alive.len(), 16);
+        let mut old = Vec::new();
+        for _ in 0..16 { old.push(replies.recv_timeout(Duration::from_secs(5)).unwrap()); }
+        script.on_event(old.pop().unwrap(), &mut context);
+        assert_eq!(script.c.lock().unwrap().facts["answers"], 1.0);
+        std::fs::write(&path, r#"
+            fact.answers = 100
+            sys.ask_async("testservice1.state", {}, function() fact.answers += 1 end)
+        "#).unwrap();
+        script.load_script();
+        assert!(script.lua.is_some());
+        assert!(alive.iter().all(|active| !active.load(Ordering::Acquire)));
+        for reply in old { script.on_event(reply, &mut context); }
+        assert_eq!(script.c.lock().unwrap().facts["answers"], 100.0);
+        script.on_event(replies.recv_timeout(Duration::from_secs(5)).unwrap(), &mut context);
+        assert_eq!(script.c.lock().unwrap().facts["answers"], 101.0);
+        assert!(script.c.lock().unwrap().processes.is_empty());
+        drop(script);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn failed_initialization_clears_callbacks_and_can_reload() {
+        let path = std::env::temp_dir().join(format!("pleamar-failed-lua-{}.luau", std::process::id()));
+        let (tx, _render) = std::sync::mpsc::channel();
+        let (events, _logic) = std::sync::mpsc::channel();
+        let mut script = LuauScript::new("recovery.plm", path.to_str().unwrap(), tx, events, Arc::default());
+        script.c.lock().unwrap().facts.insert("value".into(), 0.0);
+        // Both an explicit failure and the watchdog used to leave Functions
+        // backed by a destroyed VM in Shared; the next event then panicked.
+        for failure in ["error('initialization failed')", "while true do end"] {
+            script.release();
+            script.lua = None;
+            std::fs::write(&path, format!("on('ping', function() fact.value = -1 end)\nafter(1, function() fact.value = -2 end)\n{failure}")).unwrap();
+            script.load_script();
+            assert!(script.lua.is_none());
+            assert!(script.c.lock().unwrap().handlers.is_empty());
+            assert!(script.c.lock().unwrap().timers.is_empty());
+            script.dispatch("ping", Value::Nil);
+            assert_eq!(script.c.lock().unwrap().facts["value"], 0.0);
+
+            std::fs::write(&path, "on('ping', function() fact.value = 42 end)").unwrap();
+            script.load_script();
+            assert!(script.lua.is_some());
+            script.dispatch("ping", Value::Nil);
+            assert_eq!(script.c.lock().unwrap().facts["value"], 42.0);
+            script.c.lock().unwrap().facts.insert("value".into(), 0.0);
+        }
+        drop(script);
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod service_reload_tests;
+
+#[cfg(test)]
+mod watch_reload_tests;
+
+#[cfg(test)]
+mod async_tests;
+
+#[cfg(test)]
+mod run_tests;
+
 pub struct LuauScript {
     scene: String,
     logic: String,
@@ -331,6 +739,15 @@ pub struct LuauScript {
     plugins: Vec<LivePlugin>,
     /// If it is a plugin: what the scene says about it (its logic, what it asks for).
     definition: Option<crate::scene::Plugin>,
+    memory_reported: Option<Instant>,
+}
+
+impl Drop for LuauScript {
+    fn drop(&mut self) {
+        // Closures in Shared point back into the VM. Break the cycle before
+        // Lua is dropped, and cancel this script's queued service operations.
+        self.release();
+    }
 }
 
 /// A running plugin, seen from the scene's logic: how it is spoken to.
@@ -372,14 +789,13 @@ fn qualified_listener(prefix: &Option<String>, what: &str) -> String {
 
 impl LuauScript {
     pub fn new(scene: &str, logic: &str, tx: Sender<ToRender>, to_logic: Sender<Event>, blocked: Arc<AtomicBool>) -> Self {
-        LuauScript { scene: scene.to_owned(), logic: logic.to_owned(), tx, to_logic, blocked, lua: None, c: Arc::default(), prefix: None, plugins: Vec::new(), definition: None }
+        LuauScript { scene: scene.to_owned(), logic: logic.to_owned(), tx, to_logic, blocked, lua: None, c: Arc::default(), prefix: None, plugins: Vec::new(), definition: None, memory_reported: crate::gpu::timing_enabled().then(Instant::now) }
     }
 
-    /// A plugin's logic. The number is so that its timers and processes are not
-    /// named the same as another logic's: they all share the mailbox.
-    fn for_plugin(&self, p: &crate::scene::Plugin, number: usize) -> Self {
-        let c = Shared { next: (number as u32 + 1) * 1_000_000, plugin: Some(p.name.clone()), ..Default::default() };
-        LuauScript { scene: self.scene.clone(), logic: p.logic.to_string_lossy().into_owned(), tx: self.tx.clone(), to_logic: self.to_logic.clone(), blocked: self.blocked.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefix: Some(p.name.clone()), plugins: Vec::new(), definition: Some(p.clone()) }
+    /// A plugin's logic, with its own state and the scene's shared reply mailbox.
+    fn for_plugin(&self, p: &crate::scene::Plugin) -> Self {
+        let c = Shared { plugin: Some(p.name.clone()), ..Default::default() };
+        LuauScript { scene: self.scene.clone(), logic: p.logic.to_string_lossy().into_owned(), tx: self.tx.clone(), to_logic: self.to_logic.clone(), blocked: self.blocked.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefix: Some(p.name.clone()), plugins: Vec::new(), definition: Some(p.clone()), memory_reported: crate::gpu::timing_enabled().then(Instant::now) }
     }
 
     /// Sets a plugin running on its thread. From there it tends its mailbox and its timers.
@@ -411,12 +827,16 @@ impl LuauScript {
         c.handlers.clear();
         c.timers.clear();
         c.processes.clear();
+        c.service_workers.clear();
         c.watchers.clear();
+        c.watched.clear();
+        c.latest.clear();
+        c.subscriptions.clear();
         for (_, (_, child)) in c.running.drain() {
-            if let Some(mut h) = child.lock().unwrap().take() {
-                let _ = h.kill();
-                let _ = h.wait();
-            }
+            stop_child(&child);
+        }
+        for child in c.commands.drain().filter_map(|(_, child)| child) {
+            stop_child(&child);
         }
     }
 
@@ -455,8 +875,9 @@ impl LuauScript {
         }
         let who = self.owner();
         let pending: Vec<crate::scene::Service> = {
-            let c = self.c.lock().unwrap();
-            c.services.iter().filter(|s| !c.subscribed.contains(&s.alias)).cloned().collect()
+            let mut c = self.c.lock().unwrap();
+            c.subscriptions.clear();
+            c.services.clone()
         };
         for s in pending {
             let root = s.name.split(['.', ':']).next().unwrap_or(&s.name).to_owned();
@@ -468,13 +889,53 @@ impl LuauScript {
                 eprintln!("logic  · `service {}` needs permission: add `services: \"{root}\"` to this scene's `permissions`", s.name);
                 continue;
             }
-            self.c.lock().unwrap().subscribed.insert(s.alias.clone());
+            let lifetime = Arc::new(());
+            let live = Arc::downgrade(&lifetime);
             let (to_logic, alias) = (Mutex::new(self.to_logic.clone()), s.alias.clone());
-            if !crate::platform::service(&who, &s.name, &format!("service:{}", s.alias), Box::new(move |v| {
-                let _ = to_logic.lock().unwrap().send(Event::Data(format!("service:{alias}"), v));
+            // The platform replaces the listener and replays its snapshot, without
+            // starting another worker. This also initializes newly added fields.
+            if crate::platform::service(&who, &s.name, &format!("service:{}", s.alias), Box::new(move |v| {
+                if live.strong_count() != 0 {
+                    let _ = to_logic.lock().unwrap().send(Event::ServiceData(alias.clone(), live.clone(), v));
+                }
             })) {
+                self.c.lock().unwrap().subscriptions.push(lifetime);
+            } else {
                 eprintln!("logic  · the '{}' service is not available here: '{}' stays as the scene left it", s.name, s.alias);
             }
+        }
+    }
+
+    fn refresh_watches(&self) {
+        let names: Vec<_> = self.c.lock().unwrap().watchers.keys().cloned().collect();
+        for name in names {
+            if check_service_permission(&self.c, &name, false).is_err() {
+                let mut c = self.c.lock().unwrap();
+                c.watched.remove(&name);
+                c.latest.remove(&name);
+            } else if !self.c.lock().unwrap().watched.get(&name).is_some_and(Option::is_some) {
+                subscribe_watch(&self.c, &self.to_logic, &self.owner(), &name);
+            }
+        }
+    }
+
+    fn dispatch_watch(&self, name: &str, listener: Option<usize>, value: &SysValue) {
+        if check_service_permission(&self.c, name, false).is_err() { return; }
+        let Some(lua) = &self.lua else { return };
+        let listeners: Vec<_> = {
+            let mut c = self.c.lock().unwrap();
+            if listener.is_none() { c.latest.insert(name.to_owned(), value.clone()); }
+            c.watchers.get_mut(name).into_iter().flatten().enumerate().filter_map(|(i, h)| {
+                // A fresh native update may precede a queued replay to a late
+                // listener. In that case it is already initialized with newer data.
+                if listener.is_some() && (listener != Some(i) || h.initialized) { return None; }
+                h.initialized = true;
+                Some(h.f.clone())
+            }).collect()
+        };
+        match value_to_lua(lua, value) {
+            Ok(v) => listeners.iter().for_each(|f| self.call_handler(f, v.clone())),
+            Err(e) => eprintln!("logic  · {e}"),
         }
     }
 
@@ -570,6 +1031,14 @@ impl LuauScript {
     /// the old one was stopped first, and a failed reload left timers pointing
     /// at a Lua already gone: the next one to fire brought the thread down.
     fn load_script(&mut self) {
+        // Editing a plugin's code changes its approval fingerprint even when
+        // its .plm has not changed, so ReloadLogic must recheck the boundary.
+        if let Some(p) = &self.definition {
+            let approved = crate::permissions::is_approved(p);
+            let mut c = self.c.lock().unwrap();
+            c.unapproved = !approved;
+            c.permissions = if approved { p.permissions.clone() } else { Default::default() };
+        }
         // Said before loading: if the script trips over a permission it does not have, let it be known why.
         if let (Some(p), true) = (&self.prefix, self.c.lock().unwrap().unapproved) {
             println!("logic  · plugin '{p}' · ⚠ NOT APPROVED: runs unable to touch the system. To see what it asks for and decide: pleamar --approve {}", self.scene);
@@ -588,8 +1057,16 @@ impl LuauScript {
         let fresh = old.lock().unwrap().fresh();
         self.c = Arc::new(Mutex::new(fresh));
         match self.prepare().and_then(|lua| {
+            // Compilation is bounded by the VM's memory limit, not the
+            // execution watchdog. A large scene may compile slowly under load.
+            let function = lua.load(&source).set_name(format!("@{}", self.logic)).into_function()?;
             self.c.lock().unwrap().deadline = Some(Instant::now() + PATIENCE);
-            lua.load(&source).set_name(format!("@{}", self.logic)).exec()?;
+            if let Err(error) = function.call::<()>(()) {
+                // Partial initialization can already have registered callbacks
+                // in Shared. Clear them while their Lua instance is still alive.
+                self.release();
+                return Err(error);
+            }
             Ok(lua)
         }) {
             Ok(lua) => {
@@ -609,6 +1086,10 @@ impl LuauScript {
                 // What the failed one started goes with it; the old one, as it was.
                 self.release();
                 self.c = old;
+                // A candidate may have replaced the hub's callback for the same
+                // owner and service before failing. Bind the retained VM again.
+                self.c.lock().unwrap().watched.clear();
+                self.refresh_watches();
                 eprintln!("logic  · the previous one stays as it was:\n{e}");
             }
         }
@@ -733,18 +1214,17 @@ impl LuauScript {
             Ok(())
         })?)?;
 
-        let schedule = |c: &Arc<Mutex<Shared>>, ms: f64, f: Function, repeats: bool| {
+        let schedule = |c: &Arc<Mutex<Shared>>, ms: f64, f: Function, repeats: bool| -> mlua::Result<u32> {
             let mut c = c.lock().unwrap();
-            c.next += 1;
             let d = Duration::from_secs_f64(ms.max(1.0) / 1000.0);
-            let id = c.next;
+            let id = next_id()?;
             c.timers.push(Timer { id, when: Instant::now() + d, every: repeats.then_some(d), f });
-            id
+            Ok(id)
         };
         let c = self.c.clone();
-        g.set("after", lua.create_function(move |_, (ms, f): (f64, Function)| Ok(schedule(&c, ms, f, false)))?)?;
+        g.set("after", lua.create_function(move |_, (ms, f): (f64, Function)| schedule(&c, ms, f, false))?)?;
         let c = self.c.clone();
-        g.set("every", lua.create_function(move |_, (ms, f): (f64, Function)| Ok(schedule(&c, ms, f, true)))?)?;
+        g.set("every", lua.create_function(move |_, (ms, f): (f64, Function)| schedule(&c, ms, f, true))?)?;
         let c = self.c.clone();
         g.set("cancel", lua.create_function(move |_, id: u32| {
             c.lock().unwrap().timers.retain(|t| t.id != id);
@@ -769,6 +1249,7 @@ impl LuauScript {
 
         // A system command: it runs on another thread and answers when it finishes.
         let (c, to_logic) = (self.c.clone(), self.to_logic.clone());
+        let command_folder = std::path::Path::new(&self.logic).parent().unwrap_or(std::path::Path::new(".")).to_owned();
         // With a fourth argument, how: `{ stdin = "/path" }` gives it that file as
         // its input —what in a terminal is `command < file`, which is how an image
         // is copied to the clipboard— and `{ output = false }` does not collect what
@@ -779,19 +1260,27 @@ impl LuauScript {
             check_command_permission(&c, &command)?;
             let input: Option<String> = how.as_ref().and_then(|t| t.get("stdin").ok());
             let collect: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("output").ok().flatten()).unwrap_or(true);
+            // Opt-in: existing commands retain their inherited working directory.
+            // Relative cwd values belong to the logic file, so packaged helpers
+            // work when a scene is opened by absolute path from another folder.
+            let cwd: Option<String> = how.as_ref().map(|t| t.get("cwd")).transpose()?.flatten();
+            let cwd = cwd.map(|path| command_folder.join(path));
             let id = {
                 let mut c = c.lock().unwrap();
-                c.next += 1;
-                let id = c.next;
+                let id = next_id()?;
                 if let Some(f) = f {
-                    c.processes.insert(id, f);
+                    c.processes.insert(id, Callback { f, query: None });
                 }
+                c.commands.insert(id, None);
                 id
             };
             let to_logic = to_logic.clone();
+            let state = Arc::downgrade(&c);
             std::thread::spawn(move || {
                 let mut launch = std::process::Command::new(&command);
                 launch.args(args.unwrap_or_default());
+                if let Some(cwd) = cwd { launch.current_dir(cwd); }
+                crate::platform::die_with_parent(&mut launch);
                 if let Some(path) = &input {
                     match std::fs::File::open(path) {
                         Ok(f) => {
@@ -803,16 +1292,32 @@ impl LuauScript {
                         }
                     }
                 }
-                let (output, code) = if collect {
-                    match launch.output() {
-                        Ok(o) => (String::from_utf8_lossy(&o.stdout).trim_end().to_owned(), o.status.code().unwrap_or(-1)),
-                        Err(e) => (e.to_string(), -1),
+                // Match Command::output's closed input unless the caller supplied
+                // a file. No-output commands keep their inherited input as before.
+                if collect && input.is_none() { launch.stdin(std::process::Stdio::null()); }
+                launch.stdout(if collect { std::process::Stdio::piped() } else { std::process::Stdio::null() })
+                    .stderr(std::process::Stdio::null());
+                let started = start_run(&state, id, &command, &mut launch);
+                let (child, output) = match started {
+                    Ok(Some(child)) => child,
+                    Ok(None) => return, // Retired before launch.
+                    Err(e) => {
+                        let _ = to_logic.send(Event::Process(id, e.to_string(), -1));
+                        return;
                     }
-                } else {
-                    match launch.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status() {
-                        Ok(s) => (String::new(), s.code().unwrap_or(-1)),
-                        Err(e) => (e.to_string(), -1),
-                    }
+                };
+                let mut bytes = Vec::new();
+                let read = match output {
+                    Some(mut output) => std::io::Read::read_to_end(&mut output, &mut bytes),
+                    None => Ok(0),
+                };
+                if read.is_err() { stop_child(&child); }
+                let code = wait_child(&child);
+                let weak = Arc::downgrade(&child);
+                CHILDREN.lock().unwrap().retain(|other| !other.ptr_eq(&weak));
+                let (output, code) = match read {
+                    Ok(_) => (String::from_utf8_lossy(&bytes).trim_end().to_owned(), code),
+                    Err(e) => (e.to_string(), -1),
                 };
                 let _ = to_logic.send(Event::Process(id, output, code));
             });
@@ -832,22 +1337,19 @@ impl LuauScript {
             launch.args(args.unwrap_or_default()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
             // If the program gets killed, this goes with it.
             crate::platform::die_with_parent(&mut launch);
+            let id = next_id()?;
             let mut child = launch
                 .spawn()
                 .map_err(|e| mlua::Error::runtime(format!("cannot run '{command}': {e}")))?;
             let output = child.stdout.take();
-            let child = Arc::new(Mutex::new(Some(child)));
-            CHILDREN.lock().unwrap().push(child.clone());
-            let id = {
+            let child = track_child(child);
+            {
                 let mut c = c.lock().unwrap();
-                c.next += 1;
-                let id = c.next;
                 c.running.insert(id, (f, child.clone()));
                 if let Some(end) = on_exit {
-                    c.processes.insert(id, end);
+                    c.processes.insert(id, Callback { f: end, query: None });
                 }
-                id
-            };
+            }
             let to_logic = to_logic.clone();
             std::thread::spawn(move || {
                 if let Some(s) = output {
@@ -857,7 +1359,9 @@ impl LuauScript {
                         }
                     }
                 }
-                let code = child.lock().unwrap().take().and_then(|mut h| h.wait().ok()).and_then(|s| s.code()).unwrap_or(-1);
+                let code = wait_child(&child);
+                let weak = Arc::downgrade(&child);
+                CHILDREN.lock().unwrap().retain(|other| !other.ptr_eq(&weak));
                 let _ = to_logic.send(Event::Process(id, String::new(), code));
             });
             Ok(id)
@@ -870,8 +1374,8 @@ impl LuauScript {
         g.set("kill", lua.create_function(move |_, (id, how): (u32, Option<String>)| {
             let signal = match how.as_deref() {
                 None => None,
-                Some("int") => Some(libc::SIGINT),
-                Some("term") => Some(libc::SIGTERM),
+                Some("int") => Some("int"),
+                Some("term") => Some("term"),
                 Some(other) => return Err(mlua::Error::runtime(format!("kill(id, \"{other}\"): it is \"int\" or \"term\" to ask, or nothing to kill"))),
             };
             let mut c = c.lock().unwrap();
@@ -879,23 +1383,14 @@ impl LuauScript {
                 Some(signal) => {
                     if let Some((_, child)) = c.running.get(&id) {
                         if let Some(h) = child.lock().unwrap().as_ref() {
-                            #[cfg(unix)]
-                            unsafe {
-                                libc::kill(h.id() as libc::pid_t, signal);
-                            }
-                            let _ = (h, signal);
+                            crate::platform::signal_child(h, signal).map_err(mlua::Error::runtime)?;
                         }
                     }
                 }
                 None => {
                     c.processes.remove(&id);
                     if let Some((_, child)) = c.running.remove(&id) {
-                        if let Some(mut h) = child.lock().unwrap().take() {
-                            // Reaped here: its reader thread finds nothing
-                            // left to wait for, and unwaited it stayed a zombie.
-                            let _ = h.kill();
-                            let _ = h.wait();
-                        }
+                        stop_child(&child);
                     }
                 }
             }
@@ -908,26 +1403,58 @@ impl LuauScript {
         let (c, to_logic, mine) = (self.c.clone(), self.to_logic.clone(), who.clone());
         sys.set("watch", lua.create_function(move |_, (name, f): (String, Function)| {
             check_service_permission(&c, &name, false)?;
-            let first = {
+            let (listener, subscribed, latest) = {
                 let mut c = c.lock().unwrap();
                 let v = c.watchers.entry(name.clone()).or_default();
-                v.push(f);
-                v.len() == 1
+                let listener = v.len();
+                v.push(WatchHandler { f, initialized: false });
+                (listener, c.watched.get(&name).and_then(|s| s.clone()), c.latest.get(&name).cloned())
             };
-            if !first {
-                return Ok(true);
+            if listener != 0 {
+                if let (Some(lifetime), Some(value)) = (&subscribed, latest) {
+                    let _ = to_logic.send(Event::WatchData {
+                        name, live: Arc::downgrade(lifetime), listener: Some(listener), value,
+                    });
+                }
+                return Ok(subscribed.is_some());
             }
-            let (to_logic, n) = (Mutex::new(to_logic.clone()), name.clone());
-            Ok(crate::platform::service(&mine, &name, "watch", Box::new(move |v| {
-                let _ = to_logic.lock().unwrap().send(Event::Data(n.clone(), v));
-            })))
+            Ok(subscribe_watch(&c, &to_logic, &mine, &name))
         })?)?;
         let (c, mine) = (self.c.clone(), who.clone());
         sys.set("call", lua.create_function(move |_, (name, args): (String, mlua::Variadic<Value>)| {
             check_service_permission(&c, &name, true)?;
             let args: Vec<SysValue> = args.iter().map(|v| lua_to_value(v, 0)).collect();
-            crate::platform::command(&mine, &name, &args).map_err(mlua::Error::runtime)
+            // Native device drivers can take longer than the Luau watchdog.
+            // Waiting on the OS is not an infinite loop in the scene's logic.
+            let t0 = Instant::now();
+            let result = crate::platform::command(&mine, &name, &args);
+            if let Some(l) = &mut c.lock().unwrap().deadline { *l += t0.elapsed(); }
+            result.map_err(mlua::Error::runtime)
         })?)?;
+        // Bounded, serial workers per service: a slow monitor cannot hold up
+        // audio, Lua timers, or enqueue an unbounded thread for every drag event.
+        for (function, query) in [("call_async", false), ("ask_async", true)] {
+        let (c, mine, to_logic) = (self.c.clone(), who.clone(), self.to_logic.clone());
+        sys.set(function, lua.create_function(move |_, (name, args, callback): (String, Vec<Value>, Function)| {
+            check_service_permission(&c, &name, !query)?;
+            let args = args.iter().map(|v| lua_to_value(v, 0)).collect();
+            let service = name.split('.').next().unwrap_or(&name).to_owned();
+            let mut state = c.lock().unwrap();
+            if !state.service_workers.contains_key(&service) {
+                if state.service_workers.len() >= MAX_SERVICE_WORKERS {
+                    return Err(mlua::Error::runtime("too many asynchronous service workers"));
+                }
+                let worker = ServiceWorker::new(mine.clone(), to_logic.clone(), Arc::downgrade(&c)).map_err(mlua::Error::external)?;
+                state.service_workers.insert(service.clone(), worker);
+            }
+            let id = next_id()?;
+            let callback = Callback { f: callback, query: query.then(|| name.clone()) };
+            state.service_workers[&service].sender.try_send(ServiceRequest { id, name, args, query })
+                .map_err(|_| mlua::Error::runtime("native service command queue is full or closed"))?;
+            state.processes.insert(id, callback);
+            Ok(())
+        })?)?;
+        }
         // The same, but it answers: `sys.ask("tray.menu", key)` returns the menu.
         let (c, mine) = (self.c.clone(), who.clone());
         sys.set("ask", lua.create_function(move |lua, (name, args): (String, mlua::Variadic<Value>)| {
@@ -1046,8 +1573,8 @@ impl Script for LuauScript {
         });
         // What the scene takes as true at birth is what the logic believes until someone says otherwise.
         self.learn(&e, e.permissions.clone());
-        self.plugins = e.plugins.iter().enumerate().map(|(k, p)| {
-            let plugin = self.for_plugin(p, k);
+        self.plugins = e.plugins.iter().map(|p| {
+            let plugin = self.for_plugin(p);
             plugin.learn(&e, crate::permissions::effective(p));
             plugin.c.lock().unwrap().unapproved = !crate::permissions::is_approved(p);
             Self::start(plugin)
@@ -1056,6 +1583,11 @@ impl Script for LuauScript {
     }
 
     fn on_event(&mut self, e: Event, ctx: &mut Context) {
+        // A snapshot can already be queued when its declaration or permission
+        // changes. Plugins must reject that same retired snapshot too.
+        if let Event::ServiceData(_, live, _) | Event::WatchData { live, .. } = &e {
+            if live.strong_count() == 0 { return; }
+        }
         // Every plugin receives the same, but only has handlers with its name in front:
         // it does not find out about what is not its own.
         if !matches!(e, Event::NewScene(..)) {
@@ -1128,7 +1660,7 @@ impl Script for LuauScript {
                 // The scene: the plugins that stay, with what is new; the ones that arrive, start; the ones no longer there, go.
                 if self.prefix.is_none() {
                     let mut staying: Vec<LivePlugin> = Vec::new();
-                    for (k, p) in plugins.iter().enumerate() {
+                    for p in &plugins {
                         let fresh = Event::NewScene(facts.clone(), texts.clone(), crate::permissions::effective(p), models.clone(), types.clone(), vec![p.clone()], signals.clone(), services.clone(), translations.clone());
                         let live = match self.plugins.iter().position(|x| x.definition.name == p.name && x.definition.logic == p.logic) {
                             Some(i) => {
@@ -1137,7 +1669,7 @@ impl Script for LuauScript {
                                 v
                             }
                             None => {
-                                let v = Self::start(self.for_plugin(p, k + 100));
+                                let v = Self::start(self.for_plugin(p));
                                 println!("logic  · plugin '{}' arrives", p.name);
                                 let _ = v.mailbox.send(fresh.clone());
                                 let _ = v.mailbox.send(Event::ReloadLogic);
@@ -1169,8 +1701,9 @@ impl Script for LuauScript {
                 for (n, v) in texts {
                     c.texts.entry(n.to_owned()).or_insert(v);
                 }
-                // If the scene now asks for a service it did not ask for before, it is set up here.
+                // Reconcile sources, fields and permissions against the running services.
                 drop(c);
+                self.refresh_watches();
                 self.subscribe_services();
             }
             Event::Line(id, line) => {
@@ -1179,24 +1712,38 @@ impl Script for LuauScript {
                     self.call_handler(&f, line);
                 }
             }
-            Event::Data(name, value) => {
+            Event::ServiceData(alias, _, value) => {
                 // `service clock as now`: it arrives without anyone asking for it from Luau,
                 // and it is spread even if the scene has no logic at all.
-                if let Some(alias) = name.strip_prefix("service:") {
-                    return self.spread_service(alias, &value);
-                }
-                let Some(lua) = &self.lua else { return };
-                let listeners = self.c.lock().unwrap().watchers.get(&name).cloned().unwrap_or_default();
-                match value_to_lua(lua, &value) {
-                    Ok(v) => listeners.iter().for_each(|f| self.call_handler(f, v.clone())),
-                    Err(e) => eprintln!("logic  · {e}"),
+                self.spread_service(&alias, &value);
+            }
+            Event::WatchData { name, live, listener, value } => {
+                let mine = self.c.lock().unwrap().watched.get(&name).and_then(Option::as_ref)
+                    .is_some_and(|current| live.ptr_eq(&Arc::downgrade(current)));
+                if mine { self.dispatch_watch(&name, listener, &value); }
+            }
+            Event::Data(name, value) => self.dispatch_watch(&name, None, &value),
+            Event::Answer(id, result) => {
+                let f = self.c.lock().unwrap().processes.remove(&id);
+                if let (Some(f), Some(lua)) = (f, &self.lua) {
+                    // The query may have completed before permission was removed,
+                    // while its reply was still waiting in the logic mailbox.
+                    let result = match &f.query {
+                        Some(name) => check_service_permission(&self.c, name, false).map_err(|e| e.to_string()).and(result),
+                        None => result,
+                    };
+                    match result.and_then(|v| value_to_lua(lua, &v).map_err(|e| e.to_string())) {
+                        Ok(value) => self.call_handler(&f.f, (value, Value::Nil)),
+                        Err(error) => self.call_handler(&f.f, (Value::Nil, error)),
+                    }
                 }
             }
             Event::Process(id, output, code) => {
                 self.c.lock().unwrap().running.remove(&id);
+                self.c.lock().unwrap().commands.remove(&id);
                 let f = self.c.lock().unwrap().processes.remove(&id);
                 if let Some(f) = f {
-                    self.call_handler(&f, (output, code));
+                    self.call_handler(&f.f, (output, code));
                 }
             }
             _ => {}
@@ -1224,6 +1771,18 @@ impl Script for LuauScript {
         };
         for f in due {
             self.call_handler(&f, ());
+        }
+        // Observe the VM after its scheduled work; do not force a collection
+        // or introduce wakeups just to make a memory measurement look flat.
+        let report = self.memory_reported.as_mut().is_some_and(|last| {
+            if last.elapsed() < Duration::from_secs(5) { return false; }
+            *last = now;
+            true
+        });
+        if report {
+            let c = self.c.lock().unwrap();
+            println!("timing · Luau {}: {} bytes · {} timers · {} pending callbacks · {} children",
+                self.owner(), self.lua.as_ref().map_or(0, Lua::used_memory), c.timers.len(), c.processes.len(), c.running.len() + c.commands.len());
         }
     }
 }
