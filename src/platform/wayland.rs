@@ -132,6 +132,25 @@ impl BackdropTarget {
 /// The monitors by their name: a window that moves from one to another is
 /// photographed on the one the compositor says.
 static OUTPUTS: std::sync::LazyLock<Mutex<std::collections::HashMap<String, wl_output::WlOutput>>> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+/// When a monitor last came or went. While they are changing (a wake from deep
+/// sleep, where Hyprland's stand-in FALLBACK comes and goes as the real ones
+/// return), a monitor can be gone in the compositor before this side has heard
+/// so, and photographing it then is a fatal protocol error: no backdrop is
+/// photographed until they have been still for a moment.
+static OUTPUTS_CHANGED: std::sync::LazyLock<Mutex<Option<std::time::Instant>>> = std::sync::LazyLock::new(|| Mutex::new(None));
+const OUTPUTS_SETTLE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// A monitor came or went: backdrops wait until they have been still for
+/// `OUTPUTS_SETTLE`, and then the render is woken, so that a glass whose
+/// capture was refused meanwhile gets a fresh one even if nothing else moves.
+fn outputs_changed(to_render: &Sender<ToRender>) {
+    *OUTPUTS_CHANGED.lock().unwrap() = Some(std::time::Instant::now());
+    let tx = to_render.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(OUTPUTS_SETTLE + std::time::Duration::from_millis(50));
+        let _ = tx.send(ToRender::Repaint);
+    });
+}
 
 /// Where a layer lands inside its monitor, by the layer-shell rules: the
 /// margin only counts on the side it's stuck to, and what isn't stuck to
@@ -360,6 +379,10 @@ impl PlatformWindow for WaylandWindow {
         // A monitor that went away (sleep, unplugged) leaves its handle behind, and asking
         // the compositor to photograph it is a fatal protocol error ("invalid output").
         if !output.is_alive() || !OUTPUTS.lock().unwrap().values().any(|o| o == &output) {
+            return false;
+        }
+        // Not while monitors are coming and going: the one it is on may already be gone over there.
+        if OUTPUTS_CHANGED.lock().unwrap().is_some_and(|t| t.elapsed() < OUTPUTS_SETTLE) {
             return false;
         }
         if d.in_flight.swap(true, Ordering::Relaxed) {
@@ -1720,10 +1743,12 @@ impl OutputHandler for State {
     }
     /// A monitor plugged in with the program running.
     fn new_output(&mut self, _: &Connection, qh: &QueueHandle<Self>, output: wl_output::WlOutput) {
+        outputs_changed(&self.to_render);
         self.place_on(&output, qh);
     }
     fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
     fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
+        outputs_changed(&self.to_render);
         self.remove_from(&output);
     }
 }
