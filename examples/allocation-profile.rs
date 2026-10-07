@@ -53,12 +53,24 @@ unsafe impl GlobalAlloc for Tracked {
 static ALLOCATOR: Tracked = Tracked::new();
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) != Some("--compile-check") {
-        eprintln!("usage: allocation-profile --compile-check SCENE ITERATIONS");
-        std::process::exit(2);
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().is_some_and(|arg| arg == "--compile-check") {
+        compile_check(&arguments[1..]);
+        return;
     }
-    compile_check(&args[1..]);
+    std::thread::spawn(|| {
+        #[cfg(target_os = "windows")]
+        let inspect_native = std::env::var_os("PLEAMAR_PROFILE_NATIVE_HEAP").is_some();
+        let start = std::time::Instant::now();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let (bytes, blocks, peak) = (ALLOCATOR.bytes.load(Relaxed), ALLOCATOR.blocks.load(Relaxed), ALLOCATOR.peak.load(Relaxed));
+            println!("allocation · {:.1} s · Rust live {} bytes in {} blocks · peak {} bytes", start.elapsed().as_secs_f64(), bytes, blocks, peak);
+            #[cfg(target_os = "windows")]
+            if inspect_native { native_heap::report(); }
+        }
+    });
+    pleamar::run();
 }
 
 fn compile_check(arguments: &[String]) {
@@ -88,6 +100,62 @@ fn compile_check(arguments: &[String]) {
     // This is requested live memory, not RSS, allocator caches or driver memory.
     // Allow a small fixed amount of lazy bookkeeping, never a per-reload budget.
     if after > before + 4096 { std::process::exit(1); }
+}
+
+#[cfg(target_os = "windows")]
+mod native_heap {
+    use windows::{core::{s, w, BOOL}, Win32::{Foundation::{GetLastError, HANDLE},
+        System::{LibraryLoader::{GetModuleHandleW, GetProcAddress}, Memory::*}}};
+
+    fn summary(heap: HANDLE) -> Result<HEAP_SUMMARY, u32> {
+        type Read = unsafe extern "system" fn(HANDLE, u32, *mut HEAP_SUMMARY) -> BOOL;
+        static READ: std::sync::OnceLock<Option<Read>> = std::sync::OnceLock::new();
+        // This API starts at build 20348. Older Windows must still be able to
+        // load the diagnostic and report that this extra counter is unavailable.
+        let read = READ.get_or_init(|| unsafe {
+            let module = GetModuleHandleW(w!("kernel32.dll")).ok()?;
+            GetProcAddress(module, s!("HeapSummary")).map(|function| std::mem::transmute::<unsafe extern "system" fn() -> isize, Read>(function))
+        }).ok_or(127u32)?;
+        let mut result = HEAP_SUMMARY { cb: std::mem::size_of::<HEAP_SUMMARY>() as u32, ..Default::default() };
+        if unsafe { read(heap, 0, &mut result) }.as_bool() { Ok(result) }
+        else { Err(unsafe { GetLastError().0 }) }
+    }
+
+    pub fn report() {
+        let started = std::time::Instant::now();
+        let result = unsafe { GetProcessHeap() }.map_err(|e| e.code().0 as u32).and_then(summary);
+        match result {
+            Ok(value) => {
+                // The default heap cannot disappear while the process runs.
+                // Other heaps may be destroyed concurrently: count them without
+                // retaining handles or walking an unowned heap.
+                let heaps = unsafe { GetProcessHeaps(&mut []) };
+                println!("allocation · default heap: {} allocated · {} committed · {} reserved bytes · {} process heaps · query {:.3} ms",
+                    value.cbAllocated, value.cbCommitted, value.cbReserved, heaps, started.elapsed().as_secs_f64() * 1000.0);
+            }
+            Err(code) => println!("allocation · default heap unavailable: {code}"),
+        }
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn native_summary_observes_owned_allocation_and_free() {
+        struct Owned(HANDLE);
+        impl Drop for Owned { fn drop(&mut self) { unsafe { let _ = HeapDestroy(self.0); } } }
+        unsafe {
+            let heap = Owned(HeapCreate(HEAP_NONE, 0, 0).unwrap());
+            let before = match summary(heap.0) {
+                Err(127) => { eprintln!("NOT RUN: HeapSummary is unavailable on this Windows version"); return; }
+                value => value.unwrap(),
+            };
+            let ptr = HeapAlloc(heap.0, HEAP_ZERO_MEMORY, 1 << 20);
+            assert!(!ptr.is_null());
+            let during = summary(heap.0).unwrap();
+            assert!(during.cbAllocated >= before.cbAllocated + (1 << 20));
+            HeapFree(heap.0, HEAP_NONE, Some(ptr)).unwrap();
+            assert_eq!(summary(heap.0).unwrap().cbAllocated, before.cbAllocated);
+        }
+    }
 }
 
 #[cfg(test)]

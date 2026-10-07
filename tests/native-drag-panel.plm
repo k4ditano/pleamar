@@ -1,0 +1,9 @@
+// expect: ok
+// Transparent source for a second-process drop target placed behind this panel.
+scene NativeDragPanel {
+    surface { size: 1000, 600; anchor: top; margin: 300, 0, 0, 0; level: overlay; keyboard: none }
+    box { from: 24, 78; size: 260, 100; corner: 10; color: #375f66 }
+    text "Drag from the panel" { at: 40, 90; size: 18; color: #ffffff }
+    text "España ñ 世界 🚀" { at: 40, 125; size: 18; color: #80dcc2 }
+    zone box source { from: 24, 78; size: 260, 100; cursor: grab; carries: "España ñ 世界 🚀" }
+}

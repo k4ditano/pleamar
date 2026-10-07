@@ -1172,6 +1172,15 @@ pub enum Cursor {
     Grabbing,
 }
 
+/// A scrolling layout's visible area, shared by its child zones.
+#[derive(Clone, Debug)]
+pub struct ViewportClip {
+    pub shape: Shape,
+    /// The zone's transform prefix up to the viewport, before its scroll offset.
+    /// Layout placement can still change that prefix after the child is compiled.
+    pub under: usize,
+}
+
 /// A sensitive region: a shape with a name. The render does the hit-test with
 /// the same formula it paints with.
 #[derive(Clone, Debug)]
@@ -1184,6 +1193,7 @@ pub struct Zone {
     /// The transforms it lives under, from outside in: what is seen
     /// rotated is pressed rotated.
     pub under: Vec<Transform>,
+    pub viewports: Vec<ViewportClip>,
     /// Where it was declared among the instructions, and the group with `z:`
     /// it is inside, if any: a zone is on top where what holds it is drawn.
     pub at: usize,
@@ -1314,11 +1324,26 @@ impl Scene {
 }
 
 impl Zone {
-    /// The box that contains it, to tell the compositor where the mouse comes in.
-    pub fn bounds(&self, c: Ctx) -> Option<[f32; 4]> {
+    /// The whole row remains describable even when its viewport clips it out.
+    pub fn layout_bounds(&self, c: Ctx) -> Option<[f32; 4]> {
         let mut p = self.shape.flatten_into(c, &mut Vec::new());
         p.affine = self.under.iter().fold(Affine::IDENTITY, |a, t| a.mul(t.affine(c)));
         p.bounds()
+    }
+
+    /// The box that contains it, to tell the compositor where the mouse comes in.
+    pub fn bounds(&self, c: Ctx) -> Option<[f32; 4]> {
+        let mut bounds = self.layout_bounds(c)?;
+        for viewport in &self.viewports {
+            let mut clip = viewport.shape.flatten_into(c, &mut Vec::new());
+            clip.affine = self.under[..viewport.under].iter().fold(Affine::IDENTITY, |a, t| a.mul(t.affine(c)));
+            let clipped = clip.bounds()?;
+            bounds = [bounds[0].max(clipped[0]), bounds[1].max(clipped[1]), bounds[2].min(clipped[2]), bounds[3].min(clipped[3])];
+            if bounds[0] >= bounds[2] || bounds[1] >= bounds[3] {
+                return None;
+            }
+        }
+        Some(bounds)
     }
 
     /// A point on the screen, seen from inside: in a stack, (0, 0) is the
@@ -1331,6 +1356,14 @@ impl Zone {
     /// like an arrow is pressed where the arrow is seen, not in its box.
     pub fn contains(&self, c: Ctx, x: f32, y: f32) -> bool {
         let mut pts = Vec::new();
+        for viewport in &self.viewports {
+            let mut clip = viewport.shape.flatten_into(c, &mut pts);
+            clip.affine = self.under[..viewport.under].iter().fold(Affine::IDENTITY, |a, t| a.mul(t.affine(c)));
+            if clip.distance_with(x, y, &pts) >= 0.0 {
+                return false;
+            }
+        }
+        pts.clear();
         let mut p = self.shape.flatten_into(c, &mut pts);
         p.affine = self.under.iter().fold(Affine::IDENTITY, |a, t| a.mul(t.affine(c)));
         p.distance_with(x, y, &pts) < 0.0
@@ -1721,7 +1754,9 @@ pub struct Scene {
     /// names nothing of its own copy, only the scene's facts and props— is the
     /// same rule written twice: for each one, the first of its twins. Only one
     /// of them may act, or a `n = n + 1` counts once per monitor, an `emit` is
-    /// heard twice and a `toggle` undoes itself. Empty: every rule is its own.
+    /// heard twice and a `toggle` undoes itself. Identical `change` and `still`
+    /// rules also share their sampled history across active copies, so a monitor
+    /// handoff cannot lose a timeout or replay an old change. Empty: every rule is its own.
     pub twin_of: Vec<usize>,
     /// Whether it names `cursor.x` or `cursor.y`: only then is the system asked
     /// where the mouse is when it is not over the scene.
@@ -1924,7 +1959,7 @@ impl Scene {
         self.zone_under(id, shape, active, vec![])
     }
     pub fn zone_under(&mut self, id: &'static str, shape: Shape, active: impl Into<Expr>, under: Vec<Transform>) -> ZoneId {
-        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, at: self.instrs.len(), zblock: None, carries: None, label: None, reach: Reach::Any, scrolls: None, within: None, told: None });
+        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, viewports: Vec::new(), at: self.instrs.len(), zblock: None, carries: None, label: None, reach: Reach::Any, scrolls: None, within: None, told: None });
         ZoneId(self.zones.len() as u16 - 1)
     }
     /// Claims go from more to less priority; the last one should be
@@ -2004,6 +2039,9 @@ pub enum ToRender {
     /// plugged in.
     Sheet(Box<crate::gpu::NewSheet>),
     SheetGone(u32),
+    /// A native window moved to another output, or its output changed refresh.
+    #[cfg(target_os = "windows")]
+    WindowsOutput(u32, String, i32),
     /// The compositor has already shown that sheet's last frame and wants another.
     Frame(u32),
     /// What was seen on screen behind a glass, with it on top.
@@ -2058,11 +2096,13 @@ pub enum ToRender {
     Describe(bool, std::sync::mpsc::Sender<String>),
     /// An agent asks the scene to do something by name, as a hand would
     /// (`press save`); it is answered with what happened.
-    Act(crate::agent::Act, std::sync::mpsc::Sender<String>),
+    Act(crate::agent::Act, std::sync::mpsc::Sender<String>, std::sync::Weak<()>),
     /// `wait EXPR [TIMEOUT]`: answered as soon as it holds, or when it is late.
-    Wait(String, std::sync::mpsc::Sender<String>),
+    Wait(String, std::sync::mpsc::Sender<String>, std::sync::Weak<()>),
     /// `watch`: a line for each thing that happens, until then.
-    Watch(std::sync::mpsc::Sender<String>, std::time::Instant),
+    Watch(std::sync::mpsc::Sender<String>, std::time::Instant, std::sync::Weak<()>),
+    /// Retire disconnected wait/watch clients even when the scene is idle.
+    CommandGone,
     /// `pleamar --report`: measure every frame from now (`None`), or answer
     /// with what was measured and stop (`Some`).
     Probe(Option<std::sync::mpsc::Sender<String>>),
@@ -2209,6 +2249,9 @@ pub enum PieceContent {
     Kept,
     /// BGRA, premultiplied, opaque if the program said so.
     Pixels(Vec<u8>),
+    /// Immutable native capture pixels, retained until GPU copies finish.
+    #[cfg(target_os = "windows")]
+    Windows(std::sync::Arc<crate::windows_texture::SharedTexture>),
     /// Already on the card: a program that draws with the GPU hands it over
     /// as it is, and it is copied there without passing through here.
     #[cfg(unix)]
@@ -2242,9 +2285,22 @@ pub struct DmabufPlane {
 /// are in the window's own pixels, from its corner.
 #[derive(Debug)]
 pub enum ToNest {
+    /// The Windows scene's main copies: logical screen index and native output
+    /// name. Native enumeration order is not the scene's copy order.
+    #[cfg(target_os = "windows")]
+    WindowsScreens(Vec<(usize, String)>),
+    /// The renderer's actual adapter/device, or a request for CPU fallback.
+    #[cfg(target_os = "windows")]
+    WindowsGpu(Option<crate::windows_texture::SharedDevice>),
     Size(i32, i32),
+    /// Window images needed by open scene surfaces, including view-only copies.
+    /// This is resource demand, not an input target or native window placement.
+    Visible(Vec<usize>),
     /// A program pinned to the dock (true) or unpinned: by its name.
     Pin(String, bool),
+    /// A native dock program and dropped files, kept separate from shell code.
+    #[cfg(target_os = "windows")]
+    OpenProgram { key: String, files: Vec<String> },
     Pointer { slot: usize, x: f64, y: f64 },
     PointerOut,
     /// evdev codes: 0x110 left, 0x111 right, 0x112 middle.
@@ -2318,10 +2374,21 @@ pub enum Event {
     Fact(&'static str, f32),
     /// A command that was launched has finished: (which one, what it wrote, with what code).
     Process(u32, String, i32),
+    /// An asynchronous system query has finished, retaining its structured value.
+    Answer(u32, Result<crate::platform::SysValue, String>),
     /// A command that is still running has written a line.
     Line(u32, String),
     /// A system service has something new to tell.
     Data(String, crate::platform::SysValue),
+    /// A declarative service snapshot, valid only while its subscription lives.
+    ServiceData(String, std::sync::Weak<()>, crate::platform::SysValue),
+    /// A VM's service update, or its cached snapshot for one new listener.
+    WatchData {
+        name: String,
+        live: std::sync::Weak<()>,
+        listener: Option<usize>,
+        value: crate::platform::SysValue,
+    },
     /// The logic file has changed.
     ReloadLogic,
     /// The scene has been reloaded: these are now its facts and its texts.

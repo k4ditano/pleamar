@@ -1,0 +1,58 @@
+{
+  "date": "2026-10-06",
+  "platform": "Windows 11 x64 MSVC",
+  "default_luau": true,
+  "library_tests": {
+    "passed": 197,
+    "failed": 0,
+    "ignored": 41,
+    "local_unpublished_ignored_fixtures": 2
+  },
+  "native_protocol": {
+    "passed": true,
+    "command": "python scripts/windows-toast-broker.py --binary <release/pleamar.exe> --tests <paired-library-test.exe> --output <new-owned-directory> --activation protocol",
+    "engine_sha256": "9d0d6981a1cc033c994b28e2b2d51a9ed951ae4d615590c36d43789047c5e76c",
+    "broker_sha256": "ab1baf9f643f7290a1d22071f22a1c1ea38b96032f33e2d2a0e40a142f42f054",
+    "unicode_shortcut_and_exact_handlers": true,
+    "real_shell_execute_startup": true,
+    "one_live_action_delivered": true,
+    "duplicate_rejected": true,
+    "malformed_arguments_rejected": true,
+    "helper_exited": true,
+    "replacement_handler_and_unrelated_values_preserved": true,
+    "own_registrations_removed": true,
+    "foreground_unchanged": true,
+    "toast_published": false,
+    "actual_toast_click": false,
+    "physical_input_sent": false,
+    "live_then_replayed_activation_cycles": 2,
+    "new_action_after_expired_client_disconnect": true,
+    "idle_receiver_shutdown_verified": true,
+    "idle_receiver_cpu_cycles": [
+      0,
+      0
+    ],
+    "idle_receiver_sample_ms": 350
+  },
+  "legacy_com": {
+    "local_automatic_startup": "REGDB_E_CLASSNOTREG 0x80040154; unresolved",
+    "local_running_helper_activation": "passed",
+    "windows_server_2022_automatic_startup": "passed at fe21fcb in CI run 37518953407"
+  },
+  "limitations": [
+    "Actual notification-center clicks remain pending",
+    "Current installer and combined COM/protocol CI are separate checks",
+    "Idle samples are not whole-app or sustained-performance measurements",
+    "No full GUI or port parity claim"
+  ],
+  "ipc_permissions": {
+    "native_logon_dacl_readback": true,
+    "restricted_token_read_client_denied": true,
+    "normal_client_connects_after_denial": true,
+    "old_and_new_runtime_stopped_by_actual_installer_hook": true,
+    "upgrade_probe_visible_windows": 0,
+    "upgrade_probe_foreground_unchanged": true,
+    "full_local_installer_test": false,
+    "real_other_logon_or_rdp_test": false
+  }
+}

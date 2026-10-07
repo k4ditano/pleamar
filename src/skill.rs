@@ -56,7 +56,10 @@ pub fn docs(topic: &str) -> i32 {
 
 /// Where each agent keeps its skills, if the agent is installed (its folder exists).
 fn places() -> Vec<(&'static str, std::path::PathBuf)> {
-    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else { return Vec::new() };
+    let home = std::env::var_os("HOME").filter(|v| !v.is_empty());
+    #[cfg(target_os = "windows")]
+    let home = home.or_else(|| std::env::var_os("USERPROFILE").filter(|v| !v.is_empty()));
+    let Some(home) = home.map(std::path::PathBuf::from) else { return Vec::new() };
     let config = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(std::path::PathBuf::from).unwrap_or_else(|| home.join(".config"));
     [
         ("Claude Code", home.join(".claude"), "skills"),
@@ -96,6 +99,9 @@ pub fn install(loud: bool) -> i32 {
             Ok(()) => {}
             Err(e) => eprintln!("skill · {agent}: {}: {e}", file.display()),
         }
+        // The desktop protocol needs pleamar-wm's independent Wayland seat.
+        // Do not advertise it as a native Windows capability.
+        if !cfg!(target_os = "linux") { continue; }
         // The desktop one, beside it, under the same rule: never over one
         // pleamar did not write.
         let Some(desktop_dir) = dir.parent().map(|p| p.join("pleamar-desktop")) else { continue };

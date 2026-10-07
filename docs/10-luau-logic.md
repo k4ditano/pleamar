@@ -33,6 +33,7 @@ cancel(t)
 
 run("date", { "+%H:%M" }, function(out, code) … end)   -- a system command; answers when it finishes
 run("wl-copy", { "--type", "image/png" }, nil, { stdin = path, output = false })   -- how: a file on its input; and not waiting for what it writes
+run("node", { "tools/reader.mjs" }, consume, { cwd = "." }) -- opt-in working directory relative to this logic file
 run("sudo", { "-S", "-p", "", "-v" }, function(_, code) … end, { input = pw .. "\n" })   -- a text on its input, which never touches a file, its arguments or its environment
 local id = spawn("wf-recorder", { "-f", file }, function(line) … end, function(_, code) … end)   -- one that does not end: a call per line, and one when it HAS ended
 spawn("pacman", args, on_line, on_exit, { input = "…", errors = true, env = { LC_ALL = "C" } })   -- how, too: a text on its input, its error output among the lines, and variables of its own (`env` and `errors` also for `run`: its error output after the rest)
@@ -44,11 +45,26 @@ kill(id)
 
 sys.watch("workspaces", function(w) … end)   -- a system service; returns whether this system has it
 sys.call("workspaces.focus", 3)               -- ask a service for something
+sys.call_async("audio.volume", { 0.5 }, function(error, code)
+    if code ~= 0 then log(error) end
+end)                                        -- completion without blocking Lua
 local menu = sys.ask("tray.menu", key)        -- ask it something and wait for the answer (the logic may wait)
+sys.ask_async("env", { "USERPROFILE" }, function(value, error)
+    if error then log(error) else log(value) end
+end)                                        -- structured answer without blocking Lua
 log("whatever", 42)
 tr("Good morning")                   -- the scene's `translations`, in the language `locale` says
 busy(600)                                 -- fake work, to see that the renderer does not care
 ```
+
+With `stdin = "open"`, `input` is sent first without blocking startup; later
+`write` calls preserve its order. A successful write means the bytes reached the
+pipe, not that the helper has processed them. `write(id)` waits for earlier input
+then closes the pipe. Each input is limited to 8 MiB and each write waits at most
+two seconds. A failed, oversized or timed-out write returns `false`, closes the
+input and stops that helper, so a partial message cannot be retried against a
+still-running protocol. Unknown or already-closed IDs return `false`. Reload,
+shutdown and `kill(id)` discard pending input; a write rechecks command permission.
 
 **Facts have a type**, the one the scene gave them: a yes-or-no is read and written with `true` and `false`; an enum (`fact mode: low | normal | critical`), with the name of its value; everything else, numbers. `on("fact:mode", function(m) … end)` receives the same. A value that does not exist is an error that says which ones there are: `'mode' cannot be 'critcal'. Did you mean 'critical'?`
 
@@ -56,7 +72,52 @@ A misspelled name is an error there and then, with a suggestion: `the scene has 
 
 ## The system services
 
+`sys.ask_async(name, arguments, callback)` checks the same read permissions as
+`sys.ask`. Its callback receives `(value, nil)` on success or `(nil, error)` on
+failure, on the Lua thread. It shares the bounded workers and reload lifetime
+of `sys.call_async`; neither form calls Lua from a worker thread.
+
+Queued service operations check permission again before starting. Queries also
+check it before delivering their data, so a reply waiting in the mailbox cannot
+bypass a revoked read permission. A denied request still calls its error
+handler. Removing permission does not undo a command already started by the
+system; its completion reports the actual outcome. Reloading or removing the
+logic discards its old callbacks. Callback and timer identifiers are unique
+within the process, including when plugins are inserted, removed or reordered.
+
 `sys.watch(name, fn)` listens to something that happens in the system. The function receives the state right now and then every change, as a table. **The names are the same on every system**; who answers is `src/platform/`'s business. If this system does not have that service, `sys.watch` returns `false` and the scene decides what to do without it.
+
+Each subscription belongs to its scene or plugin and its current Lua state.
+Reload discards old queued updates and reuses the platform's running service;
+removing a watcher stops delivery to that logic. Removing its service permission
+pauses the registered handlers; restoring permission resumes them with the
+current available snapshot. A listener registered later receives its initial
+snapshot without calling earlier handlers again. Private `files:` notifications
+stay with the owner of that file.
+
+`run` accepts an optional `cwd` string in its fourth argument. Relative values
+resolve against the logic file's folder, and absolute values select that folder
+directly. Omitting it preserves the launching process's working directory;
+running a helper never changes pleamar's own directory. An invalid/missing
+folder is reported through the ordinary nonzero process completion. On Windows,
+console helpers do not open a console window and remain in pleamar's Job Object.
+
+Both `run` and `spawn` register their direct child processes with the logic.
+Reloading or retiring that logic kills and reaps unfinished children, including
+`run` calls without output or callbacks. A `run` queued before reload cannot
+start afterwards; it also rechecks command permission before launch. Completed
+commands still deliver their real exit code, while callbacks from the discarded
+Lua state are ignored. This does not undo work a command has already performed,
+or promise cancellation of a daemon it has deliberately detached.
+
+`sys.call_async(name, arguments, callback)` has the same command permissions as
+`sys.call`. It returns after enqueueing; the callback receives `(error, code)` on
+the Lua thread, with an empty error and code `0` on success. Permission and queue
+errors are raised immediately. Commands execute serially per service prefix,
+with at most sixteen workers and eight queued commands per worker. A reload drops
+queued requests and callbacks; an OS call already executing may still finish.
+For sliders, coalesce pointer changes before enqueueing and confirm the final
+value through the service instead of treating enqueueing as device success.
 
 | Service | What it reports | Who provides it today |
 | --- | --- | --- |

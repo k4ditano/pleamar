@@ -1,0 +1,24 @@
+// expect: ok
+// Manual native pointer/capture probe. This slider changes no system setting.
+scene NativePointer {
+    surface { size: 620, 280; kind: window; title: "pleamar pointer validation"; keyboard: on_demand }
+    fact value = 0.5
+    fact held = false
+    fact presses = 0
+    fact releases = 0
+    fact moves = 0
+    text entry = ""
+    box { from: 0, 0; size: screen.width, screen.height; color: #142224 }
+    text "Native pointer and Unicode input" { at: 24, 22; size: 23; color: #ffffff }
+    box { from: 24, 88; size: 572, 24; corner: 12; color: #375f66 }
+    box { from: 24, 88; size: 572 * value, 24; corner: 12; color: #80dcc2 }
+    zone box slider { from: 24, 72; size: 572, 56; cursor: grab }
+    text "Value {value} · Held {held} · Press {presses} · Release {releases} · Move {moves}" {
+        at: 24, 145; size: 16; color: #ffffff
+    }
+    box { from: 24, 199; size: 572, 48; corner: 8; color: #2b4144 }
+    input entry { at: 36, 210; width: 548; size: 19; color: #ffffff; placeholder: "Type Unicode after dragging" }
+    on press slider { held = true; presses = presses + 1; value = clamp((local.x - 24) / 572, 0, 1) }
+    on drag slider { moves = moves + 1; value = clamp((local.x - 24) / 572, 0, 1) }
+    on release slider { held = false; releases = releases + 1 }
+}

@@ -1,0 +1,30 @@
+// expect: ok
+scene NativeInteraction {
+    surface { size: 520, 340; kind: window; title: "pleamar native validation"; keyboard: on_demand }
+    permissions { services: "clock", "clipboard", "clipboard.set" }
+    service clock as now { time: text = "--:--" }
+    fact clicks = 0
+    fact ticks = 0
+    fact scrolled = 0
+    fact open = false
+    text entry = ""
+    text result = "ready"
+    event clicked ->
+    event submitted ->
+    box { from: 0, 0; size: screen.width, screen.height; color: #142224 }
+    text "Native Windows · {now.time}" { at: 24, 24; size: 24; color: #ffffff }
+    text "Luau ticks: {ticks} · Clicks: {clicks} · Wheel: {scrolled}" { at: 24, 65; size: 16; color: #80dcc2 }
+    box { from: 20, 110; size: 480, 45; corner: 8; color: #2b4144 }
+    input entry { at: 32, 120; width: 450; size: 19; color: #ffffff; placeholder: "Type Unicode, then press Enter" }
+    box button { from: 24, 180; size: 180, 42; corner: 10; color: #80dcc2 }
+    text "Click / popup" { at: 40, 191; size: 16; color: #142224 }
+    text "{result}" { at: 24, 266; size: 16; color: #ffffff }
+    on press button { emit clicked; toggle open }
+    on scroll button { scrolled = scrolled + wheel }
+    on submit entry { emit submitted }
+    popup menu { at: 210, 180; size: 250, 70; open: open
+        box choice { from: 0, 0; size: 250, 70; corner: 10; color: #375f66 }
+        text "Native popup" { at: 20, 22; size: 18; color: #ffffff }
+        on press choice { emit clicked; open = false }
+    }
+}

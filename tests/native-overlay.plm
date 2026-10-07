@@ -1,0 +1,12 @@
+// expect: ok
+scene NativeOverlay {
+    surface { size: 360, 210; anchor: center; level: overlay; keyboard: on_demand while enabled; rate: 60 }
+    fact clicks = 0
+    fact enabled = true
+    event disable
+    on disable { enabled = false }
+    box { from: 0, 0; size: 180, 210; color: #328469 }
+    text "Overlay: {clicks}" { at: 20, 30; size: 20; color: #ffffff }
+    zone box button { from: 0, 0; size: 180, 210; active: enabled; cursor: pointer }
+    on press button { clicks = clicks + 1 }
+}

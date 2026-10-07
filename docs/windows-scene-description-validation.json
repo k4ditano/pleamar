@@ -1,0 +1,107 @@
+{
+  "date": "2026-10-06",
+  "source_commit": "ac5d4e3770f6877f81a6fb28a007015eea72503c",
+  "upstream": "3c8606d8e00609bc20d67a5ccf9ceefcbe7184df",
+  "default_luau": true,
+  "binary_sha256": "2cd5f3eaaf74202c4d707026fdfa725f3fd112585af4221e3d189b7be761cd44",
+  "test_binary_sha256": "507bac7b6ed0eef5bf8038a2ca01ea85ed333efe10457a45e57443e7566f0c56",
+  "commands": [
+    {
+      "command": "cargo test --release --locked --features windows-notifications --lib -- --test-threads=2",
+      "passed": 202,
+      "failed": 0,
+      "ignored": 41,
+      "note": "Two ignored fixtures in the local test tree are unpublished."
+    },
+    {
+      "command": "cargo build --release --locked --features windows-notifications --bins --example luau-test",
+      "exit": 0
+    },
+    {
+      "command": "python scripts/run-tests.py --binary <release-exe>",
+      "checks": 248,
+      "documentation_scenes": 35,
+      "failed": 0
+    },
+    {
+      "command": "python scripts/test-luau-runner.py --runner <luau-test.exe>",
+      "exit": 0
+    },
+    {
+      "command": "python windows/test-logic.py --binary <release-exe> --luau-runner <luau-test.exe>",
+      "repository": "marea-plm",
+      "commit": "1a93d39a6536db6d1b0600bb1c44e4261da4e3ff",
+      "exit": 0
+    }
+  ],
+  "regressions": {
+    "before": "200 passed, 2 failed: private-zone words leaked into loose text; clipped rows disappeared",
+    "after": "Both regression tests pass; existing viewport input and geometry cache tests also pass"
+  },
+  "native": {
+    "screen": "\\\\.\\DISPLAY2",
+    "scale": 1.25,
+    "backend": "DX12",
+    "logical_size": [
+      540,
+      430
+    ],
+    "inspected_capture_size": [
+      675,
+      538
+    ],
+    "checks": [
+      "Visible labels and full scrolled row geometry",
+      "Secret and person-only field values withheld",
+      "Hidden-zone text withheld",
+      "Open hidden surface confirmed using a visible positive control",
+      "Luau callback changes field labels and loose text",
+      "Repeated describe requests after cached frames",
+      "Watched scene reload and privacy changes",
+      "Owned process exits successfully"
+    ],
+    "physical_input_sent": false,
+    "foreground_unchanged": true,
+    "installer_exercised": false,
+    "captures": [
+      "windows-scene-description/01-initial.png",
+      "windows-scene-description/02-reloaded.png"
+    ]
+  },
+  "timing": {
+    "kind": "Complete CLI process roundtrip, including startup and pipe exchange",
+    "samples_ms": [
+      135.00559993553907,
+      140.85900003556162,
+      149.11250001750886,
+      130.17490005586296,
+      151.23839990701526,
+      140.67730004899204,
+      156.57049999572337,
+      133.11769999563694,
+      135.36469999235123,
+      158.6630999809131,
+      129.67529997695237,
+      162.10560000035912,
+      127.39289994351566,
+      145.7323000067845,
+      155.72929999325424,
+      170.66219996195287,
+      147.60909997858107,
+      155.4360999725759
+    ],
+    "median_ms": 146.67069999268278,
+    "note": "Small synthetic scene; not GPU frame time, Marea latency, sustained performance or a RAM benchmark."
+  },
+  "fixture_repairs": [
+    "Incorrect --check invocation corrected before native acceptance",
+    "Invalid Luau set() helper replaced with the actual text/fact API",
+    "Unscoped auxiliary surface stopped by the DISPLAY2 guard; all surfaces then explicitly scoped",
+    "PLM strings use literal backslashes; corrected a double-escaped monitor name before accepting the hidden-surface test"
+  ],
+  "limits": [
+    "Only describe/metadata implemented; proposed name-based actions, wait/watch and UIA remain design work",
+    "Legacy IPC commands do not enforce agent metadata; this is not a security boundary within the current logon",
+    "No physical interaction, installed-app walkthrough, full WM effects or Linux desktop acceptance established"
+  ]
+}

@@ -222,8 +222,12 @@ fn shape_distance(k: u32, point: vec2<f32>) -> f32 {
     var d = FAR;
     switch u32(f.a.x) {
         case ELLIPSE: {
-            let e = f.c.zw;
-            d = (length(p / e) - f.c.x) * min(e.x, e.y);
+            if (f.c.x > 0.0) {
+                let axes = f.c.x * f.c.zw;
+                let k0 = length(p / axes);
+                let k1 = length(p / (axes * axes));
+                d = select(-min(axes.x, axes.y), k0 * (k0 - 1.0) / max(k1, 1e-6), k1 > 1e-6);
+            }
         }
         case RECT: {
             if (f.b.z >= 0.5 && f.b.w >= 0.5) { d = rounded_rect(p, f.b.zw, f.c.x); }

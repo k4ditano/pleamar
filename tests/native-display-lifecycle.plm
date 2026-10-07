@@ -1,0 +1,21 @@
+// expect: ok
+scene NativeDisplayLifecycle {
+    surface { size: 440, 250; anchor: center; keyboard: on_demand }
+    fact clicks = 0
+    fact ticks = 0
+    fact open = false
+    box button { from: 0, 0; size: 440, 250; color: #183a40 }
+    text "Monitor lifecycle" { at: 24, 30; size: 24; color: #ffffff }
+    text "Clicks {clicks} · Ticks {ticks}" { at: 24, 86; size: 18; color: #ffffff }
+    text "Click here after reconnection" { at: 24, 145; size: 18; color: #a2e7d2 }
+    on press button { clicks = clicks + 1 }
+    surface extra {
+        size: 220, 60; anchor: bottom_right; margin: 24; screens: each max 2
+        box { from: 0, 0; size: 220, 60; color: #285c65 }
+        text "Additional surface" { at: 12, 20; size: 16; color: #ffffff }
+    }
+    popup menu { at: 30, 30; size: 200, 90; open: open
+        box { from: 0, 0; size: 200, 90; color: #536670 }
+        text "Owned popup" { at: 12, 24; size: 18; color: #ffffff }
+    }
+}

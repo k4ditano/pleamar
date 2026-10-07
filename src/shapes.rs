@@ -79,6 +79,33 @@ impl Affine {
     }
 }
 
+#[cfg(test)]
+mod ellipse_tests {
+    use super::*;
+
+    fn ellipse(radius: f32, ex: f32, ey: f32) -> FlatShape {
+        FlatShape { kind: 0, cx: 0.0, cy: 0.0, mx: 0.0, my: 0.0,
+            radius, ex, ey, rotation: 0.0, stroke: 0.0, affine: Affine::IDENTITY }
+    }
+
+    #[test]
+    fn collapsed_ellipses_have_no_hit_area_or_shadow() {
+        let empty = ellipse(0.0, 1.0, 0.01);
+        assert!(empty.bounds().is_none());
+        assert_eq!(empty.distance(0.0, 0.0), f32::MAX);
+    }
+
+    #[test]
+    fn flat_ellipse_shadow_falls_off_along_both_axes() {
+        let flat = ellipse(30.0, 1.0, 0.01);
+        assert!((flat.distance(400.0, 0.0) - 370.0).abs() < 0.01);
+        assert!((flat.distance(0.0, 10.0) - 9.7).abs() < 0.01);
+        assert!(flat.distance(0.0, 0.0).is_finite());
+        let circle = ellipse(30.0, 1.0, 1.0);
+        assert!((circle.distance(30.0, 40.0) - 20.0).abs() < 0.01);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Shape {
     Ellipse { center: Point, radius: Expr, scale: Point },
@@ -299,7 +326,15 @@ impl FlatShape {
         let (x, y) = rotate_point(x, y, (self.cx, self.cy), self.rotation);
         let (px, py) = (x - self.cx, y - self.cy);
         let mut d = match self.kind {
-            0 => ((px / self.ex).hypot(py / self.ey) - self.radius) * self.ex.min(self.ey),
+            0 => {
+                if self.radius <= 0.0 { return f32::MAX; }
+                let (a, b) = (self.radius * self.ex, self.radius * self.ey);
+                let k0 = (px / a).hypot(py / b);
+                let k1 = (px / (a * a)).hypot(py / (b * b));
+                // Scaling by the short axis understates distances along the
+                // long axis: a flattened ellipse cast a screen-wide shadow.
+                if k1 > 1e-6 { k0 * (k0 - 1.0) / k1 } else { -a.min(b) }
+            },
             1 => {
                 if self.mx < 0.5 || self.my < 0.5 {
                     return f32::MAX;
@@ -370,7 +405,10 @@ impl FlatShape {
     pub fn bounds(&self) -> Option<[f32; 4]> {
         let half = self.stroke * 0.5;
         let (mut hx, mut hy) = match self.kind {
-            0 => (self.radius * self.ex, self.radius * self.ey),
+            0 => {
+                if self.radius <= 0.0 { return None; }
+                (self.radius * self.ex, self.radius * self.ey)
+            },
             1 => {
                 if self.mx < 0.5 || self.my < 0.5 {
                     return None;

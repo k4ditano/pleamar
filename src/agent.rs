@@ -182,8 +182,13 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
     let there: Vec<Option<[f32; 4]>> = scene
         .zones
         .iter()
-        .map(|z| if z.reach == Reach::Hidden || (sight.gone)(z.at) { None } else { z.bounds(c) })
+        .map(|z| if z.reach == Reach::Hidden || (sight.gone)(z.at) { None } else { z.layout_bounds(c) })
         .collect();
+    // A hidden zone's words must not be reassigned to its parent or become
+    // loose text after the zone itself has been removed from the tree.
+    let private: Vec<[f32; 4]> = scene.zones.iter()
+        .filter(|z| z.reach == Reach::Hidden && !(sight.gone)(z.at))
+        .filter_map(|z| z.layout_bounds(c)).collect();
     let active: Vec<bool> = scene.zones.iter().map(|z| z.active.is_true(c)).collect();
     let rank = |k: usize| sight.rank.map_or((k, 0, 0), |r| r[k]);
     // The one on top at a point: what a press there would reach.
@@ -224,7 +229,12 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
         });
         // Scrolled out of its list: its centre is not inside the list's window.
         let off_view = |k: usize| {
-            scene.zones[k].within.is_some_and(|l| match (there[l.0 as usize], there[k]) {
+            let z = &scene.zones[k];
+            if !z.viewports.is_empty() && there[k].is_some_and(|b| {
+                let (x, y) = centre(b);
+                z.bounds(c).is_none_or(|visible| !inside(visible, x, y))
+            }) { return true; }
+            z.within.is_some_and(|l| match (there[l.0 as usize], there[k]) {
                 (Some(w), Some(z)) => {
                     let (x, y) = centre(z);
                     !inside(w, x, y)
@@ -243,6 +253,7 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
         let mut loose: Vec<&SeenText> = Vec::new();
         for t in sight.texts_seen {
             let (x, y) = centre(t.bounds);
+            if private.iter().any(|b| inside(*b, x, y)) { continue; }
             // An active zone first: a closed menu's zone, still in its place, does not
             // take the words of what is drawn where it would be.
             let smallest = mine
@@ -421,7 +432,8 @@ impl Act {
             "hold" => Ok(Act::Hold { name: need(name)? }),
             "drag" => {
                 let name = need(name)?;
-                let n: Vec<f32> = w.filter_map(|x| x.parse().ok()).collect();
+                let n = w.map(|x| x.parse::<f32>().ok().filter(|v| v.is_finite())).collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| format!("`drag {name}` needs two finite distances"))?;
                 match n[..] {
                     [dx, dy] => Ok(Act::Drag { name, by: (dx, dy) }),
                     _ => Err(format!("`drag {name}` needs how far, in pixels: `drag {name} 0 -40`")),
@@ -429,7 +441,9 @@ impl Act {
             }
             "wheel" => {
                 let name = need(name)?;
-                let n = w.next().and_then(|x| x.parse::<f32>().ok()).ok_or_else(|| format!("`wheel {name}` needs how many notches: 3 up, -3 down"))?;
+                let n = w.next().and_then(|x| x.parse::<f32>().ok()).filter(|n| n.is_finite())
+                    .ok_or_else(|| format!("`wheel {name}` needs a finite number of notches: 3 up, -3 down"))?;
+                if w.next().is_some() { return Err(format!("`wheel {name}` takes one number of notches")); }
                 Ok(Act::Wheel { name, notches: n })
             }
             "type" => {
@@ -490,6 +504,12 @@ fn key_name(k: &str) -> (String, Option<String>) {
     (named.to_owned(), None)
 }
 
+pub(crate) fn watch_duration(args: &str) -> std::time::Duration {
+    let seconds = args.trim().trim_end_matches('s').parse::<f32>().ok()
+        .filter(|s| *s > 0.0 && *s <= 3600.0).unwrap_or(10.0);
+    std::time::Duration::from_secs_f32(seconds)
+}
+
 /// The zone a name means: as the scene knows it, or without the `#screen0`
 /// that `describe` leaves out, in the copy that is on screen.
 pub fn locate(scene: &Scene, c: Ctx, name: &str, sight: &Sight) -> Option<usize> {
@@ -512,12 +532,50 @@ pub fn locate(scene: &Scene, c: Ctx, name: &str, sight: &Sight) -> Option<usize>
     candidates.iter().find(|k| seen(k)).or(candidates.first()).copied()
 }
 
+fn shown_point(scene: &Scene, sight: &Sight, p: (f32, f32)) -> bool {
+    sight.shown.iter().any(|s| inside(s.bounds, p.0, p.1) && scene.surfaces.get(s.surface)
+        .is_some_and(|f| !f.lock_screen && !f.hidden_from_captures && !f.agent_hidden))
+}
+
+fn top_zone(scene: &Scene, c: Ctx, sight: &Sight, p: (f32, f32)) -> Option<usize> {
+    scene.zones.iter().enumerate()
+        .filter(|(_, z)| !(sight.gone)(z.at) && z.active.is_true(c) && z.contains(c, p.0, p.1))
+        .max_by_key(|(k, _)| (sight.rank.map_or((*k, 0, 0), |r| r[*k]), *k))
+        .map(|(k, _)| k)
+}
+
+/// Recheck the actual input point after any hover, animation or cursor trip.
+/// A reachable part elsewhere in the zone cannot make an old point safe.
+pub fn press_at(scene: &Scene, c: Ctx, k: usize, p: (f32, f32), sight: &Sight) -> Result<(), String> {
+    let zone = &scene.zones[k];
+    if reach_point(scene, c, k, sight)?.is_none() || !shown_point(scene, sight, p) || !zone.contains(c, p.0, p.1) {
+        return Err("? the target moved or left the visible area; ask describe again".into());
+    }
+    let top = top_zone(scene, c, sight, p);
+    if top.is_none_or(|top| scene.zones[top].reach != Reach::Any || (top != k && zone.scrolls.is_none())) {
+        return Err("? another element covers the input point; ask describe again".into());
+    }
+    Ok(())
+}
+
+pub fn field_key(scene: &Scene, c: Ctx, field: usize, sight: &Sight) -> Result<(), String> {
+    let fields: Vec<_> = scene.instrs.iter().filter_map(|i| match i {
+        Instr::Field { text, zone, .. } if text.0 as usize == field => Some(*zone), _ => None,
+    }).collect();
+    if scene.zones.iter().enumerate().any(|(k, zone)| fields.contains(&zone.id)
+        && reach_point(scene, c, k, sight).is_ok_and(|point| point.is_some())) { return Ok(()); }
+    Err("? the focused field is not available to agents; choose an allowed input first".into())
+}
+
 /// Where a hand would press zone `k` now, or why it cannot: the point of
 /// it that is on top, its centre if that is. `Ok(None)`: it is scrolled out
 /// of its list, which has to bring it into sight first.
 pub fn reach_point(scene: &Scene, c: Ctx, k: usize, sight: &Sight) -> Result<Option<(f32, f32)>, String> {
     let z = &scene.zones[k];
     let said = z.id.split("#screen").next().unwrap_or(z.id);
+    if z.reach == Reach::Hidden {
+        return Err("? that element is hidden from agents".into());
+    }
     if z.reach == Reach::Person {
         return Err(format!("? {said} is for a person's hand (agent: no): ask them to"));
     }
@@ -525,7 +583,7 @@ pub fn reach_point(scene: &Scene, c: Ctx, k: usize, sight: &Sight) -> Result<Opt
         return Err(format!("? {said} is not there now"));
     };
     let centre = ((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5);
-    let on_screen = |x: f32, y: f32| sight.shown.iter().any(|s| inside(s.bounds, x, y) && scene.surfaces.get(s.surface).is_some_and(|f| !f.lock_screen && !f.agent_hidden));
+    let on_screen = |x: f32, y: f32| shown_point(scene, sight, (x, y));
     if let Some(l) = z.within {
         let lz = &scene.zones[l.0 as usize];
         if let Some(w) = lz.bounds(c)
@@ -541,16 +599,7 @@ pub fn reach_point(scene: &Scene, c: Ctx, k: usize, sight: &Sight) -> Result<Opt
     if !z.active.is_true(c) {
         return Err(format!("? {said} is inactive"));
     }
-    let rank = |k: usize| sight.rank.map_or((k, 0, 0), |r| r[k]);
-    let top = |x: f32, y: f32| {
-        scene
-            .zones
-            .iter()
-            .enumerate()
-            .filter(|(_, o)| !(sight.gone)(o.at) && o.active.is_true(c) && o.contains(c, x, y))
-            .max_by_key(|(j, _)| (rank(*j), *j))
-            .map(|(j, _)| j)
-    };
+    let top = |x, y| top_zone(scene, c, sight, (x, y));
     // The centre if it is its own; if not —a ring, a corner under a badge—
     // any point of it that is.
     let mut candidates = vec![centre];
@@ -560,7 +609,7 @@ pub fn reach_point(scene: &Scene, c: Ctx, k: usize, sight: &Sight) -> Result<Opt
         }
     }
     // A list's zone is under its rows, and its wheel and its drag reach it all the same.
-    if let Some(p) = candidates.iter().find(|(x, y)| z.contains(c, *x, *y) && (z.scrolls.is_some() || top(*x, *y) == Some(k))) {
+    if let Some(p) = candidates.iter().find(|(x, y)| on_screen(*x, *y) && z.contains(c, *x, *y) && (z.scrolls.is_some() || top(*x, *y) == Some(k))) {
         return Ok(Some(*p));
     }
     let over = top(centre.0, centre.1).filter(|t| *t != k).map_or("something", |t| scene.zones[t].id);
@@ -1158,6 +1207,8 @@ mod tests {
         assert!(matches!(p("key", "enter"), Ok(Act::Key { ref name, .. }) if name == "Return"));
         assert!(p("press", "").is_err());
         assert!(p("wheel", "list up").is_err());
+        for rest in ["knob NaN 2", "knob inf 2", "knob 1 typo 2", "knob 1 2 3"] { assert!(p("drag", rest).is_err()); }
+        for rest in ["list NaN", "list -inf", "list 3 extra"] { assert!(p("wheel", rest).is_err()); }
         assert!(Act::parse("emit", "x").is_none());
     }
 
@@ -1176,6 +1227,57 @@ mod tests {
         assert!(at("save").unwrap_err().contains("inactive"));
         // Hidden is not even there to be found.
         assert_eq!(locate(&scene, c, "private", &sight), None);
+    }
+
+    #[test]
+    fn named_actions_respect_each_surface_privacy_and_visibility() {
+        let (mut scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/agent.plm")).unwrap();
+        let props: Vec<Animated> = scene.props.iter().map(|(_, v, s)| Animated::at(*v, *s)).collect();
+        let facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let c = Ctx { props: &props, facts: &facts };
+        let never = |_: usize| false;
+        let sight = Sight { shown: vec![Shown { surface: 0, popup: None, bounds: [0.0, 0.0, 400.0, 300.0], scale: 1.25 }], texts_seen: &[], gone: &never, rank: None };
+        let k = locate(&scene, c, "knob.1", &sight).unwrap();
+        assert!(reach_point(&scene, c, k, &sight).unwrap().is_some());
+        scene.surfaces[0].hidden_from_captures = true;
+        assert!(reach_point(&scene, c, k, &sight).is_err());
+        scene.surfaces[0].hidden_from_captures = false;
+        scene.surfaces[0].agent_hidden = true;
+        assert!(reach_point(&scene, c, k, &sight).is_err());
+        scene.surfaces[0].agent_hidden = false;
+        scene.surfaces[0].lock_screen = true;
+        assert!(reach_point(&scene, c, k, &sight).is_err());
+        scene.surfaces[0].lock_screen = false;
+        let hidden = scene.zones.iter().position(|z| z.id == "private").unwrap();
+        assert!(reach_point(&scene, c, hidden, &sight).is_err());
+    }
+
+    #[test]
+    fn an_input_point_is_rechecked_when_an_overlay_appears() {
+        let (mut scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/agent.plm")).unwrap();
+        let props: Vec<Animated> = scene.props.iter().map(|(_, v, s)| Animated::at(*v, *s)).collect();
+        let facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let c = Ctx { props: &props, facts: &facts };
+        let never = |_: usize| false;
+        let sight = Sight { shown: vec![Shown { surface: 0, popup: None, bounds: [0.0, 0.0, 400.0, 300.0], scale: 1.25 }], texts_seen: &[], gone: &never, rank: None };
+        let k = locate(&scene, c, "knob.1", &sight).unwrap();
+        let point = reach_point(&scene, c, k, &sight).unwrap().unwrap();
+        assert!(press_at(&scene, c, k, point, &sight).is_ok());
+        let mut overlay = scene.zones[k].clone();
+        overlay.id = "private overlay"; overlay.reach = Reach::Person;
+        scene.zones.push(overlay);
+        assert!(press_at(&scene, c, k, point, &sight).is_err());
+        // Even an ordinary small overlay must not receive a stale named click.
+        let overlay = scene.zones.last_mut().unwrap();
+        overlay.reach = Reach::Any;
+        overlay.shape = crate::scene::Shape::Rect { center: (100.0.into(), 100.0.into()), half_size: (5.0.into(), 5.0.into()), radius: 0.0.into() };
+        assert!(reach_point(&scene, c, k, &sight).unwrap().is_some());
+        assert!(press_at(&scene, c, k, point, &sight).is_err());
+        scene.zones.pop();
+        assert!(press_at(&scene, c, k, (2.0, 2.0), &sight).is_err());
+        let field = |name| scene.texts.iter().position(|t| t.0 == name).unwrap();
+        assert!(field_key(&scene, c, field("query"), &sight).is_ok());
+        assert!(field_key(&scene, c, field("pin"), &sight).is_err());
     }
 
     #[test]
@@ -1210,5 +1312,37 @@ mod tests {
         let loose: Vec<&str> = parts[0].nodes.iter().filter(|n| n.role == Role::Text).map(|n| n.label.as_str()).collect();
         assert_eq!(loose, ["Ready"]);
         assert!(to_text(&parts).contains("text            «Ready»"), "{}", to_text(&parts));
+    }
+
+    #[test]
+    fn hidden_zone_words_do_not_reappear_as_loose_text() {
+        let seen = [SeenText { at: 0, text: "Private account".into(), bounds: [20.0, 252.0, 80.0, 272.0], clipped: false }];
+        let parts = told_with(false, &seen);
+        assert!(!to_text(&parts).contains("Private account"));
+        assert!(!to_json(&parts).contains("Private account"));
+    }
+
+    #[test]
+    fn descriptions_keep_scrolled_rows_without_making_them_clickable() {
+        let (scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/agent-scroll.plm")).unwrap();
+        let mut props: Vec<Animated> = scene.props.iter().map(|(_, v, s)| Animated::at(*v, *s)).collect();
+        let facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let texts: Vec<String> = scene.texts.iter().map(|t| t.1.clone()).collect();
+        let scroll = scene.props.iter().position(|(n, _, _)| n.starts_with("·scroll")).unwrap();
+        let never = |_: usize| false;
+        for offset in [0.0, 40.0] {
+            props[scroll].x = offset;
+            let c = Ctx { props: &props, facts: &facts };
+            let sight = Sight { shown: vec![Shown { surface: 0, popup: None, bounds: [0.0, 0.0, 400.0, 300.0], scale: 1.25 }], texts_seen: &[], gone: &never, rank: None };
+            let parts = describe(&scene, c, &texts, &sight);
+            let third = node(&parts, "third").expect("a scrolled row must remain in its list");
+            assert!(third.off_view);
+            assert_eq!(third.at, [20.0, 110.0 - offset, 100.0, 40.0]);
+            assert!(third.inside.is_some());
+            let zone = scene.zones.iter().find(|z| z.id == "third").unwrap();
+            assert!(!zone.contains(c, 30.0, 120.0 - offset));
+            assert_eq!(node(&parts, "second").unwrap().off_view, offset == 0.0);
+            assert_eq!(node(&parts, "first").unwrap().off_view, offset == 40.0);
+        }
     }
 }

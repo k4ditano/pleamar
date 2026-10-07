@@ -2,12 +2,15 @@
 //! walks through them at the screen's cadence and, when everything is still, stops
 //! painting altogether.
 
+use crate::platform::thread_cpu_ms;
 use crate::scene::*;
 use crate::gpu::{DrawList, Gpu, Sheet, HUD_HEIGHT, N_UNIFORMS};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+mod zones;
 
 pub struct Options {
     pub hud: bool,
@@ -49,9 +52,32 @@ struct NestPiece {
     opaque: bool,
     pixels: Vec<u8>,
     buffer: Option<u64>,
+    #[cfg(target_os = "windows")]
+    shared: Option<std::sync::Arc<crate::windows_texture::SharedTexture>>,
     #[cfg(unix)]
     fresh: Option<crate::scene::DmabufPiece>,
     uploaded: bool,
+}
+
+#[derive(Default)]
+struct NestLoans {
+    buffers: Vec<u64>,
+    #[cfg(target_os = "windows")]
+    images: Vec<std::sync::Arc<crate::windows_texture::SharedTexture>>,
+}
+impl NestLoans {
+    fn is_empty(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        if !self.images.is_empty() { return false; }
+        self.buffers.is_empty()
+    }
+}
+impl NestPiece {
+    fn has_pixels(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        if self.shared.is_some() { return true; }
+        self.buffer.is_some() || !self.pixels.is_empty()
+    }
 }
 
 /// The workspaces of the scene's windows: which one each window is on, which
@@ -307,6 +333,7 @@ fn nest_places(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic:
 }
 
 /// `%20` and the rest of a file URI, back to the bytes they stand for.
+#[cfg(not(target_os = "windows"))]
 fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
@@ -354,9 +381,26 @@ impl Rng {
     }
 }
 
+/// Frame cadence starts after the first presentation. GPU initialization is
+/// reported separately as time to first frame; it is not a missed frame.
+#[derive(Default)]
+struct FrameClock(Option<Instant>);
+impl FrameClock {
+    fn start(&mut self, now: Instant) { self.0 = Some(now); }
+    fn wake(&mut self, now: Instant) { if self.0.is_some() { self.0 = Some(now); } }
+    fn sample(&mut self, now: Instant) -> Option<f32> {
+        self.0.as_mut().map(|previous| now.duration_since(std::mem::replace(previous, now)).as_secs_f32() * 1000.0)
+    }
+}
+
+// Continuous desktop animations may run for days without becoming idle.
+// Keep exact percentiles in bounded reporting windows, not a lifetime log.
+const CYCLE_FRAMES: usize = 3600;
+
 #[derive(Default)]
 struct Cycle {
     dts: Vec<f32>,
+    total_ms: f64,
     max_blocked: f32,
     frames_blocked: u32,
     /// What goes into READING the scene —evaluating its expressions and noting down what
@@ -368,6 +412,17 @@ struct Cycle {
 }
 
 impl Cycle {
+    fn frame(&mut self, ms: f32, blocked: bool, period_ms: Option<f32>) {
+        self.dts.push(ms);
+        self.total_ms += ms as f64;
+        if let Some(period) = period_ms { self.watch(period); }
+        if blocked {
+            self.frames_blocked += 1;
+            self.max_blocked = self.max_blocked.max(ms);
+        }
+        if self.dts.len() >= CYCLE_FRAMES { self.close(); }
+    }
+
     /// A scene that does not deliver the frames the screen asks for does not show in the
     /// log —they are isolated slow frames, one after another— and from outside it looks
     /// like the runtime has become slow. It is said ONCE, with the breakdown, as
@@ -376,7 +431,7 @@ impl Cycle {
         if self.slow_reported || self.dts.len() < 240 {
             return;
         }
-        let mean = self.dts.iter().sum::<f32>() / self.dts.len() as f32;
+        let mean = (self.total_ms / self.dts.len() as f64) as f32;
         if mean <= period_ms * 1.35 {
             return;
         }
@@ -389,13 +444,15 @@ impl Cycle {
 
     fn close(&mut self) {
         if self.dts.len() < 8 {
-            self.dts.clear();
+            let reported = self.slow_reported;
+            *self = Cycle::default();
+            self.slow_reported = reported;
             return;
         }
         let mut o = self.dts.clone();
         o.sort_by(|a, b| a.total_cmp(b));
         let reading = self.compose_ms / o.len() as f32;
-        let mean = o.iter().sum::<f32>() / o.len() as f32;
+        let mean = self.total_ms / o.len() as f64;
         let p99 = o[((o.len() as f32 * 0.99) as usize).min(o.len() - 1)];
         println!(
             "cycle  · {:>4} frames · mean {:>5.2} ms · p99 {:>6.2} ms · max {:>6.2} ms · reading the scene {:.2} ms · with the logic blocked: {} frames, max {:.2} ms",
@@ -418,6 +475,8 @@ pub fn run(
     let mut gpu: Option<Gpu> = None;
     let mut sheets: Vec<Sheet> = Vec::new();
     let mut draw = DrawList::default();
+    let mut composition = None;
+    let mut zone_geometry: Vec<zones::Geometry> = Vec::new();
     let mut previous = crate::gpu::PreviousFrame::default();
     // What the last list was made from (see `same_scene`).
     let mut compose_memo: Option<ComposeMemo> = None;
@@ -427,19 +486,20 @@ pub fn run(
     // What agents asked to do by name (`press save`), one after the other, and
     // the one being done: its steps, frame by frame, as a hand would. While it
     // lasts the pointer is its hand; the user's comes back when it is done.
-    let mut acts: std::collections::VecDeque<(crate::agent::Act, std::sync::mpsc::Sender<String>)> = std::collections::VecDeque::new();
+    let mut acts: std::collections::VecDeque<(crate::agent::Act, std::sync::mpsc::Sender<String>, std::sync::Weak<()>)> = std::collections::VecDeque::new();
     let mut acting: Option<Acting> = None;
     let mut real_pointer: Option<(f32, f32)> = None;
     // A press of an agent's seat that was not let through, by button: its release is not either.
     let mut agent_held_back = [false; 3];
     // Who waits for a condition (`wait`), and who watches what happens (`watch`).
-    let mut waits: Vec<(crate::agent::Cond, Instant, Instant, std::sync::mpsc::Sender<String>)> = Vec::new();
+    let mut waits: Vec<(crate::agent::Cond, Instant, Instant, std::sync::mpsc::Sender<String>, std::sync::Weak<()>)> = Vec::new();
     let mut watchers: Vec<Watcher> = Vec::new();
     // The zones that have already been said to have no words: once each.
     let mut unnamed_said: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
     let mut changed: Vec<[f32; 4]> = Vec::new();
     let mut sheet_counts = (0u32, 0u32, 0u32);
     let no_lens = std::env::var_os("PLEAMAR_NO_LENS").is_some();
+    let debug_input = std::env::var_os("PLEAMAR_DEBUG_INPUT").is_some();
     // The compositor's notice that it wants another frame: from which sheet it is
     // expected, whether it has already arrived, how many times in a row it did not arrive, and what arrived
     // from the rest of the world while waiting (it is handled on the next round).
@@ -528,6 +588,7 @@ pub fn run(
     let mut history = [0f32; 120];
     let mut cycle = Cycle::default();
     let mut last = Instant::now();
+    let mut frame_clock = FrameClock::default();
     let mut resting = false;
     let mut next_appointment: Option<Instant> = None;
     let mut period_ms = 16.7f32;
@@ -579,13 +640,16 @@ pub fn run(
     // Where the windows' instructions are, by how many instructions there were.
     let mut window_instrs: Option<(usize, Vec<usize>)> = None;
     // The buffers copied this round, and the copy to wait for before handing them back.
-    let mut nest_copied: (Vec<u64>, bool) = (Vec::new(), false);
+    let mut nest_copied: (NestLoans, bool) = (NestLoans::default(), false);
     // Programs' buffers the card is still copying, by the work they went in:
     // they go back as soon as it says it has finished, and nobody waits for it.
-    let mut nest_lent: Vec<(crate::gpu::Sent, Vec<u64>)> = Vec::new();
+    let mut nest_lent: Vec<(crate::gpu::Sent, NestLoans)> = Vec::new();
     let mut last_card_ask = Instant::now();
     // Where each window was last told to be seen.
     let mut nest_shown: std::collections::HashMap<usize, (String, [i32; 4])> = Default::default();
+    let mut nest_visible: Option<Vec<usize>> = None;
+    #[cfg(target_os = "windows")]
+    let mut nest_outputs: Option<Vec<(usize, String)>> = None;
     // Programs' buffers already destroyed that a window is still showing.
     #[cfg(target_os = "linux")]
     let mut nest_doomed: Vec<u64> = Vec::new();
@@ -658,7 +722,7 @@ pub fn run(
                     nest_lent.retain(|(index, buffers)| {
                         let done = index.finished() || (ask && g.is_done(index));
                         if done {
-                            send(ToNest::Released(buffers.clone()));
+                            if !buffers.buffers.is_empty() { send(ToNest::Released(buffers.buffers.clone())); }
                         }
                         !done
                     });
@@ -683,6 +747,7 @@ pub fn run(
             }
             resting = false;
             last = Instant::now() - Duration::from_secs_f32(period_ms / 1000.0);
+            frame_clock.wake(last);
         }
         incoming.extend(rx.try_iter());
         if let (Some(g), Some(send)) = (&gpu, &nest) {
@@ -695,7 +760,7 @@ pub fn run(
             nest_lent.retain(|(index, buffers)| {
                 let done = index.finished() || (ask && g.is_done(index));
                 if done {
-                    send(ToNest::Released(buffers.clone()));
+                    if !buffers.buffers.is_empty() { send(ToNest::Released(buffers.buffers.clone())); }
                 }
                 !done
             });
@@ -717,6 +782,8 @@ pub fn run(
                 // once, on arrival: while it lasts, the good scene is painted with the
                 // banner on top.
                 ToRender::ReloadError(what) => {
+                    composition = None;
+                    compose_memo = None;
                     // `size: full` does not tell its width until the compositor
                     // configures it: then it is the screen's, which is `screen.width`.
                     let width = match scene.surface().width {
@@ -731,6 +798,30 @@ pub fn run(
                     }
                 }
                 ToRender::Scene(fresh) => {
+                    // Conditions and action steps contain indices into this
+                    // exact scene. A reload must not reinterpret them as new
+                    // fields, or leave a held button attached to a retired zone.
+                    for (_, _, _, reply, _) in waits.drain(..) {
+                        let _ = reply.send("? scene reloaded while waiting; repeat the condition\n".into());
+                    }
+                    for watcher in watchers.drain(..) {
+                        let _ = watcher.lines.send("scene reloaded; watch ended".into());
+                    }
+                    for (_, reply, _) in acts.drain(..) {
+                        let _ = reply.send("? scene reloaded before the action; ask describe again\n".into());
+                    }
+                    if let Some(action) = acting.take() {
+                        let _ = action.reply.send("? scene reloaded during the action; ask describe again\n".into());
+                        pointer = real_pointer;
+                        finger_down = false;
+                        drag = None;
+                        buttons.clear();
+                    }
+                    selection = None;
+                    draw.selectable.clear();
+                    // Constant geometry can change while every fact and property stays equal.
+                    compose_memo = None;
+                    composition = None;
                     crate::platform::release_memory();
                     crate::platform::CURSOR_WANTED.store(fresh.wants_cursor, std::sync::atomic::Ordering::Relaxed);
                     // The properties with the same name survive the change.
@@ -747,7 +838,18 @@ pub fn run(
                     // hot reload, the scene carries on where it was.
                     let hot = !scene.props.is_empty();
                     facts = fresh.facts.iter().map(|(n, initial)| scene.facts.iter().position(|h| h.0 == *n).map_or(*initial, |k| facts[k])).collect();
+                    // A reload can introduce/reorder measured properties while
+                    // the native windows keep their size and send no resize.
+                    for sheet in &sheets {
+                        if let Some(old) = scene.surfaces.get(sheet.view.surface) {
+                            if let Some(surface) = fresh.surfaces.iter().find(|s| s.name == old.name && s.instance == old.instance) {
+                                if sheet.view.popup.is_none() { publish_surface_size(surface, &mut props, sheet.view.size); }
+                                sheet.capture_visibility(surface.hidden_from_captures);
+                            }
+                        }
+                    }
                     inside = vec![false; fresh.zones.len()];
+                    zone_geometry = fresh.zones.iter().map(zones::Geometry::new).collect();
                     follows = Follows::default();
                     warning = None;
                     with_warning.clear();
@@ -786,8 +888,10 @@ pub fn run(
                         fresh.gestures.len(), fresh.rules.len(), fresh.zones.len()
                     );
                     scene = fresh;
+                    update_screen_count(&scene, &mut facts, &sheets);
                     z_memo = None;
                     window_instrs = None;
+                    draw.reset_composition();
                     draw.hidden.clear();
                     if let Some(n) = &scene.nest {
                         if nest.is_none() {
@@ -801,6 +905,9 @@ pub fn run(
                             w.ask = None;
                         }
                         nest_size = (0, 0);
+                        nest_visible = None;
+                        #[cfg(target_os = "windows")]
+                        { nest_outputs = None; }
                     }
                     // A window's zone is named like it: `win.3`, with the copy's mark if it has one.
                     nest_zones = scene
@@ -818,11 +925,17 @@ pub fn run(
                     }
                 }
                 ToRender::Sheet(n) => {
+                    if let Some(surface) = scene.surfaces.get(n.view.surface) {
+                        n.window.capture_visibility(surface.hidden_from_captures);
+                    }
+                    // The CPU may already have composed the scene while no GPU
+                    // surface existed. Its cached list has never been uploaded.
+                    compose_memo = None;
                     let g = gpu.get_or_insert_with(|| {
-                        Gpu::new(&instance, match &n.target {
+                        Gpu::with_shaders(&instance, match &n.target {
                             crate::gpu::Target::Surface(s) => Some(s),
                             crate::gpu::Target::Frames(_) => None,
-                        })
+                        }, &scene.shaders)
                     });
                     g.set_shaders(&scene.shaders);
                     // A scene that asks for "the full width" measures whatever its monitor measures, and it
@@ -839,10 +952,8 @@ pub fn run(
                     } else {
                         (n.size.0 as f32, n.size.1 as f32)
                     };
-                    if let Some((w, h)) = scene.surfaces.get(n.view.surface).and_then(|s| s.size_props).filter(|_| n.view.popup.is_none()) {
-                        for (p, v) in [(w, measures.0), (h, measures.1)] {
-                            props[p.0 as usize] = Animated { x: v, v: 0.0, target: v, spring: props[p.0 as usize].spring };
-                        }
+                    if let Some(surface) = scene.surfaces.get(n.view.surface).filter(|_| n.view.popup.is_none()) {
+                        publish_surface_size(surface, &mut props, measures);
                     }
                     if (scene.surface().width == 0 || is_window) && its_own {
                         size.0 = n.size.0 as f32;
@@ -897,23 +1008,39 @@ pub fn run(
                         println!("render · surface {} on {} · {}×{} · scale {} · {:.0} Hz{which}", n.id, n.name, n.size.0, n.size.1, n.scale, n.mhz as f32 / 1000.0);
                     }
                     sheets.push(g.sheet(*n, size));
-                    // How many monitors are showing something right now.
-                    if let Some(i) = scene.facts.iter().position(|h| h.0 == "screens.count") {
-                        let how_many = sheets.iter().filter(|l| l.view.popup.is_none()).map(|l| l.view.surface).collect::<std::collections::HashSet<_>>().len();
-                        facts[i] = how_many as f32;
-                    }
+                    update_screen_count(&scene, &mut facts, &sheets);
                     assign_pace(g, &mut sheets, size, op.no_vsync);
                     region = vec![[i32::MIN; 4]];
                 }
                 ToRender::SheetGone(id) => {
                     sheets.retain(|l| l.id != id);
+                    update_screen_count(&scene, &mut facts, &sheets);
                     crate::platform::sheet_released(id);
                     println!("render · surface {id} gone; {} left", sheets.len());
                     if let Some(g) = &gpu {
                         assign_pace(g, &mut sheets, size, op.no_vsync);
                     }
                 }
-                ToRender::Workshop(p) => letters.receive(*p),
+                #[cfg(target_os = "windows")]
+                ToRender::WindowsOutput(id, name, mhz) => {
+                    if let Some(l) = sheets.iter_mut().find(|l| l.id == id) {
+                        l.name = name;
+                        l.mhz = mhz;
+                        if let Some(surface) = scene.surfaces.get(l.view.surface)
+                            .filter(|s| s.name.is_empty() && l.view.popup.is_none()) {
+                            nest_text(&scene, &mut texts, &to_logic,
+                                &format!("screen.{}.name", surface.instance), l.name.clone());
+                        }
+                        update_screen_count(&scene, &mut facts, &sheets);
+                        if let Some(g) = &gpu { assign_pace(g, &mut sheets, size, op.no_vsync); }
+                    }
+                }
+                ToRender::Workshop(p) => {
+                    letters.receive(*p);
+                    // A finished layout can add glyphs without changing any
+                    // facts, and can reuse atlas pixels (no pending upload).
+                    compose_memo = None;
+                }
                 // A window someone stretches: the sheet changes, and with it what the
                 // scene reads in `screen.width` and `screen.height`.
                 // A capture of what is behind a glass: the background is unmixed, and if
@@ -936,10 +1063,8 @@ pub fn run(
                 ToRender::SheetSize(id, new_size) => {
                     if let (Some(g), Some(l)) = (&gpu, sheets.iter_mut().find(|l| l.id == id)) {
                         // A named surface publishes what it measures.
-                        if let Some((w, h)) = scene.surfaces.get(l.view.surface).and_then(|s| s.size_props) {
-                            for (p, v) in [(w, new_size.0), (h, new_size.1)] {
-                                props[p.0 as usize] = Animated { x: v, v: 0.0, target: v, spring: props[p.0 as usize].spring };
-                            }
+                        if let Some(surface) = scene.surfaces.get(l.view.surface).filter(|_| l.view.popup.is_none()) {
+                            publish_surface_size(surface, &mut props, new_size);
                         }
                         if l.view.size != new_size {
                             l.view.size = new_size;
@@ -996,6 +1121,7 @@ pub fn run(
                         // not to try again until the scene releases it itself.
                         for &k in &locks {
                             sheets.retain(|l| !(l.view.surface == k && l.view.popup.is_none()));
+                            update_screen_count(&scene, &mut facts, &sheets);
                             crate::platform::lock_screen(k, None);
                         }
                         if let Some(g) = &gpu {
@@ -1059,20 +1185,21 @@ pub fn run(
                     };
                     let _ = reply_to.send(r);
                 }
-                ToRender::Act(act, reply_to) => acts.push_back((act, reply_to)),
-                ToRender::Wait(src, reply_to) => match crate::agent::Cond::parse(&scene, &src) {
+                ToRender::Act(act, reply_to, live) => acts.push_back((act, reply_to, live)),
+                ToRender::CommandGone => {},
+                ToRender::Wait(src, reply_to, live) => match crate::agent::Cond::parse(&scene, &src) {
                     Ok((cond, timeout)) => {
                         let now = Instant::now();
-                        waits.push((cond, now, now + timeout, reply_to));
+                        waits.push((cond, now, now + timeout, reply_to, live));
                     }
                     Err(m) => {
                         let _ = reply_to.send(format!("? {m}\n"));
                     }
                 },
-                ToRender::Watch(lines, until) => {
+                ToRender::Watch(lines, until, live) => {
                     let c = Ctx { props: &props, facts: &facts };
                     let _ = lines.send(format!("watching for {:.0} s", until.saturating_duration_since(Instant::now()).as_secs_f32()));
-                    watchers.push(Watcher { lines, until, start: Instant::now(), before: crate::agent::before(&scene, c, &texts, open_surfaces(&scene, &sheets)) });
+                    watchers.push(Watcher { lines, until, live, start: Instant::now(), before: crate::agent::before(&scene, c, &texts, open_surfaces(&scene, &sheets)) });
                 }
                 ToRender::Describe(json, reply_to) => {
                     describing.push((json, reply_to));
@@ -1300,7 +1427,7 @@ pub fn run(
                                             nest_layers.push(true);
                                         }
                                         nest_layers[layer] = true;
-                                        NestPiece { id: p.id, layer: layer as u32, at: p.at, size: p.size, px: p.px, src: p.src, opaque: false, pixels: Vec::new(), buffer: None, #[cfg(unix)] fresh: None, uploaded: false }
+                                        NestPiece { id: p.id, layer: layer as u32, at: p.at, size: p.size, px: p.px, src: p.src, opaque: false, pixels: Vec::new(), buffer: None, #[cfg(target_os = "windows")] shared: None, #[cfg(unix)] fresh: None, uploaded: false }
                                     });
                                     piece.at = p.at;
                                     piece.size = p.size;
@@ -1313,8 +1440,18 @@ pub fn run(
                                             if let Some(before) = piece.fresh.take() {
                                                 unread.push(before.buffer);
                                             }
+                                            #[cfg(target_os = "windows")]
+                                            { piece.shared = None; }
                                             piece.pixels = px;
                                             piece.buffer = None;
+                                            piece.uploaded = false;
+                                        }
+                                        #[cfg(target_os = "windows")]
+                                        PieceContent::Windows(image) => {
+                                            piece.pixels = Vec::new();
+                                            piece.buffer = None;
+                                            piece.px = image.size();
+                                            piece.shared = Some(image);
                                             piece.uploaded = false;
                                         }
                                         #[cfg(unix)]
@@ -1555,6 +1692,12 @@ pub fn run(
             }
         }
         // ── an agent's hand ─────────────────────────────────────
+        acts.retain(|(_, _, live)| live.strong_count() > 0);
+        if acting.as_ref().is_some_and(|a| a.live.strong_count() == 0) {
+            let a = acting.take().unwrap();
+            if a.hand.is_some() { pointer = real_pointer; }
+            if a.down == Some(0) { finger_down = false; drag = None; }
+        }
         if acting.is_some() || !acts.is_empty() {
             let c = Ctx { props: &props, facts: &facts };
             let absent: Vec<std::ops::Range<usize>> = scene.spans.iter().filter(|t| scene.surfaces.get(t.surface).is_some_and(|s| s.instance > 0) && !sheets.iter().any(|l| l.view.surface == t.surface)).map(|t| t.instrs.clone()).collect();
@@ -1568,9 +1711,9 @@ pub fn run(
             };
             let now = Instant::now();
             if acting.is_none()
-                && let Some((act, reply)) = acts.pop_front()
+                && let Some((act, reply, live)) = acts.pop_front()
             {
-                match Acting::plan(&scene, c, &sight, act, reply, &texts, open_surfaces(&scene, &sheets)) {
+                match Acting::plan(&scene, c, &sight, act, reply, live, &texts, open_surfaces(&scene, &sheets)) {
                     Ok(a) => acting = Some(a),
                     Err((reply, m)) => {
                         let _ = reply.send(m + "\n");
@@ -1590,7 +1733,7 @@ pub fn run(
                             }
                             _ => {
                                 a.hand = Some(a.from);
-                                a.steps.pop_front();
+                                a.advance(now);
                                 break;
                             }
                         },
@@ -1624,7 +1767,7 @@ pub fn run(
                         Step::Point => match crate::agent::reach_point(&scene, c, a.zone, &sight) {
                             Ok(Some(p)) => {
                                 a.from = p;
-                                a.steps.pop_front();
+                                a.advance(now);
                                 // The agent's cursor there first, in the pixels of the window's
                                 // picture; the hand comes in when it arrives, so what lights up
                                 // lights up under it.
@@ -1654,10 +1797,17 @@ pub fn run(
                                 let (on, at) = cursor_place(&scene, s, p);
                                 crate::platform::agent_cursor_to(on, at.0, at.1, false);
                             }
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                         Step::Down(b) => {
+                            if let Some(p) = a.hand
+                                && let Err(m) = crate::agent::press_at(&scene, c, a.zone, p, &sight) {
+                                failed = Some(m); break;
+                            }
+                            buttons_agent.resize(buttons.len(), false);
+                            buttons_agent.push(true);
+                            a.down = Some(b);
                             buttons.push((b, true));
                             if let (0, Some(p)) = (b, a.hand) {
                                 finger_down = true;
@@ -1667,43 +1817,57 @@ pub fn run(
                                     ripple = Some((p, now));
                                 }
                             }
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                         Step::Up(b) => {
+                            buttons_agent.resize(buttons.len(), false);
+                            buttons_agent.push(true);
+                            a.down = None;
                             buttons.push((b, false));
                             if b == 0 {
                                 finger_down = false;
                             }
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                         Step::Wheel(n) => {
+                            if let Some(p) = a.hand
+                                && let Err(m) = crate::agent::press_at(&scene, c, a.zone, p, &sight) {
+                                failed = Some(m); break;
+                            }
                             wheel += n;
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                         Step::Leave => {
                             a.hand = None;
                             pointer = real_pointer;
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                         Step::Type(k, text) => {
+                            if let Err(m) = crate::agent::field_key(&scene, c, k, &sight) {
+                                failed = Some(m); break;
+                            }
                             // As typing over what was there: all of it chosen, then the letters.
                             editing = Some(Editing { field: k, cursor: texts[k].len(), anchor: 0 });
                             last_key = now;
                             key_presses.push(if text.is_empty() { ("BackSpace".into(), None, Mods::default(), 0) } else { ("type".into(), Some(text), Mods::default(), 0) });
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                         Step::Key(name, mods, typed) => {
+                            if let Some(e) = &editing
+                                && let Err(m) = crate::agent::field_key(&scene, c, e.field, &sight) {
+                                failed = Some(m); break;
+                            }
                             key_presses.push((name, typed, mods, 0));
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                     }
-                    a.steps.pop_front();
+                    a.advance(now);
                 }
                 if let Some(p) = a.hand {
                     pointer = Some(p);
@@ -1715,6 +1879,7 @@ pub fn run(
                 if a.hand.is_some() {
                     pointer = real_pointer;
                 }
+                if a.down == Some(0) { finger_down = false; drag = None; }
                 let _ = a.reply.send(m + "\n");
             }
         }
@@ -1847,6 +2012,7 @@ pub fn run(
         let now = Instant::now();
         let dt = (now - last).as_secs_f32();
         last = now;
+        let frame_ms = frame_clock.sample(now);
         let t_total = (now - start).as_secs_f32();
         let mut effects: Vec<Effect> = Vec::new();
         let mut keyboard_changed = false;
@@ -1864,7 +2030,7 @@ pub fn run(
         {
             let c = Ctx { props: &props, facts: &facts };
             for (k, (z, was_inside)) in scene.zones.iter().zip(inside.iter_mut()).enumerate() {
-                let is_inside = !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)) && z.active.is_true(c) && pointer.is_some_and(|(x, y)| z.contains(c, x, y));
+                let is_inside = !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)) && z.active.is_true(c) && pointer.is_some_and(|(x, y)| zone_geometry[k].contains(z, c, x, y));
                 if is_inside != *was_inside {
                     *was_inside = is_inside;
                     edges.push((is_inside, k));
@@ -1880,8 +2046,9 @@ pub fn run(
             let zs: Vec<f32> = scene.zblocks.iter().map(|b| b.z.eval(c)).collect();
             if z_memo.as_ref().is_none_or(|(before, _)| *before != zs) {
                 z_memo = Some((zs, scene.z_arrange(c)));
+                composition = None;
             }
-            z_memo.as_ref().and_then(|(_, a)| a.clone())
+            z_memo.as_ref().and_then(|(_, a)| a.as_ref())
         };
         let hovered = match &arrangement {
             Some(a) => inside.iter().enumerate().filter(|(_, d)| **d).max_by_key(|(k, _)| (a.zone_rank[*k], *k)).map(|(k, _)| k),
@@ -1933,6 +2100,7 @@ pub fn run(
                     let keeps = hovered.and_then(|k| scene.zones.get(k)).is_some_and(|z| z.cursor == Cursor::Hand || z.carries.is_some() || draw.fields.iter().any(|f| f.zone == z.id));
                     let on_text = if keeps { None } else { pointer.and_then(|p| draw.selectable.iter().rev().find(|t| t.contains(p.0, p.1)).map(|t| (t, p))) };
                     if let Some((t, p)) = on_text {
+                        editing = None;
                         let (lx, ly) = t.local(p.0, p.1);
                         let b = t.layout.byte_at(lx, ly).min(t.text.len());
                         let again = now.duration_since(clicks.0) < Duration::from_millis(450) && (p.0 - clicks.1 .0).hypot(p.1 - clicks.1 .1) < 5.0;
@@ -2019,6 +2187,10 @@ pub fn run(
             _ => None,
         };
         last_pointer = pointer;
+        if debug_input && (!buttons.is_empty() || dragged.is_some()) {
+            eprintln!("input · pointer={pointer:?} buttons={buttons:?} drag={:?} moved={}",
+                drag.map(|(k, origin, _)| (scene.zones[k].id, origin)), dragged.is_some());
+        }
         // The wheel is not only for the topmost zone: it works for any zone it has
         // underneath, because a whole pill wants the wheel even if there is a button inside.
         if wheel != 0.0 {
@@ -2321,10 +2493,11 @@ pub fn run(
         {
             let c = Ctx { props: &props, facts: &facts };
             let mut acted: Vec<usize> = Vec::new();
-            for (k, (r, e)) in scene.rules.iter().zip(rules.iter_mut()).enumerate() {
+            for (k, r) in scene.rules.iter().enumerate() {
                 if rule_asleep(k) {
                     continue;
                 }
+                let Some(e) = sampled_rule(&scene, &mut rules, k, now) else { continue };
                 let fires = match &r.when {
                     Trigger::Enter(z) => edges.contains(&(true, z.0 as usize)),
                     Trigger::Leave(z) => edges.contains(&(false, z.0 as usize)),
@@ -2351,31 +2524,13 @@ pub fn run(
                     }
                     // `on change floor(list.scroll / 34) { … }`: when that changes.
                     Trigger::Change(x) => {
-                        let now = x.eval(c);
-                        let before = e.last_value.replace(now);
-                        before.is_some_and(|v| (v - now).abs() > 0.001)
+                        e.changed(x.eval(c))
                     }
                     // `on still audio.volume for 1.1s { … }`: when that has been still for that
                     // long. Each change resets the clock to zero, so six
                     // taps in a row on the volume key are a single wait.
                     Trigger::Still { value, duration } => {
-                        let value = value.eval(c);
-                        let before = e.last_value.replace(value);
-                        if before.is_some_and(|v| (v - value).abs() > 0.001) {
-                            e.armed = true;
-                            e.next = Some(now + *duration);
-                        }
-                        match e.next.filter(|_| e.armed) {
-                            Some(p) if now >= p => {
-                                e.armed = false;
-                                true
-                            }
-                            Some(p) => {
-                                appointments.push(p);
-                                false
-                            }
-                            None => false,
-                        }
+                        e.still(value.eval(c), *duration, now, &mut appointments)
                     }
                     Trigger::Key(t) => keys.iter().any(|x| x == t),
                     Trigger::Submit(t) => submitted.contains(&(t.0 as usize)),
@@ -2430,8 +2585,7 @@ pub fn run(
                     }
                     Trigger::On(_) => false, // handled with the signals, below
                 };
-                // Its twins in the other copies watched too —each one keeps its own
-                // `on change`, its own `on still`—, but only the first awake acts.
+                // Identical rules act once even when both copies are awake.
                 let twin = scene.twin_of.get(k).copied().unwrap_or(k);
                 if fires && !acted.contains(&twin) && r.guard.as_ref().is_none_or(|guard| guard.is_true(c)) {
                     acted.push(twin);
@@ -2565,12 +2719,20 @@ pub fn run(
                             desks.grow(n.max);
                             if let Some(item) = desks.items[screen].get(k as usize).cloned() {
                                 let mine: Vec<usize> = desks.here(screen, &nest_screens).into_iter().filter(|w| desks.of_item(*w, &item)).collect();
-                                // Files dropped on it: opened with it (one `sh -c`, each path quoted).
+                                // Native Windows programs receive file arguments, never shell code.
                                 if what == crate::scene::DockAction::OpenDrop {
+                                    #[cfg(target_os = "windows")]
+                                    let paths: Vec<String> = drops.iter().filter_map(|(_, d)| crate::platform::dropped_file_paths(d)).flatten().collect();
+                                    #[cfg(not(target_os = "windows"))]
                                     let paths: Vec<String> = drops.iter().flat_map(|(_, d)| d.lines().map(str::trim).filter_map(|l| l.strip_prefix("file://")).map(percent_decode).collect::<Vec<_>>()).collect();
                                     if !paths.is_empty() && !item.exec.is_empty() {
+                                        #[cfg(target_os = "windows")]
+                                        send(ToNest::OpenProgram { key: item.exec.clone(), files: paths });
+                                        #[cfg(not(target_os = "windows"))]
+                                        {
                                         let quoted: Vec<String> = paths.iter().map(|p| format!("'{}'", p.replace('\'', "'\\''"))).collect();
                                         send(ToNest::Launch(format!("{} {}", item.exec, quoted.join(" "))));
+                                        }
                                     }
                                 } else if what == crate::scene::DockAction::Pin || what == crate::scene::DockAction::Unpin {
                                     send(ToNest::Pin(item.key.clone(), what == crate::scene::DockAction::Pin));
@@ -2580,6 +2742,9 @@ pub fn run(
                                     }
                                 } else if mine.is_empty() {
                                     if !item.exec.is_empty() {
+                                        #[cfg(target_os = "windows")]
+                                        send(ToNest::OpenProgram { key: item.exec.clone(), files: Vec::new() });
+                                        #[cfg(not(target_os = "windows"))]
                                         send(ToNest::Launch(item.exec.clone()));
                                     }
                                 } else {
@@ -2990,6 +3155,7 @@ pub fn run(
             } else if !wants && was {
                 locks.retain(|x| *x != k);
                 sheets.retain(|l| !(l.view.surface == k && l.view.popup.is_none()));
+                update_screen_count(&scene, &mut facts, &sheets);
                 crate::platform::lock_screen(k, None);
                 if let Some(g) = &gpu {
                     assign_pace(g, &mut sheets, size, op.no_vsync);
@@ -3075,8 +3241,9 @@ pub fn run(
         let to_paint: &[Instr] = if warning.is_some() { &with_warning } else { &scene.instrs };
         draw.set_attached_edges(scene.surface().anchor.attached_edges());
         let reading = Instant::now();
-        let skip: Vec<std::ops::Range<usize>> = asleep.iter().map(|t| t.instrs.clone()).collect();
-        draw.skip = skip;
+        draw.skip.clear();
+        draw.skip.extend(asleep.iter().map(|t| t.instrs.clone()));
+        let composition = composition.get_or_insert_with(|| crate::gpu::composition::Composition::new(to_paint, arrangement.map(|a| a.order.as_slice())));
         // A selection whose text was not painted last frame (closed, gone) is forgotten.
         if selection.as_ref().is_some_and(|s| !draw.selectable.iter().any(|t| t.at == s.at)) {
             selection = None;
@@ -3084,7 +3251,6 @@ pub fn run(
         draw.selected = selection.as_ref().map(|s| (s.at, s.anchor, s.cursor));
         // Which zone is on top of which stays for `describe`, after the list is made.
         let zone_rank = arrangement.as_ref().filter(|_| draw.collect_texts).map(|a| a.zone_rank.clone());
-        draw.order = arrangement.map(|a| a.order);
         draw.clock = t_total;
         draw.reduced_motion = op.reduced_motion;
         if draw.signal_times.len() != scene.signals.len() {
@@ -3099,6 +3265,15 @@ pub fn run(
             prof_c = c;
         }
         if nest.is_some() {
+            #[cfg(target_os = "windows")]
+            if let Some(send) = &nest {
+                let outputs = native_screen_copies(&scene, sheets.iter().filter(|s| s.view.popup.is_none())
+                    .map(|s| (s.view.surface, s.name.as_str())));
+                if nest_outputs.as_ref() != Some(&outputs) {
+                    send(ToNest::WindowsScreens(outputs.clone()));
+                    nest_outputs = Some(outputs);
+                }
+            }
             // What the windows drew, to the card; and where each one is in it.
             if let Some(g) = gpu.as_mut() {
                 #[cfg(target_os = "linux")]
@@ -3107,6 +3282,13 @@ pub fn run(
                     if let (Some(send), Some((device, formats))) = (&nest, g.dmabuf_formats()) {
                         println!("windows · programs can hand over their frames on the card: {} layouts", formats.len());
                         send(ToNest::Gpu { device, formats });
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                if !nest_gpu_told {
+                    nest_gpu_told = true;
+                    if let Some(send) = &nest {
+                        send(ToNest::WindowsGpu(crate::windows_texture::SharedDevice::from_wgpu(g.device())));
                     }
                 }
                 let mut released: Vec<u64> = Vec::new();
@@ -3120,7 +3302,24 @@ pub fn run(
                                 continue;
                             }
                             p.uploaded = true;
-                            let grew = if let Some(buffer) = p.buffer {
+                            #[cfg(target_os = "windows")]
+                            let shared_grew = if let Some(image) = &p.shared {
+                                match g.copy_windows_texture(p.layer, image) {
+                                    Ok(grew) => {
+                                        nest_copied.0.images.push(image.clone());
+                                        copied_any = true;
+                                        Some(grew)
+                                    },
+                                    Err(error) => {
+                                        eprintln!("windows · GPU capture failed, requesting CPU fallback: {error}");
+                                        if let Some(send) = &nest { send(ToNest::WindowsGpu(None)); }
+                                        Some(false)
+                                    },
+                                }
+                            } else { None };
+                            #[cfg(not(target_os = "windows"))]
+                            let shared_grew: Option<bool> = None;
+                            let grew = if let Some(grew) = shared_grew { grew } else if let Some(buffer) = p.buffer {
                                 #[cfg(target_os = "linux")]
                                 {
                                     let fresh = p.fresh.take();
@@ -3167,7 +3366,7 @@ pub fn run(
                 }
                 // The programs' buffers go back once the card has copied them:
                 // that is waited for after painting, when it is long done.
-                nest_copied.0.extend(released);
+                nest_copied.0.buffers.extend(released);
                 nest_copied.1 |= copied_any;
                 let (dw, dh) = g.windows_dims();
                 draw.window_tex = nest_windows
@@ -3176,7 +3375,7 @@ pub fn run(
                         let pieces: Vec<(u32, [f32; 4], [f32; 4], bool)> = w
                             .pieces
                             .iter()
-                            .filter(|p| p.buffer.is_some() || !p.pixels.is_empty())
+                            .filter(|p| p.has_pixels())
                             .map(|p| {
                                 // Its pixels (the part it shows) into its size, in the window's units.
                                 let (pw, ph) = (p.size.0 as f32, p.size.1 as f32);
@@ -3247,11 +3446,9 @@ pub fn run(
         let same_scene = !draw.timed
             && !draw.particles_alive
             && draw.wake_at.is_none()
-            && compose_memo.as_ref().is_some_and(|m: &ComposeMemo| {
-                m.size == size && m.view == view && m.views == draw.views && m.facts == facts && m.texts == texts && m.window_tex == draw.window_tex && m.props.len() == props.len() && m.props.iter().zip(&props).all(|(a, b)| *a == b.x)
-            });
+            && compose_memo.as_ref().is_some_and(|m| m.matches(size, view, &draw, &facts, &texts, &props));
         if !same_scene {
-            draw.compose(to_paint, c, &texts, &mut letters, view, size, op.hud);
+            draw.compose_prepared(to_paint, composition, c, &texts, &mut letters, view, size, op.hud);
             if draw.collect_texts {
                 let gone = |at: usize| draw.hidden.get(at).copied().unwrap_or(false) || absent.iter().any(|r| r.contains(&at));
                 let sight = crate::agent::Sight {
@@ -3282,8 +3479,20 @@ pub fn run(
                 draw.collect_texts = false;
                 draw.texts_seen.clear();
             }
-            compose_memo = Some(ComposeMemo { size, view, views: draw.views.clone(), facts: facts.clone(), texts: texts.clone(), window_tex: draw.window_tex.clone(), props: props.iter().map(|a| a.x).collect() });
+            let memo = compose_memo.get_or_insert_with(ComposeMemo::default);
+            memo.size = size;
+            memo.view = view;
+            memo.selected = draw.selected;
+            memo.views.clone_from(&draw.views);
+            memo.facts.clone_from(&facts);
+            // An animation usually moves properties while all the labels stay
+            // the same. Keep their allocations instead of cloning every frame.
+            if memo.texts != texts { memo.texts.clone_from(&texts); }
+            memo.window_tex.clone_from(&draw.window_tex);
+            memo.props.clear();
+            memo.props.extend(props.iter().map(|a| a.x));
         }
+        if !acts.is_empty() { appointments.push(now + Duration::from_millis(15)); }
         // An agent's action: when its steps are done and the scene has stopped
         // answering —its rules, its logic—, it is told what happened.
         if let Some(a) = &mut acting {
@@ -3305,7 +3514,8 @@ pub fn run(
         }
         // Conditions waited for: said as soon as they hold.
         if !waits.is_empty() {
-            waits.retain(|(cond, start, deadline, reply)| {
+            waits.retain(|(cond, start, deadline, reply, live)| {
+                if live.strong_count() == 0 { return false; }
                 if cond.holds(&scene, c, &texts) {
                     let _ = reply.send(format!("yes, after {} ms\n", (now - *start).as_millis()));
                     false
@@ -3322,6 +3532,7 @@ pub fn run(
         if !watchers.is_empty() {
             let open = open_surfaces(&scene, &sheets);
             watchers.retain_mut(|w| {
+                if w.live.strong_count() == 0 { return false; }
                 if now >= w.until {
                     let _ = w.lines.send("done watching".into());
                     return false;
@@ -3356,7 +3567,7 @@ pub fn run(
         }
         g.upload_atlas(&mut letters.pending_upload);
         if !same_scene {
-            g.upload(&draw);
+            g.upload_changed(&draw, &previous);
         }
         // What has changed, and where. The frame graph always changes.
         // The light of a click changes the glass without changing the list: everything is painted.
@@ -3371,7 +3582,7 @@ pub fn run(
         let all_changed = !previous.changed_rects(&draw, &mut changed) || op.hud || finger_light > 0.0 || ripple.is_some();
         // A window that drew something new changes what its box covers, and nothing else.
         for slot in std::mem::take(&mut nest_changed) {
-            changed.extend(draw.windows_drawn.iter().filter(|w| w.0 == slot).map(|(_, d, affine)| {
+            changed.extend(draw.window_regions.iter().filter(|w| w.0 == slot).map(|(_, d, affine)| {
                 let b = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
                 [b[0] - 1.0, b[1] - 1.0, b[2] + 1.0, b[3] + 1.0]
             }));
@@ -3382,7 +3593,7 @@ pub fn run(
         // ended up holding a dead window's pixels, a monitor's worth each.
         if !nest_closed.is_empty() {
             nest_closed.retain(|slot| {
-                if draw.windows_drawn.iter().any(|w| w.0 == *slot) {
+                if draw.window_regions.iter().any(|w| w.0 == *slot) {
                     return true;
                 }
                 if let Some(w) = nest_windows.get_mut(*slot) {
@@ -3404,6 +3615,17 @@ pub fn run(
         // Where each window is seen, for the compositor: on which monitor and its
         // box there (the last one drawn, which is the one on top).
         if let Some(send) = &nest {
+            // A provider can suspend expensive capture outside the current page.
+            // Unlike input placement, demand also includes pictures without a frame.
+            let mut needed:Vec<_>=draw.window_requests.iter().filter(|(_,r)|sheets.iter().any(|l| {
+                let open=scene.surfaces.get(l.view.surface).is_none_or(|s|s.open.as_ref().is_none_or(|e|e.is_true(c)));
+                let v=l.view.bounds();
+                open && r[0]<v[2] && r[2]>v[0] && r[1]<v[3] && r[3]>v[1]
+            })).map(|(slot,_)|*slot).collect();
+            needed.sort_unstable();needed.dedup();
+            if nest_visible.as_ref()!=Some(&needed) {
+                send(ToNest::Visible(needed.clone()));nest_visible=Some(needed);
+            }
             let mut seen: Vec<usize> = Vec::new();
             for (slot, d, affine) in draw.windows_drawn.iter().rev() {
                 if seen.contains(slot) {
@@ -3452,9 +3674,10 @@ pub fn run(
         let boxes: Vec<[i32; 4]> = scene
             .zones
             .iter()
-            .filter(|z| !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)))
-            .filter(|z| z.active.is_true(c))
-            .filter_map(|z| z.bounds(c))
+            .enumerate()
+            .filter(|(_, z)| !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)))
+            .filter(|(_, z)| z.active.is_true(c))
+            .filter_map(|(k, z)| zone_geometry[k].bounds(z, c))
             .filter(|b| !closed.iter().any(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]))
             .map(|b| [(b[0] - 3.0).floor() as i32, (b[1] - 3.0).floor() as i32, (b[2] + 3.0).ceil() as i32, (b[3] + 3.0).ceil() as i32])
             .collect();
@@ -3619,7 +3842,8 @@ pub fn run(
         let mut open_changed = false;
         for l in &mut sheets {
             let is_open = l.view.popup.is_some() || open(l.view.surface);
-            open_changed |= is_open != l.open;
+            let changed = is_open != l.open;
+            open_changed |= changed;
             if is_open {
                 l.cleared = false;
             } else if l.lens.is_some() {
@@ -3628,6 +3852,12 @@ pub fn run(
                 l.lens = None;
             }
             l.open = is_open;
+            #[cfg(target_os = "windows")]
+            if changed {
+                // Release closed full-screen swapchains and restore their
+                // physical extent before presenting an opened surface.
+                g.reconfigure(l, size);
+            }
         }
         if open_changed {
             assign_pace(g, &mut sheets, size, op.no_vsync);
@@ -3651,15 +3881,10 @@ pub fn run(
         if !op.no_vsync && !op.naive {
             let right_now = Instant::now();
             if g.uses_mailbox() {
-                let mhz = sheets.iter().find(|l| l.drives_pace).map_or(60_000, |l| l.mhz.max(1));
                 // With `rate:`, the scene decides the step and not the monitor: a bar
                 // that breathes does not need 165 frames per second, and painting them is what
                 // costs. Never faster than the screen, which would be no use.
-                let mhz = match scene.surface().max_fps {
-                    0 => mhz,
-                    r => mhz.min(r as i32 * 1000),
-                };
-                let period = Duration::from_secs_f64(1000.0 / mhz as f64);
+                let period = frame_period(sheets.iter().find(|l| l.drives_pace).map(|l| l.mhz), scene.surface().max_fps);
                 // The clock gives the step: one deadline per period. The compositor's
                 // notice is no use as a metronome —Hyprland notifies when it composes,
                 // and if a frame reaches it right after, it composes again and notifies
@@ -3801,14 +4026,14 @@ pub fn run(
                 }
             }
             // The one that sets the pace asks the compositor to notify when it wants another.
-            let asks = l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive;
+            let asks = l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive && l.has_frame_callbacks();
             // The others ask too, and while their last frame has not been
             // shown they skip the round instead of painting: on a slower
             // monitor, painting again waited until the compositor let go of a
             // buffer, and that held the whole render to that monitor's pace —a
             // scene on a 165 Hz monitor and a 60 Hz one went at 60 on both—.
             // Not beyond a while: what is not shown is never answered.
-            let others = !l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive;
+            let others = !l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive && l.has_frame_callbacks();
             if others && l.open && in_flight.iter().any(|f| f.0 == l.id && f.1.elapsed() < Duration::from_millis(100)) {
                 if !owed.contains(&l.id) {
                     owed.push(l.id);
@@ -3880,6 +4105,7 @@ pub fn run(
                 sheet_counts = (0, 0, 0);
                 // What is kept for the compositor's windows: over a long
                 // session, none of these should only grow.
+                #[cfg(target_os = "linux")]
                 if nest.is_some() {
                     let pieces: usize = nest_windows.iter().map(|w| w.pieces.len()).sum();
                     let pixels: usize = nest_windows.iter().flat_map(|w| &w.pieces).map(|p| p.pixels.capacity()).sum();
@@ -3912,6 +4138,13 @@ pub fn run(
             // The copies went with the painting; if nothing was painted, on their own.
             g.flush_copies();
             let done = std::mem::take(&mut nest_copied.0);
+            #[cfg(target_os = "windows")]
+            if !done.images.is_empty() {
+                // Keep the producer's loan even if this render loop exits before
+                // its last submission. The queue owns the completion callback.
+                let images = done.images.clone();
+                g.queue().on_submitted_work_done(move || drop(images));
+            }
             if let (Some(index), false) = (g.last_submission(), done.is_empty()) {
                 nest_lent.push((index, done));
             }
@@ -3939,6 +4172,13 @@ pub fn run(
                 }
             }
         }
+        #[cfg(target_os = "windows")]
+        if nest_visible.as_ref().is_some_and(|slots| slots.is_empty())
+            && nest_windows.iter().all(|w| w.pieces.is_empty()) {
+            // Do not shrink during page switches: a newly visible page can
+            // still be waiting for its first capture. All demand must be gone.
+            if let Some(g) = gpu.as_mut() { g.release_windows(); }
+        }
         // What the windows drew has been shown: they may draw the next one.
         if painted > 0 {
             if let Some(send) = &nest {
@@ -3949,6 +4189,9 @@ pub fn run(
             std::thread::sleep(Duration::from_millis(8));
         } else if painted > 0 && first_frame {
             first_frame = false;
+            frame_clock.start(Instant::now());
+            cycle = Cycle::default();
+            crate::FIRST_FRAME.store(true, std::sync::atomic::Ordering::Release);
             println!("render · first frame {} ms after starting", op.start_time.elapsed().as_millis());
         }
 
@@ -4041,7 +4284,7 @@ pub fn run(
                 prof_frames = 0;
             }
         }
-        let ms = dt * 1000.0;
+        let ms = frame_ms.unwrap_or(0.0);
         // A permanent telltale: any frame that goes over two periods, with its time.
         if ms > period_ms * 2.4 && !first_frame && cycle.dts.len() > 1 && !op.no_vsync && !op.naive {
             if profiling {
@@ -4069,21 +4312,13 @@ pub fn run(
         sec_paced = 0.0;
         history.copy_within(1.., 0);
         history[119] = if blocked { -ms } else { ms };
-        cycle.dts.push(ms);
-        if !op.no_vsync && !op.naive && !blocked {
+        let watched_period = if !op.no_vsync && !op.naive && !blocked {
             // The LEARNT period is no good here: a scene that is always
             // late teaches it that the screen gives 28 ms and then it is never
             // late. It is compared with the monitor's real refresh.
-            let mut real = sheets.iter().find(|l| l.drives_pace).map_or(16.7, |l| 1_000_000.0 / l.mhz.max(1) as f32);
-            if scene.surface().max_fps > 0 {
-                real = real.max(1000.0 / scene.surface().max_fps as f32);
-            }
-            cycle.watch(real);
-        }
-        if blocked {
-            cycle.frames_blocked += 1;
-            cycle.max_blocked = cycle.max_blocked.max(ms);
-        }
+            Some(frame_period(sheets.iter().find(|l| l.drives_pace).map(|l| l.mhz), scene.surface().max_fps).as_secs_f32() * 1000.0)
+        } else { None };
+        if frame_ms.is_some() { cycle.frame(ms, blocked, watched_period); }
         // The screen's period, learnt from the first good frames.
         if frames_for_period < 40 && ms > 3.0 && ms < 40.0 {
             frames_for_period += 1;
@@ -4113,6 +4348,38 @@ pub fn run(
             // Still now: if something overflowed, this is what stays watching.
             draw.report_pending();
         }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn native_screen_copies<'a>(scene: &Scene, sheets: impl Iterator<Item = (usize, &'a str)>) -> Vec<(usize, String)> {
+    let mut copies: Vec<_> = sheets.filter_map(|(which, name)| {
+        let surface = scene.surfaces.get(which)?;
+        (surface.name.is_empty() && !name.is_empty()).then(|| (surface.instance, name.to_owned()))
+    }).collect();
+    copies.sort();
+    copies.dedup();
+    copies
+}
+
+fn publish_surface_size(surface: &Surface, props: &mut [Animated], size: (f32, f32)) {
+    if let Some((w, h)) = surface.size_props {
+        for (p, value) in [(w, size.0), (h, size.1)] {
+            let measured = &mut props[p.0 as usize];
+            *measured = Animated { x: value, v: 0.0, target: value, spring: measured.spring };
+        }
+    }
+}
+
+fn update_screen_count(scene: &Scene, facts: &mut [f32], sheets: &[Sheet]) {
+    if let Some(i) = scene.facts.iter().position(|h| h.0 == "screens.count") {
+        // Several panels can share an output; popups add no monitor. Recompute
+        // after removal too, including the transition to no visible outputs.
+        facts[i] = sheets.iter().filter(|l| l.view.popup.is_none())
+            // Keep the previous surface-based fallback for hosts that do not
+            // provide output names, instead of merging all unnamed outputs.
+            .map(|l| if l.name.is_empty() { (None, l.view.surface) } else { (Some(l.name.as_str()), 0) })
+            .collect::<std::collections::HashSet<_>>().len() as f32;
     }
 }
 
@@ -4199,6 +4466,14 @@ fn assign_pace(g: &Gpu, sheets: &mut [Sheet], size: (f32, f32), no_vsync: bool) 
             g.reconfigure(l, size);
         }
     }
+}
+
+fn frame_period(mhz: Option<i32>, max_fps: u32) -> Duration {
+    // An unknown refresh must not become a 1 mHz (1000-second) deadline.
+    // Keep the reported metadata unknown; only the pacing uses this fallback.
+    let hz = f64::from(mhz.filter(|r| *r > 0).unwrap_or(60_000)) / 1000.0;
+    let hz = if max_fps == 0 { hz } else { hz.min(f64::from(max_fps)) };
+    Duration::from_secs_f64(1.0 / hz)
 }
 
 /// What is selected of a text that can be: its instruction, and the bytes
@@ -4293,7 +4568,7 @@ impl Editing {
                 if name == "x" && self.delete_selection(t) { KeyOutcome::Changed } else { KeyOutcome::Moved }
             }
             "v" if m.ctrl => {
-                let Some(pasted) = crate::platform::clipboard_read() else { return KeyOutcome::Moved };
+                let Some(pasted) = crate::platform::clipboard_for_paste(typed) else { return KeyOutcome::Moved };
                 // A field is single-line: whatever comes with line breaks, without them.
                 let pasted: String = pasted.chars().filter(|c| !c.is_control()).collect();
                 self.delete_selection(t);
@@ -4361,9 +4636,37 @@ struct RuleState {
     armed: bool,
     next: Option<Instant>,
     last_time: Option<Instant>,
+    sampled_at: Option<Instant>,
+}
+
+fn sampled_rule<'a>(scene: &Scene, states: &'a mut [RuleState], k: usize, now: Instant) -> Option<&'a mut RuleState> {
+    let sampled = matches!(scene.rules[k].when, Trigger::Change(_) | Trigger::Still { .. });
+    // A shared value has one history, even when the active surface changes.
+    // Otherwise the newly opened copy sees only the current volume and never
+    // arms the timeout that must hide the already visible meter.
+    let owner = if sampled { scene.twin_of.get(k).copied().unwrap_or(k) } else { k };
+    let state = &mut states[owner];
+    if sampled && state.sampled_at.replace(now) == Some(now) { return None }
+    Some(state)
 }
 
 impl RuleState {
+    fn changed(&mut self, value: f32) -> bool {
+        self.last_value.replace(value).is_some_and(|before| (before - value).abs() > 0.001)
+    }
+
+    fn still(&mut self, value: f32, duration: Duration, now: Instant, appointments: &mut Vec<Instant>) -> bool {
+        if self.changed(value) {
+            self.armed = true;
+            self.next = Some(now + duration);
+        }
+        match self.next.filter(|_| self.armed) {
+            Some(p) if now >= p => { self.armed = false; true }
+            Some(p) => { appointments.push(p); false }
+            None => false,
+        }
+    }
+
     /// "It has been true for this long": fires once per episode.
     fn sustained(&mut self, true_now: bool, duration: Duration, now: Instant, appointments: &mut Vec<Instant>) -> bool {
         if !true_now {
@@ -4383,6 +4686,10 @@ impl RuleState {
         false
     }
 }
+
+#[cfg(test)]
+#[path = "render/rule_tests.rs"]
+mod rule_tests;
 
 struct Playback {
     gesture: usize,
@@ -4411,20 +4718,6 @@ impl Playback {
     fn target(&self, keyframe: usize, p: PropId, props: &[Animated]) -> f32 {
         self.values[keyframe].iter().find(|(q, _)| *q == p).map_or(props[p.0 as usize].target, |(_, v)| *v)
     }
-}
-
-/// The CPU this thread has used, in milliseconds (the wall clock also counts
-/// what it spends waiting).
-fn thread_cpu_ms() -> f64 {
-    #[cfg(target_os = "linux")]
-    {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        // SAFETY: a valid clock and a timespec of our own to fill.
-        if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) } == 0 {
-            return t.tv_sec as f64 * 1000.0 + t.tv_nsec as f64 / 1e6;
-        }
-    }
-    0.0
 }
 
 /// The `follow`s and `bind`s of a scene, remembered: each one is worked out
@@ -4483,9 +4776,11 @@ impl Follows {
 }
 
 /// What a draw list was made from: while all of it holds, the list holds.
+#[derive(Default)]
 struct ComposeMemo {
     size: (f32, f32),
     view: Option<crate::gpu::FieldView>,
+    selected: Option<(usize, usize, usize)>,
     /// What falls on no sheet is left out of the list: a sheet that comes
     /// (a lock screen, after its `open:` had already been read) makes it again.
     views: Vec<[f32; 4]>,
@@ -4495,9 +4790,132 @@ struct ComposeMemo {
     props: Vec<f32>,
 }
 
+impl ComposeMemo {
+    fn matches(&self, size: (f32, f32), view: Option<crate::gpu::FieldView>, draw: &crate::gpu::DrawList,
+        facts: &[f32], texts: &[String], props: &[Animated]) -> bool {
+        self.size == size && self.view == view && self.selected == draw.selected && self.views == draw.views
+            && self.facts == facts && self.texts == texts && self.window_tex == draw.window_tex
+            && self.props.len() == props.len() && self.props.iter().zip(props).all(|(a, b)| *a == b.x)
+    }
+}
+
+#[cfg(test)]
+mod cadence_tests {
+    use super::*;
+
+    #[test]
+    fn refresh_fallback_and_scene_rate_have_finite_deadlines() {
+        for refresh in [None, Some(0), Some(-1)] {
+            assert!((frame_period(refresh, 0).as_secs_f64() - 1.0 / 60.0).abs() < 1e-9);
+            assert_eq!(frame_period(refresh, 1), Duration::from_secs(1));
+        }
+        for (mhz, rate, hz) in [(59_940, 0, 59.94), (144_000, 0, 144.0),
+            (144_000, 30, 30.0), (24_000, 60, 24.0), (144_000, u32::MAX, 144.0)] {
+            assert!((frame_period(Some(mhz), rate).as_secs_f64() - 1.0 / hz).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn initialization_and_sleep_are_not_frame_delays() {
+        let now = Instant::now();
+        let mut clock = FrameClock::default();
+        assert_eq!(clock.sample(now + Duration::from_secs(3)), None);
+        clock.start(now + Duration::from_secs(5));
+        assert_eq!(clock.sample(now + Duration::from_millis(5016)), Some(16.0));
+        // Keep a real late frame: this must not merely clamp away all delays.
+        assert_eq!(clock.sample(now + Duration::from_millis(5116)), Some(100.0));
+        clock.wake(now + Duration::from_millis(59984));
+        assert_eq!(clock.sample(now + Duration::from_secs(60)), Some(16.0));
+    }
+
+    #[test]
+    fn sustained_slow_frames_still_trigger_the_warning() {
+        let mut cycle = Cycle { dts: vec![16.67; 240], total_ms: 16.67 * 240.0, ..Default::default() };
+        cycle.watch(16.67);
+        assert!(!cycle.slow_reported);
+        cycle.dts = vec![30.0; 240];
+        cycle.total_ms = 30.0 * 240.0;
+        cycle.watch(16.67);
+        assert!(cycle.slow_reported);
+    }
+
+    #[test]
+    fn continuous_animation_statistics_have_bounded_storage() {
+        let mut cycle = Cycle::default();
+        for _ in 0..CYCLE_FRAMES * 4 + 17 {
+            cycle.compose_ms += 0.25;
+            cycle.frame(16.0, false, Some(16.0));
+            assert!(cycle.dts.len() < CYCLE_FRAMES);
+        }
+        assert_eq!(cycle.dts.len(), 17);
+        assert_eq!(cycle.total_ms, 272.0);
+        assert_eq!(cycle.compose_ms, 4.25);
+        assert!(!cycle.slow_reported);
+        cycle.frame(200.0, true, None);
+        assert_eq!(cycle.max_blocked, 200.0);
+        assert_eq!(cycle.frames_blocked, 1);
+        assert_eq!(cycle.total_ms, 472.0);
+    }
+
+    #[test]
+    fn reporting_windows_keep_the_one_time_warning_but_clear_short_cycles() {
+        let mut cycle = Cycle::default();
+        for _ in 0..CYCLE_FRAMES { cycle.frame(30.0, false, Some(16.0)); }
+        assert!(cycle.slow_reported);
+        assert!(cycle.dts.is_empty());
+        cycle.compose_ms = 9.0;
+        cycle.frame(90.0, true, None);
+        cycle.close();
+        assert!(cycle.slow_reported);
+        assert_eq!((cycle.total_ms, cycle.compose_ms, cycle.max_blocked, cycle.frames_blocked), (0.0, 0.0, 0.0, 0));
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod input_tests {
+    use super::*;
+    #[test]
+    fn native_outputs_keep_scene_indices_across_enumeration_and_removal() {
+        let mut scene = Scene::default();
+        scene.surfaces = vec![Surface::default(), Surface { instance: 1, ..Surface::default() },
+            Surface { name: "notification".into(), ..Surface::default() }];
+        assert_eq!(native_screen_copies(&scene, [(1,"RIGHT"),(2,"OTHER"),(0,"LEFT"),(1,"RIGHT"),(9,"INVALID"),(0,"")].into_iter()),
+            vec![(0,"LEFT".into()),(1,"RIGHT".into())]);
+        // A disconnected first copy must not renumber the surviving second one.
+        assert_eq!(native_screen_copies(&scene, [(1,"RIGHT")].into_iter()),vec![(1,"RIGHT".into())]);
+        assert!(native_screen_copies(&scene, std::iter::empty()).is_empty());
+    }
+    #[test]
+    fn paste_uses_the_input_events_clipboard_snapshot() {
+        let mut editing = Editing { field: 0, cursor: 3, anchor: 0 };
+        let mut value = "old".to_owned();
+        let result = editing.handle_key(&mut value, "v", Some("España ñ\n世界 🚀"), Mods { ctrl: true, ..Mods::default() });
+        assert!(matches!(result, KeyOutcome::Changed));
+        assert_eq!(value, "España ñ世界 🚀");
+        assert_eq!(editing.cursor, value.len());
+        assert_eq!(editing.anchor, value.len());
+    }
+}
+
 #[cfg(test)]
 mod selection_tests {
     use super::*;
+
+    #[test]
+    fn selecting_and_clearing_static_text_recompose_without_a_scene_change() {
+        let mut memo = ComposeMemo { size: (640.0, 320.0), texts: vec!["Café · 日本語".into()], ..Default::default() };
+        let mut draw = crate::gpu::DrawList::default();
+        let matches = |memo: &ComposeMemo, draw: &crate::gpu::DrawList| memo.matches((640.0, 320.0), None, draw, &[], &["Café · 日本語".into()], &[]);
+        assert!(matches(&memo, &draw));
+        draw.selected = Some((1, 0, "Café".len()));
+        assert!(!matches(&memo, &draw), "mouse-only selection must invalidate the static frame");
+        memo.selected = draw.selected;
+        assert!(matches(&memo, &draw));
+        draw.selected = Some((1, 0, "Café · 日本語".len()));
+        assert!(!matches(&memo, &draw));
+        draw.selected = None;
+        assert!(!matches(&memo, &draw), "clearing must repaint the old highlight");
+    }
 
     #[test]
     fn a_double_click_takes_the_word() {
@@ -4553,6 +4971,8 @@ enum Step {
 /// An action an agent asked for by name, while it is being done.
 struct Acting {
     reply: std::sync::mpsc::Sender<String>,
+    live: std::sync::Weak<()>,
+    down: Option<u8>,
     zone: usize,
     said_name: String,
     /// What it answers before what happened: «pressed save».
@@ -4569,9 +4989,13 @@ struct Acting {
 }
 
 impl Acting {
+    fn advance(&mut self, now: Instant) {
+        advance_action_step(&mut self.steps, now);
+    }
+
     /// The steps for an action, or why it cannot be done (with whom to tell).
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-    fn plan(scene: &Scene, c: Ctx, sight: &crate::agent::Sight, act: crate::agent::Act, reply: std::sync::mpsc::Sender<String>, texts: &[String], open: Vec<String>) -> Result<Acting, (std::sync::mpsc::Sender<String>, String)> {
+    fn plan(scene: &Scene, c: Ctx, sight: &crate::agent::Sight, act: crate::agent::Act, reply: std::sync::mpsc::Sender<String>, live: std::sync::Weak<()>, texts: &[String], open: Vec<String>) -> Result<Acting, (std::sync::mpsc::Sender<String>, String)> {
         use crate::agent::Act;
         let now = Instant::now();
         let ms = |n: u64| now + Duration::from_millis(n);
@@ -4648,7 +5072,53 @@ impl Acting {
             }
         };
         let said_name = name.split("#screen").next().unwrap_or(&name).to_owned();
-        Ok(Acting { reply, zone, said_name, said: said + "\n", steps, hand: None, from: (0.0, 0.0), scrolled: false, before: crate::agent::before(scene, c, texts, open), events: Vec::new(), done: None, heard: String::new(), quiet: now })
+        Ok(Acting { reply, live, down: None, zone, said_name, said: said + "\n", steps, hand: None, from: (0.0, 0.0), scrolled: false, before: crate::agent::before(scene, c, texts, open), events: Vec::new(), done: None, heard: String::new(), quiet: now })
+    }
+}
+
+fn advance_action_step(steps: &mut std::collections::VecDeque<Step>, now: Instant) {
+    steps.pop_front();
+    // A pause starts when its input was delivered, not on the next frame.
+    // Otherwise slow frames add a whole extra frame to each point of a drag.
+    if let Some(Step::Pause(duration)) = steps.front() {
+        steps[0] = Step::Wait(now + *duration);
+    }
+}
+
+#[cfg(test)]
+mod action_timing_tests {
+    use super::*;
+
+    #[test]
+    fn slow_frames_do_not_restart_the_pause_after_every_input() {
+        let start = Instant::now();
+        let mut steps = std::collections::VecDeque::from([
+            Step::Down(0), Step::Pause(Duration::from_millis(40)), Step::Move(0.0,-10.0),
+            Step::Pause(Duration::from_millis(40)), Step::Up(0),
+            Step::Pause(Duration::from_millis(60)), Step::Down(0),
+            Step::Pause(Duration::from_millis(600)), Step::Up(0), Step::Leave,
+        ]);
+        advance_action_step(&mut steps,start);
+        assert!(matches!(steps.front(),Some(Step::Wait(t)) if *t == start+Duration::from_millis(40)));
+        // The next frame is already late. It consumes the expired wait and
+        // performs one movement; the following pause belongs to that movement.
+        let frame = start+Duration::from_millis(350);
+        advance_action_step(&mut steps,frame);
+        assert!(matches!(steps.front(),Some(Step::Move(..))));
+        advance_action_step(&mut steps,frame);
+        assert!(matches!(steps.front(),Some(Step::Wait(t)) if *t == frame+Duration::from_millis(40)));
+        let frame = frame+Duration::from_millis(350);
+        advance_action_step(&mut steps,frame);
+        assert!(matches!(steps.front(),Some(Step::Up(0))));
+        advance_action_step(&mut steps,frame);
+        assert!(matches!(steps.front(),Some(Step::Wait(t)) if *t == frame+Duration::from_millis(60)));
+        let frame = frame+Duration::from_millis(350);
+        advance_action_step(&mut steps,frame);
+        assert!(matches!(steps.front(),Some(Step::Down(0))));
+        advance_action_step(&mut steps,frame);
+        // A long hold must still wait its full requested duration.
+        assert!(matches!(steps.front(),Some(Step::Wait(t)) if *t > frame+Duration::from_millis(350)
+            && *t == frame+Duration::from_millis(600)));
     }
 }
 
@@ -4673,6 +5143,7 @@ fn open_surfaces(scene: &Scene, sheets: &[Sheet]) -> Vec<String> {
 /// Someone watching what happens in the scene (`watch`), until then.
 struct Watcher {
     lines: std::sync::mpsc::Sender<String>,
+    live: std::sync::Weak<()>,
     until: Instant,
     start: Instant,
     before: crate::agent::Before,

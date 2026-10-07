@@ -1,0 +1,16 @@
+// expect: ok
+// Empty effects must not suppress the visible groups that follow them.
+scene ManyEffects {
+    surface { size: 640, 320; anchor: top; keyboard: none; open: shown }
+    fact shown = 1
+    fact alpha = 0.5
+    repeat k in 0..128 { group { blur: 2 } }
+    repeat k in 0..128 {
+        group {
+            blur: if(mod(k, 2) == 0, 2, 0)
+            opacity: if(mod(k, 2) == 0, 1, alpha)
+            ellipse { at: mod(k, 16) * 40 + 17, floor(k / 16) * 40 + 20; radius: 10; color: #ff3300 }
+            ellipse { at: mod(k, 16) * 40 + 23, floor(k / 16) * 40 + 20; radius: 10; color: #0080ff }
+        }
+    }
+}

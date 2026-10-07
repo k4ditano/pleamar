@@ -30,6 +30,10 @@ fn path_in(owner: &str, name: &str) -> Result<PathBuf, String> {
     if !clean {
         return Err(format!("'{name}' is not a name inside this scene's folder: no `..`, no full paths"));
     }
+    #[cfg(target_os = "windows")]
+    if name.split('/').any(|part| !super::paths::storage_component(part)) {
+        return Err(format!("'{name}' contains a reserved Windows file name"));
+    }
     Ok(dir_for(owner).join(name))
 }
 
@@ -82,19 +86,34 @@ pub fn query(owner: &str, what: &str, args: &[SysValue]) -> Result<SysValue, Str
         },
         ("files.exists", [SysValue::Text(name)]) => Ok(SysValue::Bool(path_in(owner, name)?.exists())),
         ("files.list", []) => {
-            let mut names: Vec<String> = std::fs::read_dir(dir_for(owner))
-                .into_iter()
-                .flatten()
-                .filter_map(Result::ok)
-                .filter(|e| e.path().is_file())
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .collect();
-            names.sort();
+            let names = list_folder(&dir_for(owner))?;
             Ok(SysValue::List(names.into_iter().map(SysValue::Text).collect()))
         }
         ("files.folder", []) => Ok(SysValue::Text(dir_for(owner).to_string_lossy().into_owned())),
         _ => Err(format!("'{what}' is not asked like that: files.read(name[, \"json\"]), files.exists(name), files.list(), files.folder()")),
     }
+}
+
+fn list_folder(folder: &Path) -> Result<Vec<String>, String> {
+    let entries = match std::fs::read_dir(folder) {
+        Ok(entries) => entries,
+        // A scene has no storage folder until it first saves something.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("cannot list {}: {e}", folder.display())),
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("cannot list {}: {e}", folder.display()))?;
+        match std::fs::metadata(entry.path()) {
+            Ok(meta) if meta.is_file() => names.push(entry.file_name().to_string_lossy().into_owned()),
+            Ok(_) => {},
+            // Another writer may remove a file during enumeration.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+            Err(e) => return Err(format!("cannot read {}: {e}", entry.path().display())),
+        }
+    }
+    names.sort();
+    Ok(names)
 }
 
 /// `sys.call("files.write", "settings.json", text)` · `("files.remove", name)`
@@ -150,4 +169,29 @@ pub fn watch(owner: &str, name: &str, dispatch: Box<dyn Fn(SysValue) + Send>) ->
             }
         })
         .is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listing_distinguishes_missing_storage_from_an_os_error() {
+        let folder = std::env::temp_dir().join(format!("pleamar-files-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        assert_eq!(list_folder(&folder).unwrap(), Vec::<String>::new());
+        std::fs::create_dir(&folder).unwrap();
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup { fn drop(&mut self) {
+            for name in ["z.json", "café.json"] { let _ = std::fs::remove_file(self.0.join(name)); }
+            let _ = std::fs::remove_dir(self.0.join("subfolder"));
+            let _ = std::fs::remove_dir(&self.0);
+        } }
+        let _cleanup = Cleanup(folder.clone());
+        std::fs::write(folder.join("z.json"), "{}").unwrap();
+        std::fs::write(folder.join("café.json"), "{}").unwrap();
+        std::fs::create_dir(folder.join("subfolder")).unwrap();
+        assert_eq!(list_folder(&folder).unwrap(), vec!["café.json", "z.json"]);
+        assert!(list_folder(&folder.join("z.json")).is_err(), "an OS listing failure is not an empty archive");
+    }
 }

@@ -1,0 +1,22 @@
+scene NativeServices {
+    permissions { services: "audio", "audio.*", "media.*", "network.*", "apps.*", "bluetooth", "bluetooth.*", "brightness", "brightness.*", "wallpaper.*" }
+    surface { kind: window; title: "pleamar native services"; size: 380, 120 }
+    fact ready = false
+    fact outputs = 0
+    fact apps = 0
+    fact media = false
+    fact network = false
+    fact wifi = false
+    fact bluetooth = false
+    fact brightness = false
+    fact async_error = false
+    fact async_denied = false
+    fact async_query = false
+    fact async_query_error = false
+    fact async_query_denied = false
+    fact wallpaper = false
+    fact wallpaper_preview = false
+    box { from: 0, 0; size: 380, 120; color: #142624 }
+    text "Native service probe" { at: 20, 25; size: 18; color: #ffffff }
+    text "Audio devices {outputs, 0} · Apps {apps, 0}" { at: 20, 64; size: 14; color: #b4ebd6 }
+}

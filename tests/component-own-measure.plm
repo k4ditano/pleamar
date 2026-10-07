@@ -1,0 +1,13 @@
+// expect: ok
+scene MeasuredRows {
+    surface { size: 300, 200; keyboard: none }
+    prop extent = 0
+    on change list.content { extent: list.content }
+    component TextRow(label: text) {
+        measure said
+        size: 100, said.height + 12
+        box hit { from: 0, 0; size: 100, said.height + 12; active: true }
+        text label { at: 0, 0; width: 100; size: 12; measure: said }
+    }
+    column list { at: 0, 0; gap: 0; TextRow("first"); TextRow("second") }
+}

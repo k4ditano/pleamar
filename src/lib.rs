@@ -15,6 +15,10 @@ mod shaders;
 mod shapes;
 mod lsp;
 pub mod gpu;
+#[cfg(target_os = "windows")]
+pub mod windows_texture;
+#[cfg(target_os = "windows")]
+pub mod windows_desktop;
 mod agent;
 #[cfg(target_os = "linux")]
 pub mod dmabuf;
@@ -34,6 +38,16 @@ pub use gpu::{Frames, NewSheet, Sent, Target, View};
 /// The same wgpu the render paints with, for a platform that lends it textures.
 pub use wgpu;
 pub use scenes::from_file::read as read_scene;
+
+/// Native scene command clients used by Windows desktop companions.
+#[cfg(target_os = "windows")]
+pub mod commands {
+    pub use crate::platform::{ask, ask_with_pid, running_scenes, send, send_to_process, stream};
+}
+
+/// Entry point for the windowless Windows COM notification activator.
+#[cfg(target_os = "windows")]
+pub fn run_notification_broker() -> Result<(),String> {platform::run_notification_broker()}
 mod text;
 
 use scene::*;
@@ -59,6 +73,7 @@ const HELP: &str = "pleamar [options]
                       each word means. For any editor that speaks LSP
   --highlight EDITOR  writes the syntax file for 'vim' or 'vscode', made from the vocabulary
   --version           the version of the program and of the language it understands
+  --register-notification-shortcut PATH   Windows: assign toast identity to an existing Start menu .lnk
   --report [SCENES]   measures the scenes running (all of them, or those named) for a while
                       —use the desktop as usual meanwhile— and writes what it saw, with the
                       machine's details, to a file to send us when something stutters.
@@ -71,8 +86,8 @@ const HELP: &str = "pleamar [options]
   --stall MS          how long the logic blocks after every decision (600)
   --naive             the logic blocks the painting thread, as in QtQuick
   --demo              opens and closes by itself, with no mouse
-  --mouse SCRIPT      fake mouse: «360,90@1000 click@2500 down@… up@… wheel+@… out@4000» (ms)
-  --seconds N         exits by itself after N seconds
+  --mouse SCRIPT      fake mouse after the first frame: «360,90@1000 click@2500 down@… up@…» (ms)
+  --seconds N         exits after N seconds (after the first frame with --mouse)
   --margin PX         top margin, instead of the scene\u{2019}s
   --no-hud            without the frame graph
   --record NAMES      prints what those properties, facts or texts are worth on every
@@ -126,6 +141,28 @@ fn args(given: Vec<String>) -> Args {
             "--version" => {
                 println!("pleamar {} · language {}.{}", env!("CARGO_PKG_VERSION"), language::VERSION.0, language::VERSION.1);
                 std::process::exit(0);
+            }
+            #[cfg(target_os = "windows")]
+            "--register-notification-shortcut" => {
+                let path = value();
+                std::process::exit(match platform::register_notification_shortcut(std::path::Path::new(&path)) {
+                    Ok(id) => { println!("Notification publisher registered: {id}"); 0 },
+                    Err(error) => { eprintln!("{error}"); 1 },
+                });
+            }
+            #[cfg(target_os = "windows")]
+            "--unregister-notification-publisher" => {
+                std::process::exit(match platform::unregister_notification_publisher() {
+                    Ok(()) => 0, Err(error) => {eprintln!("{error}");1},
+                });
+            }
+            #[cfg(target_os = "windows")]
+            "--check-notification-shortcut" => {
+                let path=value();
+                std::process::exit(match platform::check_notification_shortcut(std::path::Path::new(&path)) {
+                    Ok(())=>{println!("Notification shortcut and broker match this package");0},
+                    Err(error)=>{eprintln!("{error}");1},
+                });
             }
             "--approve" => {
                 let scene = value();
@@ -202,8 +239,14 @@ pub fn run() {
 
 /// The same, with the options given instead of the command line's.
 pub fn run_with(options: Vec<String>) {
+    #[cfg(target_os = "windows")]
+    if let Some(code) = windows_desktop::capture_helper(&options) { std::process::exit(code); }
     let start_time = std::time::Instant::now();
     let a = args(options);
+    if let Err(e) = platform::prepare_runtime() {
+        eprintln!("platform · cannot contain child processes: {e}");
+        std::process::exit(1);
+    }
     // The agents' skill, written again if this pleamar is not the one it speaks of.
     skill::refresh_quietly();
     let blocked = Arc::new(AtomicBool::new(false));
@@ -257,7 +300,7 @@ pub fn run_with(options: Vec<String>) {
     if std::env::var_os("PLEAMAR_VALIDATE").is_some() {
         flags = wgpu::InstanceFlags::VALIDATION | wgpu::InstanceFlags::DEBUG;
     }
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, flags, ..wgpu::InstanceDescriptor::new_without_display_handle() });
+    let instance = platform::graphics_instance(flags);
     let wanted = scene.surfaces.clone();
 
     println!(
@@ -278,8 +321,12 @@ pub fn run_with(options: Vec<String>) {
         std::thread::Builder::new()
             .name("render".into())
             .spawn(move || {
+                struct Finished;
+                impl Drop for Finished {
+                    fn drop(&mut self) { RENDER_DONE.store(true, std::sync::atomic::Ordering::SeqCst); }
+                }
+                let _finished = Finished;
                 render::run(instance, from_render, letters, to_logic, blocked, op);
-                RENDER_DONE.store(true, std::sync::atomic::Ordering::SeqCst);
             })
             .unwrap()
     };
@@ -298,7 +345,7 @@ pub fn run_with(options: Vec<String>) {
         let name = std::path::Path::new(&a.scene).file_stem().map_or(a.scene.clone(), |n| n.to_string_lossy().into_owned());
         let tx = Mutex::new((to_render.clone(), to_logic_for_commands));
         let me = name.clone();
-        platform::listen_for_commands(&name, std::sync::Arc::new(move |line: String, out: &mut dyn FnMut(&str) -> bool| {
+        platform::listen_for_commands(&name, std::sync::Arc::new(move |line: String, out: &mut dyn platform::CommandReply| {
             // Copies, and the lock let go at once: a `wait` that lasts does not hold up the others.
             let (tx, to_logic) = {
                 let guard = tx.lock().unwrap();
@@ -314,19 +361,31 @@ pub fn run_with(options: Vec<String>) {
             }
             // `wait saving == false 3s`: answered as soon as it holds, or when it is late.
             if what == "wait" {
+                let lease = CommandLease::new(tx.clone());
                 let (question, answer) = std::sync::mpsc::channel();
-                let _ = tx.send(ToRender::Wait(after.to_owned(), question));
-                return Some(answer.recv_timeout(std::time::Duration::from_secs(62)).unwrap_or_else(|_| "? the render does not answer\n".into()));
+                let _ = tx.send(ToRender::Wait(after.to_owned(), question, std::sync::Arc::downgrade(&lease.live)));
+                let until = std::time::Instant::now() + Duration::from_secs(62);
+                loop {
+                    if !out.connected() { return None; }
+                    match answer.recv_timeout(Duration::from_millis(100)) {
+                        Ok(answer) => return Some(answer),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) if std::time::Instant::now() < until => {},
+                        Err(_) => return Some("? the render does not answer\n".into()),
+                    }
+                }
             }
             // `watch [10s]`: a line for each thing that happens, for that long (ten seconds if unsaid).
             if what == "watch" {
-                let secs = after.trim().trim_end_matches('s').parse::<f32>().ok().filter(|s| *s > 0.0 && *s <= 3600.0).unwrap_or(10.0);
+                let lease = CommandLease::new(tx.clone());
+                let duration = crate::agent::watch_duration(after);
                 let (lines, heard) = std::sync::mpsc::channel();
-                let until = std::time::Instant::now() + std::time::Duration::from_secs_f32(secs);
-                let _ = tx.send(ToRender::Watch(lines, until));
-                while let Ok(l) = heard.recv_timeout(until.saturating_duration_since(std::time::Instant::now()) + std::time::Duration::from_millis(200)) {
-                    if !out(&l) {
-                        break;
+                let until = std::time::Instant::now() + duration;
+                let _ = tx.send(ToRender::Watch(lines, until, std::sync::Arc::downgrade(&lease.live)));
+                while out.connected() {
+                    match heard.recv_timeout(Duration::from_millis(100)) {
+                        Ok(l) => if !out.write(&l) { break; },
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) if std::time::Instant::now() < until + Duration::from_millis(200) => {},
+                        Err(_) => break,
                     }
                 }
                 return None;
@@ -352,9 +411,18 @@ pub fn run_with(options: Vec<String>) {
                 return Some(match act {
                     Err(m) => format!("? {m}\n"),
                     Ok(act) => {
+                        let lease = CommandLease::new(tx.clone());
                         let (question, answer) = std::sync::mpsc::channel();
-                        let _ = tx.send(ToRender::Act(act, question));
-                        answer.recv_timeout(std::time::Duration::from_secs(8)).unwrap_or_else(|_| "? the render does not answer\n".into())
+                        let _ = tx.send(ToRender::Act(act, question, std::sync::Arc::downgrade(&lease.live)));
+                        let until = std::time::Instant::now() + Duration::from_secs(8);
+                        loop {
+                            if !out.connected() { return None; }
+                            match answer.recv_timeout(Duration::from_millis(100)) {
+                                Ok(answer) => break answer,
+                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if std::time::Instant::now() < until => {},
+                                Err(_) => break "? the render does not answer\n".into(),
+                            }
+                        }
                     }
                 });
             }
@@ -380,9 +448,7 @@ pub fn run_with(options: Vec<String>) {
                     let _ = to_logic.send(Event::Submit(scene::intern(who), rest.to_owned()));
                     tx.send(ToRender::Text(scene::intern(who), rest.to_owned()))
                 }
-                // Through the render, as `--seconds` does: leaving while it still
-                // works with the card crashed the process on its way out.
-                "quit" => quit_after_render(tx),
+                "quit" => { if !platform::request_quit() { quit_after_render(tx) } Ok(()) },
                 _ => {
                     eprintln!("orders · I don't understand '{line}'");
                     return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, describe, press, hold, drag, wheel, type, key, wait, watch, hello, probe, quit", line.trim()));
@@ -395,6 +461,7 @@ pub fn run_with(options: Vec<String>) {
         // To rehearse the zones without taking the mouse away from anyone.
         let tx = to_render.clone();
         std::thread::spawn(move || {
+            if !wait_for_first_frame() { return; }
             let start = std::time::Instant::now();
             for step in steps.split_whitespace() {
                 let (what, when) = step.split_once('@').expect("--mouse: @ms is missing");
@@ -456,8 +523,14 @@ pub fn run_with(options: Vec<String>) {
     }
     if let Some(s) = a.seconds {
         let tx = to_render.clone();
+        let scripted = a.mouse.is_some();
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs_f64(s));
+            // A scripted rehearsal's duration uses the same origin as its
+            // input. GPU startup must not consume the entire test interval.
+            if !scripted || wait_for_first_frame() {
+                std::thread::sleep(Duration::from_secs_f64(s));
+            }
+            if platform::request_quit() { return; }
             // Quitting goes through the render so that it closes its last measurement cycle.
             quit_after_render(&tx);
         });
@@ -471,15 +544,32 @@ pub fn run_with(options: Vec<String>) {
         None => platform::run_event_loop(wanted, extra_height, instance, to_render.clone()),
     }
     let _ = to_render.send(ToRender::Quit);
-    let _ = render.join();
+    if render.join().is_err() {
+        #[cfg(target_os = "windows")]
+        platform::finish_native_services();
+        std::process::exit(1);
+    }
     quit();
 }
 
-/// The process goes away whole —the destruction order does not deserve code in a
-/// prototype—, but not without first stopping what the logic left running, nor
-/// what a platform handed over still has working with the card (`provide_before_quit`).
-/// Quitting goes through the render, and waits until it has let the card go (a few
-/// seconds at most): leaving while it still works with it brought the driver down with it.
+struct CommandLease {
+    live: std::sync::Arc<()>,
+    render: std::sync::mpsc::Sender<ToRender>,
+}
+impl CommandLease {
+    fn new(render: std::sync::mpsc::Sender<ToRender>) -> Self { Self { live: std::sync::Arc::new(()), render } }
+}
+impl Drop for CommandLease {
+    fn drop(&mut self) {
+        // Release before waking: the renderer must observe the expired lease.
+        let old = std::mem::replace(&mut self.live, std::sync::Arc::new(()));
+        drop(old);
+        let _ = self.render.send(ToRender::CommandGone);
+    }
+}
+
+/// Quitting goes through the render and waits until it lets the GPU go. Leaving
+/// while it still has submitted work brought the driver down with the process.
 fn quit_after_render(tx: &std::sync::mpsc::Sender<ToRender>) -> ! {
     let _ = tx.send(ToRender::Quit);
     let asked = std::time::Instant::now();
@@ -490,6 +580,8 @@ fn quit_after_render(tx: &std::sync::mpsc::Sender<ToRender>) -> ! {
 }
 
 fn quit() -> ! {
+    #[cfg(target_os = "windows")]
+    platform::finish_native_services();
     if let Some(f) = BEFORE_QUIT.lock().unwrap().take() {
         f();
     }
@@ -500,6 +592,21 @@ fn quit() -> ! {
 
 /// Whether the render has finished: nothing of it touches the card any more.
 static RENDER_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) static FIRST_FRAME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn wait_for_first_frame() -> bool {
+    use std::sync::atomic::Ordering;
+    let started = std::time::Instant::now();
+    while !FIRST_FRAME.load(Ordering::Acquire) {
+        if RENDER_DONE.load(Ordering::Acquire) { return false; }
+        if started.elapsed() > Duration::from_secs(60) {
+            eprintln!("mouse · no first frame within 60 seconds; rehearsal cancelled");
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
 static BEFORE_QUIT: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> = std::sync::Mutex::new(None);
 
 /// What to do right before the process goes away: a platform with threads of
@@ -514,8 +621,13 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
     if let Some(d) = std::env::var_os("PLEAMAR_CONFIG").filter(|v| !v.is_empty()) {
         return Some(d.into());
     }
+    #[cfg(target_os = "windows")]
+    return Some(platform::config_dir());
+    #[cfg(not(target_os = "windows"))]
+    {
     let base = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
     Some(base.join("pleamar"))
+    }
 }
 
 /// `pleamar --autostart`: what `autostart` says, each on its own and let go
@@ -527,8 +639,8 @@ fn autostart() -> i32 {
         return 1;
     };
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("wm:")) {
-        let mut c = std::process::Command::new("sh");
-        c.arg("-c").arg(line).stdin(std::process::Stdio::null());
+        let mut c = platform::shell_command(line);
+        c.stdin(std::process::Stdio::null());
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut c, 0);
         match c.spawn() {

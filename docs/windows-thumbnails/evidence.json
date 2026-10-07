@@ -1,0 +1,55 @@
+{
+  "passed": true,
+  "physical_input": false,
+  "monitor": "\\\\.\\DISPLAY2",
+  "primary": false,
+  "binary_sha256": "33aca7c249c859ed62346d0650d01fd93d0291266fdd3b519c8c2c03fb0ea87a",
+  "stages": [
+    "01-live",
+    "02-repaint",
+    "03-resize",
+    "04-minimized",
+    "04-still",
+    "05-stopped",
+    "06-reloaded",
+    "07-closed"
+  ],
+  "actual_wgc_to_d3d12": true,
+  "source_updates": true,
+  "source_resize": true,
+  "source_closure": true,
+  "scene_reload": true,
+  "minimize_restore": true,
+  "live_to_file": true,
+  "capture_stopped": true,
+  "cache_cleaned": true,
+  "native": {
+    "captures": 8,
+    "exit": 0,
+    "foreground_unchanged": true,
+    "limit_seconds": 240,
+    "passive_input": true,
+    "physical_input_sent": false,
+    "scene_pid": 26804,
+    "screen": "\\\\.\\DISPLAY2"
+  },
+  "foreground_same_at_end": true,
+  "validation": {
+    "library": "185 passed, 0 failed, 39 opt-in fixtures ignored (37 in the committed tree)",
+    "language": "242 checks, 0 failures, 34 documentation scenes",
+    "marea": "Current modular profile logic suite passes in the review and synchronized source checkouts",
+    "build": "Windows x64/MSVC release with default Luau",
+    "scope": "Two owned native sources on non-primary DISPLAY2, 125% DPI; no physical input, real applications/accounts or sustained eight-window performance acceptance"
+  },
+  "command": "python scripts/windows-thumbnails.py --binary <release-exe> --harness <library-test-exe> --output <new-directory>",
+  "rust_sources": {
+    "src\\lib.rs": "267146cf59d40b1d8a54bc7c59d8811d04388e815ce4471ff315173e621973a2",
+    "src\\logic_luau.rs": "35cfdfc53d87707e4f17482e35b9bbd30e176daa104827eb4bdbfa82a3e04a7e",
+    "src\\platform\\mod.rs": "6e7076a3dba48db003f206c6500ffce95b580ec1cec5cbc0a52edf5fef115243",
+    "src\\platform\\windows.rs": "3f0c81943d110fce04c7486310a9d9596f12ee348b4a31a0bfc4aceb991cae53",
+    "src\\platform\\windows_system.rs": "1d8052b3ba1fd13830ec3e5ddfe78537e0a9ab9665c3b28c5f013a3778aae900",
+    "src\\platform\\windows_windows.rs": "c20f37f8c1f3a500c7accd80b7b9638c447f4d4826fc6d5840ba01d0a580160d",
+    "src\\platform\\windows_thumbnails.rs": "e772767d1d9b443f745b8ba048e51e9221231155b80950ef7be71da852d3c046",
+    "src\\platform\\windows_thumbnail_capture.rs": "e25b27d7aadc975819731f234d5f9f50e0ae7efcb99a71c28845a4365d199085"
+  }
+}

@@ -11,6 +11,11 @@ jobs:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev libfontconfig1-dev libpam0g-dev pkg-config fonts-dejavu-core
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          cache-workspace-crates: false
+          cache-bin: false
       - run: cargo test --locked
       - run: cargo test --locked --example allocation-profile
       - run: cargo build --locked --example allocation-profile

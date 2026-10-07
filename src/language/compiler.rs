@@ -146,6 +146,7 @@ struct Candidate {
     /// If what contains it is not there (`show:`, a record that does not exist), neither is it.
     visible: Option<Expr>,
     under: Vec<Transform>,
+    viewports: Vec<ViewportClip>,
     forced: bool,
     cursor: Cursor,
     /// What it carries when dragged out to another program (`carries:`).
@@ -536,7 +537,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         for (k, instance) in copies {
             let per_copy = matches!(o.e.surfaces[k].screens, Screens::Number(_));
             if per_copy {
-                o.scopes.push(Rc::new(o.screen_scope(instance)));
+                o.scopes.push(Rc::new(o.surface_scope(&o.e.surfaces[k].name, instance)));
             }
             let mut c = Cur::new(tokens, l, col);
             match o.expr(&mut c) {
@@ -1657,7 +1658,7 @@ impl<'a> Compiler<'a> {
         // which it is painted. Whether it is or not is decided at the end: see `materialize_zones`.
         if let Some(name) = &name {
             let name = &self.declare_zone(name);
-            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), forced: carries.is_some(), cursor, carries, label, reach, within: None, told });
+            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), viewports: Vec::new(), forced: carries.is_some(), cursor, carries, label, reach, within: None, told });
         }
         Ok(ParsedShape { shape, color, opacity, blend, size: extent, glass_spec })
     }
@@ -3080,7 +3081,12 @@ impl<'a> Compiler<'a> {
             None => self.imposed_measure.take(),
         };
         if let Some((w, h)) = measure {
-            self.last_size = Some((width.clone().unwrap_or(w.e()), h.e()));
+            // The font worker answers after composition. Reserve a known single
+            // line now, so its first glyphs cannot overlap the following label.
+            let height = if style.max_lines == Some(1) {
+                h.e().max(Expr::K(style.px * style.line_height))
+            } else { h.e() };
+            self.last_size = Some((width.clone().unwrap_or(w.e()), height));
         }
         // Its effects, if it has any: they go right before it.
         let gradient = match p.get_mut("gradient") {
@@ -3249,7 +3255,7 @@ impl<'a> Compiler<'a> {
             at: self.e.instrs.len(),
             zblock: self.zblock,
             shape: Shape::Rect { center: (at.0.clone() + width.clone() * 0.5, at.1.clone() + height * 0.5), half_size: (width.clone() * 0.5, (height * 0.5 + 3.0).into()), radius: 0.0.into() },
-            active: None, visible: None, under: self.under.clone(), forced: true, cursor: Cursor::Text, carries: None, label, reach, within: None, told: None,
+            active: None, visible: None, under: self.under.clone(), viewports: Vec::new(), forced: true, cursor: Cursor::Text, carries: None, label, reach, within: None, told: None,
         });
         self.last_size = Some((width.clone(), height.into()));
         self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret });
@@ -3720,7 +3726,7 @@ impl<'a> Compiler<'a> {
                 // With `screens: each`, each copy has its own: its properties, its zones
                 // and its rules. `$screen` is its number, and `screen.name` that of its monitor.
                 if per_screen {
-                    self.scopes.push(Rc::new(self.screen_scope(instance)));
+                    self.scopes.push(Rc::new(self.surface_scope(&name, instance)));
                 } else if lock {
                     let mut env = Scope::default();
                     for part in ["width", "height"] {
@@ -3945,7 +3951,17 @@ impl<'a> Compiler<'a> {
             let base = self.e.surfaces[which].clone();
             for k in 1..limit {
                 self.next_origin += 10000.0;
-                let copy = Surface { instance: k, origin: (0.0, self.next_origin), screens: Screens::Number(k), ..base.clone() };
+                // Each native surface reports its own logical dimensions.
+                // Sharing the first copy's properties lets the last monitor
+                // resize every copy's drawing, even when their windows differ.
+                let size_props = base.size_props.map(|_| {
+                    let prefix = format!("{name}#screen{k}");
+                    let (w, h) = self.e.measured(interned(&prefix));
+                    self.props.insert(format!("{prefix}.width"), w);
+                    self.props.insert(format!("{prefix}.height"), h);
+                    (w, h)
+                });
+                let copy = Surface { instance: k, origin: (0.0, self.next_origin), screens: Screens::Number(k), size_props, ..base.clone() };
                 // The main one's copies go together at the start: the first one is still the main one.
                 if base.name.is_empty() {
                     self.e.surfaces.insert(k, copy);
@@ -3989,6 +4005,17 @@ impl<'a> Compiler<'a> {
     }
 
     /// Inside a `screens: each` surface: what holds for that copy.
+    fn surface_scope(&self, name: &str, k: usize) -> Scope {
+        let mut env = self.screen_scope(k);
+        if !name.is_empty() && k > 0 {
+            for part in ["width", "height"] {
+                env.alias.insert(format!("{name}.{part}"), format!("{name}#screen{k}.{part}"));
+            }
+        }
+        env
+    }
+
+    /// Inside a `screens: each` surface: what holds for that monitor.
     fn screen_scope(&self, k: usize) -> Scope {
         let mut env = Scope { suffix: format!("#screen{k}"), ..Default::default() };
         // `$screen` in a name is its number, like `$i` in a `repeat`.
@@ -4944,6 +4971,18 @@ impl<'a> Compiler<'a> {
                 c.under[base_level].translate = translate.clone();
             }
         }
+        if let Some((vw, vh)) = &view {
+            // Hidden rows must not steal clicks from the controls below the
+            // list. Keep the viewport before scrolling, even after an outer
+            // layout moves or anchors these children.
+            let viewport = ViewportClip {
+                shape: Shape::Rect { center: (vw.clone() * 0.5, vh.clone() * 0.5), half_size: (vw.clone() * 0.5, vh.clone() * 0.5), radius: zone_corner.clone() },
+                under: base_level + 1,
+            };
+            for c in &mut self.candidates[base_candidates..] {
+                c.viewports.push(viewport.clone());
+            }
+        }
         if scroller.is_some() {
             self.under.pop();
             self.e.paint(Instr::Transform(None));
@@ -4971,7 +5010,7 @@ impl<'a> Compiler<'a> {
                 under.push(t.clone());
             }
             let bounds = Shape::Rect { center: (size.0.clone() * 0.5, size.1.clone() * 0.5), half_size: (size.0.clone() * 0.5, size.1.clone() * 0.5), radius: zone_corner };
-            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, forced: scroller.is_some(), cursor: stack_cursor, carries: None, label: None, reach: Reach::Any, within: None, told: None });
+            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, viewports: Vec::new(), forced: scroller.is_some(), cursor: stack_cursor, carries: None, label: None, reach: Reach::Any, within: None, told: None });
             // A hidden stack does not catch the mouse: neither its children nor IT, which with
             // `view:` has a zone of its own —the one for the wheel and dragging— the
             // size of its window. Hidden and in front, that zone
@@ -5314,6 +5353,9 @@ impl<'a> Compiler<'a> {
         for (child, scopes) in children {
             let mark = self.rules.len();
             let extra = scopes.len() + 1;
+            // A model reserves its capacity at compile time, but only its live
+            // rows may paint or receive input.
+            let presence = scopes.iter().filter_map(|s| s.visible.clone()).reduce(|a, b| a * b);
             self.scopes.extend(scopes);
             // How many columns it takes: a number known when reading the scene,
             // which inside a `repeat` may depend on it (`span: if(t == 4, 2, 1)`).
@@ -5355,6 +5397,9 @@ impl<'a> Compiler<'a> {
             let instr = self.e.instrs.len();
             let slot = Transform::at((0.0.into(), 0.0.into())).translate(x, Expr::K(0.0));
             self.e.paint(Instr::Transform(Some(slot.clone())));
+            if let Some(v) = &presence {
+                self.e.paint(Instr::Opacity(Some(v.clone())));
+            }
             self.under.push(slot);
             let from = self.candidates.len();
             self.in_slot = true;
@@ -5363,6 +5408,12 @@ impl<'a> Compiler<'a> {
             let r = self.statement(child, &mut no_clips);
             self.in_slot = false;
             self.under.pop();
+            if let Some(v) = &presence {
+                self.e.paint(Instr::Opacity(None));
+                for c in &mut self.candidates[from..] {
+                    c.visible = Some(match c.visible.take() { Some(old) => old * v.clone(), None => v.clone() });
+                }
+            }
             self.e.paint(Instr::Transform(None));
             if let Some(v) = &present {
                 self.e.paint(Instr::Opacity(None));
@@ -5698,6 +5749,7 @@ impl<'a> Compiler<'a> {
             active: None,
             visible: Some(alpha.clone()),
             under: self.under.clone(),
+            viewports: Vec::new(),
             forced: true,
             cursor: Cursor::Normal,
             carries: None,
@@ -5953,6 +6005,7 @@ impl<'a> Compiler<'a> {
                 self.e.zones[z.0 as usize].at = k.at;
                 self.e.zones[z.0 as usize].zblock = k.zblock;
                 self.e.zones[z.0 as usize].carries = k.carries;
+                self.e.zones[z.0 as usize].viewports = k.viewports;
                 self.e.zones[z.0 as usize].label = k.label;
                 self.e.zones[z.0 as usize].reach = k.reach;
                 self.e.zones[z.0 as usize].within = k.within.and_then(|w| self.zones.get(&w).copied());

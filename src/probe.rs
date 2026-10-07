@@ -196,6 +196,7 @@ fn median(mut v: Vec<f32>) -> f32 {
 }
 
 /// The CPU the whole process has used, in milliseconds.
+#[cfg(not(target_os = "windows"))]
 fn process_cpu_ms() -> Option<f64> {
     let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
     // After the name, which may have spaces, between parentheses.
@@ -209,8 +210,12 @@ fn process_cpu_ms() -> Option<f64> {
     Some(ticks * 1000.0 / hz.max(1.0))
 }
 
+#[cfg(not(target_os = "windows"))]
 fn rss_mb() -> Option<f64> {
     let s = std::fs::read_to_string("/proc/self/status").ok()?;
     let kb: f64 = s.lines().find_map(|l| l.strip_prefix("VmRSS:"))?.trim().trim_end_matches("kB").trim().parse().ok()?;
     Some(kb / 1024.0)
 }
+
+#[cfg(target_os = "windows")]
+use crate::platform::windows_diagnostics::{process_cpu_ms, rss_mb};

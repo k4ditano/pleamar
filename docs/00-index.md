@@ -20,6 +20,7 @@
 | [Language reference — version 0.1](11-language-reference.md) | **The reference**: lexicon, EBNF grammar, every element with what it accepts, and the version number. Its examples are compiled by `./run-tests.sh` |
 | [Known limitations](08-limitations.md) | Everything that is half-done, with its severity, to cross off one by one |
 | [Scenes an agent can read](12-agents.md) | Design: the scene as a tree, acting by name, `wait`, and `agent: no`. Step 1 towards pleamar as any program's interface |
+| [Native Windows scene commands](windows-scene-commands.md) | Named actions, streaming commands, lifetime and current validation limits |
 
 ## Status (4 Oct 2026)
 

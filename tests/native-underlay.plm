@@ -1,0 +1,12 @@
+// expect: ok
+scene NativeUnderlay {
+    surface { size: 640, 420; kind: window; title: "pleamar cross-process underlay" }
+    fact clicks = 0
+    fact focused = false
+    fact focus_gains = 0
+    box background { from: 0, 0; size: screen.width, screen.height; color: #351f4f }
+    text "Separate process: {clicks} clicks" { at: 20, 24; size: 22; color: #ffffff }
+    on press background { clicks = clicks + 1 }
+    on focus { focused = true; focus_gains = focus_gains + 1 }
+    on blur { focused = false }
+}

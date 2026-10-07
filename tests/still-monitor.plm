@@ -1,0 +1,15 @@
+// expect: ok
+language 0.1
+// No audio service: changing this fact never changes system volume.
+scene StillMonitor {
+    surface { size: 200, 60; anchor: top; screens: each max 2; open: screen.index == home; keyboard: none }
+    fact home = 0
+    fact volume = 0
+    prop meter = 0 ~180ms
+    on change volume { meter: 1 }
+    on still volume for 1.1s { meter: 0 }
+    // A copy-dependent expression must retain its own history.
+    on change volume + screen.index { }
+    box { from: 0, 0; size: 200, 60; color: #151616 }
+    text number(volume * 100, 0, " %") { at: 100, 22; anchor: center; opacity: meter }
+}

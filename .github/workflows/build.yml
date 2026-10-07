@@ -1,0 +1,186 @@
+name: Native builds and language tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux system libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev libfontconfig1-dev libpam0g-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          cache-workspace-crates: false
+          cache-bin: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          cache-workspace-crates: false
+          cache-bin: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Build with Luau
+        run: cargo build --release --locked ${{ runner.os == 'Windows' && '--features windows-notifications' || '' }}
+      - name: Package and verify the Windows shader compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'dxc_2026_09_29.zip'
+          Invoke-WebRequest -Uri 'https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip' -OutFile $archive
+          ./scripts/prepare-windows-runtime.ps1 -Archive $archive
+          ./scripts/test-windows-runtime.ps1 -Archive $archive
+      - name: Native retained canvas pixels against full repaint
+        if: runner.os == 'Windows'
+        env:
+          PLEAMAR_CI_RETAINED: '1'
+        run: |
+          python scripts/test-windows-retained-readiness.py
+          if ($LASTEXITCODE -ne 0) { throw 'Retained readiness regression failed' }
+          python scripts/windows-retained-ci.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/retained canvas ñ"
+      - name: Preserve retained canvas reference and comparison images
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-retained-canvas
+          path: ${{ runner.temp }}/retained canvas ñ
+          if-no-files-found: warn
+      - name: Native popup placement and owner lifecycle
+        if: runner.os == 'Windows'
+        env:
+          PLEAMAR_CI_POPUP: '1'
+        run: python scripts/windows-popup-ci.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/popup placement ñ"
+      - name: Preserve native popup placement images
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-popup-placement
+          path: ${{ runner.temp }}/popup placement ñ
+          if-no-files-found: warn
+      - name: Unit tests with Luau
+        run: cargo test --locked
+      - name: Reject named input when the rendered target becomes covered
+        if: runner.os == 'Windows'
+        env:
+          PLEAMAR_CI_AGENT_GUARD: '1'
+        run: python scripts/windows-agent-guard-ci.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/agent guard ñ"
+      - name: Preserve native input guard images and commands
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-agent-input-guard
+          path: ${{ runner.temp }}/agent guard ñ
+          if-no-files-found: warn
+      - name: Real native input to owned disposable CI windows
+        if: runner.os == 'Windows'
+        env:
+          PLEAMAR_CI_DESKTOP_INPUT: '1'
+          PLEAMAR_DESKTOP_TEST_DIR: ${{ runner.temp }}/native desktop input ñ
+        run: cargo test --locked --lib platform::windows_desktop::ci_input_tests::native_positive_input -- --ignored --exact --nocapture
+      - name: Preserve native input screenshots and observed application state
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-desktop-input
+          path: ${{ runner.temp }}/native desktop input ñ
+          if-no-files-found: warn
+      - name: Windows D3D11 to D3D12 shared-image pixels and lifetimes (no desktop input)
+        if: runner.os == 'Windows'
+        run: cargo test --locked --lib windows_texture::tests::shared_capture_reuses_native_pixels_without_cpu_upload -- --ignored --exact --nocapture
+      - name: Windows preview texture retirement and fresh pixels (no desktop input)
+        if: runner.os == 'Windows'
+        run: cargo test --locked --lib gpu::windows_memory_tests::retired_preview_capacity_reopens_with_fresh_pixels -- --ignored --exact --nocapture
+      - name: Windows media paths and Unicode filenames
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $messages = cargo test --locked --lib --no-run --message-format=json | ForEach-Object { $_ | ConvertFrom-Json }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests = @($messages | Where-Object { $_.reason -eq 'compiler-artifact' -and $_.profile.test -and $_.target.kind -contains 'lib' -and $_.executable })
+          if ($tests.Count -ne 1) { throw 'Expected one pleamar library test executable' }
+          python scripts/test-windows-media-paths.py --tests $tests[0].executable
+      - name: Windows-key hook ownership on an isolated private desktop
+        if: runner.os == 'Windows'
+        run: cargo test --locked --lib native_layer_private_desktop -- --ignored --nocapture
+      - name: Owned Windows notification COM and protocol activation (no toast/input)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $artifacts = cargo test --locked --lib --no-run --message-format=json 2>$null | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not locate paired notification test executable' }
+          $tests = @($artifacts | Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'pleamar' -and $_.profile.test -and $_.executable })
+          if ($tests.Count -ne 1) { throw 'Expected one notification test executable' }
+          python scripts/windows-toast-broker.py --binary target/release/pleamar.exe --tests $tests[0].executable --output "${{ runner.temp }}/toast broker ñ"
+      - name: Allocation diagnostic bookkeeping
+        run: cargo test --locked --example allocation-profile
+      - name: Build diagnostic executables
+        run: cargo build --locked --example luau-test --example allocation-profile
+      - name: Isolated Luau assertions without a desktop
+        run: python scripts/test-luau-runner.py --runner target/debug/examples/luau-test${{ runner.os == 'Windows' && '.exe' || '' }}
+      - name: Repeated compiler success and failure allocations
+        run: python scripts/test-compile-memory.py --profiler target/debug/examples/allocation-profile${{ runner.os == 'Windows' && '.exe' || '' }}
+      - name: Scenes, documentation and editor contracts
+        run: python scripts/run-tests.py
+      - name: Isolated agent skill installation and platform scope
+        run: python scripts/test-skills.py --binary target/release/pleamar${{ runner.os == 'Windows' && '.exe' || '' }}
+      - name: Windows CLI smoke
+        if: runner.os == 'Windows'
+        run: python scripts/windows-smoke.py --binary target/release/pleamar.exe
+      - name: Isolated Windows dummy credentials (no user secrets)
+        if: runner.os == 'Windows'
+        run: cargo test --locked --lib platform::windows_credentials::tests::native_scoped_credential_roundtrip -- --ignored --exact
+      - name: Windows credential service through default Luau
+        if: runner.os == 'Windows'
+        run: python scripts/windows-credentials.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/credential service ñ"
+      - name: Windows service and Luau reloads without a display
+        if: runner.os == 'Windows'
+        run: python scripts/windows-service-reload.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/service reload ñ"
+      - name: Windows watcher ownership and plugin approval reloads
+        if: runner.os == 'Windows'
+        run: python scripts/windows-watch-reload.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/watch reload ñ"
+      - name: Windows callback isolation across plugin insertion
+        if: runner.os == 'Windows'
+        run: python scripts/windows-callback-isolation.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/callback isolation ñ"
+      - name: Windows subprocess lifetime across Luau reloads
+        if: runner.os == 'Windows'
+        run: python scripts/windows-run-lifetime.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/run lifetime ñ"
+      - name: Build Windows recording decoder
+        if: runner.os == 'Windows'
+        run: cargo build --locked --example recording-inspect
+      - name: Build Windows notification status diagnostic
+        if: runner.os == 'Windows'
+        run: cargo build --locked --example notifications-status
+      - name: Build Windows tray fixture (interactive validation is separate)
+        if: runner.os == 'Windows'
+        run: cargo build --locked --example tray-fixture
+      - name: Build Windows media fixture (interactive validation is separate)
+        if: runner.os == 'Windows'
+        run: cargo build --locked --example media-fixture
+      - name: Build Windows shelf fixture (interactive validation is separate)
+        if: runner.os == 'Windows'
+        run: cargo build --locked --example window-fixture
+      - name: Additional core diagnostic without Luau
+        run: cargo check --locked --no-default-features
+      - name: Preserve Windows reload diagnostics
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-reload-diagnostics
+          path: |
+            ${{ runner.temp }}/service reload ñ
+            ${{ runner.temp }}/watch reload ñ
+            ${{ runner.temp }}/callback isolation ñ
+            ${{ runner.temp }}/run lifetime ñ
+            ${{ runner.temp }}/toast broker ñ/report.json
+            ${{ runner.temp }}/toast broker ñ/commands.log
+          if-no-files-found: ignore

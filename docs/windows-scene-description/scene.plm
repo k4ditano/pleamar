@@ -1,0 +1,41 @@
+scene Description {
+    surface { size: 540, 430; anchor: center; keyboard: none; level: overlay; rate: 30; screens: "\\.\DISPLAY2" }
+    surface vault {
+        size: 150, 80; anchor: bottom_right; margin: 0, 20, 20, 0
+        keyboard: none; agent: hidden; screens: "\\.\DISPLAY2"
+        box { from: 0, 0; size: 150, 80; color: #151616 }
+        text "Vault text" { at: 12, 20; size: 14; color: #ffffff }
+    }
+    fact ready = false
+    fact dirty = false
+    fact changed = false
+    text status = "Starting"
+    text query = "notes"
+    text pin = "4268"
+    text person = "personal-value"
+    event refresh ->
+    box { from: 0, 0; size: 540, 430; color: #151616 }
+    text "Windows scene description" { at: 20, 20; size: 20; color: #ffffff }
+    input query { at: 20, 60; width: 200; size: 16; color: #ffffff; label: "Search notes" }
+    input pin { at: 250, 60; width: 100; size: 16; color: #ffffff; secret: true; label: "PIN" }
+    input person { at: 360, 60; width: 150; size: 16; color: #ffffff; agent: no; label: "Personal" }
+    column list {
+        at: 20, 110; view: 500, 80
+        repeat k in 0..4 {
+            group {
+                size: 500, 40
+                box row.$k { from: 0, 0; size: 500, 38; color: #303a35; cursor: pointer; label: "Note {k}" }
+                text "Note {k}" { at: 12, 10; size: 15; color: #ffffff }
+                on press row.$k { dirty = true }
+            }
+        }
+    }
+    box private { from: 20, 230; size: 180, 36; color: #333333; agent: hidden }
+    text "Hidden account" { at: 28, 238; size: 14; color: #ffffff }
+    on press private { dirty = true }
+    box save { from: 250, 230; size: 160, 36; color: #9ed6bd; label: "Save {status}" }
+    text "Save" { at: 270, 238; size: 14; color: #151616 }
+    on press save { dirty = true }
+    text status { at: 20, 310; size: 18; color: #9ed6bd }
+    text "Reload version B" { at: 20, 360; size: 14; color: #ffffff }
+}

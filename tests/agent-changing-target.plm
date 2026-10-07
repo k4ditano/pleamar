@@ -1,0 +1,17 @@
+scene ChangingTarget {
+    surface { size: 420, 300; anchor: center; keyboard: none; reserve: 0; rate: 30 }
+    fact blocked = false
+    fact forbidden = false
+    fact allowed = false
+    text query = "Original"
+    box { from: 0, 0; size: 420, 300; color: #151616 }
+    text "The target changes before the press" { at: 20, 20; size: 18; color: #ffffff }
+    box target { from: 40, 70; size: 300, 60; color: #36514b; label: "Allowed target" }
+    on enter target { blocked = true }
+    on press target { allowed = true }
+    input query { at: 40, 155; width: 300; size: 18; color: #ffffff; label: "Search" }
+    box guard { from: 30, 60; size: 320, 150; active: blocked; agent: no; color: #805050; show: blocked; label: "Person only" }
+    on press guard { forbidden = true }
+    text "Forbidden action: {forbidden}" { at: 40, 235; size: 18; color: #ffffff }
+    text "Stored: {query}" { at: 40, 265; size: 16; color: #ffffff }
+}

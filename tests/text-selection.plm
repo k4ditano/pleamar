@@ -1,0 +1,14 @@
+// expect: ok
+scene TextSelection {
+    surface { kind: window; size: 500, 260; keyboard: on_demand }
+    text "Café · 日本語\nSelect these lines and copy them." {
+        at: 30, 40
+        width: 420
+        lines: 4
+        size: 18
+        color: #e9e9e9
+        selectable: true
+        selection: #356d59
+    }
+    text "This label is not selectable." { at: 30, 180; size: 14; selectable: false }
+}

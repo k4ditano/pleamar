@@ -1,0 +1,541 @@
+{
+  "date": "2026-10-06",
+  "base_engine": "889dcf8d4188ac2f7e6d99508ab8e85cbd1b89b9",
+  "base_wm": "72f2609a3112a41022089204aa0ad964e7b6e173",
+  "marea": "1a93d39a6536db6d1b0600bb1c44e4261da4e3ff",
+  "runtime_source_sha256": {
+    "engine": {
+      "Cargo.toml": "3aae77674aab493b1440fa01da536633ac0596f2f2c81cd9b36ae079f86c4e5a",
+      "src/lib.rs": "8afc7081a20f7b9a7e04088d7438132a59aac40c7fb43dddd791d20cc459e388",
+      "src/scene.rs": "7a673ca0d1f7f7b05dcf410d90fae9c919d878a3e5465ab0f8bff2c0199d14c0",
+      "src/render.rs": "9277c27e260cb41dcf36c055f024bf1739080bc0a384db4046f4b4681330bc25",
+      "src/gpu.rs": "618e2830fb5583193131f6741203d66e8ec570983757c839978472f0fec215ac",
+      "src/windows_texture.rs": "ba6866a7b860100842828e4b92eddec84f388acd6d8945868459f420865754a5",
+      "src/windows_texture_tests.rs": "90a4b0f5185040667d8d39c9af49de108aadce81e80179343bf448f27481de59"
+    },
+    "wm": {
+      "src/windows_capture.rs": "bdb67c17a8b8d511a4ce356e4ae24c193fae21f8ffd79925fd4d9c282b6d6bbb",
+      "src/windows_preview.rs": "9ca69018b4ca65ae25b197ddb0acaf1f3da007f289f865208af42335623486b3"
+    }
+  },
+  "wm_binary_sha256": "212003df80bc463a425a3ada75297d75ae7bc86e1f95afe5bfdefa860790418b",
+  "default_luau": true,
+  "tests": [
+    {
+      "command": "cargo test --release --locked --features windows-notifications --lib -- --test-threads=2",
+      "passed": 202,
+      "failed": 0,
+      "ignored": 42,
+      "note": "Two local ignored scene/input fixtures are unpublished; no physical input fixture was run."
+    },
+    {
+      "command": "cargo test --release --locked --features windows-notifications --lib windows_texture::tests::shared_capture_reuses_native_pixels_without_cpu_upload -- --ignored --exact --nocapture",
+      "passed": 1,
+      "failed": 0,
+      "checks": [
+        "12 exact BGRA pixel comparisons through D3D11-to-D3D12 sharing",
+        "reuse across two sizes",
+        "retired Arc ownership",
+        "reject another logical wgpu device"
+      ]
+    },
+    {
+      "repository": "pleamar-wm",
+      "command": "cargo test --release --locked --bin pleamar-wm -- --test-threads=2",
+      "passed": 18,
+      "failed": 0,
+      "ignored": 9
+    },
+    {
+      "repository": "pleamar-wm",
+      "command": "cargo build --release --locked --features windows-host",
+      "exit": 0
+    },
+    {
+      "repository": "pleamar-wm",
+      "command": "cargo test --release --locked --bin pleamar-wm windows_backend::preview_tests::native_marea_overview_pages -- --ignored --exact --nocapture --test-threads=1",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "native": {
+    "monitor": "\\\\.\\DISPLAY2",
+    "primary": false,
+    "dpi_scale": 1.25,
+    "physical_input": false,
+    "foreground_unchanged": true,
+    "sources": "Two owned disabled source windows, initially 1200x700; one resized to 1500x800; 16-second repaint sample.",
+    "stages": [
+      "initial",
+      "updated",
+      "resized",
+      "scene-reloaded",
+      "after-motion",
+      "source-closed",
+      "all-sources-closed"
+    ],
+    "luau": true,
+    "reload": true,
+    "source_closure": true,
+    "clean_exit": true,
+    "marea_overview": {
+      "owned_windows": 6,
+      "pages": [
+        0,
+        1,
+        0,
+        1
+      ],
+      "hidden_geometry_cleared": true,
+      "fresh_pixels_on_return": true,
+      "luau_close": true
+    },
+    "captures": [
+      "windows-shared-capture/shared-scene-reloaded.png",
+      "windows-shared-capture/cpu-scene-reloaded.png",
+      "windows-shared-capture/marea-page-1.png"
+    ]
+  },
+  "comparison": {
+    "kind": "Same WM executable, same owned source workload; CPU time is process CPU seconds, not whole-machine percent or UI frame time.",
+    "samples": {
+      "cpu": {
+        "seconds": 16.01500000001397,
+        "source_repaints": 505,
+        "cpu_seconds": 1.9375,
+        "working_set_mib": 186.59,
+        "private_mib": 240.301,
+        "handles_before_close": 658,
+        "handles_after_close": 635
+      },
+      "shared": {
+        "seconds": 16.0,
+        "source_repaints": 512,
+        "cpu_seconds": 0.8125,
+        "working_set_mib": 431.625,
+        "private_mib": 206.441,
+        "handles_before_close": 664,
+        "handles_after_close": 637
+      }
+    }
+  },
+  "failures_corrected": [
+    "D3D11 OpenSharedResource1 returned E_INVALIDARG without ALLOW_RENDER_TARGET; native flag matrix reproduced it.",
+    "A cached texture must belong to the same logical wgpu device, not merely the same native D3D12 COM pointer."
+  ],
+  "limits": [
+    "No physical input or installed product acceptance in this run.",
+    "No cross-adapter sharing, HDR, effect/compositor parity or total GPU memory cap claimed.",
+    "Renderer texture-array capacity can remain allocated after sources close.",
+    "CI of these changes is recorded separately; previous green CI predates this transport."
+  ],
+  "memory_follow_up": {
+    "reason": "Final 16-second GPU run had a 431.6 MiB working set despite stable 206.4 MiB private commit; earlier GPU samples had roughly 152 MiB working sets.",
+    "source": "https://learn.microsoft.com/en-us/windows/win32/api/psapi/ns-psapi-process_memory_counters_ex2",
+    "samples": {
+      "shared": {
+        "seconds": 32.01600000006147,
+        "cpu_seconds": 1.515625,
+        "working_set_mib": 153.473,
+        "private_commit_mib": 207.809,
+        "private_working_set_mib": 94.18,
+        "shared_commit_mib": 33.527,
+        "motion_series": [
+          {
+            "seconds": 0.03200000000651926,
+            "cpu_seconds": 1.09375,
+            "private_bytes": 217546752,
+            "working_bytes": 160440320,
+            "private_working_bytes": 98263040,
+            "shared_commit_bytes": 35221504,
+            "handles": 660
+          },
+          {
+            "seconds": 2.0320000000065193,
+            "cpu_seconds": 1.21875,
+            "private_bytes": 217939968,
+            "working_bytes": 160833536,
+            "private_working_bytes": 98656256,
+            "shared_commit_bytes": 35221504,
+            "handles": 660
+          },
+          {
+            "seconds": 4.032000000006519,
+            "cpu_seconds": 1.234375,
+            "private_bytes": 217939968,
+            "working_bytes": 160837632,
+            "private_working_bytes": 98660352,
+            "shared_commit_bytes": 35221504,
+            "handles": 660
+          },
+          {
+            "seconds": 6.032000000006519,
+            "cpu_seconds": 1.296875,
+            "private_bytes": 217939968,
+            "working_bytes": 160841728,
+            "private_working_bytes": 98664448,
+            "shared_commit_bytes": 35221504,
+            "handles": 660
+          },
+          {
+            "seconds": 8.03200000000652,
+            "cpu_seconds": 1.53125,
+            "private_bytes": 217939968,
+            "working_bytes": 160841728,
+            "private_working_bytes": 98664448,
+            "shared_commit_bytes": 35221504,
+            "handles": 660
+          },
+          {
+            "seconds": 10.03200000000652,
+            "cpu_seconds": 1.640625,
+            "private_bytes": 217939968,
+            "working_bytes": 160845824,
+            "private_working_bytes": 98668544,
+            "shared_commit_bytes": 35221504,
+            "handles": 660
+          },
+          {
+            "seconds": 12.047000000020489,
+            "cpu_seconds": 1.71875,
+            "private_bytes": 217939968,
+            "working_bytes": 160919552,
+            "private_working_bytes": 98738176,
+            "shared_commit_bytes": 35221504,
+            "handles": 662
+          },
+          {
+            "seconds": 14.062999999965541,
+            "cpu_seconds": 1.765625,
+            "private_bytes": 217939968,
+            "working_bytes": 160923648,
+            "private_working_bytes": 98742272,
+            "shared_commit_bytes": 35221504,
+            "handles": 662
+          },
+          {
+            "seconds": 16.06299999996554,
+            "cpu_seconds": 1.859375,
+            "private_bytes": 217939968,
+            "working_bytes": 160923648,
+            "private_working_bytes": 98742272,
+            "shared_commit_bytes": 35221504,
+            "handles": 662
+          },
+          {
+            "seconds": 18.06299999996554,
+            "cpu_seconds": 1.9375,
+            "private_bytes": 217939968,
+            "working_bytes": 160927744,
+            "private_working_bytes": 98746368,
+            "shared_commit_bytes": 35221504,
+            "handles": 663
+          },
+          {
+            "seconds": 20.07799999997951,
+            "cpu_seconds": 2.09375,
+            "private_bytes": 217939968,
+            "working_bytes": 160927744,
+            "private_working_bytes": 98746368,
+            "shared_commit_bytes": 35221504,
+            "handles": 663
+          },
+          {
+            "seconds": 22.07799999997951,
+            "cpu_seconds": 2.171875,
+            "private_bytes": 217899008,
+            "working_bytes": 160907264,
+            "private_working_bytes": 98734080,
+            "shared_commit_bytes": 35155968,
+            "handles": 662
+          },
+          {
+            "seconds": 24.07799999997951,
+            "cpu_seconds": 2.265625,
+            "private_bytes": 217903104,
+            "working_bytes": 160915456,
+            "private_working_bytes": 98742272,
+            "shared_commit_bytes": 35155968,
+            "handles": 663
+          },
+          {
+            "seconds": 26.07799999997951,
+            "cpu_seconds": 2.28125,
+            "private_bytes": 217903104,
+            "working_bytes": 160915456,
+            "private_working_bytes": 98742272,
+            "shared_commit_bytes": 35155968,
+            "handles": 662
+          },
+          {
+            "seconds": 28.07799999997951,
+            "cpu_seconds": 2.328125,
+            "private_bytes": 217903104,
+            "working_bytes": 160923648,
+            "private_working_bytes": 98750464,
+            "shared_commit_bytes": 35155968,
+            "handles": 662
+          },
+          {
+            "seconds": 30.07799999997951,
+            "cpu_seconds": 2.515625,
+            "private_bytes": 217903104,
+            "working_bytes": 160923648,
+            "private_working_bytes": 98750464,
+            "shared_commit_bytes": 35155968,
+            "handles": 662
+          }
+        ],
+        "retirement": {
+          "before": {
+            "cpu_seconds": 2.625,
+            "private_bytes": 217903104,
+            "working_bytes": 160952320,
+            "private_working_bytes": 98754560,
+            "shared_commit_bytes": 35155968,
+            "handles": 662
+          },
+          "all_sources_closed": {
+            "cpu_seconds": 2.65625,
+            "private_bytes": 217845760,
+            "working_bytes": 161161216,
+            "private_working_bytes": 98713600,
+            "shared_commit_bytes": 35155968,
+            "handles": 638
+          },
+          "series": [
+            {
+              "seconds": 2,
+              "cpu_seconds": 2.65625,
+              "private_bytes": 217845760,
+              "working_bytes": 161161216,
+              "private_working_bytes": 98713600,
+              "shared_commit_bytes": 35155968,
+              "handles": 638
+            },
+            {
+              "seconds": 4,
+              "cpu_seconds": 2.671875,
+              "private_bytes": 217845760,
+              "working_bytes": 161161216,
+              "private_working_bytes": 98713600,
+              "shared_commit_bytes": 35155968,
+              "handles": 638
+            },
+            {
+              "seconds": 6,
+              "cpu_seconds": 2.71875,
+              "private_bytes": 217845760,
+              "working_bytes": 161161216,
+              "private_working_bytes": 98713600,
+              "shared_commit_bytes": 35155968,
+              "handles": 638
+            }
+          ]
+        }
+      },
+      "cpu": {
+        "seconds": 32.01599999994505,
+        "cpu_seconds": 3.640625,
+        "working_set_mib": 186.812,
+        "private_commit_mib": 240.844,
+        "private_working_set_mib": 127.551,
+        "shared_commit_mib": 19.777,
+        "motion_series": [
+          {
+            "seconds": 0.030999999959021807,
+            "cpu_seconds": 1.109375,
+            "private_bytes": 260521984,
+            "working_bytes": 203833344,
+            "private_working_bytes": 141688832,
+            "shared_commit_bytes": 20803584,
+            "handles": 654
+          },
+          {
+            "seconds": 2.047000000020489,
+            "cpu_seconds": 1.40625,
+            "private_bytes": 252284928,
+            "working_bytes": 195592192,
+            "private_working_bytes": 133447680,
+            "shared_commit_bytes": 20803584,
+            "handles": 654
+          },
+          {
+            "seconds": 4.062999999965541,
+            "cpu_seconds": 1.671875,
+            "private_bytes": 252284928,
+            "working_bytes": 195596288,
+            "private_working_bytes": 133451776,
+            "shared_commit_bytes": 20803584,
+            "handles": 654
+          },
+          {
+            "seconds": 6.062999999965541,
+            "cpu_seconds": 1.84375,
+            "private_bytes": 252284928,
+            "working_bytes": 195600384,
+            "private_working_bytes": 133455872,
+            "shared_commit_bytes": 20803584,
+            "handles": 654
+          },
+          {
+            "seconds": 8.062999999965541,
+            "cpu_seconds": 2.0625,
+            "private_bytes": 256995328,
+            "working_bytes": 200024064,
+            "private_working_bytes": 137879552,
+            "shared_commit_bytes": 20803584,
+            "handles": 654
+          },
+          {
+            "seconds": 10.077999999979511,
+            "cpu_seconds": 2.3125,
+            "private_bytes": 252289024,
+            "working_bytes": 195608576,
+            "private_working_bytes": 133464064,
+            "shared_commit_bytes": 20803584,
+            "handles": 654
+          },
+          {
+            "seconds": 12.077999999979511,
+            "cpu_seconds": 2.546875,
+            "private_bytes": 252444672,
+            "working_bytes": 195772416,
+            "private_working_bytes": 133623808,
+            "shared_commit_bytes": 20803584,
+            "handles": 656
+          },
+          {
+            "seconds": 14.077999999979511,
+            "cpu_seconds": 2.765625,
+            "private_bytes": 252444672,
+            "working_bytes": 195772416,
+            "private_working_bytes": 133623808,
+            "shared_commit_bytes": 20803584,
+            "handles": 656
+          },
+          {
+            "seconds": 16.07799999997951,
+            "cpu_seconds": 2.921875,
+            "private_bytes": 252444672,
+            "working_bytes": 195776512,
+            "private_working_bytes": 133627904,
+            "shared_commit_bytes": 20803584,
+            "handles": 656
+          },
+          {
+            "seconds": 18.094000000040978,
+            "cpu_seconds": 3.109375,
+            "private_bytes": 252440576,
+            "working_bytes": 195776512,
+            "private_working_bytes": 133627904,
+            "shared_commit_bytes": 20803584,
+            "handles": 657
+          },
+          {
+            "seconds": 20.10999999998603,
+            "cpu_seconds": 3.390625,
+            "private_bytes": 252399616,
+            "working_bytes": 195751936,
+            "private_working_bytes": 133611520,
+            "shared_commit_bytes": 20738048,
+            "handles": 656
+          },
+          {
+            "seconds": 22.10999999998603,
+            "cpu_seconds": 3.53125,
+            "private_bytes": 252403712,
+            "working_bytes": 195751936,
+            "private_working_bytes": 133611520,
+            "shared_commit_bytes": 20738048,
+            "handles": 656
+          },
+          {
+            "seconds": 24.10999999998603,
+            "cpu_seconds": 3.765625,
+            "private_bytes": 252538880,
+            "working_bytes": 195878912,
+            "private_working_bytes": 133738496,
+            "shared_commit_bytes": 20738048,
+            "handles": 656
+          },
+          {
+            "seconds": 26.125,
+            "cpu_seconds": 4.03125,
+            "private_bytes": 252538880,
+            "working_bytes": 195878912,
+            "private_working_bytes": 133738496,
+            "shared_commit_bytes": 20738048,
+            "handles": 656
+          },
+          {
+            "seconds": 28.125,
+            "cpu_seconds": 4.265625,
+            "private_bytes": 252534784,
+            "working_bytes": 195878912,
+            "private_working_bytes": 133738496,
+            "shared_commit_bytes": 20738048,
+            "handles": 656
+          },
+          {
+            "seconds": 30.140999999945052,
+            "cpu_seconds": 4.546875,
+            "private_bytes": 252538880,
+            "working_bytes": 195887104,
+            "private_working_bytes": 133746688,
+            "shared_commit_bytes": 20738048,
+            "handles": 656
+          }
+        ],
+        "retirement": {
+          "before": {
+            "cpu_seconds": 4.765625,
+            "private_bytes": 252538880,
+            "working_bytes": 195911680,
+            "private_working_bytes": 133746688,
+            "shared_commit_bytes": 20738048,
+            "handles": 656
+          },
+          "all_sources_closed": {
+            "cpu_seconds": 4.78125,
+            "private_bytes": 244490240,
+            "working_bytes": 188112896,
+            "private_working_bytes": 125722624,
+            "shared_commit_bytes": 20738048,
+            "handles": 633
+          },
+          "series": [
+            {
+              "seconds": 2,
+              "cpu_seconds": 4.78125,
+              "private_bytes": 244490240,
+              "working_bytes": 188112896,
+              "private_working_bytes": 125722624,
+              "shared_commit_bytes": 20738048,
+              "handles": 633
+            },
+            {
+              "seconds": 4,
+              "cpu_seconds": 4.78125,
+              "private_bytes": 244490240,
+              "working_bytes": 188112896,
+              "private_working_bytes": 125722624,
+              "shared_commit_bytes": 20738048,
+              "handles": 633
+            },
+            {
+              "seconds": 6,
+              "cpu_seconds": 4.8125,
+              "private_bytes": 244490240,
+              "working_bytes": 188112896,
+              "private_working_bytes": 125722624,
+              "shared_commit_bytes": 20738048,
+              "handles": 633
+            }
+          ]
+        }
+      }
+    },
+    "conclusion": "The 32-second repeat did not reproduce the resident-memory spike. CPU time and private commit improved in both comparisons. The outlier is retained; its cause is undetermined. No guaranteed RSS saving or absence of long-duration leaks is claimed."
+  }
+}

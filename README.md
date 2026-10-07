@@ -58,6 +58,7 @@ So if you are on Hyprland and just want a new bar, pleamar is all you need.
 | **GNOME (Wayland)** | ⚠️ Only scenes in a normal window: GNOME has no layer-shell, so a bar cannot anchor. pleamar-wm can be picked as a session next to it |
 | **pleamar-wm** | ✅ A whole desktop of its own |
 | **X11 sessions** | ❌ pleamar is for Wayland |
+| **Windows x64 (MSVC)** | Native Win32/DX12 backend with Luau; see [setup, capabilities and validation](docs/windows.md). Some desktop-shell features remain limited |
 
 # Features
 
@@ -115,6 +116,9 @@ So if you are on Hyprland and just want a new bar, pleamar is all you need.
 </div>
 
 # Install
+
+**Windows:** use the [PowerShell build and installation instructions](docs/windows.md).
+The one-line installer below is for Linux.
 
 One line installs pleamar, the [pleamar-wm] window manager and [Marea] in your
 home (nothing outside it), and keeps them up to date:
@@ -214,6 +218,8 @@ with a band on top saying what does not compile and where. Rebuild pleamar itsel
 running one starts again with the same arguments.
 
 # Getting started from the source
+
+Windows instructions and the multiplatform test runner are in [docs/windows.md](docs/windows.md).
 
 ```sh
 cargo build --release

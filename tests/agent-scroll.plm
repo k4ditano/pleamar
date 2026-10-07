@@ -1,0 +1,10 @@
+// Descriptions retain full row geometry; input remains clipped to the viewport.
+scene Scroll {
+    surface { size: 400, 300; kind: window }
+    column list {
+        at: 20, 30; view: 100, 50
+        box first { size: 100, 40; active: true; label: "First" }
+        box second { size: 100, 40; active: true; label: "Second" }
+        box third { size: 100, 40; active: true; label: "Third" }
+    }
+}
