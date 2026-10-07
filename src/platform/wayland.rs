@@ -609,8 +609,9 @@ impl State {
             }
             let layer = self.layers.create_layer_surface(qh, wl, level, Some("pleamar"), Some(output));
             let reserves = p.exclusive_zone > 0 || p.reserve_while.is_some();
-            let stretch = Stretch { width: p.width == 0, height: p.height == 0, monitor: if reserves { info.logical_size } else { None } };
+            let mut stretch = Stretch { width: p.width == 0, height: p.height == 0, monitor: if reserves { info.logical_size } else { None }, edges: Anchor::empty() };
             let (edges, size) = placement(p.anchor, stretch, (p.width, height));
+            stretch.edges = edges;
             layer.set_anchor(edges);
             // The second one on the same monitor, below the first: it's for trying things out.
             let m = p.margin;
@@ -945,6 +946,8 @@ struct Stretch {
     width: bool,
     height: bool,
     monitor: Option<(i32, i32)>,
+    /// The edges it holds now, to know along which one it asked for the monitor's size when the monitor changes (`update_output`).
+    edges: Anchor,
 }
 
 /// The edges it sticks to, and the size to ask for. A surface as big as the
@@ -1018,11 +1021,12 @@ pub fn rezone(which: usize, zone: i32) {
 pub fn reanchor(which: usize, anchor: SurfaceAnchor) {
     let Some(c) = MOVABLE_LAYERS.get() else { return };
     let mut any = false;
-    for (k, layer, margin, stretch) in c.placed.lock().unwrap().iter() {
+    for (k, layer, margin, stretch) in c.placed.lock().unwrap().iter_mut() {
         if *k != which {
             continue;
         }
         let (edges, size) = placement(anchor, *stretch, (0, 0));
+        stretch.edges = edges;
         layer.set_anchor(edges);
         // As big as the monitor: from one edge to another, the size along the fourth changes too.
         if stretch.width && stretch.height {
@@ -1722,7 +1726,38 @@ impl OutputHandler for State {
     fn new_output(&mut self, _: &Connection, qh: &QueueHandle<Self>, output: wl_output::WlOutput) {
         self.place_on(&output, qh);
     }
-    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    /// A monitor changed mode (or scale, or turned). A surface that is as big as its monitor and keeps a reserve asks for the monitor's size along one
+    /// edge (see `placement`), and the compositor keeps that size: after a new mode it was still the old one, and the surface stayed as it was
+    /// until the program was started again. Ask again with the new size; the compositor answers with a configure, and `configured` resizes the sheet.
+    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
+        let Some((w, h)) = self.outputs.info(&output).and_then(|i| i.logical_size) else { return };
+        let Some(c) = MOVABLE_LAYERS.get() else { return };
+        let mut any = false;
+        for (_, layer, _, stretch) in c.placed.lock().unwrap().iter_mut() {
+            if !(stretch.width && stretch.height) || stretch.monitor.is_none() || stretch.monitor == Some((w, h)) {
+                continue;
+            }
+            if !self.placed.iter().any(|p| p.output == output && p.role.wl() == layer.wl_surface()) {
+                continue;
+            }
+            stretch.monitor = Some((w, h));
+            let (up, down) = (stretch.edges.contains(Anchor::TOP), stretch.edges.contains(Anchor::BOTTOM));
+            let (left, right) = (stretch.edges.contains(Anchor::LEFT), stretch.edges.contains(Anchor::RIGHT));
+            let size = if up && down && !(left && right) {
+                (w.max(0) as u32, 0)
+            } else if left && right && !(up && down) {
+                (0, h.max(0) as u32)
+            } else {
+                continue;
+            };
+            layer.set_size(size.0, size.1);
+            layer.commit();
+            any = true;
+        }
+        if any {
+            let _ = c.connection.flush();
+        }
+    }
     fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
         self.remove_from(&output);
     }
