@@ -821,6 +821,7 @@ impl LuauScript {
             std::thread::spawn(move || {
                 let mut launch = std::process::Command::new(&command);
                 launch.args(args.unwrap_or_default()).envs(vars);
+                crate::platform::apart(&mut launch);
                 if let Some(path) = &input {
                     match std::fs::File::open(path) {
                         Ok(f) => {
@@ -891,6 +892,7 @@ impl LuauScript {
             }
             // If the program gets killed, this goes with it.
             crate::platform::die_with_parent(&mut launch);
+            crate::platform::apart(&mut launch);
             let mut child = launch
                 .spawn()
                 .map_err(|e| mlua::Error::runtime(format!("cannot run '{command}': {e}")))?;

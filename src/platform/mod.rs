@@ -385,6 +385,24 @@ pub fn die_with_parent(command: &mut std::process::Command) {
     let _ = command;
 }
 
+/// A session of its own, without the terminal the scene may have: a program
+/// that asks something there (`sudo` wanting a password) fails, instead of the
+/// kernel stopping it and, with it, the whole group it shares — the scene too.
+pub fn apart(command: &mut std::process::Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // `setsid` is one of those that can be used between `fork` and `exec`.
+        unsafe {
+            command.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+    let _ = command;
+}
+
 /// What answers each line said to the scene. It returns the answer, if any;
 /// one that goes on talking (`watch`) writes its lines with `out`, which says
 /// `false` once whoever asked has gone.
