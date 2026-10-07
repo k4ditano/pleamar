@@ -143,11 +143,17 @@ done
 say "building pleamar and pleamar-wm (the first time takes a few minutes)"
 (cd "$src/pleamar" && cargo build --release --quiet) || fail "pleamar did not build"
 (cd "$src/pleamar-wm" && cargo build --release --quiet) || fail "pleamar-wm did not build"
+# The remote desktop's video (pleamar-wm-stream): it needs ffmpeg's
+# development files; without them the remote uses wf-recorder.
+if $remote || [ -x "$bin/pleamar-wm-stream" ]; then
+    (cd "$src/pleamar-wm" && cargo build --release --quiet -p pleamar-wm-stream) || say "remote: its own video did not build (ffmpeg's development files?): wf-recorder is used"
+fi
 
 # ── put in place ───────────────────────────────────────────────────
 # Copied, not linked: a build half-way through never leaves a broken program.
 mkdir -p "$bin"
-for p in pleamar/target/release/pleamar pleamar-wm/target/release/pleamar-wm; do
+for p in pleamar/target/release/pleamar pleamar-wm/target/release/pleamar-wm pleamar-wm/target/release/pleamar-wm-stream; do
+    [ -x "$src/$p" ] || continue
     install -m755 "$src/$p" "$bin/$(basename "$p").new"
     mv -f "$bin/$(basename "$p").new" "$bin/$(basename "$p")"
 done
@@ -183,7 +189,8 @@ fi
 # encrypts it and makes it reachable (Tailscale Funnel, for example).
 if $remote; then
     needs=""
-    command -v wf-recorder > /dev/null || needs="$needs wf-recorder"
+    # Its video: ffmpeg's libraries (pleamar-wm-stream), or wf-recorder.
+    [ -x "$bin/pleamar-wm-stream" ] || command -v wf-recorder > /dev/null || needs="$needs wf-recorder"
     command -v grim > /dev/null || needs="$needs grim"
     command -v wl-copy > /dev/null || needs="$needs wl-clipboard"
     command -v notify-send > /dev/null || needs="$needs libnotify"
