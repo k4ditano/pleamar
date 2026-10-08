@@ -392,13 +392,9 @@ pub fn apart(command: &mut std::process::Command) {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        // `setsid` is one of those that can be used between `fork` and `exec`.
-        unsafe {
-            command.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
+        // A process group of its own, not a session: `pre_exec` (what `setsid` needs) makes Rust fork the whole scene instead of
+        // `posix_spawn`ing, and forking a scene that holds a gigabyte stalls every thread in it, the painting one too.
+        command.process_group(0);
     }
     let _ = command;
 }
