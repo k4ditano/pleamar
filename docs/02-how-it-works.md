@@ -111,7 +111,7 @@ Key repeat is ours (400 ms, then one every 33): that way it is the same on every
 
 ## Commands from outside (`platform/mod.rs`)
 
-A thread listens on `$XDG_RUNTIME_DIR/pleamar-SCENE.sock`; `pleamar --say SCENE "emit toggle"` writes one line and leaves (2 ms). A question (`get open`) goes to the renderer with a channel back (`ToRender::Query`) and is answered over the same socket. The command enters the renderer as `ToRender::ExternalSignal`, through the same door as the logic's events. It is `cfg(unix)`: on Windows it will be a named pipe.
+A thread listens on `$XDG_RUNTIME_DIR/pleamar-SCENE.sock`; `pleamar --say SCENE "emit toggle"` writes one line and leaves (2 ms); with several commands it writes one line each, on the same connection, and one thread reads them in order. A question (`get open`) goes to the renderer with a channel back (`ToRender::Query`) and is answered over the same socket. The command enters the renderer as `ToRender::ExternalSignal`, through the same door as the logic's events. It is `cfg(unix)`: on Windows it will be a named pipe.
 
 ## Dropping from another application (`platform/wayland.rs`)
 

@@ -349,6 +349,14 @@ pleamar --say launcher "emit toggle"
 
 Every running scene listens on a socket with its name (the file's). `emit event` or `emit event 3` fires its rules as if the logic had emitted it. Also `fact name value`, `text name whatever it should say` (the logic hears about it, as if someone had typed it), `focus field`, `quit`, and **`get name`, which answers** with whatever that fact, text or property is worth: `pleamar --say launcher "get open"` → `1`. And **`describe`**, which answers with what there is on screen to read and touch, by name: what an agent needs to use the scene without looking at its pixels (`describe json`, as data; see the reference, *Told to an agent*).
 
+**Several at once, in order**: each command after the scene's name is a line, and they all go down one connection, so the scene runs them in that order. A popup's texts are in place before the emit that shows it:
+
+```
+pleamar --say osd "text label Volume" "fact value 0.4" "emit popup"
+```
+
+A `get` right after an `emit` answers before the emit's rules have run. Put a `wait` between them (`"emit flip" "wait flag == true 1s" "get flag"`).
+
 **A global shortcut is this**: a compositor bind that runs that order. In Hyprland:
 
 ```lua
