@@ -805,37 +805,51 @@ fn fit(img: image::RgbaImage, px: (u32, u32)) -> Vec<u8> {
 /// A window's frame —premultiplied BGRA, as the compositor copies it— to
 /// premultiplied RGBA at exactly `px`, fitted like `fit`. Made smaller by
 /// averaging each box of pixels: it reads every pixel once, whatever the size
-/// (a frame is megabytes, and comes again many times a second). Made bigger,
-/// a window smaller than where it is drawn, it is filtered like any image.
+/// (a frame is megabytes, and comes again many times a second). The rows of a
+/// box are summed first, a whole row at a time —a plain add over contiguous
+/// bytes, which the compiler turns into vector code—, then each box across
+/// that sum. Made bigger, a window smaller than where it is drawn, it is
+/// filtered like any image.
 fn fit_frame(f: &crate::platform::ThumbnailFrame, px: (u32, u32)) -> Vec<u8> {
     let (fw, fh) = (f.width.max(1), f.height.max(1));
     let k = (px.0 as f32 / fw as f32).min(px.1 as f32 / fh as f32);
     let (w, h) = (((fw as f32 * k).round() as u32).clamp(1, px.0), ((fh as f32 * k).round() as u32).clamp(1, px.1));
-    let rgba = |i: usize| {
-        let p = &f.pixels[i..i + 4];
-        [p[2], p[1], p[0], if f.opaque { 255 } else { p[3] }]
-    };
     let reduced: Vec<u8> = if w <= fw && h <= fh {
+        // The source pixels that make output pixel `i` of `n`, along a side of `of`.
+        let span = |i: u32, n: u32, of: u32| {
+            let a = i * of / n;
+            (a as usize, ((i + 1) * of / n).max(a + 1) as usize)
+        };
+        let boxes: Vec<(usize, usize)> = (0..w).map(|x| span(x, w, fw)).collect();
+        let row = fw as usize * 4;
         let mut out = Vec::with_capacity(w as usize * h as usize * 4);
+        let mut rows = vec![0u32; row];
         for y in 0..h {
-            let (y0, y1) = ((y * fh / h), ((y + 1) * fh / h).max(y * fh / h + 1));
-            for x in 0..w {
-                let (x0, x1) = ((x * fw / w), ((x + 1) * fw / w).max(x * fw / w + 1));
+            let (y0, y1) = span(y, h, fh);
+            rows.fill(0);
+            for line in f.pixels[y0 * row..y1 * row].chunks_exact(row) {
+                for (sum, &b) in rows.iter_mut().zip(line) {
+                    *sum += b as u32;
+                }
+            }
+            for &(x0, x1) in &boxes {
                 let mut sum = [0u32; 4];
-                for sy in y0..y1 {
-                    for sx in x0..x1 {
-                        let p = rgba((sy as usize * fw as usize + sx as usize) * 4);
-                        for c in 0..4 {
-                            sum[c] += p[c] as u32;
-                        }
+                for p in rows[x0 * 4..x1 * 4].chunks_exact(4) {
+                    for c in 0..4 {
+                        sum[c] += p[c];
                     }
                 }
-                let n = (y1 - y0) * (x1 - x0);
-                out.extend(sum.map(|c| ((c + n / 2) / n) as u8));
+                let n = ((y1 - y0) * (x1 - x0)) as u32;
+                let mean = |c: u32| ((c + n / 2) / n) as u8;
+                out.extend_from_slice(&[mean(sum[2]), mean(sum[1]), mean(sum[0]), if f.opaque { 255 } else { mean(sum[3]) }]);
             }
         }
         out
     } else {
+        let rgba = |i: usize| {
+            let p = &f.pixels[i..i + 4];
+            [p[2], p[1], p[0], if f.opaque { 255 } else { p[3] }]
+        };
         let full: Vec<u8> = (0..fw as usize * fh as usize).flat_map(|i| rgba(i * 4)).collect();
         let Some(img) = image::RgbaImage::from_raw(fw, fh, full) else { return vec![0; px.0 as usize * px.1 as usize * 4] };
         // Already premultiplied: filtered as it is, and not multiplied again.
@@ -872,6 +886,33 @@ mod tests {
 
     fn frame(width: u32, height: u32, bgra: [u8; 4], opaque: bool) -> crate::platform::ThumbnailFrame {
         crate::platform::ThumbnailFrame { version: 1, width, height, pixels: bgra.repeat((width * height) as usize), opaque }
+    }
+
+    #[test]
+    fn a_live_frame_made_smaller_is_the_mean_of_each_box() {
+        // Boxes of uneven sizes (36 into 7, 26 into 5), every pixel different:
+        // each output pixel is the rounded mean of exactly the pixels of its box.
+        let (fw, fh, w, h) = (36u32, 26u32, 7u32, 5u32);
+        let mut n = 7u32;
+        let pixels: Vec<u8> = (0..fw * fh * 4).map(|_| { n = n.wrapping_mul(1_103_515_245).wrapping_add(12_345); (n >> 16) as u8 }).collect();
+        for opaque in [true, false] {
+            let f = crate::platform::ThumbnailFrame { version: 1, width: fw, height: fh, pixels: pixels.clone(), opaque };
+            let out = fit_frame(&f, (w, h));
+            for y in 0..h {
+                for x in 0..w {
+                    let (y0, y1) = (y * fh / h, (y + 1) * fh / h);
+                    let (x0, x1) = (x * fw / w, (x + 1) * fw / w);
+                    let count = (y1 - y0) * (x1 - x0);
+                    let mean = |c: usize| {
+                        let sum: u32 = (y0..y1).flat_map(|sy| (x0..x1).map(move |sx| (sy, sx))).map(|(sy, sx)| pixels[((sy * fw + sx) * 4) as usize + c] as u32).sum();
+                        ((sum + count / 2) / count) as u8
+                    };
+                    let want = [mean(2), mean(1), mean(0), if opaque { 255 } else { mean(3) }];
+                    let i = ((y * w + x) * 4) as usize;
+                    assert_eq!(out[i..i + 4], want, "pixel ({x}, {y}), opaque {opaque}");
+                }
+            }
+        }
     }
 
     #[test]
