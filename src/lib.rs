@@ -191,6 +191,33 @@ pub fn report(args: Vec<String>, extra: Option<String>) -> i32 {
 /// Not starting again when the program changes on disk (see `watch_binary`):
 /// for a compositor, starting again closes every window it holds. Only this
 /// process; the programs it starts still reload as ever.
+/// What the programs a scene's logic starts must know about the desktop the
+/// scene is (pleamar-wm says where its windows connect, `WAYLAND_DISPLAY`, and
+/// its X11 display): the process itself may have been started without them,
+/// and a program run from the logic —a screenshot, an app from a launcher—
+/// would look for another desktop, or none. `None` removes the variable.
+pub fn set_child_env(name: &str, value: Option<&str>) {
+    let mut vars = CHILD_ENV.lock().unwrap();
+    vars.retain(|(n, _)| n != name);
+    vars.push((name.to_owned(), value.map(str::to_owned)));
+}
+
+static CHILD_ENV: std::sync::Mutex<Vec<(String, Option<String>)>> = std::sync::Mutex::new(Vec::new());
+
+/// Gives a program what `set_child_env` said (before its own variables, which win).
+pub(crate) fn child_env(command: &mut std::process::Command) {
+    for (name, value) in CHILD_ENV.lock().unwrap().iter() {
+        match value {
+            Some(v) => {
+                command.env(name, v);
+            }
+            None => {
+                command.env_remove(name);
+            }
+        }
+    }
+}
+
 pub fn stay_on_update() {
     scenes::STAY_ON_UPDATE.store(true, std::sync::atomic::Ordering::Relaxed);
 }

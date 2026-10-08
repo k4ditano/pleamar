@@ -60,7 +60,9 @@ pub fn launch(command: &str) -> Result<(), String> {
     if !known {
         return Err(format!("'{command}' is none of the installed applications: apps.launch only launches what the `apps` service has reported"));
     }
-    let mut child = Command::new("setsid").args(["-f", "sh", "-c", command]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
+    let mut launch = Command::new("setsid");
+    crate::child_env(&mut launch);
+    let mut child = launch.args(["-f", "sh", "-c", command]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
     std::thread::spawn(move || {
         let _ = child.wait();
     });

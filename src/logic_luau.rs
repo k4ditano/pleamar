@@ -820,6 +820,7 @@ impl LuauScript {
             let to_logic = to_logic.clone();
             std::thread::spawn(move || {
                 let mut launch = std::process::Command::new(&command);
+                crate::child_env(&mut launch);
                 launch.args(args.unwrap_or_default()).envs(vars);
                 crate::platform::apart(&mut launch);
                 if let Some(path) = &input {
@@ -885,6 +886,7 @@ impl LuauScript {
             let errors: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("errors").ok().flatten()).unwrap_or(false);
             let open: bool = how.as_ref().and_then(|t| t.get::<Option<String>>("stdin").ok().flatten()).is_some_and(|v| v == "open");
             let mut launch = std::process::Command::new(&command);
+            crate::child_env(&mut launch);
             launch.args(args.unwrap_or_default()).envs(environment(how.as_ref())).stdout(std::process::Stdio::piped());
             launch.stderr(if errors { std::process::Stdio::piped() } else { std::process::Stdio::null() });
             if text.is_some() || open {
