@@ -204,6 +204,8 @@ pub fn run() {
 pub fn run_with(options: Vec<String>) {
     let start_time = std::time::Instant::now();
     let a = args(options);
+    // No terminal to be stopped on, for the programs it starts.
+    platform::leave_terminal();
     // The agents' skill, written again if this pleamar is not the one it speaks of.
     skill::refresh_quietly();
     let blocked = Arc::new(AtomicBool::new(false));

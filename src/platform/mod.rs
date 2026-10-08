@@ -396,9 +396,32 @@ pub fn die_with_parent(command: &mut std::process::Command) {
     let _ = command;
 }
 
-/// A session of its own, without the terminal the scene may have: a program
-/// that asks something there (`sudo` wanting a password) fails, instead of the
-/// kernel stopping it and, with it, the whole group it shares — the scene too.
+/// A scene whose input is not a terminal (started by a session, its input
+/// /dev/null) still has the one it was started from as its controlling
+/// terminal, and so does every program it starts: one that asks something there
+/// (`sudo` wanting a password) is stopped by the kernel for good, and whatever
+/// waits for it with it. Let go of it: such a program finds no terminal and
+/// fails at once. Not a session's leader (it would hang up its terminal), nor
+/// a scene typed into a terminal (Ctrl+C there still reaches it).
+pub fn leave_terminal() {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        if libc::isatty(0) == 1 || libc::getsid(0) == libc::getpid() {
+            return;
+        }
+        let fd = libc::open(c"/dev/tty".as_ptr(), libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC);
+        if fd >= 0 {
+            libc::ioctl(fd, libc::TIOCNOTTY);
+            libc::close(fd);
+        }
+    }
+}
+
+/// A process group of its own: a program that reads the terminal the scene may
+/// have (`sudo` wanting a password) is stopped by the kernel alone, not with
+/// the whole group it would share — the scene too. (A scene that does not use
+/// its terminal lets go of it at the start, `leave_terminal`: there such a
+/// program finds none, and fails at once.)
 pub fn apart(command: &mut std::process::Command) {
     #[cfg(unix)]
     {
