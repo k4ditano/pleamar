@@ -34,7 +34,7 @@ use smithay_client_toolkit::{
 };
 use smithay_client_toolkit::reexports::protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{Shape, WpCursorShapeDeviceV1};
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 use smithay_client_toolkit::dispatch2::Dispatch2;
@@ -662,6 +662,7 @@ impl State {
             let backdrop = Some(BackdropTarget::new(id, Some((output.clone(), output_name)), BackdropKind::Layer));
             let layer_placement = Some((edges, margin));
             self.placed.push(Placed { id, which, role: Role::Layer(layer), output: output.clone(), viewport, _fractional_scale: fractional_scale, scale: 1.0, size: (0, 0), pending: Some((surface, name.clone(), mhz)), layer_placement, backdrop });
+            LAYERS_PLACED.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -880,6 +881,15 @@ fn lock_shows(screens: &Screens, name: &str, number: usize) -> bool {
 /// A monitor that arrives while the session is locked —one that slept so deep
 /// it was unplugged, and woke up— gets a face of its own. Without it the
 /// compositor shows its own fallback there: still locked, but not our lock.
+///
+/// It shows the scene only if `screens:` names it. When none of the faces shows
+/// the scene (the monitors of `screens:` are still away: on waking, the
+/// compositor's stand-in FALLBACK and the first real monitor come before the
+/// one the lock is meant for), the black cover waits `LOCK_GRACE` and then, if
+/// still nothing shows it, becomes the scene: a lock with nowhere to type the
+/// password would be no way back. Waiting is what keeps the lock off the
+/// monitors that were not chosen: a face that paints is only let go of by the
+/// render, so one that showed the scene at once would stay on the wrong monitor.
 fn lock_face_for_new_monitor(output: &wl_output::WlOutput, name: &str, number: usize, mhz: i32) {
     let Some(c) = LOCKS.get() else { return };
     let mut engaged = c.engaged.lock().unwrap();
@@ -887,15 +897,41 @@ fn lock_face_for_new_monitor(output: &wl_output::WlOutput, name: &str, number: u
     if e.faces.iter().any(|f| &f.output == output) {
         return;
     }
-    // If no face shows the scene (the monitors of `screens:` are still away), this
-    // one does: a lock with nowhere to type the password would be no way back. It
-    // keeps showing it when they come back: a face that paints is only let go of
-    // by the render, and the lock must never fail halfway.
-    let shows = lock_shows(&e.screens, name, number) || e.faces.iter().all(|f| f.cover.is_some());
+    let shows = lock_shows(&e.screens, name, number);
     let face = lock_face(c, &e.lock, output, name, mhz, shows, e.origin);
+    let covered = face.cover.is_some();
     e.faces.push(face);
     let _ = c.connection.flush();
     println!("lock   · {name} arrived while locked: it has its face");
+    if covered && e.faces.iter().all(|f| f.cover.is_some()) {
+        std::thread::spawn(|| {
+            std::thread::sleep(LOCK_GRACE);
+            let Some(c) = LOCKS.get() else { return };
+            let mut engaged = c.engaged.lock().unwrap();
+            if let Some(e) = engaged.as_mut() {
+                promote_first_cover(c, e);
+            }
+        });
+    }
+}
+
+/// How long the monitors of `screens:` are waited for before a cover shows the scene.
+const LOCK_GRACE: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// If what there is are only black covers, the first of them becomes the scene.
+/// A cover paints nothing, so it can be destroyed here, and it is destroyed
+/// before the new face is made, since a monitor can only have one.
+fn promote_first_cover(c: &Locks, e: &mut Engaged) {
+    if e.faces.is_empty() || !e.faces.iter().all(|f| f.cover.is_some()) {
+        return;
+    }
+    let cover = e.faces.remove(0);
+    let (output, name, mhz) = (cover.output.clone(), cover.name.clone(), cover.mhz);
+    drop(cover);
+    let face = lock_face(c, &e.lock, &output, &name, mhz, true, e.origin);
+    e.faces.insert(0, face);
+    let _ = c.connection.flush();
+    println!("lock   · {name} shows the lock: the monitors it was meant for are not here");
 }
 
 /// A monitor that goes while the session is locked takes its face with it. A
@@ -918,14 +954,7 @@ fn lock_face_for_gone_monitor(output: &wl_output::WlOutput) -> Vec<u32> {
             e.retiring.push(f);
         }
     }
-    if !e.faces.is_empty() && e.faces.iter().all(|f| f.cover.is_some()) {
-        let cover = e.faces.remove(0);
-        let (output, name, mhz) = (cover.output.clone(), cover.name.clone(), cover.mhz);
-        drop(cover);
-        let face = lock_face(c, &e.lock, &output, &name, mhz, true, e.origin);
-        e.faces.insert(0, face);
-        println!("lock   · {name} shows the lock: the monitors it was meant for have gone");
-    }
+    promote_first_cover(c, e);
     let _ = c.connection.flush();
     gone
 }
@@ -998,6 +1027,12 @@ struct MovableLayers {
     placed: Mutex<Vec<(usize, LayerSurface, [i32; 4], Stretch)>>,
 }
 static MOVABLE_LAYERS: std::sync::OnceLock<MovableLayers> = std::sync::OnceLock::new();
+static LAYERS_PLACED: AtomicU64 = AtomicU64::new(0);
+
+/// How many layers have been put on a monitor so far (see `platform::layers_placed`).
+pub fn layers_placed() -> u64 {
+    LAYERS_PLACED.load(Ordering::Relaxed)
+}
 
 fn layer_of(level: Level) -> Layer {
     match level {
@@ -1746,7 +1781,12 @@ impl OutputHandler for State {
         outputs_changed(&self.to_render);
         self.place_on(&output, qh);
     }
-    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    /// What a monitor says about itself (its name, its modes) can arrive after it
+    /// does, and one that came without a name was not given its surfaces: here they
+    /// are. It is safe to do again: what is already on it is not made twice.
+    fn update_output(&mut self, _: &Connection, qh: &QueueHandle<Self>, output: wl_output::WlOutput) {
+        self.place_on(&output, qh);
+    }
     fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
         outputs_changed(&self.to_render);
         self.remove_from(&output);
