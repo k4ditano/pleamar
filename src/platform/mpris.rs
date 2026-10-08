@@ -3,8 +3,9 @@
 //!
 //! `{ playing, title, artist, album, length, position, rate, art, player, players }`. If there are
 //! several, the one chosen with `media.choose` is reported, while it is there; otherwise the one
-//! that is playing, or if none is, the first. With no players, `player = ""`. `players` is all of
-//! them, `{ id, name, playing, chosen }`, to choose from.
+//! that is playing; if none is, the one that played last; and before anything has played, the
+//! first. With no players, `player = ""`. `players` is all of them, `{ id, name, playing,
+//! chosen }`, to choose from.
 //!
 //! MPRIS does not signal `Position` as it moves, so it is read whenever something
 //! else is reported, and on `Seeked`. Between reports the scene carries it on with
@@ -25,6 +26,10 @@ const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 /// The player `media.choose` pinned, by its bus name without the prefix; "" is none. It is the
 /// process's, like the default output is the system's: every scene reports the same one.
 static CHOSEN: Mutex<String> = Mutex::new(String::new());
+/// The last player seen playing, by its whole bus name; "" is none yet. A pause leaves `media` on
+/// it: without this, nothing playing meant the first on the bus, and play after a pause went
+/// there —a phone through KDE Connect sorts before most players—.
+static LAST: Mutex<String> = Mutex::new(String::new());
 /// The running services, to report again at once when the choice changes.
 static WAKE: Mutex<Vec<Sender<()>>> = Mutex::new(Vec::new());
 
@@ -49,7 +54,13 @@ fn is_playing(p: &Proxy) -> bool {
     p.get_property::<String>("PlaybackStatus").is_ok_and(|s| s == "Playing")
 }
 
-/// The chosen one if it is there; otherwise the one that is playing, or the first.
+/// What a pause falls back to: see `LAST`.
+fn remember(name: &str) {
+    if let Ok(mut l) = LAST.lock() { name.clone_into(&mut l) }
+}
+
+/// The chosen one if it is there; otherwise the one that is playing, the one that played last, or
+/// the first.
 fn active_player(c: &Connection) -> Option<(String, Proxy<'static>, bool)> {
     let pinned = chosen();
     let names = players(c);
@@ -57,17 +68,22 @@ fn active_player(c: &Connection) -> Option<(String, Proxy<'static>, bool)> {
         if let Some(n) = names.iter().find(|n| n.strip_prefix(PREFIX) == Some(pinned.as_str())) {
             if let Some(p) = player(c, n) {
                 let playing = is_playing(&p);
+                if playing { remember(n) }
                 return Some((n.clone(), p, playing));
             }
         }
     }
-    let mut first = None;
+    let last = LAST.lock().map(|l| l.clone()).unwrap_or_default();
+    let (mut first, mut previous) = (None, None);
     for n in names {
         let Some(p) = player(c, &n) else { continue };
-        if is_playing(&p) { return Some((n, p, true)) }
-        first.get_or_insert((n, p, false));
+        if is_playing(&p) {
+            remember(&n);
+            return Some((n, p, true));
+        }
+        if n == last { previous = Some((n, p, false)) } else { first.get_or_insert((n, p, false)); }
     }
-    first
+    previous.or(first)
 }
 
 /// Every player, to choose from: `id` is what `media.choose` takes, `name` what the player
@@ -162,7 +178,7 @@ pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
 
 /// `media.toggle`, `media.next`, `media.previous`: to the one `now` is reporting.
 /// `media.choose(id)`: report that one, and command it, while it is there; `""` goes back to
-/// whichever is playing.
+/// the one playing, else the one that played last, else the first.
 pub fn command(what: &str, args: &[SysValue]) -> Result<(), String> {
     let method = match (what, args) {
         ("media.toggle", _) => "PlayPause",
