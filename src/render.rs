@@ -1762,8 +1762,10 @@ pub fn run(
                 }
             }
             // The field first: whatever is typing belongs to it. The rest —Escape, a
-            // shortcut— goes on to the rules and to the logic.
-            if let Some(ed) = &mut editing {
+            // shortcut— goes on to the rules and to the logic. Only a field that is
+            // drawn now: a hidden one (a search that is closed) takes nothing, or
+            // in a window manager no window could be typed into.
+            if let Some(ed) = editing.as_mut().filter(|e| draw.fields.iter().any(|f| f.text == e.field)) {
                 let k = ed.field;
                 match ed.handle_key(&mut texts[k], &name, typed.as_deref(), mods) {
                     KeyOutcome::Changed => {
@@ -1827,7 +1829,9 @@ pub fn run(
             if *gained {
                 // On gaining the keyboard: the field it was in when it went; if
                 // none, somewhere to type that is on show —the first one drawn—.
-                if editing.is_none() {
+                // Not in a window manager: there the windows are what is typed
+                // into, and a field only takes the keys when a rule focuses it.
+                if editing.is_none() && scene.nest.is_none() {
                     editing = parked.take().or_else(|| {
                         draw.fields
                             .first()
@@ -2358,7 +2362,10 @@ pub fn run(
                                 // Only if it is on: a zone switched off —another monitor's
                                 // copy of a window, one hidden— that happens to hold the
                                 // point pressed did not ask to be dragged.
-                                (Some(zone), Some((_, o, _))) => zone.active.is_true(c) && zone.contains(c, o.0, o.1),
+                                // The zone pressed keeps it until the button goes up, even
+                                // if it has moved away from that point (a title bar that
+                                // carries its window with it); others, while they hold it.
+                                (Some(zone), Some((k, o, _))) => zone.active.is_true(c) && (k == z.0 as usize || zone.contains(c, o.0, o.1)),
                                 _ => false,
                             }
                     }
