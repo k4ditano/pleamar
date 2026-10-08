@@ -944,14 +944,23 @@ pub fn run(
                         if l.view.size != new_size {
                             l.view.size = new_size;
                             g.reconfigure(l, size);
-                            if l.view.surface == 0 && l.view.popup.is_none() && scene.surface().window.is_some() {
+                            if l.view.surface == 0 && l.view.popup.is_none() {
                                 // What is painted outside the surface does not exist: if the
-                                // window grows, the frame has to grow with it.
-                                size = new_size;
+                                // window grows, the frame has to grow with it. The same for a
+                                // surface that asked for the whole monitor (`size: full`) when
+                                // its monitor changes mode: it measures what the monitor does now.
+                                let is_window = scene.surface().window.is_some();
+                                if is_window || scene.surface().width == 0 {
+                                    size.0 = new_size.0;
+                                }
+                                if is_window || scene.surface().height == 0 {
+                                    size.1 = new_size.1;
+                                }
+                                let height = if is_window || scene.surface().height == 0 { new_size.1 } else { scene.surface().height as f32 };
                                 for (k, (name, _)) in scene.facts.iter().enumerate() {
                                     match *name {
-                                        "screen.width" => facts[k] = new_size.0,
-                                        "screen.height" => facts[k] = new_size.1,
+                                        "screen.width" => facts[k] = size.0,
+                                        "screen.height" => facts[k] = height,
                                         _ => {}
                                     }
                                 }
