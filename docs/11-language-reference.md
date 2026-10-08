@@ -513,7 +513,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `size: w, h` · `view: w, h` · `step` · `content` · `wrap: n` |
 | `grid` | `at` · `columns` · `width` · `gap` · `row` (the height of every row) · `show` · `opacity`; and on its children, `span`. What it is: below |
 
-`anchor` of a text: `left` `center` `right` and `top` `center` `bottom`, one or both (`anchor: left center`). Of a layout: `left` `center` `right` and `top` `middle` `bottom` —with no anchor, `at` is its top left corner—. `cursor:` `default` `pointer` `text` `grab` `grabbing`.
+`anchor` of a text: `left` `center` `right` and `top` `center` `bottom`, one or both (`anchor: left center`). Of a layout: `left` `center` `right` and `top` `middle` `bottom` —with no anchor, `at` is its top left corner—. `cursor:` `default` `pointer` `text` `grab` `grabbing`, and for stretching and carrying `ew_resize` `ns_resize` `nwse_resize` `nesw_resize` `move`, `not_allowed`, `crosshair`.
 
 **A shadow can be of any colour, and everything about it is an expression.**
 Black if no colour is said, which is what a shadow is on paper. On a desktop of
@@ -1106,6 +1106,8 @@ reloads on save while the programs in it keep running.
 | `win.$i.minimized` | it is put away: its minimize button, the scene (`minimize`), or whoever lists the windows (a dock, Marea). It is left out of the layout's order, as a dialog is; `restore` brings it back |
 | `win.$i.floating` | it floats over the layout (`float`): `.place` is −1 and `.among` and `win.on.$s` do not count it, so the others close up as if it were a dialog; it keeps its turn in `win.order`, `.rank` and `win.count` (the keyboard still reaches it). The compositor keeps it: a reload of the scene does not lose it. `tile` puts it back; it ends when the window closes |
 | `win.$i.dialog` | it is a dialog: it belongs to another window, or has a size of its own it cannot leave (a message, a file chooser). It is left out of the layout's order (`place` −1, not counted in `win.on`): float it over the rest, at its own size (`ask: 0, 0`) |
+| `win.$i.framed` | it lets the compositor draw its frame (server-side decorations, X11 programs): draw its title bar. False, it draws its own —a GTK 4 header bar, a browser's tabs—: draw none |
+| `win.$i.held` · `win.$i.edges` | what it asks from its own title bar or edges while the button is down: 1 to be carried with the mouse, 2 to be stretched by `edges` (1 top, 2 bottom, 4 left, 8 right, added: 10 is the bottom right corner); 0 when the button is let go. Floating windows follow `cursor.x`, `cursor.y` while it lasts |
 | `win.$i.fullscreen` | it is fullscreen: it asked (a video, a game, F11) or the scene did. Where it goes is still the scene's: draw it over the whole monitor, and ask it for that size |
 | `win.$i.workspace` | the workspace it is on, by its turn in its monitor's stack (from 1): the one its monitor showed when it opened, or the one it was sent to. It changes when one above it dries up |
 | `win.$i.pool` | the same workspace by its identity, which never changes: compare this one to tell whether two windows share a workspace, or whether it is the one shown (`win.pool.$s`) |
@@ -1498,7 +1500,7 @@ services.notification_history: list
 parameter_types: number bool color text record event image gesture spring
 springs: lively calm quick slow gentle pose
 units: px % deg ms s
-cursors: default pointer text grab grabbing
+cursors: default pointer text grab grabbing ew_resize ns_resize nwse_resize nesw_resize move not_allowed crosshair
 surface.anchor: top bottom left right top_left top_right bottom_left bottom_right center
 surface.level: background bottom top overlay
 surface.kind: panel window lock

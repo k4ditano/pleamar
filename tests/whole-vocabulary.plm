@@ -21,6 +21,14 @@ scene WholeVocabulary {
     box handle { at: 40, 150; size: 40 + chip.w, 24; corner: 12; color: #9ed6bd; cursor: grab }
     box target { at: 240, 150; size: 60, 40; corner: 8; color: #2e2f2f; cursor: default }
     box busy   { at: 150, 150; size: 30, 30; corner: 8; color: #e8c07a; cursor: grabbing; active: held }
+    // The cursors a window manager stretches and carries with.
+    zone box edge.e  { from: 0, 0; size: 4, 4; cursor: ew_resize }
+    zone box edge.s  { from: 4, 0; size: 4, 4; cursor: ns_resize }
+    zone box edge.se { from: 8, 0; size: 4, 4; cursor: nwse_resize }
+    zone box edge.sw { from: 12, 0; size: 4, 4; cursor: nesw_resize }
+    zone box carry   { from: 16, 0; size: 4, 4; cursor: move }
+    zone box refuse  { from: 20, 0; size: 4, 4; cursor: not_allowed }
+    zone box aim     { from: 24, 0; size: 4, 4; cursor: crosshair }
     row spread  { at: 20, 100; gap: 4; align: start; box { size: 10, 20; color: #fff }; box { size: 10, 10; color: #fff } }
     row bottoms { at: 80, 100; gap: 4; align: end;   box { size: 10, 20; color: #fff }; box { size: 10, 10; color: #fff } }
 

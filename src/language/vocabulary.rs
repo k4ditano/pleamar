@@ -93,7 +93,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("for", "`for r in rows { … }` · `for r in rows from first { … }` — once per record of a model."),
     ("row", "`row { gap: 8; align: center }` — children side by side, with gap, padding, fill and scroll (`view:`)."),
     ("grid", "`grid { columns: 2; gap: 12; width: 456; row: 106 }` — children in cells, left to right and down; `span: 2` takes two. Inside each, `cell.w` and `cell.h` are its cell."),
-    ("windows", "`windows win max 6` — a compositor inside the scene: programs started with `launch \"kitty\"` open in it. Per slot: `win.$i.open`, `.title`, `.app`, `.width`, `.height`, `.focused`, `.place` (its turn in the layout of its monitor, −1 if closed), `.screen`, `.fullscreen`, `.dialog`, `.minimized`, `.floating` (`float win.$i`: over the layout, out of `.place`, `.among` and `on.$s`), `.workspace`, `.among` (how many share its monitor and workspace), `.rank` (its turn among the ones shown, −1 if hidden); and `win.count`, `win.on.$screen`, `win.shown.$screen` (the workspace each monitor shows), `win.focus`, `win.socket`."),
+    ("windows", "`windows win max 6` — a compositor inside the scene: programs started with `launch \"kitty\"` open in it. Per slot: `win.$i.open`, `.title`, `.app`, `.width`, `.height`, `.focused`, `.place` (its turn in the layout of its monitor, −1 if closed), `.screen`, `.fullscreen`, `.dialog`, `.minimized`, `.floating`, `.framed` (it lets the compositor draw its title bar), `.held` · `.edges` (it asks to be carried, 1, or stretched, 2, by those edges) (`float win.$i`: over the layout, out of `.place`, `.among` and `on.$s`), `.workspace`, `.among` (how many share its monitor and workspace), `.rank` (its turn among the ones shown, −1 if hidden); and `win.count`, `win.on.$screen`, `win.shown.$screen` (the workspace each monitor shows), `win.focus`, `win.socket`."),
     ("window", "`window win.$i { at: x, y; size: w, h }` — that slot's window, drawn there and answering the mouse and the keyboard. `ask: w, h` is the size it is told to have (by default `size`): let `size` travel on a spring and `ask` be where it goes. It is also a zone: `on press win.$i`, `win.$i.hover`."),
     ("pages", "`pages settings { header: 20, 45; page menu \"Settings\" { … } page look \"Her look\" { … } }` — one page at a time, sliding in; `settings` is a fact with the pages' names (`settings = look`), and with `header:` comes the ← and the title, and Esc goes back."),
     ("column", "`column { gap: 8 }` — children one under the other. Same properties as `row`."),
@@ -152,7 +152,7 @@ pub const MODEL_TYPES: &[&str] = &["list"];
 pub const PARAMETER_TYPES: &[&str] = &["number", "bool", "color", "text", "record", "event", "image", "gesture", "spring"];
 pub const SPRINGS: &[&str] = &["lively", "calm", "quick", "slow", "gentle", "pose"];
 pub const UNITS: &[&str] = &["px", "%", "deg", "ms", "s"];
-pub const CURSORS: &[&str] = &["default", "pointer", "text", "grab", "grabbing"];
+pub const CURSORS: &[&str] = &["default", "pointer", "text", "grab", "grabbing", "ew_resize", "ns_resize", "nwse_resize", "nesw_resize", "move", "not_allowed", "crosshair"];
 pub const SURFACE_ANCHORS: &[&str] = &["top", "bottom", "left", "right", "top_left", "top_right", "bottom_left", "bottom_right", "center"];
 pub const LEVELS: &[&str] = &["background", "bottom", "top", "overlay"];
 /// Which kind of window a surface asks for: stuck to an edge, or a normal one.

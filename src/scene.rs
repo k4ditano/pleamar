@@ -1170,6 +1170,14 @@ pub enum Cursor {
     Text,
     Grab,
     Grabbing,
+    /// Stretching along an edge: left and right, up and down, and the two diagonals.
+    EwResize,
+    NsResize,
+    NwseResize,
+    NeswResize,
+    Move,
+    NotAllowed,
+    Crosshair,
 }
 
 /// A sensitive region: a shape with a name. The render does the hit-test with
@@ -2145,6 +2153,13 @@ pub enum NestEvent {
     /// A window is a dialog (it has a parent, or a size of its own it
     /// cannot leave): it is left out of the layout's order.
     Dialog(usize, bool),
+    /// A window lets the compositor draw its frame (server-side decorations),
+    /// or draws its own title bar and buttons (client-side, as GTK 4 does).
+    Framed(usize, bool),
+    /// A window asks, from its own title bar or edge, to be carried with the
+    /// mouse (1) or stretched (2) by `edges` (xdg-shell's: 1 top, 2 bottom,
+    /// 4 left, 8 right, added); 0 when the button is let go.
+    Held { slot: usize, how: u32, edges: u32 },
     /// A window is put away now (minimized), or back: it asked, the scene
     /// did, or whoever lists the windows (Marea) did.
     Minimized(usize, bool),

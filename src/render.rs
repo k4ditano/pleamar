@@ -1256,6 +1256,11 @@ pub fn run(
                             nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                         }
                         NestEvent::Fullscreen(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.fullscreen"), yes as u8 as f32),
+                        NestEvent::Framed(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.framed"), yes as u8 as f32),
+                        NestEvent::Held { slot, how, edges } => {
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.edges"), edges as f32);
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.held"), how as f32);
+                        }
                         NestEvent::Minimized(slot, yes) => {
                             // Brought back, it comes to the workspace its monitor shows:
                             // left on the one it was put away from, it had the keyboard
@@ -1402,6 +1407,8 @@ pub fn run(
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.dialog"), 0.0);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.minimized"), 0.0);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.floating"), 0.0);
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.framed"), 0.0);
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.held"), 0.0);
                             if slot < desks.floating.len() {
                                 desks.floating[slot] = false;
                             }

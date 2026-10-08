@@ -442,6 +442,13 @@ fn shape_of(c: Cursor) -> Shape {
         Cursor::Text => Shape::Text,
         Cursor::Grab => Shape::Grab,
         Cursor::Grabbing => Shape::Grabbing,
+        Cursor::EwResize => Shape::EwResize,
+        Cursor::NsResize => Shape::NsResize,
+        Cursor::NwseResize => Shape::NwseResize,
+        Cursor::NeswResize => Shape::NeswResize,
+        Cursor::Move => Shape::Move,
+        Cursor::NotAllowed => Shape::NotAllowed,
+        Cursor::Crosshair => Shape::Crosshair,
     }
 }
 
@@ -1491,6 +1498,13 @@ impl PointerHandler for State {
                                 2 => Cursor::Text,
                                 3 => Cursor::Grab,
                                 4 => Cursor::Grabbing,
+                                5 => Cursor::EwResize,
+                                6 => Cursor::NsResize,
+                                7 => Cursor::NwseResize,
+                                8 => Cursor::NeswResize,
+                                9 => Cursor::Move,
+                                10 => Cursor::NotAllowed,
+                                11 => Cursor::Crosshair,
                                 _ => Cursor::Normal,
                             };
                             d.set_shape(serial, shape_of(c));

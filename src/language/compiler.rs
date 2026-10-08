@@ -5572,6 +5572,11 @@ impl<'a> Compiler<'a> {
             fact(self, format!("{name}.{k}.dialog"), 0.0, true);
             fact(self, format!("{name}.{k}.minimized"), 0.0, true);
             fact(self, format!("{name}.{k}.floating"), 0.0, true);
+            // It lets the compositor draw its frame; and what it asks, from its
+            // own title bar or edges, while the button is down.
+            fact(self, format!("{name}.{k}.framed"), 0.0, true);
+            fact(self, format!("{name}.{k}.held"), 0.0, false);
+            fact(self, format!("{name}.{k}.edges"), 0.0, false);
             // Workspaces: which one it is on (they start at 1), how many share
             // its monitor and workspace (what its layout is shared out
             // among), and its turn among the windows shown.
@@ -6466,6 +6471,13 @@ fn read_cursor(c: &mut Cur) -> R<Cursor> {
         "text" => Cursor::Text,
         "grab" => Cursor::Grab,
         "grabbing" => Cursor::Grabbing,
+        "ew_resize" => Cursor::EwResize,
+        "ns_resize" => Cursor::NsResize,
+        "nwse_resize" => Cursor::NwseResize,
+        "nesw_resize" => Cursor::NeswResize,
+        "move" => Cursor::Move,
+        "not_allowed" => Cursor::NotAllowed,
+        "crosshair" => Cursor::Crosshair,
         _ => unreachable!(),
     })
 }
