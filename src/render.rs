@@ -777,7 +777,15 @@ pub fn run(
                         .collect();
                     gesture = None;
                     pending.clear();
-                    size = (fresh.surface().width as f32, fresh.surface().height as f32 + if op.hud { HUD_HEIGHT } else { 0.0 });
+                    // What it measures. `full` (0) is what its monitor measures, which
+                    // the surface already knows: it is kept, or a reload left the scene
+                    // 0 × 0 and everything drawn from its corner —a wallpaper— went
+                    // unpainted.
+                    let hud = if op.hud { HUD_HEIGHT } else { 0.0 };
+                    size = (
+                        if fresh.surface().width == 0 { size.0 } else { fresh.surface().width as f32 },
+                        if fresh.surface().height == 0 { size.1 } else { fresh.surface().height as f32 + hud },
+                    );
                     texts = fresh.texts.iter().map(|(n, initial)| scene.texts.iter().position(|t| t.0 == *n).map_or_else(|| initial.clone(), |k| texts[k].clone())).collect();
                     shown_locale = None;
                     atlas_stale = true;
