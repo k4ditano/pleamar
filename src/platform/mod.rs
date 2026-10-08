@@ -346,6 +346,17 @@ pub fn rezone(which: usize, zone: i32) {
     let _ = (which, zone);
 }
 
+/// How many layers have been put on a monitor so far. A monitor that comes back
+/// (after a deep sleep) gets its layers new, with the scene's defaults: when this
+/// number moves, the render sends again what each surface has changed (edge, level,
+/// room), or the new ones would sit where the scene began.
+pub fn layers_placed() -> u64 {
+    #[cfg(target_os = "linux")]
+    return wayland::layers_placed();
+    #[cfg(not(target_os = "linux"))]
+    0
+}
+
 pub fn reanchor(which: usize, anchor: crate::scene::SurfaceAnchor) {
     if let Some(h) = LAYER_HOOKS.get() {
         return (h.reanchor)(which, anchor);

@@ -278,7 +278,16 @@ pub fn run_with(options: Vec<String>) {
         std::thread::Builder::new()
             .name("render".into())
             .spawn(move || {
-                render::run(instance, from_render, letters, to_logic, blocked, op);
+                // A render that panics leaves nothing on screen that moves, while the
+                // rest goes on: a lock screen stayed locked over a frozen picture
+                // (wgpu panicked when the card stalled on a monitor's wake). Better
+                // to end the whole process, so whatever keeps it running starts it
+                // again; the panic has already said why.
+                let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::run(instance, from_render, letters, to_logic, blocked, op)));
+                if run.is_err() {
+                    eprintln!("render · it panicked: leaving, so that it can be started again");
+                    std::process::exit(70);
+                }
                 RENDER_DONE.store(true, std::sync::atomic::Ordering::SeqCst);
             })
             .unwrap()

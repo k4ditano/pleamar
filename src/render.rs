@@ -536,6 +536,7 @@ pub fn run(
     let mut levels_set: Vec<crate::scene::Level> = Vec::new();
     let mut reserves_set: Vec<i32> = Vec::new();
     let mut anchors_set: Vec<crate::scene::SurfaceAnchor> = Vec::new();
+    let mut layers_seen: u64 = 0;
     // The "this does not compile" banner, and the good scene with it on top.
     let mut warning: Option<Vec<Instr>> = None;
     let mut with_warning: Vec<Instr> = Vec::new();
@@ -3580,6 +3581,15 @@ pub fn run(
         // Has any surface decided to attach itself to another edge? The corner that
         // Marea's recording face chooses is a fact, and layer-shell lets it be
         // changed without creating anything again.
+        // A monitor that came back has its layers new, with the scene's defaults:
+        // what was changed is sent to them again.
+        let placed_now = crate::platform::layers_placed();
+        if placed_now != layers_seen {
+            layers_seen = placed_now;
+            anchors_set.clear();
+            levels_set.clear();
+            reserves_set.clear();
+        }
         if anchors_set.len() != scene.surfaces.len() {
             anchors_set = scene.surfaces.iter().map(|s| s.anchor).collect();
         }
