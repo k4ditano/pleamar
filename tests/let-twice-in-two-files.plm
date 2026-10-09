@@ -1,0 +1,10 @@
+// expect: note «there is already a `let wide` in»
+// Two files of one scene, each with its own `let wide`: the second changes
+// what the first means after it, and copied per monitor each copy may take
+// one or the other. It still loads, and says so.
+scene TwoFiles {
+    surface { size: full, 120; screens: each }
+    include "parts/sidebar.plm"
+    let wide = 556
+    box { from: 0, 60; size: wide, 40; color: #555555 }
+}

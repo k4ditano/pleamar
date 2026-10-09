@@ -19,6 +19,8 @@ for f in tests/*.plm examples/*.plm "$examples"/*.plm; do
         ok) echo "$output" | grep -q ": ok ·" || { echo "✗ $f: it had to be fine"; echo "$output" | head -3; bad=$((bad + 1)); } ;;
         error*) piece=$(echo "$expect" | sed 's|^error «||; s|»$||')
             echo "$output" | grep -qF "$piece" || { echo "✗ $f: expected an error with «$piece»"; echo "$output" | head -3; bad=$((bad + 1)); } ;;
+        note*) piece=$(echo "$expect" | sed 's|^note «||; s|»$||')
+            { echo "$output" | grep -q ": ok ·" && echo "$output" | grep -qF "$piece"; } || { echo "✗ $f: it had to load and say «$piece»"; echo "$output" | head -3; bad=$((bad + 1)); } ;;
     esac
 done
 

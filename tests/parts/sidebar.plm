@@ -1,0 +1,5 @@
+// A part with a `let` named like one in the scene that includes it (see let-twice-in-two-files.plm).
+part Sidebar {
+    let wide = 214
+    box { from: 0, 0; size: wide, 40; color: #333333 }
+}

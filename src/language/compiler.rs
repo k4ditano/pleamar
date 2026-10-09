@@ -298,6 +298,11 @@ struct Compiler<'a> {
     /// On which line each loose `let` was declared: so as not to let another one, further
     /// down, change its meaning without saying anything.
     let_lines: HashMap<String, usize>,
+    /// The same, for the scene's own `let`s also when read once per monitor's
+    /// copy: where each was seen last, to tell two files that both write one.
+    scene_let_lines: std::cell::RefCell<HashMap<String, usize>>,
+    /// The names of `let`s already said to be written in two files (once, not once per monitor).
+    twice_noted: std::cell::RefCell<std::collections::HashSet<String>>,
     /// The scene's `let`s written outside any group, and on which line (inside
     /// a scope, its own `loose`).
     loose_lets: HashMap<String, usize>,
@@ -379,7 +384,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         generated: &generated,
         translations: Vec::new(), untranslated: Default::default(),
         props: HashMap::new(), facts: HashMap::new(), signals: HashMap::new(), texts: HashMap::new(), images: HashMap::new(), figures: HashMap::new(), shaders: HashMap::new(), models: HashMap::new(),
-        measurements: HashMap::new(), gestures: HashMap::new(), zones: HashMap::new(), lets: HashMap::new(), let_lines: HashMap::new(), loose_lets: HashMap::new(), groups: Vec::new(), colors: HashMap::new(),
+        measurements: HashMap::new(), gestures: HashMap::new(), zones: HashMap::new(), lets: HashMap::new(), let_lines: HashMap::new(), scene_let_lines: Default::default(), twice_noted: Default::default(), loose_lets: HashMap::new(), groups: Vec::new(), colors: HashMap::new(),
         springs: vocab::SPRINGS.iter().map(|n| ((*n).to_owned(), match *n {
             "lively" => Spring::LIVELY,
             "calm" => Spring::CALM,
@@ -1953,6 +1958,22 @@ impl<'a> Compiler<'a> {
                     // asks before restarting —`fact pw`— took 496 for "open".
                     // (In a component or a `repeat` the `let` is theirs.) Said, not
                     // refused: a scene that has one still loads.
+                    // And one in another file of the scene —two parts— did the
+                    // same: it changed what the first one means in everything
+                    // after it. Copied per monitor it was worse, each copy took
+                    // one or the other: Bahía's ⇧⌘5 bar (`let sbw = 556`) drew its
+                    // glass 214 wide, Settings' sidebar, and placed its buttons
+                    // for its own width. Said, not refused, like the next one:
+                    // scenes that have one still load.
+                    if self.scopes.iter().all(|e| e.suffix.starts_with("#screen")) {
+                        let before = self.scene_let_lines.borrow_mut().insert(name.clone(), n.line);
+                        if let Some(before) = before.filter(|b| b / super::PER_FILE != n.line / super::PER_FILE) {
+                            if self.twice_noted.borrow_mut().insert(name.clone()) {
+                                let file = |line: usize| self.files.get(line / super::PER_FILE).map_or("", String::as_str);
+                                eprintln!("note   · {}:{}: there is already a `let {name}` in {}:{}: this one changes what `{name}` means in everything after it, and in a scene copied per monitor each copy may take one or the other. Give one of them another name", file(n.line), n.line % super::PER_FILE, file(before), before % super::PER_FILE);
+                            }
+                        }
+                    }
                     if self.scopes.iter().all(|e| e.suffix.starts_with("#screen")) && self.hiding_noted.borrow_mut().insert(n.line) {
                         let what = if self.facts.contains_key(&name) { Some("fact") } else if self.props.contains_key(&name) { Some("prop") } else { None };
                         if let Some(what) = what {
