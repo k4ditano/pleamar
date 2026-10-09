@@ -77,6 +77,10 @@ struct Shared {
     services: Vec<crate::scene::Service>,
     /// Which ones already got a thread: reloading the scene does not start them twice.
     subscribed: std::collections::HashSet<String>,
+    /// What each one said last, by alias: spread again when the scene is
+    /// reloaded, so a field or a list it asks for anew is filled at once (a
+    /// service speaks only when something changes, and a reload changes nothing).
+    last_reports: std::collections::HashMap<String, SysValue>,
     /// If it is a plugin's logic, what it is called: so that errors talk about it and not about the scene.
     plugin: Option<String>,
     /// It asks for permissions nobody has approved: it runs with none, and the errors say why.
@@ -1298,6 +1302,13 @@ impl Script for LuauScript {
                 // If the scene now asks for a service it did not ask for before, it is set up here.
                 drop(c);
                 self.subscribe_services();
+                // And what the ones already running said last goes again into
+                // the scene as it is now: Bahía's Settings asked the network for
+                // its list on a reload, and it stayed empty until the list changed.
+                let last: Vec<(String, SysValue)> = self.c.lock().unwrap().last_reports.iter().map(|(a, v)| (a.clone(), v.clone())).collect();
+                for (alias, value) in last {
+                    self.spread_service(&alias, &value);
+                }
             }
             Event::Line(id, line) => {
                 let f = self.c.lock().unwrap().running.get(&id).map(|x| x.0.clone());
@@ -1309,6 +1320,7 @@ impl Script for LuauScript {
                 // `service clock as now`: it arrives without anyone asking for it from Luau,
                 // and it is spread even if the scene has no logic at all.
                 if let Some(alias) = name.strip_prefix("service:") {
+                    self.c.lock().unwrap().last_reports.insert(alias.to_owned(), value.clone());
                     return self.spread_service(alias, &value);
                 }
                 let Some(lua) = &self.lua else { return };
