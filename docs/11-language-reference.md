@@ -530,6 +530,9 @@ to work out, and the renderer does not look at it.
 **`glass` turns a body into glass**, from `0%` to `100%`, and like everything
 else it is an expression, so it can come and go. Three things happen. The fill
 becomes a tint: its `color` is still there, but what is behind shows through.
+Below `100%` it is partly glass and partly its fill —at `50%`, a glass tinted
+half with its colour—, with a lens or without one, and it covers as much as its
+`opacity` says: going from `0` to `100%` the plain fill turns into glass with no jump.
 The edge catches the light: a thin highlight on the side facing the top left,
 a softer one on the opposite side, and the glass getting lighter towards its
 edge, like glass seen side-on; all of it comes from where the edge points,

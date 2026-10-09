@@ -491,11 +491,17 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
         var glass_color = mix(vivid, tone, LENS_TINT);
         glass_color = mix(glass_color, tone, max(bright * 0.5, detail * 0.55));
         glass_color = mix(glass_color, vec3<f32>(1.0), clamp(shine + finger_light, 0.0, 1.0));
+        // Partly glass, partly its fill: as without a lens, where less glass
+        // is more tint. It covers as much as its opacity says whatever the
+        // glass: weighed by it too, `glass: 0.5` let two thirds of the sharp
+        // background through and read as clear, and `glass: 0` —a plain
+        // fill— was a jump from almost nothing (#40).
+        glass_color = mix(tone, glass_color, glass);
         // What has to be seen is this glass. But the compositor puts the real
         // background, sharp, under our alpha, and it would leak through like a
         // ghost of the text behind: it is subtracted beforehand, since we know
         // it. What is seen: ours + (1 − α)·behind = glass · coverage.
-        let seen = coverage(d) * alpha * glass;
+        let seen = coverage(d) * alpha;
         let db = textureSampleLevel(backdrop_sharp, backdrop_sampler, e.pos.xy / size, 0.0);
         let underneath = db.rgb / max(db.a, 0.001) * step(0.5, db.a);
         let lens_alpha = seen * LENS_ALPHA;
