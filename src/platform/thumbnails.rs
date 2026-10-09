@@ -273,6 +273,9 @@ impl State {
         };
         match write_png(&self.dir, w.seq, &f.pixels, (f.width, f.height), f.opaque) {
             Some(path) => {
+                // Live, it was compared byte for byte and never hashed: hashed
+                // now, so the same frame coming again is not written twice.
+                w.pixels = fingerprint(&f.pixels, (f.width, f.height));
                 w.version += 1;
                 w.picture = format!("{}?{}", path.display(), w.version);
             }
@@ -355,10 +358,19 @@ impl State {
         let (pw, ph) = s.size;
         // SAFETY: our own mapping, `len` bytes, filled by the compositor before `ready`.
         let px = unsafe { std::slice::from_raw_parts(s.map, s.len) };
-        let pixels = fingerprint(px, s.size);
         // The same pixels, kept the same way, are nothing new. Kept the other
-        // way —the window went live, or stopped being live—, they are.
-        if pixels == w.pixels && w.version > 0 && w.live == live {
+        // way —the window went live, or stopped being live—, they are. A live
+        // window's are compared with the frame kept for it, byte for byte: a
+        // hash reads the whole frame at a fraction of the speed of a compare,
+        // and a live window is looked at up to 30 times a second.
+        let (same, pixels) = if live {
+            let kept = w.live.then(|| FRAMES.lock().unwrap().as_ref().and_then(|f| f.get(&w.seq).cloned())).flatten();
+            (kept.is_some_and(|f| (f.width, f.height) == s.size && f.pixels[..] == px[..]), 0)
+        } else {
+            let pixels = fingerprint(px, s.size);
+            (pixels == w.pixels && w.version > 0 && !w.live, pixels)
+        };
+        if same {
             // The same picture again: nothing to write, and only `stale` to undo.
             if w.stale {
                 w.stale = false;
