@@ -823,6 +823,11 @@ impl LuauScript {
                 crate::child_env(&mut launch);
                 launch.args(args.unwrap_or_default()).envs(vars);
                 crate::platform::apart(&mut launch);
+                // No input unless it is given one: it got the scene's, and in
+                // pleamar-wm's session that is its terminal. ffmpeg read it
+                // from behind and the system stopped it (SIGTTIN): a recording
+                // in Bahía never ended.
+                launch.stdin(std::process::Stdio::null());
                 if let Some(path) = &input {
                     match std::fs::File::open(path) {
                         Ok(f) => {
@@ -889,6 +894,8 @@ impl LuauScript {
             crate::child_env(&mut launch);
             launch.args(args.unwrap_or_default()).envs(environment(how.as_ref())).stdout(std::process::Stdio::piped());
             launch.stderr(if errors { std::process::Stdio::piped() } else { std::process::Stdio::null() });
+            // No input unless it is given one, as with `run`.
+            launch.stdin(std::process::Stdio::null());
             if text.is_some() || open {
                 launch.stdin(std::process::Stdio::piped());
             }
