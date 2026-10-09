@@ -87,7 +87,7 @@ The rule: **everything system-related lives behind `src/platform/`**, and the co
 
 | # | Limitation | Severity | How it gets fixed |
 | --- | --- | --- | --- |
-| P4 | A group with opacity inside another one gets no layer of its own: it multiplies —and one with only opacity around a group with effects gives its layer up to it—. Two groups with effects cannot nest (it is an error). There is no limit of four any more: they all share one layer, painted in turn | ⚪ | Painting the inner ones before the outer ones, into a stack of layers |
+| P4 | A group with opacity inside another one gets no layer of its own: it multiplies —and one with only opacity around a group with effects gives its layer up to it—. Two groups with effects cannot nest (it is an error). There is no limit of four any more: they share up to four layers —those that do not reach each other go on the same one, painted in one pass—, painted in turn | ⚪ | Painting the inner ones before the outer ones, into a stack of layers |
 | P5 | With a different scale on each axis, the edge antialiasing is approximate | ⚪ | Measuring the distance gradient in the shader (`fwidth`) instead of a fixed factor |
 | P6 | The gradient and the light live in the group's space: if the shape rotates *by itself* (`.rotated`) they do not rotate with it | ⚪ | Evaluating the paint in the space of the body's first shape |
 | P7 | **Every glyph is an element**: a paragraph is hundreds. There is no cap any more (the stores grow), but it is extra work for the graphics card | ⚪ | One element per *line* of text, walking its glyphs in the shader. And the nested clips that clip by their shape are still four: the outermost ones clip by their box (it warns once) |

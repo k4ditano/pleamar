@@ -9,9 +9,12 @@ use std::ops::Range;
 const PER_SHAPE: usize = 20;
 const PER_ELEMENT: usize = 60;
 /// How many groups with opacity or effects can be blending in the same frame.
-/// They all share ONE layer: each one is painted into it right before it is
+/// They share a few layers: each one is painted into one right before it is
 /// blended (see `paint`), so this is not memory, only a sanity limit.
 pub const MAX_LAYERS: usize = 64;
+/// How many layers the groups that do not reach each other are shared out
+/// among, to be painted together (see `share_layers`).
+const LAYER_SLOTS: usize = 4;
 /// How many frames painted without groups with opacity until their layers are given back.
 const IDLE_LAYER_FRAMES: u32 = 300;
 /// The strip added to the surface for the frame graph.
@@ -52,6 +55,9 @@ pub struct DrawList {
     pub selected: Option<(usize, usize, usize)>,
     /// Groups painted separately: which elements, and on which layer.
     pub offscreen_groups: Vec<(Range<u32>, usize)>,
+    /// Where each batch of them starts, by their number: the groups of a
+    /// batch are painted on their layers together, one pass a layer.
+    pub layer_batches: Vec<usize>,
     /// The pieces of the scene that some open popup is showing.
     pub views: Vec<[f32; 4]>,
     clips_warned: bool,
@@ -272,6 +278,16 @@ enum OpacityGroup {
     /// Invisible: nothing inside is emitted.
     Hidden,
     Layer { alpha: f32, index: usize, first_element: usize, fx: Option<Fx> },
+}
+
+/// Where a group painted on a layer reaches (see `share_layers`).
+enum Reach {
+    /// It is not blended: nothing reads it.
+    Nothing,
+    /// Where it paints and where it is read from, in the scene's plane.
+    Within([f32; 4], [f32; 4]),
+    /// It cannot share its layer with anyone.
+    Anywhere,
 }
 
 /// What an emitter remembers between frames.
@@ -742,6 +758,87 @@ impl DrawList {
             e[32 + j] = clips[clips.len().saturating_sub(4)..].get(j).map_or(-1.0, |r| r.0 as f32);
         }
         fill(e);
+    }
+
+    /// The groups painted on a layer of their own, shared out in batches: in a
+    /// batch, those that do not reach each other —neither paints where the
+    /// other reads— go on the same layer, on up to `LAYER_SLOTS` of them, and
+    /// each layer is painted in one pass. A pass each, 60 cards fading cost
+    /// wgpu more than all they draw, and the card stopped between every two
+    /// to read the layer just painted (#38).
+    fn share_layers(&mut self) {
+        self.layer_batches.clear();
+        let apart = |a: &[f32; 4], b: &[f32; 4]| a[2] <= b[0] || b[2] <= a[0] || a[3] <= b[1] || b[3] <= a[1];
+        // Of each layer of the batch open: where its groups paint, and where they read.
+        let mut slots: Vec<Vec<([f32; 4], [f32; 4])>> = Vec::new();
+        // The batch open has a group that cannot share it.
+        let mut alone = true;
+        for g in 0..self.offscreen_groups.len() {
+            let span = self.offscreen_groups[g].0.clone();
+            let slot = match self.group_reach(&span) {
+                // Blended by nothing: it goes in whatever batch is open.
+                Reach::Nothing if !self.layer_batches.is_empty() => 0,
+                Reach::Within(w, r) if !alone => match slots.iter().position(|s| s.iter().all(|(w2, r2)| apart(&w, r2) && apart(&r, w2))) {
+                    Some(k) => {
+                        slots[k].push((w, r));
+                        k
+                    }
+                    None if slots.len() < LAYER_SLOTS => {
+                        slots.push(vec![(w, r)]);
+                        slots.len() - 1
+                    }
+                    None => {
+                        self.layer_batches.push(g);
+                        slots = vec![vec![(w, r)]];
+                        0
+                    }
+                },
+                reach => {
+                    self.layer_batches.push(g);
+                    slots.clear();
+                    alone = matches!(reach, Reach::Anywhere);
+                    if let Reach::Within(w, r) = reach {
+                        slots.push(vec![(w, r)]);
+                    }
+                    0
+                }
+            };
+            self.offscreen_groups[g].1 = slot;
+            if self.blends(&span) {
+                self.elements[span.end as usize * PER_ELEMENT + 1] = slot as f32;
+            }
+        }
+    }
+
+    /// Whether the element right after a group's is the one that blends it
+    /// (a group with nothing inside, or whose box falls off the surface, has none).
+    fn blends(&self, span: &Range<u32>) -> bool {
+        let k = span.end as usize;
+        !span.is_empty() && k < self.element_count() && self.elements[k * PER_ELEMENT] == 2.0
+    }
+
+    /// Where a group paints on its layer and where it is read from.
+    fn group_reach(&self, span: &Range<u32>) -> Reach {
+        if !self.blends(span) {
+            return Reach::Nothing;
+        }
+        let e = &self.elements[span.end as usize * PER_ELEMENT..(span.end as usize + 1) * PER_ELEMENT];
+        // A shader of the scene's reads its layer wherever it likes; particles
+        // fly out of any box; and a glass inside takes what is behind it in between.
+        let particles = self.particle_marks.iter().any(|(at, _)| span.contains(at));
+        let glass = self.glass_marks.iter().any(|at| span.contains(at));
+        if e[40] > 0.0 || particles || glass {
+            return Reach::Anywhere;
+        }
+        let paints = (span.start..span.end).map(|k| {
+            let b = &self.elements[k as usize * PER_ELEMENT + 4..k as usize * PER_ELEMENT + 8];
+            [b[0], b[1], b[2], b[3]]
+        });
+        let Some(paints) = paints.reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]) else { return Reach::Nothing };
+        // The blend reads its box, and a blur or a glow as far as its radius
+        // around it; and a pixel more, between two.
+        let r = e[20].max(e[21]).max(0.0) + 2.0;
+        Reach::Within(paints, [e[4] - r, e[5] - r, e[6] + r, e[7] + r])
     }
 
     /// Which edges the surface is attached to, which whoever requests it knows.
@@ -1499,6 +1596,7 @@ impl DrawList {
         // The silhouettes nobody has used this frame are forgotten; the others
         // start the count again.
         self.glass_cache.retain(|_, (_, used)| std::mem::take(used));
+        self.share_layers();
         if hud {
             // The instruments take the bottom strip, which was added for them.
             self.element(9.0, [0.0, size.1 - HUD_HEIGHT, size.0, size.1], &[], |e| Affine::IDENTITY.encode(&mut e[44..52]));
@@ -2729,10 +2827,10 @@ impl Gpu {
             }
         };
         // Everything in order, and each group with opacity or effects painted
-        // into THE layer right before the stretch that blends it: all of them
-        // share one, so there can be as many as the scene wants and they cost
-        // the memory of one. The target is cleared once, at the start; the
-        // following stretches paint on top of it.
+        // into its layer right before the stretch that blends it: they share
+        // a few, so there can be as many as the scene wants and they cost the
+        // memory of at most `LAYER_SLOTS`. The target is cleared once, at the
+        // start; the following stretches paint on top of it.
         let target = match &l.lens {
             // With a lens, on its canvas, which is then copied to the screen: one
             // has to know exactly what was painted to unmix what is behind.
@@ -2832,22 +2930,36 @@ impl Gpu {
                 }
             }
         };
-        for (span, layer) in groups {
-            // The element that blends it comes right after its span: if that one
+        // A batch at a time (see `DrawList::share_layers`): what comes before
+        // it onto the target, then its groups onto their layers, one pass a
+        // layer; what is between them and their blends go onto the target
+        // with whatever comes next.
+        let batches: &[usize] = if groups.is_empty() { &[] } else { &d.layer_batches };
+        for (b, &first) in batches.iter().enumerate() {
+            let members = &groups[first..batches.get(b + 1).copied().unwrap_or(groups.len())];
+            // The element that blends each comes right after its span: if that one
             // falls in the region, the layer is needed, even if what is inside does not.
-            let with_blend = span.start..(span.end + 1).min(total);
-            onto.push(from..span.start);
-            if l.layers as usize > *layer && d.touches_view(&with_blend, region) {
+            let painted: Vec<&(Range<u32>, usize)> = members.iter().filter(|(span, layer)| l.layers as usize > *layer && d.blends(span) && d.touches_view(&(span.start..(span.end + 1).min(total)), region)).collect();
+            onto.push(from..members[0].0.start);
+            if !painted.is_empty() {
                 onto.retain(|r| !r.is_empty());
-                // A glass inside it bends what is on the target under the group.
-                let glass_inside = marks.iter().any(|m| span.contains(m));
-                if !onto.is_empty() || !keep || glass_inside {
-                    flush(&mut encoder, &onto, &mut keep, &mut erase, glass_inside.then_some(span));
+                // A glass inside one (alone in its batch) bends what is on the target under the group.
+                let glass_inside = painted.iter().find(|(span, _)| marks.iter().any(|m| span.contains(m))).map(|(span, _)| span);
+                if !onto.is_empty() || !keep || glass_inside.is_some() {
+                    flush(&mut encoder, &onto, &mut keep, &mut erase, glass_inside);
                     onto.clear();
                 }
-                pass_to(&mut encoder, &l.layer_views[*layer], &self.no_layers_group, std::slice::from_ref(span), false, None, false);
+                for (k, view) in l.layer_views.iter().enumerate().take(l.layers as usize) {
+                    let spans: Vec<Range<u32>> = painted.iter().filter(|(_, layer)| *layer == k).map(|(span, _)| span.clone()).collect();
+                    if !spans.is_empty() {
+                        pass_to(&mut encoder, view, &self.no_layers_group, &spans, false, None, false);
+                    }
+                }
             }
-            from = span.end;
+            for pair in members.windows(2) {
+                onto.push(pair[0].0.end..pair[1].0.start);
+            }
+            from = members[members.len() - 1].0.end;
         }
         onto.push(from..total);
         onto.retain(|r| !r.is_empty());
