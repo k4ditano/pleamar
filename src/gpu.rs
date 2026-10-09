@@ -1762,7 +1762,18 @@ impl Gpu {
                 let caps = first.get_capabilities(&adapter);
                 // No sRGB: the compositor blends the bytes as they are, and premultiplied
                 // alpha only works out if nobody re-encodes them along the way.
-                let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
+                // And eight bits a channel before anything else: a float format
+                // (`Rgba16Float`, first on some AMD cards under Hyprland) is read as
+                // linear light, so the sRGB values painted into it came out far too
+                // light —a pale pink, #ffadfa, as white (#37)—.
+                let eight = [wgpu::TextureFormat::Bgra8Unorm, wgpu::TextureFormat::Rgba8Unorm];
+                let format = eight
+                    .iter()
+                    .copied()
+                    .find(|f| caps.formats.contains(f))
+                    .or_else(|| caps.formats.iter().copied().find(|f| !f.is_srgb() && !matches!(f, wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float)))
+                    .or_else(|| caps.formats.iter().copied().find(|f| !f.is_srgb()))
+                    .unwrap_or(caps.formats[0]);
                 let alpha = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
                     wgpu::CompositeAlphaMode::PreMultiplied
                 } else {
