@@ -2150,6 +2150,10 @@ pub enum NestEvent {
     Dock(Vec<DockPin>),
     /// A window is fullscreen now, or no longer: it asked, or the scene did.
     Fullscreen(usize, bool),
+    /// A window asks for attention (it asked to come forward with nothing of
+    /// the user's behind it: a message arrived), or no longer (it got the
+    /// keyboard). A dock makes its icon hop, as macOS does.
+    Urgent(usize, bool),
     /// A window is a dialog (it has a parent, or a size of its own it
     /// cannot leave): it is left out of the layout's order.
     Dialog(usize, bool),

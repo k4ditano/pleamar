@@ -5614,6 +5614,8 @@ impl<'a> Compiler<'a> {
             // It lets the compositor draw its frame; and what it asks, from its
             // own title bar or edges, while the button is down.
             fact(self, format!("{name}.{k}.framed"), 0.0, true);
+            // It asks for attention, until it gets the keyboard.
+            fact(self, format!("{name}.{k}.urgent"), 0.0, true);
             fact(self, format!("{name}.{k}.held"), 0.0, false);
             fact(self, format!("{name}.{k}.edges"), 0.0, false);
             // Workspaces: which one it is on (they start at 1), how many share

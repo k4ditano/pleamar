@@ -1265,6 +1265,7 @@ pub fn run(
                         }
                         NestEvent::Fullscreen(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.fullscreen"), yes as u8 as f32),
                         NestEvent::Framed(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.framed"), yes as u8 as f32),
+                        NestEvent::Urgent(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.urgent"), yes as u8 as f32),
                         NestEvent::Held { slot, how, edges } => {
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.edges"), edges as f32);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.held"), how as f32);
