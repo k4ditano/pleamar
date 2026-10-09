@@ -3547,7 +3547,8 @@ pub fn run(
             // The ones of the glass that bends the light (`lens`), and those of the one that does not.
             // `PLEAMAR_NO_LENS=1`: none bends it, and the compositor blurs it.
             let (mut with_lens, mut without) = (Vec::new(), Vec::new());
-            for (b, lens) in draw.glass_regions.iter().filter(|(b, _)| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]) {
+            // Closed, it shows no glass: nothing behind it is blurred.
+            for (b, lens) in draw.glass_regions.iter().filter(|_| l.open).filter(|(b, _)| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]) {
                 if *lens && !no_lens { with_lens.push(local(b)) } else { without.push(local(b)) }
             }
             l.wants_lens = !with_lens.is_empty();
@@ -3806,6 +3807,14 @@ pub fn run(
             // Closed, it is painted once, empty, and that is it: that, yes, always, whether something changes or not.
             if !l.open && std::mem::replace(&mut l.cleared, true) {
                 continue;
+            }
+            // And what the compositor blurs behind it goes with that empty
+            // frame: a region takes effect with the next frame presented, and
+            // after this one there is none (a pill faded out left its blurred
+            // patch on the screen until it opened again, #39).
+            if !l.open && !l.blur_rects.is_empty() {
+                l.update_blur_region(&[]);
+                l.blur_rects.clear();
             }
             // What it shows is already up to date: nothing of what has changed falls on its piece of the plane.
             let where_ = (l.view.bounds(), l.scale);

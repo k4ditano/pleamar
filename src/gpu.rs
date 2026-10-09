@@ -853,6 +853,10 @@ impl DrawList {
             let hidden = opacity_groups.iter().any(|g| matches!(g, OpacityGroup::Hidden));
             // What multiplies each element: the groups that have no layer of their own.
             let mult: f32 = opacity_groups.iter().map(|g| if let OpacityGroup::Multiply(a) = g { *a } else { 1.0 }).product();
+            // And what the groups with a layer of their own take away when they
+            // blend it: a glass fading inside one is seen that much less (its
+            // blur region kept for the whole fade, #39).
+            let layered: f32 = opacity_groups.iter().map(|g| if let OpacityGroup::Layer { alpha, .. } = g { *alpha } else { 1.0 }).product::<f32>();
             let affine = transforms.last().copied().unwrap_or(Affine::IDENTITY);
             match i {
                 Instr::Opacity(Some(a)) => {
@@ -1123,7 +1127,7 @@ impl DrawList {
                     // A visible glass asks for what is behind to be blurred, following its silhouette.
                     let v = glass_spec.as_ref().map_or(0.0, |v| v.amount.eval(c));
                     let lens = glass_spec.as_ref().is_some_and(|v| v.lens.is_true(c));
-                    if v * a > GLASS_VISIBLE {
+                    if v * a * layered > GLASS_VISIBLE {
                         self.request_glass(&g.flats, &clips, lens);
                         if lens {
                             self.glass_marks.push(self.element_count() as u32);
@@ -1183,7 +1187,7 @@ impl DrawList {
                     let Some(b) = p.bounds() else { continue };
                     let v = glass_spec.as_ref().map_or(0.0, |v| v.amount.eval(c).clamp(0.0, 1.0));
                     let lens = glass_spec.as_ref().is_some_and(|v| v.lens.is_true(c));
-                    if v * a > GLASS_VISIBLE {
+                    if v * a * layered > GLASS_VISIBLE {
                         self.request_glass(&[p], &clips, lens);
                         if lens {
                             self.glass_marks.push(self.element_count() as u32);
