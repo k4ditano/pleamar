@@ -716,6 +716,15 @@ pub struct Glass {
     pub dome: Expr,
     /// `ripple:` how much a press ripples it (0 = not at all).
     pub ripple: Expr,
+    /// `frost:` how frosted it is inside its bevel: 1 frosted (as it was), 0
+    /// clear, and −1 `auto`, frosted only where what is behind is busy.
+    pub frost: Expr,
+    /// `smoke:` smoked glass, which takes down what is seen through it, the
+    /// brighter the more, so light words on it read (0 = none).
+    pub smoke: Expr,
+    /// `milk:` milky glass, which lifts what is seen through it, the darker the
+    /// more, so dark words on it read (0 = none).
+    pub milk: Expr,
 }
 
 /// A vertical gradient of lightness, so the body is not flat.

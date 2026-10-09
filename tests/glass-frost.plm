@@ -1,0 +1,11 @@
+// expect: ok
+scene GlassFrost {
+    surface { size: 400, 200 }
+    prop dk = 0 ~calm
+    body { color: #eceef3; glass: 100%; frost: auto; box { at: 100, 60; size: 160, 60; corner: 30 } }
+    body { color: #eceef3; glass: 100%; frost: 0; smoke: dk; milk: 1 - dk; box { at: 300, 60; size: 160, 60; corner: 30 } }
+    box { at: 100, 150; size: 120, 40; corner: 20; color: #3a3d47; glass: 100%; frost: 40%; smoke: 100% }
+    row { at: 220, 140; fill: #eceef3; glass: 100%; frost: auto; milk: 60%; padding: 8
+        text "a plate" { size: 12; color: #1d1d1f }
+    }
+}

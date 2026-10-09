@@ -591,7 +591,7 @@ body {
 }
 ```
 
-**And how it is made is yours.** Five things go next to `glass` —on a body, a
+**And how it is made is yours.** Eight things go next to `glass` —on a body, a
 loose shape or the `fill` of a layout—, all of them expressions, so they can
 follow a fact, a spring or the pointer:
 
@@ -602,6 +602,13 @@ follow a fact, a spring or the pointer:
 | `dispersion: 100%` | how far red, green and blue come apart where it bends: the rainbow on the edge (an Abbe number of 10 at `100%`, of 5 at `200%`). `0` is none |
 | `dome: 0%` | the middle as a magnifying glass: what is behind looks bigger towards the centre (negative, smaller) |
 | `ripple: 100%` | pressing the glass sends a ring of light through it that spreads and fades, flexing it as it goes by. `0` is none; with reduced motion there is none either |
+| `frost: 100%` | how frosted it is inside its bevel. `0` is clear glass: what is behind seen as it is, bent only at the edge. `auto` is frosted only where what is behind is busy —words, a window— and clear over a wallpaper, so the words behind never fight the ones on it |
+| `smoke: 0%` | smoked glass: what is seen through it is taken down, the brighter the more —a white page to about 40 %, a dark one barely—, its colour kept, so light words on it read over anything |
+| `milk: 0%` | milky glass: what is seen through it is lifted towards white, the darker the more, so dark words on it read over anything. Both are numbers, so a light and a dark look can go from one to the other: `smoke: dk; milk: 1 - dk` |
+
+`frost`, `smoke` and `milk` belong to the glass that bends (`lens`): where
+the compositor blurs instead, `frost` has no say in how much, and smoke and
+milk are a veil of black or white over its blur.
 
 A single `box` also bends without a crease: the bevel turns its corners the
 way a polished edge does, and its highlight stays an even stroke there
@@ -1464,13 +1471,13 @@ statements: surface permissions model service spring prop pose fact event text i
 library: let spring component permissions fact text model service event image figure shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate captures agent
 properties.permissions: run services
-properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple active show cursor carries grow label agent role value checked selected
+properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple frost smoke milk active show cursor carries grow label agent role value checked selected
 properties.ellipse: at radius scale
 properties.box: at from size corner
 properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
-properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple opacity show
+properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple frost smoke milk opacity show
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection
 properties.image: at size opacity tint show grow
 properties.window: at size ask opacity show
@@ -1482,7 +1489,7 @@ properties.group: pivot rotate scale move opacity size show z grow span blur glo
 properties.popup: at size open
 properties.children: move
 properties.grid: at columns gap width row show opacity
-properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple corner show opacity cursor view step content wrap size grow
+properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple frost smoke milk corner show opacity cursor view step content wrap size grow
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick rgb
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still

@@ -373,8 +373,8 @@ pub fn content_text<'t>(content: &'t Content, c: Ctx, texts: &'t [String]) -> st
 }
 
 /// What a glass says besides being glass, in its slots: how thick it is
-/// (`uv.w`), towards its light and its dome (`glass2`), and its dispersion,
-/// its ripple and its centre (`glass3`). The light goes as a direction from
+/// (`uv.w`), towards its light and its dome (`glass2`), its dispersion,
+/// its ripple and its centre (`glass3`), and its frost, smoke and milk. The light goes as a direction from
 /// the centre of the shape, which is what the shader wants: one per shape.
 fn glass_options(e: &mut [f32], g: Option<&crate::scene::Glass>, b: [f32; 4], c: Ctx) {
     let Some(g) = g else { return };
@@ -388,6 +388,12 @@ fn glass_options(e: &mut [f32], g: Option<&crate::scene::Glass>, b: [f32; 4], c:
     }
     e[55] = g.dome.eval(c);
     e[56..60].copy_from_slice(&[g.dispersion.eval(c), g.ripple.eval(c), centre.0, centre.1]);
+    // In the slots a body and a loose shape leave free: its frost (`border.w`,
+    // −1 auto), its smoke and its milk (`dest.zw`, which only a texture and
+    // a gradient's first two use).
+    e[27] = g.frost.eval(c);
+    e[38] = g.smoke.eval(c);
+    e[39] = g.milk.eval(c);
 }
 
 /// The width of a glass's bevel: a third of its short side, not going over 30 px.

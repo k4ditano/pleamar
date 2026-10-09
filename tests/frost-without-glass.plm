@@ -1,0 +1,5 @@
+// expect: error «`frost` is something glass does»
+scene FrostWithoutGlass {
+    surface { size: 200, 100 }
+    body { color: #eceef3; frost: auto; box { at: 100, 50; size: 160, 60; corner: 30 } }
+}

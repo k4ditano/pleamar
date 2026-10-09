@@ -2590,7 +2590,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// `glass` and what goes with it: `lens`, `shine`, `refraction`,
-    /// `dispersion`, `dome` and `ripple`. Without glass there is nothing for
+    /// `dispersion`, `dome`, `ripple`, `frost`, `smoke` and `milk`. Without glass there is nothing for
     /// any of them to do.
     fn glass_spec(&self, p: &mut HashMap<&str, Cur>, n: &Node) -> R<Option<Glass>> {
         let mut one = |k: &str| -> R<Option<Expr>> {
@@ -2604,6 +2604,16 @@ impl<'a> Compiler<'a> {
             }
         };
         let (glass, lens, refraction, dispersion, dome, ripple) = (one("glass")?, one("lens")?, one("refraction")?, one("dispersion")?, one("dome")?, one("ripple")?);
+        let (smoke, milk) = (one("smoke")?, one("milk")?);
+        // `frost: auto` is frosted only where what is behind is busy; else how much.
+        let frost = match p.get_mut("frost") {
+            Some(c) => {
+                let e = if c.word("auto") { Expr::K(-1.0) } else { self.expr(c)?.clamp(0.0, 1.0) };
+                c.expect_end()?;
+                Some(e)
+            }
+            None => None,
+        };
         // `shine: pointer` is the light in your hand; otherwise, a point.
         let shine = match p.get_mut("shine") {
             Some(c) => {
@@ -2621,7 +2631,7 @@ impl<'a> Compiler<'a> {
             None => None,
         };
         let Some(g) = glass else {
-            let loose = [("lens", lens.is_some()), ("shine", shine.is_some()), ("refraction", refraction.is_some()), ("dispersion", dispersion.is_some()), ("dome", dome.is_some()), ("ripple", ripple.is_some())];
+            let loose = [("lens", lens.is_some()), ("shine", shine.is_some()), ("refraction", refraction.is_some()), ("dispersion", dispersion.is_some()), ("dome", dome.is_some()), ("ripple", ripple.is_some()), ("frost", frost.is_some()), ("smoke", smoke.is_some()), ("milk", milk.is_some())];
             return match loose.iter().find(|w| w.1) {
                 Some((w, _)) => Err(CompileError::at(n.line, n.col, format!("`{w}` is something glass does, and here there is no `glass`: `glass: 100%; {w}: …`"))),
                 None => Ok(None),
@@ -2635,6 +2645,9 @@ impl<'a> Compiler<'a> {
             dispersion: dispersion.map_or(Expr::K(1.0), |e| e.max(0.0)),
             dome: dome.map_or(Expr::K(0.0), |e| e.clamp(-1.0, 1.0)),
             ripple: ripple.map_or(Expr::K(1.0), |e| e.max(0.0)),
+            frost: frost.unwrap_or(Expr::K(1.0)),
+            smoke: smoke.map_or(Expr::K(0.0), |e| e.clamp(0.0, 1.0)),
+            milk: milk.map_or(Expr::K(0.0), |e| e.clamp(0.0, 1.0)),
         }))
     }
 

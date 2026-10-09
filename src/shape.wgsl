@@ -123,6 +123,16 @@ fn ior_for(lambda2: f32, dispersion: f32) -> f32 {
     return LENS_IOR - b / 0.34527 + b / lambda2;
 }
 
+// Smoked (`smoke`) or milky (`milk`) glass: what is seen through it, taken
+// down the brighter it is, or lifted the darker it is, its colour kept.
+fn glass_tone(c: vec3<f32>, smoke: f32, milk: f32, frost: f32) -> vec3<f32> {
+    let luma = vec3<f32>(0.2126, 0.7152, 0.0722);
+    var o = c * (1.0 - smoke * 0.58 * (0.35 + 0.65 * smoothstep(0.1, 0.85, dot(c, luma))));
+    let base = mix(0.15, 0.25, frost);
+    let lift = milk * min(base + 0.4 * (1.0 - smoothstep(0.3, 0.85, dot(o, luma))), 0.85);
+    return mix(o, vec3<f32>(1.0), lift);
+}
+
 // Where the ray seen through this point comes from: the ray straight down
 // enters the glass through its surface, tilted by the bevel (`slope` towards
 // `outward`), bends by Snell's law, and crosses the glass's height `z` down to
@@ -525,24 +535,58 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
         let sharp = vec3<f32>(nr.r / max(nr.a, 0.001), ng.g / max(ng.a, 0.001), nb.b / max(nb.a, 0.001));
         let known = min(nr.a, min(ng.a, nb.a));
         // In the bevel what is bent looks fairly sharp; further in, frosted.
+        // `frost:` how frosted it is inside the bevel: 1 as it always was, 0
+        // clear —what is behind seen as it is, bent only at the edge—, and
+        // `auto` (−1) frosted only where what is behind is busy, so words
+        // behind never fight the ones on it, and clear over a wallpaper. In
+        // the bevel what is bent looks fairly sharp whatever it says.
+        var frost = clamp(el.border.w, 0.0, 1.0);
+        if (el.border.w < -0.5) {
+            // Busy for `auto` is what blurring takes away: how far the sharp
+            // backdrop is from the frosted one, here and at four points round
+            // it (a frosted text is a flat grey, so how much the frosted one
+            // varies says nothing of it).
+            // Wide apart: a wallpaper's one sharp edge weighs in a single spot,
+            // where text has edges in all of them.
+            let reach = 26.0 * u.header.w;
+            let spots = array<vec2<f32>, 5>(vec2<f32>(0.0), vec2<f32>(reach, reach * 0.5), vec2<f32>(-reach, reach * 0.5), vec2<f32>(reach * 0.5, -reach), vec2<f32>(-reach * 0.5, -reach));
+            var busy = 0.0;
+            for (var k = 0; k < 5; k++) {
+                let at = (q + spots[k]) / size;
+                let ms = textureSampleLevel(backdrop_sharp, backdrop_sampler, at, 0.0);
+                let mf = textureSampleLevel(backdrop_blurred, backdrop_sampler, at, 0.0);
+                busy += abs(dot(ms.rgb / max(ms.a, 0.001) - mf.rgb / max(mf.a, 0.001), vec3<f32>(0.299, 0.587, 0.114)));
+            }
+            frost = smoothstep(0.02, 0.045, busy * 0.2);
+        }
         let in_bevel = 1.0 - t_rim;
-        let background = mix(frosted, sharp, smoothstep(0.0, 0.6, in_bevel) * 0.85 * known);
+        var background = mix(frosted, sharp, max(smoothstep(0.0, 0.6, in_bevel) * 0.85, 1.0 - frost) * known);
+        // `smoke:` and `milk:` (after True Glass for Omarchy's dark and light
+        // glass): smoked, what is seen through is taken down, the brighter the
+        // more —a white backdrop to about 40 %, a dark one barely—, keeping
+        // its colour, so light words on it read over anything; milky, it is
+        // lifted towards white, the darker the more, so dark words read.
+        // A frosted glass takes a little more milk.
+        let raw_gray = dot(background, vec3<f32>(0.299, 0.587, 0.114));
+        background = glass_tone(background, el.dest.z, el.dest.w, frost);
         // A glass livens up a little what it lets through.
         let gray = dot(background, vec3<f32>(0.299, 0.587, 0.114));
         let vivid = clamp(mix(vec3<f32>(gray), background, 1.18), vec3<f32>(0.0), vec3<f32>(1.0));
-        // Over something bright, or over something with a lot of detail —text,
-        // lines—, more tint: what is written on top can still be read. Apple
-        // puts it this way: the shadow of the glass rises over text. The detail
-        // is how much the frosted background varies a few steps from here,
-        // which on a flat background is nothing.
+        // Over something bright, or over something with a lot of detail,
+        // more tint: what is written on top can still be read. Apple puts it
+        // this way: the shadow of the glass rises over text. A clear glass
+        // takes less of it: that it is clear is what it was asked for.
         let bright = smoothstep(0.45, 0.9, gray);
+        // How busy what is behind is —text, lines, a window—: how much the
+        // frosted background varies a few steps from here, which on a flat
+        // background is nothing.
         let step_px = 14.0 * u.header.w;
         let around = array<vec2<f32>, 4>(vec2<f32>(step_px, 0.0), vec2<f32>(-step_px, 0.0), vec2<f32>(0.0, step_px), vec2<f32>(0.0, -step_px));
         var variation = 0.0;
         for (var k = 0; k < 4; k++) {
             let m = textureSampleLevel(backdrop_blurred, backdrop_sampler, (q + around[k]) / size, 0.0);
             let l = dot(m.rgb / max(m.a, 0.001), vec3<f32>(0.299, 0.587, 0.114));
-            variation += abs(l - gray);
+            variation += abs(l - raw_gray);
         }
         let detail = smoothstep(0.03, 0.14, variation * 0.25);
         // The glass, with everything: tint, the darkening over text, and its
@@ -552,7 +596,7 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
         // got multiplied by 25, the background never came out and the ball
         // stayed black inside.
         var glass_color = mix(vivid, tone, LENS_TINT);
-        glass_color = mix(glass_color, tone, max(bright * 0.5, detail * 0.55));
+        glass_color = mix(glass_color, tone, max(bright * 0.5, detail * 0.55) * (0.35 + 0.65 * frost));
         // The bevel, tilted away from the eye, mirrors what is round the glass
         // (Fresnel, as Schlick puts it): a little on the slope, most where it
         // turns over at the edge, and nothing on the flat top. It starts a
@@ -576,7 +620,7 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
                     let m = textureSampleLevel(backdrop_sharp, backdrop_sampler, (eo + o) / size, 0.0);
                     env += m.rgb / max(m.a, 0.001) * step(0.5, m.a);
                 }
-                glass_color = mix(glass_color, env * 0.25, fw);
+                glass_color = mix(glass_color, glass_tone(env * 0.25, el.dest.z, el.dest.w, frost), fw);
             }
         }
         glass_color = mix(glass_color, vec3<f32>(1.0), clamp(shine + finger_light, 0.0, 1.0));
@@ -600,6 +644,10 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
         // Without it, the fill is a tint: it lets what is behind show through
         // (which the compositor blurs) and keeps its colour; and on top, its light.
         c = over(c, tone, coverage(d) * alpha * mix(1.0, 0.36, glass));
+        // Smoke and milk over what the compositor blurs, which we never see:
+        // a veil of black or of white, as near as it gets.
+        c = over(c, vec3<f32>(0.0), coverage(d) * alpha * glass * el.dest.z * 0.35);
+        c = over(c, vec3<f32>(1.0), coverage(d) * alpha * glass * el.dest.w * 0.3);
         if (glass > 0.0) {
             c = over(c, vec3<f32>(1.0), clamp(shine + finger_light, 0.0, 1.0) * glass * coverage(d) * alpha);
         }
