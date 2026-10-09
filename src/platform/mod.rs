@@ -541,9 +541,10 @@ pub fn ask(_: &str, _: &str, _: std::time::Duration) -> Result<String, String> {
     Err("this system has nowhere to receive commands yet".into())
 }
 
-/// Tell a running scene something. Without a name, to the only one there is.
+/// Tell a running scene something: each command a line, on one connection, so
+/// they are run in order. Without a name, to the only one there is.
 #[cfg(unix)]
-pub fn send(scene: Option<&str>, command: &str) -> Result<(), String> {
+pub fn send(scene: Option<&str>, commands: &[String]) -> Result<(), String> {
     use std::io::Write;
     let path = match scene {
         Some(e) => command_socket_path(e).ok_or("I don't know where the sockets are")?,
@@ -558,11 +559,13 @@ pub fn send(scene: Option<&str>, command: &str) -> Result<(), String> {
         }
     };
     let mut s = std::os::unix::net::UnixStream::connect(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    writeln!(s, "{command}").map_err(|e| e.to_string())?;
+    for command in commands {
+        writeln!(s, "{command}").map_err(|e| e.to_string())?;
+    }
     // Everything has been said: if it was a question, now comes whatever they answer.
     let _ = s.shutdown(std::net::Shutdown::Write);
     // A `wait` waits up to a minute; a `watch` talks for as long as it was asked.
-    let _ = s.set_read_timeout(if command.starts_with("watch") { None } else { Some(std::time::Duration::from_secs(65)) });
+    let _ = s.set_read_timeout(if commands.iter().any(|c| c.starts_with("watch")) { None } else { Some(std::time::Duration::from_secs(65)) });
     // Line by line, as it comes: a `watch` is read while it happens.
     for line in std::io::BufRead::lines(std::io::BufReader::new(s)).map_while(Result::ok) {
         println!("{line}");
@@ -574,7 +577,7 @@ pub fn send(scene: Option<&str>, command: &str) -> Result<(), String> {
 #[cfg(not(unix))]
 pub fn listen_for_commands(_: &str, _: Commands) {}
 #[cfg(not(unix))]
-pub fn send(_: Option<&str>, _: &str) -> Result<(), String> {
+pub fn send(_: Option<&str>, _: &[String]) -> Result<(), String> {
     Err("this system has nowhere to receive commands yet: the named pipe is missing".into())
 }
 

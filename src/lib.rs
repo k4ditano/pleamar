@@ -63,7 +63,7 @@ const HELP: &str = "pleamar [options]
                       —use the desktop as usual meanwhile— and writes what it saw, with the
                       machine's details, to a file to send us when something stutters.
                       «--seconds N» (30), «--out FILE»
-  --say [SCENE] CMD   says something to a running scene and exits. Commands:
+  --say [SCENE] CMD…  says something to a running scene and exits; several commands, in order. Commands:
                       «emit event [n]», «fact name value», «text name whatever it says», «submit input what»
                       (as if typed there and Enter pressed), «focus input», «get name» (answers), «quit»
   --screen NAMES      «all», or monitors separated by commas (by default, whatever the scene asks for).
@@ -106,10 +106,12 @@ fn args(given: Vec<String>) -> Args {
         match op.as_str() {
             "--scene" => a.scene = value(),
             "--say" => {
-                let (a1, a2) = (value(), it.next());
-                let r = match &a2 {
-                    Some(command) => platform::send(Some(&a1), command),
-                    None => platform::send(None, &a1),
+                // Several commands after the scene go down one connection, one line each, and
+                // the scene runs them in that order: a popup's texts are in place before its emit.
+                let (a1, rest) = (value(), it.by_ref().collect::<Vec<String>>());
+                let r = match rest.is_empty() {
+                    false => platform::send(Some(&a1), &rest),
+                    true => platform::send(None, std::slice::from_ref(&a1)),
                 };
                 std::process::exit(match r {
                     Ok(()) => 0,
