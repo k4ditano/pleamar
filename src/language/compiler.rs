@@ -860,11 +860,13 @@ impl<'a> Compiler<'a> {
     /// scene's, one for all the copies, and so they stay.
     /// It is not an alias —a `prop glow.$k` may share the zone's name, and must
     /// keep meaning the prop—: whoever looks for a zone tries the marked name
-    /// first (`zone_named`).
+    /// first (`zone_named`). A name of the `repeat`'s own (`hit`, which is
+    /// `hit#k1` in its second turn) takes it too: every copy's second turn
+    /// made a `hit#k1`, and its rules were heard on none of them.
     fn declare_zone(&mut self, local: &str) -> String {
         let g = self.declare(local);
         match self.screen_mark() {
-            Some(mark) if local.contains('$') => format!("{g}{mark}"),
+            Some(mark) if !g.contains(&mark) => format!("{g}{mark}"),
             _ => g,
         }
     }
@@ -876,10 +878,8 @@ impl<'a> Compiler<'a> {
         let interpolated = self.interpolate(local);
         let suffix = self.scopes.last().map(|e| e.suffix.clone()).unwrap_or_default();
         let mut g = if !suffix.is_empty() && !local.contains('$') { format!("{interpolated}{suffix}") } else { interpolated.clone() };
-        if local.contains('$') {
-            if let Some(mark) = self.screen_mark() {
-                g = format!("{g}{mark}");
-            }
+        if let Some(mark) = self.screen_mark().filter(|m| !g.contains(m.as_str())) {
+            g = format!("{g}{mark}");
         }
         let spring = Spring::at(0.14);
         let mut made = Vec::new();
