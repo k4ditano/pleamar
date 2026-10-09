@@ -273,6 +273,8 @@ struct Compiler<'a> {
     /// What a `strict` component has read from the scene without asking for it: (component, name).
     unrequested: std::cell::RefCell<Vec<(String, String, (usize, usize))>>,
     unwatched: std::cell::Cell<bool>,
+    /// The lines of `let`s already said to hide a fact or a prop (once, not once per monitor).
+    hiding_noted: std::cell::RefCell<std::collections::HashSet<usize>>,
     /// Reading a text's `letter_*` property: `letter` and `letters` mean something.
     in_letters: std::cell::Cell<bool>,
     /// `translations`: each language with its table, original → translated. And, per
@@ -388,7 +390,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -1944,6 +1946,19 @@ impl<'a> Compiler<'a> {
                             }
                         }
                         self.let_lines.insert(name.clone(), n.line);
+                    }
+                    // A `let` with the name of a fact or a prop of the scene hid it,
+                    // without a word, from everything that read it: Bahía's
+                    // Settings measured its pane with `let pw`, and the dialog that
+                    // asks before restarting —`fact pw`— took 496 for "open".
+                    // (In a component or a `repeat` the `let` is theirs.) Said, not
+                    // refused: a scene that has one still loads.
+                    if self.scopes.iter().all(|e| e.suffix.starts_with("#screen")) && self.hiding_noted.borrow_mut().insert(n.line) {
+                        let what = if self.facts.contains_key(&name) { Some("fact") } else if self.props.contains_key(&name) { Some("prop") } else { None };
+                        if let Some(what) = what {
+                            let file = self.files.get(n.line / super::PER_FILE).map_or("", String::as_str);
+                            eprintln!("note   · {file}:{}: there is already a `{what} {name}`: this `let` hides it from everything that reads `{name}` after it. Give one of them another name", n.line % super::PER_FILE);
+                        }
                     }
                     // A group does not keep its `let`s: one written in it is seen
                     // by everything after it, outside too. One with the name of a
