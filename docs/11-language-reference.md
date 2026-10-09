@@ -538,9 +538,16 @@ a softer one on the opposite side, and the glass getting lighter towards its
 edge, like glass seen side-on; all of it comes from where the edge points,
 which a signed distance knows. And the body's `shadow` stops showing through
 it: only around it. And **it bends what is behind it, like a lens**:
-near the edge the background is pulled in, following a bevel with the profile
-of a squircle and Snell's law (index 1.5), a touch differently for red, green
-and blue; further in it is frosted. A bigger piece of glass bends more, as
+near the edge the background is pulled in: the ray seen through each point
+enters the glass through a bevel that is vertical at the edge and eases into
+the flat top, bends there by Snell's law (index 1.5) and crosses the glass's
+height to what is behind; red, green and blue each bend by their own index,
+so a bright edge splits into a faint rainbow where the bevel bends hard. The
+bend eases into a limit of half the bevel, so where two edges meet the view
+never folds back on itself, and a square corner is cut like a glass block's,
+its bend fading out towards the point. The bevel also mirrors a little of what
+is round the glass, most where it turns over at the edge. Further in it is
+frosted. A bigger piece of glass bends more, as
 thicker glass would. Pressing it lights it from the pointer, and over something
 bright it tints itself a little more so what is written on it still reads. To
 bend the background pleamar needs its pixels, and on Wayland only the
@@ -592,7 +599,7 @@ follow a fact, a spring or the pointer:
 | --- | --- |
 | `shine: x, y` | where the light comes from: a point in the scene. The edge that faces it lights up, and moving the shape or the point moves the highlight round the rim. `shine: pointer` is the light in your hand. Without it, from the top left |
 | `refraction: 100%` | how thick the glass is: how much its edge bends what is behind. `0` is flat glass, `200%` a thick lens |
-| `dispersion: 100%` | how far red, green and blue come apart where it bends: the rainbow on the edge. `0` is none |
+| `dispersion: 100%` | how far red, green and blue come apart where it bends: the rainbow on the edge (an Abbe number of 10 at `100%`, of 5 at `200%`). `0` is none |
 | `dome: 0%` | the middle as a magnifying glass: what is behind looks bigger towards the centre (negative, smaller) |
 | `ripple: 100%` | pressing the glass sends a ring of light through it that spreads and fades, flexing it as it goes by. `0` is none; with reduced motion there is none either |
 

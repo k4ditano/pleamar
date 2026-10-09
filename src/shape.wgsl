@@ -89,22 +89,55 @@ const LENS_ALPHA: f32 = 0.88;
 const LENS_TINT: f32 = 0.22;
 // The thickness of the glass, in bevel widths: how much it bends.
 const LENS_THICKNESS: f32 = 1.4;
+// Its refractive index (crown glass), and how much of what is around the rim
+// mirrors (Schlick's F0, ((n − 1) / (n + 1))²).
+const LENS_IOR: f32 = 1.5;
+const LENS_F0: f32 = 0.04;
 
-// How much what is behind shifts at a distance `inside` from the edge, with a
-// bevel of width `bevel`. The edge has the profile of a "squircle",
-// ⁴√(1 − (1 − x)⁴): it rises almost vertically and flattens inwards, and in the
-// centre it bends nothing. A ray coming straight down enters through that
-// slope and bends according to Snell (index 1.5); what shifts is the thickness
-// it has left times the tangent of how much it has bent.
-fn displacement(inside: f32, bevel: f32) -> f32 {
-    let x = clamp(inside / bevel, 0.0, 1.0);
-    let v = 1.0 - x;
-    let v4 = v * v * v * v;
-    let height = pow(max(1.0 - v4, 0.0), 0.25);
-    let slope = v * v * v * pow(max(1.0 - v4, 1e-4), -0.75);
-    let incoming = atan(slope);
-    let outgoing = asin(sin(incoming) / 1.5);
-    return height * bevel * LENS_THICKNESS * tan(incoming - outgoing);
+// The height of the bevel across it, t from 0 at the edge to 1 where the flat
+// top begins: (1 − (1 − t)³)^⅓, vertical at the edge and easing into the top
+// over the whole bevel. (A squircle's fourth power bent nearly all of the view
+// in the bevel's outer third and stopped short: where it stopped read as a
+// line round the inside of the glass.) The profile, the cap below and the
+// rim's reflection follow True Glass for Omarchy, by Eddie175, itself on
+// hyprnux's HyprGlass.
+fn rim_height(t: f32) -> f32 {
+    let s = 1.0 - t;
+    return pow(max(1.0 - s * s * s, 0.0), 1.0 / 3.0);
+}
+
+// Its slope, dheight/dt.
+fn rim_slope(t: f32) -> f32 {
+    let s = 1.0 - t;
+    return s * s * pow(max(1.0 - s * s * s, 1e-4), -2.0 / 3.0);
+}
+
+// The index of a colour of light, for a dispersion: Cauchy's n = A + B/λ²,
+// fitted to n at the sodium line and to an Abbe number. `dispersion: 100%` is
+// an Abbe number of 10 —a lot more than real glass, which would show none at
+// this size—; 0 is none.
+fn ior_for(lambda2: f32, dispersion: f32) -> f32 {
+    if (dispersion <= 0.0) { return LENS_IOR; }
+    let abbe = 10.0 / dispersion;
+    let b = (LENS_IOR - 1.0) / (abbe * 1.9105);
+    return LENS_IOR - b / 0.34527 + b / lambda2;
+}
+
+// Where the ray seen through this point comes from: the ray straight down
+// enters the glass through its surface, tilted by the bevel (`slope` towards
+// `outward`), bends by Snell's law, and crosses the glass's height `z` down to
+// what is behind. Eased into `cap` —half the bevel—, not clipped at it: at a
+// corner the bends of two edges add up, and uncapped the view folded back on
+// itself into a dark curl; clipped, it went from growing to flat in a pixel, a
+// crease along the glass.
+fn refract_offset(outward: vec2<f32>, slope: f32, ior: f32, z: f32, cap: f32) -> vec2<f32> {
+    let n = normalize(vec3<f32>(outward * slope, 1.0));
+    let t = refract(vec3<f32>(0.0, 0.0, -1.0), n, 1.0 / ior);
+    if (t.z > -1e-3) { return vec2<f32>(0.0); }
+    let o = t.xy * (z / -t.z);
+    let l = length(o);
+    if (l < 1e-4) { return o; }
+    return o * (cap * tanh(l / max(cap, 1e-3)) / l);
 }
 
 // How deep a point is inside a rounded box, measured so the bevel has no
@@ -390,12 +423,28 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
     // pixels and the highlight pinches into a bright dot there, while a
     // rounder one turns it gently and the lit edge stays an even stroke.
     var lens_inside = inside;
+    // How far a square corner's point is (its bend fades out there).
+    var mitre_reach = 1e6;
     var lens_normal = normal;
     var light_normal = normal;
     let lone = shapes[first];
     if (n == 1u && u32(lone.a.x) == RECT && lone.a.z <= 0.0 && lone.b.z >= 0.5 && lone.b.w >= 0.5) {
         let lp = rotate_point(to_local(p, lone.t0, lone.t1), lone.b.xy, lone.c.y) - lone.b.xy;
-        let depth = crease_free_depth(lp, lone.b.zw, lone.c.x) * lone.t1.z;
+        var depth = crease_free_depth(lp, lone.b.zw, lone.c.x) * lone.t1.z;
+        // A square corner, cut as a glass block's: the contours above close to
+        // a point on its diagonal, and the bend converging there drew a spike
+        // and gathered what is behind into a dark curl. Its depth is a 4-norm
+        // of the distances to its two edges instead —the edges straight, the
+        // contours rounding off near the diagonal—, and its bend fades out
+        // towards the corner's point.
+        if (lone.c.x < 1.0) {
+            let e = lone.b.zw - abs(lp);
+            if (e.x > 0.0 && e.y > 0.0) {
+                let q = e / min(e.x, e.y);
+                depth = min(e.x, e.y) * pow(pow(q.x, -4.0) + pow(q.y, -4.0), -0.25) * lone.t1.z;
+            }
+            mitre_reach = max(max(e.x, e.y), 0.0) * lone.t1.z;
+        }
         let gd = -vec2<f32>(dpdx(depth), dpdy(depth));
         if (depth > 0.0) {
             lens_inside = depth;
@@ -439,30 +488,44 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
         // the bevel, frosted, with a little of its tint. Red, green and blue
         // bend a hair differently: the colour fringe of a glass edge.
         let bevel = select(16.0, el.uv.y, el.uv.y > 0.5);
-        // A glass that appears does not fade in: it starts bending the light.
-        // `refraction:` is how thick it is.
-        let shift = displacement(lens_inside, bevel) * u.header.w * glass * el.uv.w;
+        // The bevel: how high the glass is here and how steep. `refraction:`
+        // is how thick it is; a glass that appears does not fade in, it
+        // starts bending the light.
+        let t_rim = clamp(lens_inside / bevel, 0.0, 1.0);
+        let thick = LENS_THICKNESS * bevel * glass * el.uv.w;
+        let z = thick * rim_height(t_rim);
+        let slope = select(0.0, min(thick * rim_slope(t_rim) / bevel, 40.0), t_rim < 1.0) * smoothstep(0.0, 1.5 * bevel, mitre_reach);
+        let cap = 0.5 * bevel;
         let size = u.header.xy * u.header.w;
         // `dome:` a magnifying glass in the middle: towards the centre, it
         // shows what is behind a little bigger. It fades out in the bevel,
         // which already bends its own way.
-        let flat = clamp(lens_inside / bevel, 0.0, 1.0);
+        let flat = t_rim;
         let dome = (el.glass3.zw - p) * el.glass2.w * 0.14 * flat * u.header.w * glass;
-        let q = e.pos.xy - lens_normal * shift + dome + ripple_push * u.header.w;
-        let tq = lens_normal * shift * 0.06 * el.glass3.x;
+        let base = e.pos.xy + dome + ripple_push * u.header.w;
+        // Red, green and blue each bend as their own index says, so where
+        // the bevel bends hard a bright edge splits into a faint rainbow
+        // (red 611 nm, green 549, blue 464).
+        let q = base + refract_offset(lens_normal, slope, ior_for(0.3014, el.glass3.x), z, cap) * u.header.w;
+        var qr = q;
+        var qb = q;
+        if (el.glass3.x > 0.0 && slope > 0.01) {
+            qr = base + refract_offset(lens_normal, slope, ior_for(0.3733, el.glass3.x), z, cap) * u.header.w;
+            qb = base + refract_offset(lens_normal, slope, ior_for(0.2153, el.glass3.x), z, cap) * u.header.w;
+        }
         // What is behind comes in premultiplied alpha —what is unknown, under
         // a text, has alpha 0 and weighs nothing—: it is divided by it.
-        let br = textureSampleLevel(backdrop_blurred, backdrop_sampler, (q - tq) / size, 0.0);
+        let br = textureSampleLevel(backdrop_blurred, backdrop_sampler, qr / size, 0.0);
         let bg = textureSampleLevel(backdrop_blurred, backdrop_sampler, q / size, 0.0);
-        let bb = textureSampleLevel(backdrop_blurred, backdrop_sampler, (q + tq) / size, 0.0);
+        let bb = textureSampleLevel(backdrop_blurred, backdrop_sampler, qb / size, 0.0);
         let frosted = vec3<f32>(br.r / max(br.a, 0.001), bg.g / max(bg.a, 0.001), bb.b / max(bb.a, 0.001));
-        let nr = textureSampleLevel(backdrop_sharp, backdrop_sampler, (q - tq) / size, 0.0);
+        let nr = textureSampleLevel(backdrop_sharp, backdrop_sampler, qr / size, 0.0);
         let ng = textureSampleLevel(backdrop_sharp, backdrop_sampler, q / size, 0.0);
-        let nb = textureSampleLevel(backdrop_sharp, backdrop_sampler, (q + tq) / size, 0.0);
+        let nb = textureSampleLevel(backdrop_sharp, backdrop_sampler, qb / size, 0.0);
         let sharp = vec3<f32>(nr.r / max(nr.a, 0.001), ng.g / max(ng.a, 0.001), nb.b / max(nb.a, 0.001));
         let known = min(nr.a, min(ng.a, nb.a));
         // In the bevel what is bent looks fairly sharp; further in, frosted.
-        let in_bevel = 1.0 - clamp(lens_inside / bevel, 0.0, 1.0);
+        let in_bevel = 1.0 - t_rim;
         let background = mix(frosted, sharp, smoothstep(0.0, 0.6, in_bevel) * 0.85 * known);
         // A glass livens up a little what it lets through.
         let gray = dot(background, vec3<f32>(0.299, 0.587, 0.114));
@@ -490,6 +553,32 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
         // stayed black inside.
         var glass_color = mix(vivid, tone, LENS_TINT);
         glass_color = mix(glass_color, tone, max(bright * 0.5, detail * 0.55));
+        // The bevel, tilted away from the eye, mirrors what is round the glass
+        // (Fresnel, as Schlick puts it): a little on the slope, most where it
+        // turns over at the edge, and nothing on the flat top. It starts a
+        // couple of pixels in: the edge's partly covered pixels would mirror
+        // almost everything.
+        if (slope > 0.01) {
+            let cv = 1.0 / sqrt(1.0 + slope * slope);
+            let m1 = 1.0 - cv;
+            let m2 = m1 * m1;
+            let fr = LENS_F0 + (1.0 - LENS_F0) * m2 * m2 * m1;
+            let edge_in = smoothstep(0.0, 2.0, lens_inside * u.header.w);
+            let fw = clamp(fr * 0.9, 0.0, 0.85) * edge_in;
+            if (fw > 0.002) {
+                // Four taps close together, outside the glass: a polished
+                // surface mirrors sharply.
+                let eo = e.pos.xy + lens_normal * 20.0 * u.header.w;
+                let es = 6.0 * u.header.w;
+                var env = vec3<f32>(0.0);
+                for (var k = 0; k < 4; k++) {
+                    let o = vec2<f32>(select(-es, es, (k & 1) == 1), select(-es, es, k >= 2));
+                    let m = textureSampleLevel(backdrop_sharp, backdrop_sampler, (eo + o) / size, 0.0);
+                    env += m.rgb / max(m.a, 0.001) * step(0.5, m.a);
+                }
+                glass_color = mix(glass_color, env * 0.25, fw);
+            }
+        }
         glass_color = mix(glass_color, vec3<f32>(1.0), clamp(shine + finger_light, 0.0, 1.0));
         // Partly glass, partly its fill: as without a lens, where less glass
         // is more tint. It covers as much as its opacity says whatever the
