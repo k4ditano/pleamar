@@ -2043,7 +2043,10 @@ impl<'a> Compiler<'a> {
                     // `screen.width`…—: it is worth something different in each copy, and a
                     // property computed once would be the first one's for
                     // all of them. It stays substituted, which is what makes it each one's own.
-                    let per_copy = self.scopes.is_empty() && e.reads(|p| self.e.facts.get(p.0 as usize).is_some_and(|(n, _)| n.starts_with("screen.")));
+                    // Only a scene that is copied per monitor (or has several surfaces) needs it: with one surface, `screen.*`
+                    // is worth the same everywhere, and a let that reads it can be computed once like any other.
+                    let has_copies = self.e.surfaces.iter().any(|s| matches!(s.screens, Screens::Number(_))) || self.e.surfaces.len() > 1;
+                    let per_copy = has_copies && self.scopes.is_empty() && e.reads(|p| self.e.facts.get(p.0 as usize).is_some_and(|(n, _)| n.starts_with("screen.")));
                     // The same one in every monitor's copy —it reads nothing of
                     // its copy— is one property: a property per copy was the
                     // same work once per monitor, and a rule naming it read
