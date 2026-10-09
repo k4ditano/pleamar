@@ -46,7 +46,7 @@ Instantiated types, with the number of times they appear across the two configur
 | `WlSessionLock` | 1 | ✅ `kind: lock` (ext-session-lock), on every monitor or those `screens:` names |
 | `LazyLoader` | 1 | ⬜ · §2 |
 | `GlobalShortcut` | 1 | 🟡 a compositor bind that calls `--say` |
-| `PwObjectTracker` | 1 | ✅ `audio` service (through `wpctl`, though, not native) |
+| `PwObjectTracker` | 1 | ✅ `audio` service, speaking PulseAudio's protocol directly (PipeWire too, through pipewire-pulse); `wpctl` only when there is no server |
 | `ClippingRectangle` | 1 | ✅ `clip` |
 
 And what they use from the `Quickshell` object: `env` (82) ✅ `sys.ask("env", …)`, with permission; `shellPath` (32) ✅ `sys.ask("files.folder")` and `require`, which are already relative to whoever writes them; `screens` (31) ✅ `screens: each` and `screen.name`; `execDetached` (24) ✅ `spawn`; `iconPath` (18) ✅ `image x = icon "…"`; `clipboardText` (6) ✅ `sys.ask("clipboard")`.
