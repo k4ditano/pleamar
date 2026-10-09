@@ -22,6 +22,7 @@ const FROST: f32 = 8.0;
 pub struct Pipelines {
     unmix: wgpu::RenderPipeline,
     blur: wgpu::RenderPipeline,
+    own: wgpu::RenderPipeline,
     linear: wgpu::Sampler,
 }
 
@@ -53,7 +54,7 @@ impl Pipelines {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        Pipelines { unmix: pipeline("unmix"), blur: pipeline("blur"), linear }
+        Pipelines { unmix: pipeline("unmix"), blur: pipeline("blur"), own: pipeline("own"), linear }
     }
 }
 
@@ -236,25 +237,6 @@ impl Lens {
         // out as a copy of the current one, and only the inside is written.
         let new = self.current ^ 1;
         enc.copy_texture_to_texture(self.backgrounds[self.current].0.as_image_copy(), self.backgrounds[new].0.as_image_copy(), wgpu::Extent3d { width: lw, height: lh, depth_or_array_layers: 1 });
-        let pass = |enc: &mut wgpu::CommandEncoder, pipeline: &wgpu::RenderPipeline, target: &wgpu::TextureView, group: &wgpu::BindGroup, scissor: (u32, u32, u32, u32)| {
-            let mut p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            p.set_pipeline(pipeline);
-            p.set_bind_group(0, group, &[]);
-            p.set_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3);
-            p.draw(0..3, 0..1);
-        };
         let unmix_group = dev.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &t.unmix.get_bind_group_layout(0),
@@ -267,33 +249,101 @@ impl Lens {
             ],
         });
         pass(enc, &t.unmix, &self.backgrounds[new].1, &unmix_group, scissor);
-        // Frost, at half resolution: horizontal into `half`, vertical into `blurred`.
-        let (mw, mh) = (self.half.0.width(), self.half.0.height());
-        let sigma = FROST * scale * 0.5;
-        for (k, step) in [[1.0f32, 0.0], [0.0, 1.0]].iter().enumerate() {
-            g.queue.write_buffer(&self.blur_uniforms[k], 0, bytemuck::cast_slice(&[step[0], step[1], sigma, 0.0, mw as f32, mh as f32, 0.0, 0.0]));
-        }
-        let blur = |source: &wgpu::TextureView, u: &wgpu::Buffer| {
-            dev.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &t.blur.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(source) },
-                    wgpu::BindGroupEntry { binding: 1, resource: u.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&t.linear) },
-                ],
-            })
-        };
-        // The clip, halved, and with the margin the gaussian reaches.
-        let m = (sigma * 2.5).ceil() as u32 + 1;
-        let x0 = (scissor.0 / 2).saturating_sub(m);
-        let y0 = (scissor.1 / 2).saturating_sub(m);
-        let x1 = ((scissor.0 + scissor.2).div_ceil(2) + m).min(mw);
-        let y1 = ((scissor.1 + scissor.3).div_ceil(2) + m).min(mh);
-        let half_clip = (x0, y0, x1.saturating_sub(x0).max(1), y1.saturating_sub(y0).max(1));
-        pass(enc, &t.blur, &self.half.1, &blur(&self.backgrounds[new].1, &self.blur_uniforms[0]), half_clip);
-        pass(enc, &t.blur, &self.blurred.1, &blur(&self.half.1, &self.blur_uniforms[1]), half_clip);
+        frost(g, t, enc, &self.backgrounds[new].1, &self.half, &self.blurred, &self.blur_uniforms, scissor, scale);
         self.current = new;
+    }
+}
+
+/// One full-screen triangle with `pipeline`, clipped to `scissor`, onto what is there.
+fn pass(enc: &mut wgpu::CommandEncoder, pipeline: &wgpu::RenderPipeline, target: &wgpu::TextureView, group: &wgpu::BindGroup, scissor: (u32, u32, u32, u32)) {
+    let mut p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: None,
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: target,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    p.set_pipeline(pipeline);
+    p.set_bind_group(0, group, &[]);
+    p.set_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3);
+    p.draw(0..3, 0..1);
+}
+
+/// Frosts the sharp background in `scissor` (real pixels), at half
+/// resolution: horizontal into `half`, vertical into `blurred`.
+#[allow(clippy::too_many_arguments)]
+fn frost(g: &crate::gpu::Gpu, t: &Pipelines, enc: &mut wgpu::CommandEncoder, sharp: &wgpu::TextureView, half: &(wgpu::Texture, wgpu::TextureView), blurred: &(wgpu::Texture, wgpu::TextureView), uniforms: &[wgpu::Buffer; 2], scissor: (u32, u32, u32, u32), scale: f32) {
+    let dev = &g.device;
+    let (mw, mh) = (half.0.width(), half.0.height());
+    let sigma = FROST * scale * 0.5;
+    for (k, step) in [[1.0f32, 0.0], [0.0, 1.0]].iter().enumerate() {
+        g.queue.write_buffer(&uniforms[k], 0, bytemuck::cast_slice(&[step[0], step[1], sigma, 0.0, mw as f32, mh as f32, 0.0, 0.0]));
+    }
+    let blur = |source: &wgpu::TextureView, u: &wgpu::Buffer| {
+        dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &t.blur.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(source) },
+                wgpu::BindGroupEntry { binding: 1, resource: u.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&t.linear) },
+            ],
+        })
+    };
+    // The clip, halved, and with the margin the gaussian reaches.
+    let m = (sigma * 2.5).ceil() as u32 + 1;
+    let x0 = (scissor.0 / 2).saturating_sub(m);
+    let y0 = (scissor.1 / 2).saturating_sub(m);
+    let x1 = ((scissor.0 + scissor.2).div_ceil(2) + m).min(mw);
+    let y1 = ((scissor.1 + scissor.3).div_ceil(2) + m).min(mh);
+    let half_clip = (x0, y0, x1.saturating_sub(x0).max(1), y1.saturating_sub(y0).max(1));
+    pass(enc, &t.blur, &half.1, &blur(sharp, &uniforms[0]), half_clip);
+    pass(enc, &t.blur, &blurred.1, &blur(&half.1, &uniforms[1]), half_clip);
+}
+
+/// The lens of a scene that is the whole screen —pleamar-wm's—: there is no
+/// compositor to ask what is behind, because what is behind is what the scene
+/// painted itself before the glass (the wallpaper, the windows). Right before
+/// a glass is painted, that is copied and frosted, and the glass bends it like
+/// any other background.
+pub struct Own {
+    pub px: (u32, u32),
+    sharp: (wgpu::Texture, wgpu::TextureView),
+    half: (wgpu::Texture, wgpu::TextureView),
+    blurred: (wgpu::Texture, wgpu::TextureView),
+    blur_uniforms: [wgpu::Buffer; 2],
+    /// What the shapes shader reads.
+    pub group: wgpu::BindGroup,
+}
+
+impl Own {
+    pub fn new(g: &crate::gpu::Gpu, px: (u32, u32)) -> Own {
+        use wgpu::TextureUsages as U;
+        let d = &g.device;
+        let half = (px.0.div_ceil(2), px.1.div_ceil(2));
+        let uniforms = || d.create_buffer(&wgpu::BufferDescriptor { label: Some("blur"), size: 32, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let sharp = texture(d, "painted below the glass", px, wgpu::TextureFormat::Rgba8Unorm, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING);
+        let blurred = texture(d, "blurred", half, wgpu::TextureFormat::Rgba8Unorm, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING);
+        let group = g.backdrop_group(&sharp.1, &blurred.1);
+        Own { px, sharp, half: texture(d, "half", half, wgpu::TextureFormat::Rgba8Unorm, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING), blurred, blur_uniforms: [uniforms(), uniforms()], group }
+    }
+
+    /// What has been painted so far in `painted`, in `scissor` (real pixels),
+    /// becomes what is behind the glass.
+    pub fn take(&self, g: &crate::gpu::Gpu, t: &Pipelines, enc: &mut wgpu::CommandEncoder, painted: &wgpu::TextureView, scissor: (u32, u32, u32, u32), scale: f32) {
+        let group = g.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &t.own.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(painted) }],
+        });
+        pass(enc, &t.own, &self.sharp.1, &group, scissor);
+        frost(g, t, enc, &self.sharp.1, &self.half, &self.blurred, &self.blur_uniforms, scissor, scale);
     }
 }
 

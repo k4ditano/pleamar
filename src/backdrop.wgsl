@@ -60,6 +60,14 @@ fn unmix(e: VertexOut) -> @location(0) vec4<f32> {
     return vec4<f32>(clamp(background, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }
 
+// ── own ───────────────────────────────────────────────────────────
+// A scene that is the whole screen (pleamar-wm's) has nothing behind it but
+// what it painted itself before the glass: that, copied as it is.
+@fragment
+fn own(e: VertexOut) -> @location(0) vec4<f32> {
+    return textureLoad(capture, vec2<i32>(e.pos.xy), 0);
+}
+
 // ── blur ──────────────────────────────────────────────────────────
 // Separable gaussian: one pass horizontally and another vertically, at half
 // resolution (the frosting needs no more, and it costs a quarter). It is read

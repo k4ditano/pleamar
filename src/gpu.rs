@@ -68,6 +68,10 @@ pub struct DrawList {
     pub particle_marks: Vec<(u32, u32)>,
     /// The elements that blend another way: which one, and how (2 screen, 3 multiply).
     pub blend_marks: Vec<(u32, u8)>,
+    /// Where a glass that bends what is behind it starts among the elements:
+    /// where a scene that is the whole screen takes what it has painted so far
+    /// as what is behind (`lens::Own`).
+    pub glass_marks: Vec<u32>,
     /// Some particle is still alive: the scene must not rest.
     pub particles_alive: bool,
     /// When an image that moves changes frame next, in the render's seconds:
@@ -763,6 +767,7 @@ impl DrawList {
         self.offscreen_groups.clear();
         self.particle_marks.clear();
         self.blend_marks.clear();
+        self.glass_marks.clear();
         self.particles_alive = false;
         self.wake_at = None;
         self.glass_regions.clear();
@@ -1120,6 +1125,9 @@ impl DrawList {
                     let lens = glass_spec.as_ref().is_some_and(|v| v.lens.is_true(c));
                     if v * a > GLASS_VISIBLE {
                         self.request_glass(&g.flats, &clips, lens);
+                        if lens {
+                            self.glass_marks.push(self.element_count() as u32);
+                        }
                     }
                     self.element(0.0, bounds, &clips, |e| {
                         affine.encode(&mut e[44..52]);
@@ -1177,6 +1185,9 @@ impl DrawList {
                     let lens = glass_spec.as_ref().is_some_and(|v| v.lens.is_true(c));
                     if v * a > GLASS_VISIBLE {
                         self.request_glass(&[p], &clips, lens);
+                        if lens {
+                            self.glass_marks.push(self.element_count() as u32);
+                        }
                     }
                     let k = self.push_shape(p, 0.0);
                     let rgb = color(col);
@@ -1264,6 +1275,7 @@ impl DrawList {
                     // What is behind it is captured like a lens's: its box.
                     if *behind {
                         self.glass_regions.push((b, true));
+                        self.glass_marks.push(self.element_count() as u32);
                     }
                     let mut v = [0f32; 8];
                     for (slot, e) in v.iter_mut().zip(values) {
@@ -1614,6 +1626,8 @@ pub struct Sheet {
     pub blur_rects: Vec<[i32; 4]>,
     /// If it shows glass and what is behind can be seen: its canvas and its background.
     pub lens: Option<crate::lens::Lens>,
+    /// Or, on a monitor of pleamar-wm's own, what it painted itself under the glass.
+    pub own: Option<crate::lens::Own>,
     /// Whether this frame has glass in its piece of the plane.
     pub wants_lens: bool,
     /// Which capture of what is behind is on the way, and since when.
@@ -2068,7 +2082,7 @@ impl Gpu {
         let (layer_views, layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
         let mut l = Sheet {
             id: n.id, frame_no: 0, painted_as: Vec::new(), damage_log: Default::default(), name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, cleared: false, view: n.view,
-            target: n.target, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: long_ago(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], presented: false, keyboard_mode: None,
+            target: n.target, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, own: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: long_ago(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], presented: false, keyboard_mode: None,
         };
         self.reconfigure(&mut l, size);
         l
@@ -2533,14 +2547,24 @@ impl Gpu {
         let needed = d.offscreen_groups.iter().filter(|(t, _)| d.touches_view(t, v)).map(|(_, c)| *c as u32 + 1).max().unwrap_or(0);
         self.ensure_layers(l, needed);
         // The lens, if it shows glass and the screen lets a canvas be copied onto it.
-        if !l.wants_lens || !self.can_copy {
+        // A monitor of pleamar-wm's own has nothing behind it to capture: what
+        // is behind its glass is what it painted itself before it.
+        let whole_screen = matches!(l.target, Target::Frames(_));
+        if !l.wants_lens || !self.can_copy || whole_screen {
             l.lens = None;
         } else if l.lens.is_none() {
             l.lens = Some(crate::lens::Lens::new(&self.device, self.format, l.px));
         }
+        if whole_screen && l.wants_lens && !d.glass_marks.is_empty() {
+            if l.own.as_ref().is_none_or(|o| o.px != l.px) {
+                l.own = Some(crate::lens::Own::new(self, l.px));
+            }
+        } else {
+            l.own = None;
+        }
         let mut u = uniforms.to_vec();
         u[3] = l.scale;
-        u[128] = l.lens.as_ref().is_some_and(|x| x.ready) as u8 as f32;
+        u[128] = (l.lens.as_ref().is_some_and(|x| x.ready) || l.own.is_some()) as u8 as f32;
         let (v, o) = (l.view.size, l.view.origin);
         (u[0], u[1], u[4], u[7]) = (v.0, v.1, o.0, o.1);
         self.queue.write_buffer(&l.uniforms, 0, bytemuck::cast_slice(&u));
@@ -2624,7 +2648,10 @@ impl Gpu {
         if let Some(lens) = &mut l.lens {
             lens.prepare(self, &self.lens, &mut encoder, scale);
         }
-        let backdrop_group = l.lens.as_ref().and_then(|x| x.group.as_ref()).unwrap_or(&self.no_backdrop_group);
+        let backdrop_group = match &l.own {
+            Some(own) => &own.group,
+            None => l.lens.as_ref().and_then(|x| x.group.as_ref()).unwrap_or(&self.no_backdrop_group),
+        };
         let pass_to = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, layers: &wgpu::BindGroup, spans: &[Range<u32>], keep: bool, scissor: Option<[u32; 4]>, erase: bool| {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
@@ -2722,6 +2749,74 @@ impl Gpu {
         // What goes straight onto the target is gathered into as few passes as
         // there are layers painted in between: a pass costs wgpu more than its draws.
         let mut onto: Vec<Range<u32>> = Vec::new();
+        // On a monitor of pleamar-wm's own, right before each glass, what has
+        // been painted so far is taken as what is behind it: only where there
+        // is glass, and only in the piece painted again. A few times a frame at
+        // most; past that, a glass bends what the one before it saw.
+        // Where a glass is, in real pixels of the sheet, with the margin its
+        // frosting reads: only that is taken for it.
+        let own = l.own.as_ref();
+        let (view_origin, sc) = (l.view.bounds(), l.scale);
+        let own_region = |at: &mut dyn Iterator<Item = u32>| -> Option<(u32, u32, u32, u32)> {
+            let own = own?;
+            let (pw, ph) = own.px;
+            let m = crate::lens::MARGIN;
+            let b = at.filter(|k| (*k as usize) < d.element_count()).map(|k| {
+                let e = &d.elements[k as usize * PER_ELEMENT + 4..k as usize * PER_ELEMENT + 8];
+                [e[0] - view_origin[0] - m, e[1] - view_origin[1] - m, e[2] - view_origin[0] + m, e[3] - view_origin[1] + m]
+            }).reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])?;
+            let mut r = [((b[0] * sc).floor().max(0.0) as u32).min(pw), ((b[1] * sc).floor().max(0.0) as u32).min(ph), ((b[2] * sc).ceil().max(0.0) as u32).min(pw), ((b[3] * sc).ceil().max(0.0) as u32).min(ph)];
+            if let Some([x, y, w, h]) = scissor {
+                r = [r[0].max(x), r[1].max(y), r[2].min(x + w), r[3].min(y + h)];
+            }
+            (r[2] > r[0] && r[3] > r[1]).then(|| (r[0], r[1], r[2] - r[0], r[3] - r[1]))
+        };
+        let mut marks: Vec<u32> = if own.is_some() { d.glass_marks.clone() } else { Vec::new() };
+        marks.sort_unstable();
+        marks.dedup();
+        // Whether something was painted on the target since it was last taken, and how many times it was.
+        let (mut dirty, mut taken) = (true, 0u32);
+        const MOST_TAKEN: u32 = 6;
+        // `then_take`: and after it, take it (a group with glass inside comes next).
+        let mut flush = |encoder: &mut wgpu::CommandEncoder, ranges: &[Range<u32>], keep: &mut bool, erase: &mut bool, then_take: Option<&Range<u32>>| {
+            let mut batch: Vec<Range<u32>> = Vec::new();
+            let paint = |encoder: &mut wgpu::CommandEncoder, batch: &mut Vec<Range<u32>>, keep: &mut bool, erase: &mut bool, dirty: &mut bool| {
+                if !batch.is_empty() || !*keep {
+                    pass_to(encoder, target, &l.layer_group, batch, *keep, scissor, *erase);
+                    *dirty |= !batch.is_empty();
+                    (*keep, *erase) = (true, false);
+                    batch.clear();
+                }
+            };
+            for r in ranges {
+                let mut start = r.start;
+                for &m in marks.iter().filter(|m| **m >= r.start && **m < r.end) {
+                    if m > start {
+                        batch.push(start..m);
+                        start = m;
+                    }
+                    // The last time it can, it takes what every glass still to come is on.
+                    let last = taken + 1 == MOST_TAKEN;
+                    let mut these = marks.iter().copied().filter(|k| *k == m || (last && *k > m));
+                    if let (Some(own), Some(region)) = (own.filter(|_| taken < MOST_TAKEN), own_region(&mut these)) {
+                        paint(encoder, &mut batch, keep, erase, &mut dirty);
+                        own.take(self, &self.lens, encoder, target, region, l.scale);
+                        (dirty, taken) = (false, taken + 1);
+                    }
+                }
+                if r.end > start {
+                    batch.push(start..r.end);
+                }
+            }
+            paint(encoder, &mut batch, keep, erase, &mut dirty);
+            if let Some(span) = then_take.filter(|_| taken < MOST_TAKEN) {
+                let last = taken + 1 == MOST_TAKEN;
+                if let (Some(own), Some(region)) = (own, own_region(&mut marks.iter().copied().filter(|m| span.contains(m) || (last && *m >= span.start)))) {
+                    own.take(self, &self.lens, encoder, target, region, l.scale);
+                    (dirty, taken) = (false, taken + 1);
+                }
+            }
+        };
         for (span, layer) in groups {
             // The element that blends it comes right after its span: if that one
             // falls in the region, the layer is needed, even if what is inside does not.
@@ -2729,10 +2824,10 @@ impl Gpu {
             onto.push(from..span.start);
             if l.layers as usize > *layer && d.touches_view(&with_blend, region) {
                 onto.retain(|r| !r.is_empty());
-                if !onto.is_empty() || !keep {
-                    pass_to(&mut encoder, target, &l.layer_group, &onto, keep, scissor, erase);
-                    keep = true;
-                    erase = false;
+                // A glass inside it bends what is on the target under the group.
+                let glass_inside = marks.iter().any(|m| span.contains(m));
+                if !onto.is_empty() || !keep || glass_inside {
+                    flush(&mut encoder, &onto, &mut keep, &mut erase, glass_inside.then_some(span));
                     onto.clear();
                 }
                 pass_to(&mut encoder, &l.layer_views[*layer], &self.no_layers_group, std::slice::from_ref(span), false, None, false);
@@ -2741,7 +2836,7 @@ impl Gpu {
         }
         onto.push(from..total);
         onto.retain(|r| !r.is_empty());
-        pass_to(&mut encoder, target, &l.layer_group, &onto, keep, scissor, erase);
+        flush(&mut encoder, &onto, &mut keep, &mut erase, None);
         if let Some(lens) = &mut l.lens {
             lens.copy_to(&mut encoder, frame_texture);
         }

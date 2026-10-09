@@ -551,7 +551,10 @@ and leaves the bending out: the compositor blurs what is behind it instead,
 which costs less; like `glass`, it is an expression, so a setting can switch
 it while the scene runs. It works on layers, normal
 windows and popups; where each one is on its monitor is asked of Hyprland,
-and worked out from the anchor elsewhere. Where it cannot be done (another
+and worked out from the anchor elsewhere. In pleamar-wm's own session the scene
+is the whole screen and there is nothing behind it to ask for: right before a
+glass is painted, what the scene has painted so far under it (the wallpaper,
+the windows) is taken as its background, frosted and bent the same way. Where it cannot be done (another
 system, a compositor without screencopy),
 **the compositor is asked to blur what is
 behind the silhouette** instead, following its shape in 2 px strips —a round thing
