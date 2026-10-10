@@ -878,12 +878,26 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// What a name declared here carries after it: the mark of the copy it is
+    /// in, and of every copy that one is inside of. A `repeat` in a `for` is
+    /// `#k2#j0`: with only the inner mark, every turn of the outer one declared
+    /// the same `hand#j0`, and a rule on it found the wrong one, or none.
+    /// (Nothing, where the innermost scope is not a copy: as it was. And the
+    /// mark of a copy per monitor goes on by its own way.)
+    fn copy_suffix(&self) -> String {
+        match self.scopes.last() {
+            Some(e) if e.suffix.starts_with("#screen") => e.suffix.clone(),
+            Some(e) if !e.suffix.is_empty() => self.scopes.iter().filter(|e| !e.suffix.is_empty() && !e.suffix.starts_with("#screen")).map(|e| e.suffix.as_str()).collect(),
+            _ => String::new(),
+        }
+    }
+
     /// `hit.hover` and `hit.pressed` for a zone about to be declared here: the
     /// same name the zone will have (see `declare_zone`), and from here they
     /// are reached as written.
     fn zone_springs_for(&mut self, local: &str) {
         let interpolated = self.interpolate(local);
-        let suffix = self.scopes.last().map(|e| e.suffix.clone()).unwrap_or_default();
+        let suffix = self.copy_suffix();
         let mut g = if !suffix.is_empty() && !local.contains('$') { format!("{interpolated}{suffix}") } else { interpolated.clone() };
         if let Some(mark) = self.screen_mark().filter(|m| !g.contains(m.as_str())) {
             g = format!("{g}{mark}");
@@ -940,9 +954,10 @@ impl<'a> Compiler<'a> {
         // everything that comes after it would look for a text that does not exist.
         let from_scene = self.scopes.last().is_some_and(|e| e.suffix.starts_with("#screen"))
             && (self.texts.contains_key(&interpolated) || self.facts.contains_key(&interpolated) || self.props.contains_key(&interpolated) || self.lets.contains_key(&interpolated));
+        let suffix = self.copy_suffix();
         match self.scopes.last_mut().map(Rc::make_mut) {
             Some(e) if !e.suffix.is_empty() && !local.contains('$') && !from_scene => {
-                let g = format!("{interpolated}{}", e.suffix);
+                let g = format!("{interpolated}{suffix}");
                 e.alias.insert(interpolated, g.clone());
                 g
             }
