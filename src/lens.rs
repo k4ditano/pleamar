@@ -23,6 +23,7 @@ pub struct Pipelines {
     unmix: wgpu::RenderPipeline,
     blur: wgpu::RenderPipeline,
     own: wgpu::RenderPipeline,
+    own_over: wgpu::RenderPipeline,
     linear: wgpu::Sampler,
 }
 
@@ -54,7 +55,7 @@ impl Pipelines {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        Pipelines { unmix: pipeline("unmix"), blur: pipeline("blur"), own: pipeline("own"), linear }
+        Pipelines { unmix: pipeline("unmix"), blur: pipeline("blur"), own: pipeline("own"), own_over: pipeline("own_over"), linear }
     }
 }
 
@@ -222,6 +223,11 @@ impl Lens {
         true
     }
 
+    /// The unmixed background as it stands, once there is one.
+    pub fn background(&self) -> Option<&wgpu::TextureView> {
+        self.ready.then(|| &self.backgrounds[self.current].1)
+    }
+
     /// Still in its first moments: see `WARM_UP`.
     pub fn warming(&self) -> bool {
         self.received < WARM_UP || self.born.elapsed() < WARM_UP_TIME
@@ -312,6 +318,10 @@ fn frost(g: &crate::gpu::Gpu, t: &Pipelines, enc: &mut wgpu::CommandEncoder, sha
 /// painted itself before the glass (the wallpaper, the windows). Right before
 /// a glass is painted, that is copied and frosted, and the glass bends it like
 /// any other background.
+///
+/// A scene on a surface uses it too, when a glass of its has something of the
+/// scene's own under it: then what is behind that glass is what the scene
+/// painted before it, over whatever the capture says is behind the surface.
 pub struct Own {
     pub px: (u32, u32),
     sharp: (wgpu::Texture, wgpu::TextureView),
@@ -335,14 +345,16 @@ impl Own {
     }
 
     /// What has been painted so far in `painted`, in `scissor` (real pixels),
-    /// becomes what is behind the glass.
-    pub fn take(&self, g: &crate::gpu::Gpu, t: &Pipelines, enc: &mut wgpu::CommandEncoder, painted: &wgpu::TextureView, scissor: (u32, u32, u32, u32), scale: f32) {
-        let group = g.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &t.own.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(painted) }],
-        });
-        pass(enc, &t.own, &self.sharp.1, &group, scissor);
+    /// becomes what is behind the glass; with `behind` —the unmixed background
+    /// of a surface—, over that.
+    pub fn take(&self, g: &crate::gpu::Gpu, t: &Pipelines, enc: &mut wgpu::CommandEncoder, painted: &wgpu::TextureView, behind: Option<&wgpu::TextureView>, scissor: (u32, u32, u32, u32), scale: f32) {
+        let pipeline = if behind.is_some() { &t.own_over } else { &t.own };
+        let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(painted) }];
+        if let Some(behind) = behind {
+            entries.push(wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(behind) });
+        }
+        let group = g.device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &pipeline.get_bind_group_layout(0), entries: &entries });
+        pass(enc, pipeline, &self.sharp.1, &group, scissor);
         frost(g, t, enc, &self.sharp.1, &self.half, &self.blurred, &self.blur_uniforms, scissor, scale);
     }
 }

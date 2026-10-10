@@ -564,7 +564,12 @@ windows and popups; where each one is on its monitor is asked of Hyprland,
 and worked out from the anchor elsewhere. In pleamar-wm's own session the scene
 is the whole screen and there is nothing behind it to ask for: right before a
 glass is painted, what the scene has painted so far under it (the wallpaper,
-the windows) is taken as its background, frosted and bent the same way. Where it cannot be done (another
+the windows) is taken as its background, frosted and bent the same way. And
+on any surface, a glass with something of the scene's own drawn under it —a
+picture, a text, another shape— sees that as well, in front of what is behind
+the surface: it is what the scene painted itself, so it is known exactly, and
+a lens over an opaque picture bends the picture. (A glass with nothing of the
+scene's under it costs what it did.) Where it cannot be done (another
 system, a compositor without screencopy),
 **the compositor is asked to blur what is
 behind the silhouette** instead, following its shape in 2 px strips —a round thing

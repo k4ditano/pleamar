@@ -17,6 +17,9 @@ pub const MAX_LAYERS: usize = 64;
 const LAYER_SLOTS: usize = 4;
 /// How many frames painted without groups with opacity until their layers are given back.
 const IDLE_LAYER_FRAMES: u32 = 300;
+/// How many frames a surface keeps what it took of its own painting for its
+/// glass after the last one that needed it.
+const IDLE_OWN_FRAMES: u32 = 300;
 /// The strip added to the surface for the frame graph.
 pub const HUD_HEIGHT: f32 = 84.0;
 /// How much room to start with. If a scene asks for more, the stores grow to double.
@@ -574,6 +577,21 @@ impl Pending {
 impl DrawList {
     pub fn element_count(&self) -> usize {
         self.elements.len() / PER_ELEMENT
+    }
+
+    /// Whether some glass that bends the light, in that piece of the plane,
+    /// has something of the scene's painted under it: an element drawn before
+    /// it, seen, whose box crosses its own.
+    fn glass_over_own(&self, v: [f32; 4]) -> bool {
+        let of = |k: usize| &self.elements[k * PER_ELEMENT..k * PER_ELEMENT + 8];
+        let count = self.element_count();
+        self.glass_marks.iter().map(|m| *m as usize).filter(|m| *m < count).any(|m| {
+            let g = &of(m)[4..8];
+            g[0] < v[2] && g[2] > v[0] && g[1] < v[3] && g[3] > v[1] && (0..m).any(|k| {
+                let e = of(k);
+                e[3] > 0.004 && e[4] < e[6] && e[5] < e[7] && e[4] < g[2] && e[6] > g[0] && e[5] < g[3] && e[7] > g[1]
+            })
+        })
     }
 
     /// Whether some element of that span falls in that piece of the plane.
@@ -1734,8 +1752,12 @@ pub struct Sheet {
     pub blur_rects: Vec<[i32; 4]>,
     /// If it shows glass and what is behind can be seen: its canvas and its background.
     pub lens: Option<crate::lens::Lens>,
-    /// Or, on a monitor of pleamar-wm's own, what it painted itself under the glass.
+    /// What it painted itself under the glass: all there is behind it on a
+    /// monitor of pleamar-wm's own, and on a surface what a glass with
+    /// something of the scene's under it sees before the background.
     pub own: Option<crate::lens::Own>,
+    /// How many frames it has gone without a glass over anything of its own.
+    idle_own_frames: u32,
     /// Whether this frame has glass in its piece of the plane.
     pub wants_lens: bool,
     /// Which capture of what is behind is on the way, and since when.
@@ -2201,7 +2223,7 @@ impl Gpu {
         let (layer_views, layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
         let mut l = Sheet {
             id: n.id, frame_no: 0, painted_as: Vec::new(), damage_log: Default::default(), name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, cleared: false, view: n.view,
-            target: n.target, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, own: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: long_ago(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], presented: false, keyboard_mode: None,
+            target: n.target, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, own: None, idle_own_frames: 0, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: long_ago(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], presented: false, keyboard_mode: None,
         };
         self.reconfigure(&mut l, size);
         l
@@ -2674,16 +2696,30 @@ impl Gpu {
         } else if l.lens.is_none() {
             l.lens = Some(crate::lens::Lens::new(&self.device, self.format, l.px));
         }
-        if whole_screen && l.wants_lens && !d.glass_marks.is_empty() {
+        // A surface has what is behind it, but a glass of its with something
+        // of the scene's own under it —a picture, a text, another shape— has
+        // that in front of what is behind: it is taken the same way, over the
+        // unmixed background. It needs the canvas, so only with a lens; and
+        // only while some glass is over something, so a glass with nothing of
+        // ours under it costs what it did.
+        let glass = l.wants_lens && !d.glass_marks.is_empty();
+        let over_own = glass && !whole_screen && l.lens.is_some() && d.glass_over_own(v);
+        if glass && (whole_screen || over_own) {
+            l.idle_own_frames = 0;
             if l.own.as_ref().is_none_or(|o| o.px != l.px) {
                 l.own = Some(crate::lens::Own::new(self, l.px));
             }
+        } else if glass && l.own.is_some() && l.idle_own_frames < IDLE_OWN_FRAMES {
+            // Kept a while: something passing under a glass now and then
+            // would otherwise remake it each time.
+            l.idle_own_frames += 1;
         } else {
             l.own = None;
         }
+        let with_own = whole_screen || over_own;
         let mut u = uniforms.to_vec();
         u[3] = l.scale;
-        u[128] = (l.lens.as_ref().is_some_and(|x| x.ready) || l.own.is_some()) as u8 as f32;
+        u[128] = (l.lens.as_ref().is_some_and(|x| x.ready) || (with_own && l.own.is_some())) as u8 as f32;
         let (v, o) = (l.view.size, l.view.origin);
         (u[0], u[1], u[4], u[7]) = (v.0, v.1, o.0, o.1);
         self.queue.write_buffer(&l.uniforms, 0, bytemuck::cast_slice(&u));
@@ -2767,7 +2803,7 @@ impl Gpu {
         if let Some(lens) = &mut l.lens {
             lens.prepare(self, &self.lens, &mut encoder, scale);
         }
-        let backdrop_group = match &l.own {
+        let backdrop_group = match l.own.as_ref().filter(|_| with_own) {
             Some(own) => &own.group,
             None => l.lens.as_ref().and_then(|x| x.group.as_ref()).unwrap_or(&self.no_backdrop_group),
         };
@@ -2872,9 +2908,12 @@ impl Gpu {
         // been painted so far is taken as what is behind it: only where there
         // is glass, and only in the piece painted again. A few times a frame at
         // most; past that, a glass bends what the one before it saw.
+        // On a surface whose glass is over something of its own, the same,
+        // over what the capture says is behind the surface.
         // Where a glass is, in real pixels of the sheet, with the margin its
         // frosting reads: only that is taken for it.
-        let own = l.own.as_ref();
+        let own = l.own.as_ref().filter(|_| with_own);
+        let behind = l.lens.as_ref().and_then(|x| x.background());
         let (view_origin, sc) = (l.view.bounds(), l.scale);
         let own_region = |at: &mut dyn Iterator<Item = u32>| -> Option<(u32, u32, u32, u32)> {
             let own = own?;
@@ -2919,7 +2958,7 @@ impl Gpu {
                     let mut these = marks.iter().copied().filter(|k| *k == m || (last && *k > m));
                     if let (Some(own), Some(region)) = (own.filter(|_| taken < MOST_TAKEN), own_region(&mut these)) {
                         paint(encoder, &mut batch, keep, erase, &mut dirty);
-                        own.take(self, &self.lens, encoder, target, region, l.scale);
+                        own.take(self, &self.lens, encoder, target, behind, region, l.scale);
                         (dirty, taken) = (false, taken + 1);
                     }
                 }
@@ -2931,7 +2970,7 @@ impl Gpu {
             if let Some(span) = then_take.filter(|_| taken < MOST_TAKEN) {
                 let last = taken + 1 == MOST_TAKEN;
                 if let (Some(own), Some(region)) = (own, own_region(&mut marks.iter().copied().filter(|m| span.contains(m) || (last && *m >= span.start)))) {
-                    own.take(self, &self.lens, encoder, target, region, l.scale);
+                    own.take(self, &self.lens, encoder, target, behind, region, l.scale);
                     (dirty, taken) = (false, taken + 1);
                 }
             }

@@ -68,6 +68,17 @@ fn own(e: VertexOut) -> @location(0) vec4<f32> {
     return textureLoad(capture, vec2<i32>(e.pos.xy), 0);
 }
 
+// A scene on a surface has both: what it painted itself before the glass, and
+// behind that, wherever it left a gap, the unmixed background (`canvas` here).
+// What is known of the result is what either of them knows.
+@fragment
+fn own_over(e: VertexOut) -> @location(0) vec4<f32> {
+    let px = vec2<i32>(e.pos.xy);
+    let ours = textureLoad(capture, px, 0);
+    let behind = textureLoad(canvas, px, 0);
+    return ours + (1.0 - ours.a) * vec4<f32>(behind.rgb * behind.a, behind.a);
+}
+
 // ── blur ──────────────────────────────────────────────────────────
 // Separable gaussian: one pass horizontally and another vertically, at half
 // resolution (the frosting needs no more, and it costs a quarter). It is read
