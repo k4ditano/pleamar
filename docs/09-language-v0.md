@@ -292,7 +292,7 @@ Any rule can carry `while expr` at the end of its header (`on press dot while ar
 
 Effects: `fact = expression` (evaluated when it fires), `toggle fact`, `emit event` or with a payload `emit opened(i)`, `impulse prop velocity`, `play gesture`, `focus field` (gives it the writing cursor), `blur`, and `prop: value ~spring after 70ms`.
 
-**What a rule can read from the mouse**, as if they were facts: `pointer.x`, `pointer.y` (in the surface), `local.x`, `local.y` (**inside the zone**: in a layout, (0, 0) is the corner of the slot, wherever it is on screen), `drag.dx`, `drag.dy` (since the press) and `wheel` (notches; positive, upwards). A drag carries on even if the mouse leaves the zone, until release.
+**What a rule can read from the mouse**, as if they were facts: `pointer.x`, `pointer.y` (in the surface), `local.x`, `local.y` (**inside the zone**: in a layout, (0, 0) is the corner of the slot, wherever it is on screen; the zone's own `from:` is not taken away), `drag.dx`, `drag.dy` (since the press) and `wheel` (notches; positive, upwards). A drag carries on even if the mouse leaves the zone, until release.
 
 A shape can carry `cursor: pointer | text | grab | grabbing`. **A named `row` or `column` is a zone too** —its whole box, underneath those of its children—: that way the wheel works across a whole pill.
 
