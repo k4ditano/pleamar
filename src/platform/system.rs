@@ -8,7 +8,8 @@
 use super::SysValue;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::time::{Duration, Instant};
 
 const SINK: &str = "@DEFAULT_AUDIO_SINK@";
 const SOURCE: &str = "@DEFAULT_AUDIO_SOURCE@";
@@ -199,12 +200,84 @@ fn battery_now() -> SysValue {
     ])
 }
 
+/// The kernel's uevents (`NETLINK_KOBJECT_UEVENT`, group 1), where a `power_supply`
+/// change is announced. `None` where netlink is not available, such as in a sandbox.
+fn uevent_socket() -> Option<OwnedFd> {
+    const NETLINK_KOBJECT_UEVENT: libc::c_int = 15;
+    // SAFETY: plain syscalls on an fd we own; the address is zeroed and then filled in.
+    unsafe {
+        let fd = libc::socket(libc::AF_NETLINK, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, NETLINK_KOBJECT_UEVENT);
+        if fd < 0 {
+            return None;
+        }
+        let fd = OwnedFd::from_raw_fd(fd);
+        let mut addr: libc::sockaddr_nl = std::mem::zeroed();
+        addr.nl_family = libc::AF_NETLINK as libc::sa_family_t;
+        addr.nl_groups = 1;
+        let size = std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t;
+        (libc::bind(fd.as_raw_fd(), (&addr as *const libc::sockaddr_nl).cast(), size) == 0).then_some(fd)
+    }
+}
+
+/// A uevent is `action@path`, then `KEY=value` fields, all separated by NULs.
+fn is_power_supply_event(message: &[u8]) -> bool {
+    message.split(|&b| b == 0).any(|field| field == b"SUBSYSTEM=power_supply")
+}
+
+/// Waits until the socket has something to read, or `wait` has passed. True if it has.
+fn readable_within(fd: &OwnedFd, wait: Duration) -> bool {
+    let mut p = libc::pollfd { fd: fd.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    let ms = wait.as_millis().min(i32::MAX as u128) as libc::c_int;
+    // SAFETY: one valid pollfd, and a count of one.
+    unsafe { libc::poll(&mut p, 1, ms) > 0 }
+}
+
+/// Reads everything waiting on the socket, and says whether any of it was a power supply changing.
+fn drain_power_supply_events(fd: &OwnedFd) -> bool {
+    let mut buf = [0u8; 8192];
+    let mut seen = false;
+    loop {
+        // SAFETY: the buffer is ours and its length is what is passed.
+        let n = unsafe { libc::recv(fd.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len(), libc::MSG_DONTWAIT) };
+        if n <= 0 {
+            return seen;
+        }
+        seen |= is_power_supply_event(&buf[..n as usize]);
+    }
+}
+
+/// Plugging a charger in or out is told by the kernel as it happens, so the service listens
+/// for that instead of looking on a timer. The event is only a nudge to read the battery
+/// again, never the answer: the adapter's event comes before the battery's status has
+/// changed (unplugged: about a second; plugged in: about four, through "Not charging"),
+/// and the battery says nothing of its own, so it is read again a few times as it settles.
+/// Without the socket it looks every 2 s; with it, every 20 s as a backstop for a missed event.
 pub fn battery(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
+    const SETTLE: [Duration; 4] = [Duration::from_millis(700), Duration::from_millis(1500), Duration::from_secs(3), Duration::from_secs(5)];
     spawn_thread("battery", move || {
+        let events = uevent_socket();
+        let backstop = if events.is_some() { Duration::from_secs(20) } else { Duration::from_secs(2) };
         let mut last = String::new();
+        let mut rereads: Vec<Instant> = Vec::new();
+        let mut next_look = Instant::now();
         loop {
-            notify_if_changed(&*dispatch, &mut last, battery_now());
-            std::thread::sleep(Duration::from_secs(20));
+            let now = Instant::now();
+            if now >= next_look || rereads.iter().any(|t| *t <= now) {
+                rereads.retain(|t| *t > now);
+                notify_if_changed(&*dispatch, &mut last, battery_now());
+                next_look = now + backstop;
+            }
+            let wake = rereads.iter().copied().fold(next_look, Instant::min);
+            let wait = wake.saturating_duration_since(Instant::now());
+            match &events {
+                Some(fd) => {
+                    if readable_within(fd, wait) && drain_power_supply_events(fd) {
+                        let at = Instant::now();
+                        rereads = std::iter::once(at).chain(SETTLE.iter().map(|d| at + *d)).collect();
+                    }
+                }
+                None => std::thread::sleep(wait),
+            }
         }
     })
 }
@@ -302,4 +375,22 @@ pub fn network(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
             std::thread::sleep(Duration::from_secs(3));
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_power_supply_uevent_is_recognised() {
+        let msg = b"change@/devices/LNXSYSTM:00/ACPI0003:00/power_supply/AC\0ACTION=change\0SUBSYSTEM=power_supply\0POWER_SUPPLY_ONLINE=0\0";
+        assert!(is_power_supply_event(msg));
+    }
+
+    #[test]
+    fn other_uevents_and_lookalikes_are_not() {
+        assert!(!is_power_supply_event(b"add@/devices/pci0000:00/usb1\0ACTION=add\0SUBSYSTEM=usb\0"));
+        assert!(!is_power_supply_event(b"change@/x\0DEVPATH=/power_supply/BAT0\0SUBSYSTEM=power_supply_extra\0"));
+        assert!(!is_power_supply_event(b""));
+    }
 }
