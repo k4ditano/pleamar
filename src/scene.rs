@@ -1051,6 +1051,9 @@ impl Style {
 #[derive(Clone, Debug)]
 pub enum ImageSource {
     File(std::path::PathBuf),
+    /// A file made of pixels meant to be seen: made bigger, each one stays a
+    /// sharp square instead of melting into its neighbours (`pixels "hero.png"`).
+    Pixels(std::path::PathBuf),
     /// An icon by its name ("firefox"). Where to find it is something the platform knows.
     Icon(String),
     /// Whatever a live text says: the name of an icon, or a path if it starts
@@ -1121,7 +1124,10 @@ pub enum Instr {
     Field { text: TextId, zone: &'static str, at: Point, width: Expr, style: Style, alpha: Expr, placeholder: Content, selection: Color, secret: bool },
     /// An image or an icon. With `tint`, its shape is painted in that color: what
     /// a symbolic icon wants.
-    Image { image: ImageId, target: (Expr, Expr, Expr, Expr), alpha: Expr, tint: Option<Color> },
+    /// `cell`: the image is a sheet of pictures in a grid, and only one is
+    /// drawn —which one (counted along the rows, from 0), and how many
+    /// columns and rows the sheet has—.
+    Image { image: ImageId, target: (Expr, Expr, Expr, Expr), alpha: Expr, tint: Option<Color>, cell: Option<(Expr, Expr, Expr)> },
     /// Another program's window, from the compositor inside the scene
     /// (`windows`): what it last drew, stretched over `target` (x, y, width,
     /// height). `ask` is the size it is told to have; while the box travels on

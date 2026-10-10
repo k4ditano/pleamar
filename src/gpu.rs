@@ -1328,7 +1328,7 @@ impl DrawList {
                         glass_options(e, glass_spec.as_ref(), b, c);
                     });
                 }
-                Instr::Image { image, target, alpha, tint } => {
+                Instr::Image { image, target, alpha, tint, cell } => {
                     let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
                     // What is not seen does not move either: no frame, no waking up.
                     if a <= 0.001 {
@@ -1341,7 +1341,16 @@ impl DrawList {
                     }
                     let d = [target.0.eval(c), target.1.eval(c), target.2.eval(c), target.3.eval(c)];
                     let rgb = tint.as_ref().map(&color);
-                    self.sprite(d, slot.uv(), a, rgb, false, affine, &clips);
+                    // One picture of a sheet: its piece of what the image takes in the atlas.
+                    let mut uv = slot.uv();
+                    if let Some((which, columns, rows)) = cell {
+                        let (columns, rows) = (columns.eval(c).round().max(1.0), rows.eval(c).round().max(1.0));
+                        let which = which.eval(c).floor().rem_euclid(columns * rows);
+                        let (x, y) = (which % columns, (which / columns).floor());
+                        let (w, h) = ((uv[2] - uv[0]) / columns, (uv[3] - uv[1]) / rows);
+                        uv = [uv[0] + x * w, uv[1] + y * h, uv[0] + (x + 1.0) * w, uv[1] + (y + 1.0) * h];
+                    }
+                    self.sprite(d, uv, a, rgb, false, affine, &clips);
                 }
                 Instr::Window { slot, target, alpha, ask } => {
                     let a = alpha.eval(c).clamp(0.0, 1.0) * mult;

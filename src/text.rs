@@ -319,7 +319,7 @@ impl Typesetter {
             .map(|(source, (w, h))| {
                 let px = (((*w as f32) * self.scale).round().max(1.0) as u32, ((*h as f32) * self.scale).round().max(1.0) as u32);
                 let path = match source {
-                    ImageSource::File(r) => Some(r.clone()),
+                    ImageSource::File(r) | ImageSource::Pixels(r) => Some(r.clone()),
                     ImageSource::Icon(name) => crate::platform::icon(name),
                     // It is requested once it is known what the text says: `live_image`.
                     ImageSource::Live(_) => {
@@ -329,7 +329,8 @@ impl Typesetter {
                 };
                 // A file that moves —a GIF, an animated PNG or WebP—: each frame to
                 // the atlas, with the moment it ends.
-                if let Some(frames) = path.as_ref().and_then(|r| animation_frames(r, px)) {
+                let sharp = matches!(source, ImageSource::Pixels(_));
+                if let Some(frames) = path.as_ref().and_then(|r| animation_frames(r, px, sharp)) {
                     let mut slots = Vec::new();
                     let mut ends = Vec::new();
                     let mut t = 0.0;
@@ -345,7 +346,7 @@ impl Typesetter {
                     return first;
                 }
                 animations.push(None);
-                let slot = path.as_ref().and_then(|r| rasterize_image(r, px)).and_then(|rgba| {
+                let slot = path.as_ref().and_then(|r| rasterize_image(r, px, sharp)).and_then(|rgba| {
                     let slot = self.reserve(px.0, px.1)?;
                     self.upload(slot, rgba);
                     Some(slot)
@@ -377,7 +378,7 @@ impl Typesetter {
             return self.load_frame(name, size, px, into);
         }
         let path = if std::path::Path::new(name).is_absolute() { Some(std::path::PathBuf::from(name)) } else { crate::platform::icon(name) };
-        let rgba = rasterize_image(&path?, px)?;
+        let rgba = rasterize_image(&path?, px, false)?;
         let slot = match into {
             Some(s) if (s.width, s.height) == px => s,
             _ => self.reserve(px.0, px.1)?,
@@ -744,7 +745,7 @@ const LIVE_BUDGET: u64 = (ATLAS_SIZE as u64 * ATLAS_SIZE as u64) / 4;
 /// A GIF, an animated PNG or an animated WebP, frame by frame, fitted like
 /// `rasterize_image` and premultiplied, each with how long it lasts. `None`
 /// for anything else, or for one with a single frame.
-fn animation_frames(path: &std::path::Path, px: (u32, u32)) -> Option<Vec<(Vec<u8>, f32)>> {
+fn animation_frames(path: &std::path::Path, px: (u32, u32), sharp: bool) -> Option<Vec<(Vec<u8>, f32)>> {
     use image::AnimationDecoder;
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     let data = std::fs::read(path).ok()?;
@@ -784,16 +785,17 @@ fn animation_frames(path: &std::path::Path, px: (u32, u32)) -> Option<Vec<(Vec<u
             // Browsers take 0 and 10 ms as «as fast as possible», which means 100 ms.
             if ms <= 10.0 { 0.1 } else { ms / 1000.0 }
         }).sum();
-        out.push((fit(chunk[0].buffer().clone(), px), delay));
+        out.push((fit(chunk[0].buffer().clone(), px, sharp), delay));
     }
     Some(out)
 }
 
 /// An RGBA image fitted into `px` without distorting, centred, premultiplied.
-fn fit(img: image::RgbaImage, px: (u32, u32)) -> Vec<u8> {
+/// `sharp`: each of its pixels stays a square, for pixel art made bigger.
+fn fit(img: image::RgbaImage, px: (u32, u32), sharp: bool) -> Vec<u8> {
     let k = (px.0 as f32 / img.width() as f32).min(px.1 as f32 / img.height() as f32);
     let (w, h) = (((img.width() as f32 * k).round() as u32).clamp(1, px.0), ((img.height() as f32 * k).round() as u32).clamp(1, px.1));
-    let reduced = image::imageops::resize(&img, w, h, image::imageops::FilterType::Triangle);
+    let reduced = image::imageops::resize(&img, w, h, if sharp { image::imageops::FilterType::Nearest } else { image::imageops::FilterType::Triangle });
     let mut canvas = image::RgbaImage::new(px.0, px.1);
     image::imageops::overlay(&mut canvas, &reduced, ((px.0 - w) / 2) as i64, ((px.1 - h) / 2) as i64);
     canvas.pixels().flat_map(|p| {
@@ -865,7 +867,7 @@ fn fit_frame(f: &crate::platform::ThumbnailFrame, px: (u32, u32)) -> Vec<u8> {
 }
 
 /// Premultiplied RGBA, at exactly `px`, fitted without distorting.
-fn rasterize_image(path: &std::path::Path, px: (u32, u32)) -> Option<Vec<u8>> {
+fn rasterize_image(path: &std::path::Path, px: (u32, u32), sharp: bool) -> Option<Vec<u8>> {
     let data = std::fs::read(path).ok()?;
     let is_svg = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
     if is_svg {
@@ -877,7 +879,7 @@ fn rasterize_image(path: &std::path::Path, px: (u32, u32)) -> Option<Vec<u8>> {
         resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(k, k).post_translate(dx, dy), &mut canvas.as_mut());
         return Some(canvas.take()); // tiny-skia already premultiplies
     }
-    Some(fit(image::load_from_memory(&data).ok()?.to_rgba8(), px))
+    Some(fit(image::load_from_memory(&data).ok()?.to_rgba8(), px, sharp))
 }
 
 #[cfg(test)]

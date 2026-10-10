@@ -1870,6 +1870,11 @@ impl<'a> Compiler<'a> {
                         let written = std::path::PathBuf::from(c.string()?);
                         let dir = self.dirs.get(n.line / super::PER_FILE);
                         ImageSource::File(match dir { Some(k) if written.is_relative() => k.join(written), _ => written })
+                    } else if c.word("pixels") {
+                        // The same, for pixel art: made bigger pixel by pixel.
+                        let written = std::path::PathBuf::from(c.string()?);
+                        let dir = self.dirs.get(n.line / super::PER_FILE);
+                        ImageSource::Pixels(match dir { Some(k) if written.is_relative() => k.join(written), _ => written })
                     } else if c.word("from") {
                         // Whichever a live text says: that is how the logic chooses an image.
                         let t = self.global(&c.id("the name of a text")?);
@@ -1878,7 +1883,7 @@ impl<'a> Compiler<'a> {
                             None => return self.unknown(&c, "no text", &t, self.texts.keys().collect()),
                         }
                     } else {
-                        return c.error("an image is `icon \"name\"`, `file \"path\"` or `from some_text`");
+                        return c.error("an image is `icon \"name\"`, `file \"path\"`, `pixels \"path\"` or `from some_text`");
                     };
                     c.expect_sym(",")?;
                     let w = c.num()?;
@@ -3499,7 +3504,18 @@ impl<'a> Compiler<'a> {
             Some(c) => Some(self.color(c)?),
             None => None,
         };
-        self.e.paint(Instr::Image { image, target: (x, y, w, h), alpha, tint });
+        // `cell: which, columns, rows`: one picture of a sheet of them.
+        let cell = match p.get_mut("cell") {
+            Some(c) => {
+                let which = self.expr(c)?;
+                c.expect_sym(",")?;
+                let columns = self.expr(c)?;
+                let rows = if c.sym(",") { self.expr(c)? } else { Expr::K(1.0) };
+                Some((which, columns, rows))
+            }
+            None => None,
+        };
+        self.e.paint(Instr::Image { image, target: (x, y, w, h), alpha, tint, cell });
         Ok(())
     }
 
@@ -5798,8 +5814,8 @@ impl<'a> Compiler<'a> {
 
     /// The fields of a model, or of a list inside a model.
     fn fields_of(&mut self, n: &'a Node, capacity: usize) -> R<Vec<Field>> {
-        if !(1..=256).contains(&capacity) {
-            return Err(CompileError::at(n.line, n.col, "a list holds between 1 and 256 records: each one unfolds when loading"));
+        if !(1..=1024).contains(&capacity) {
+            return Err(CompileError::at(n.line, n.col, "a list holds between 1 and 1024 records: each one unfolds when loading"));
         }
         let mut fields: Vec<Field> = Vec::new();
         let mut recursive: Option<(String, usize, usize)> = None;

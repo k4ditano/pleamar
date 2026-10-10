@@ -67,7 +67,7 @@ property     = ( "prop" | "pose" ) name "=" number [ "~" spring_ref ] ;
 fact         = "fact" name [ ":" ( "number" | "bool" | enum ) ] "=" ( number | "true" | "false" | name ) ;
 event        = "event" name [ "->" ] ;
 live_text    = "text" name "=" text ;
-image_decl   = "image" name "=" ( "icon" text | "file" text | "from" name ) "," number "," number ;
+image_decl   = "image" name "=" ( "icon" text | "file" text | "pixels" text | "from" name ) "," number "," number ;
 figure_decl  = "figure" name "=" "file" text ;                                  (* an svg, by its layers *)
 shader_decl  = "shader" name "=" "file" text ;                                  (* WGSL with `fn shade(s: Shader) -> vec4<f32>`: §8.1 *)
 measure      = "measure" name ;
@@ -243,7 +243,7 @@ scene Watching {
 | `surface { … }` · `surface panel { …; …drawing… }` | The windows it asks for. See below |
 | `permissions { run: "date"; services: "audio", "audio.*" }` | What the logic may touch of the system. Undeclared, nothing. **Listening is not commanding**: `"audio"` allows knowing the volume (`sys.watch`, `sys.ask`); changing it needs `"audio.volume"`, or `"audio.*"` |
 | `service clock as now { time: text; hour: number }` | A system service, by its name. Whatever it reports fills `now.time` and `now.hour` **without a line of logic**. See below |
-| `model rows max 14 { label: text; enabled: bool = true; depth: number }` | A list of records that the logic fills. `max`: how many fit (1 to 256; 16 if unsaid). Creates `rows.count`, `rows.total` and, per record, `rows.K.field` |
+| `model rows max 14 { label: text; enabled: bool = true; depth: number }` | A list of records that the logic fills. `max`: how many fit (1 to 1024; 16 if unsaid). Creates `rows.count`, `rows.total` and, per record, `rows.K.field` |
 | `prop orb.x = 360 ~lively` | An animated property: a spring. Without `~`, `lively` |
 | `pose eyes = 14` | A property of the pose: the kind a gesture leads by the hand |
 | `fact open = false` · `fact tries: number = 3` · `fact mode: low \| normal \| critical = normal` | Something that is true for a while. The logic and the rules set it. See **Types**, below |
@@ -503,7 +503,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `carries` (below) · `show` · `label` · `agent` · `role` · `value` · `checked` · `selected` (§13, *Told to an agent*) |
 | `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `glass` · `lens` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` · and its effects: `gradient` · `outline` · `shadow` · `letter_move` · `letter_opacity` · `letter_scale` (§8.4) · `selectable` · `selection` |
-| `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `show` |
+| `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `cell: which, columns, rows` (one picture of a sheet: below) · `show` |
 | `particles` | `at` · `area` · `count` · `life` · `speed` · `direction` · `spread` · `gravity` · `drag` · `size` · `colors` · `opacity` · `shape` · `emit` or `burst` · `show`: §8.3 |
 | `shader` | `at` (its top left corner) · `size: w, h` · `corner` · `opacity` · `show` · `values: a, b, …` (up to eight numbers, any expression) · `colors: c1, c2` (up to two). What it is and how it is written: §8.1 |
 | `figure` | `at` (where the piece's centre goes) · `size: w, h` or `scale:` (without either, one unit of the svg is one pixel) · `pivot: x, y` (in the svg's units, from its centre: the point it **turns** around, which does not move it) · `rotate` · `color` (instead of the one in the file) · `opacity` · `blend` · `stroke` · `show` |
@@ -636,6 +636,30 @@ scene Lens {
 }
 ```
 
+**A sheet of pictures: `cell:`.** An image can be a grid of pictures —the
+frames of a walk, a set of tiles— and `cell: which, columns, rows` draws one of
+them: which one, counted along the rows from 0, and how the sheet is divided
+(`rows` left out, it is one row). `which` is an expression, so the clock walks
+it —`cell: floor(time * 10), 8`— or the logic does, with a fact; past the last
+one it starts again. Declare the image with the size of the **whole sheet** as
+it is drawn —eight frames of 64 across are `512, 64`— and draw it with the
+size of one. Each picture wants a pixel of nothing round it, as sheets
+usually have, or its neighbour shows at its edge when it lands between two
+pixels of the screen.
+
+**Pixel art: `pixels "hero.png"`** instead of `file`. A picture made bigger
+is smoothed, which is what a photograph wants and what a 16 × 16 knight does
+not: with `pixels` each of its pixels stays a sharp square. Declare it at a
+whole number of times its real size, and draw it at the size it is declared.
+
+```plm
+scene Walk {
+    surface { size: 200, 120 }
+    image hero = pixels "pieces/spin.gif", 96, 96
+    image hero { at: 52, 12; size: 96, 96; cell: floor(time * 6), 2, 2 }
+}
+```
+
 **A figure is an svg read as geometry, not as a stamp.** An image is rasterised
 into an atlas: it shows, but it is a sticker —it melts into nothing, it cannot
 be tinted by parts nor animated by layers, and scaling it is pixels—. `figure
@@ -660,7 +684,7 @@ path {
 
 A path carries **a single stroke** (one `move`, the first) and up to 64 already flattened points; for several, several `path`. In a layout it has to be told what it takes up with `size:`, because its box is not known until it is evaluated.
 
-**Lists longer than what is unfolded.** A model unfolds its `max` records on load, and that is the ceiling (256). For a list of thousands, the scene declares only the **window** —what is seen and a little more— and says how long the whole list is:
+**Lists longer than what is unfolded.** A model unfolds its `max` records on load, and that is the ceiling (1024). For a list of thousands, the scene declares only the **window** —what is seen and a little more— and says how long the whole list is:
 
 | | |
 | --- | --- |
@@ -1484,7 +1508,7 @@ properties.line: from to width
 properties.path: at size
 properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple frost smoke milk opacity show
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection
-properties.image: at size opacity tint show grow
+properties.image: at size opacity tint cell show grow
 properties.window: at size ask opacity show
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow
 properties.shader: at size corner opacity show values colors grow
