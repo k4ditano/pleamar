@@ -37,6 +37,110 @@ pub fn copied(fourcc: u32) -> bool {
     fourcc == ARGB || fourcc == XRGB
 }
 
+/// What a buffer's layout is when nobody says it: only the driver that made
+/// it knows (DRM_FORMAT_MOD_INVALID).
+pub const NO_LAYOUT: u64 = 0x00ff_ffff_ffff_ffff;
+
+/// Whether this card's buffers go without a layout said: it cannot be told
+/// one (no VK_EXT_image_drm_format_modifier, as AMD cards before Vega with
+/// RADV), so it offers none to paint in. `PLEAMAR_NO_LAYOUTS=1` asks for it
+/// on any card, to try that way.
+pub fn without_layouts(device: &wgpu::Device, modifiers: &[u64]) -> bool {
+    std::env::var_os("PLEAMAR_NO_LAYOUTS").is_some_and(|v| v == "1") || (modifiers.is_empty() && !device.features().contains(wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF))
+}
+
+/// A buffer of BGRA whose layout only its driver knows, one plane, as a
+/// texture of this device. The image is made as the driver lays its own out
+/// and takes the buffer as memory of its own (dedicated): the driver then
+/// reads the real layout from the buffer itself, which is how cards without
+/// layouts to name have always shared them.
+pub fn import_without_layout(device: &wgpu::Device, fd: std::os::fd::OwnedFd, size: (u32, u32), uses: wgpu::TextureUses, usage: wgpu::TextureUsages, initial: wgpu::TextureUses) -> Result<wgpu::Texture, String> {
+    let format = vk::Format::B8G8R8A8_UNORM;
+    let extent = wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 };
+    let hal_desc = wgpu::hal::TextureDescriptor {
+        label: Some("a buffer on the card, laid out by its driver"),
+        size: extent,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Bgra8Unorm,
+        usage: uses,
+        memory_flags: wgpu::hal::MemoryFlags::empty(),
+        view_formats: Vec::new(),
+    };
+    let mut vk_usage = vk::ImageUsageFlags::empty();
+    for (has, flag) in [
+        (wgpu::TextureUses::COLOR_TARGET, vk::ImageUsageFlags::COLOR_ATTACHMENT),
+        (wgpu::TextureUses::COPY_SRC, vk::ImageUsageFlags::TRANSFER_SRC),
+        (wgpu::TextureUses::COPY_DST, vk::ImageUsageFlags::TRANSFER_DST),
+        (wgpu::TextureUses::RESOURCE, vk::ImageUsageFlags::SAMPLED),
+    ] {
+        if uses.contains(has) {
+            vk_usage |= flag;
+        }
+    }
+    // SAFETY: the fd is a dmabuf of that size, BGRA, as whoever made it
+    // says; the image and its memory are handed to wgpu, which frees them
+    // (the callback) once nothing uses them.
+    let hal_texture = unsafe {
+        let hal = device.as_hal::<Vulkan>().ok_or("the card is not driven with Vulkan")?;
+        let wants = [ash::khr::external_memory_fd::NAME, ash::ext::external_memory_dma_buf::NAME];
+        if let Some(missing) = wants.iter().find(|w| !hal.enabled_device_extensions().contains(w)) {
+            return Err(format!("the card's driver has no {}: it shares no buffers", missing.to_string_lossy()));
+        }
+        let raw = hal.raw_device();
+        let instance = hal.shared_instance().raw_instance();
+        // Whether the driver takes such a buffer for those uses at all.
+        let mut external_format = vk::PhysicalDeviceExternalImageFormatInfo::default().handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
+        let format_info = vk::PhysicalDeviceImageFormatInfo2::default().format(format).ty(vk::ImageType::TYPE_2D).tiling(vk::ImageTiling::OPTIMAL).usage(vk_usage).push_next(&mut external_format);
+        let mut external_props = vk::ExternalImageFormatProperties::default();
+        let mut format_props = vk::ImageFormatProperties2::default().push_next(&mut external_props);
+        if let Err(e) = instance.get_physical_device_image_format_properties2(hal.raw_physical_device(), &format_info, &mut format_props) {
+            return Err(format!("the card's driver takes no buffer without a layout for that: {e}"));
+        }
+        if !external_props.external_memory_properties.external_memory_features.contains(vk::ExternalMemoryFeatureFlags::IMPORTABLE) {
+            return Err("the card's driver does not read buffers without a layout".into());
+        }
+        let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
+        let info = vk::ImageCreateInfo::default()
+            .image_type(vk::ImageType::TYPE_2D)
+            .format(format)
+            .extent(vk::Extent3D { width: extent.width, height: extent.height, depth: 1 })
+            .mip_levels(1)
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .usage(vk_usage)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .push_next(&mut external);
+        let image = raw.create_image(&info, None).map_err(|e| format!("the card made no image for the buffer: {e}"))?;
+        let fd_fn = ash::khr::external_memory_fd::Device::new(instance, raw);
+        let req = raw.get_image_memory_requirements(image);
+        let memory = match import_memory(raw, &fd_fn, fd.into_raw_fd(), req, Some(image)) {
+            Ok(m) => m,
+            Err(e) => {
+                raw.destroy_image(image, None);
+                return Err(e);
+            }
+        };
+        if let Err(e) = raw.bind_image_memory(image, memory, 0) {
+            raw.free_memory(memory, None);
+            raw.destroy_image(image, None);
+            return Err(format!("the buffer could not be bound: {e}"));
+        }
+        let raw = raw.clone();
+        let free: wgpu::hal::DropCallback = Box::new(move || {
+            raw.destroy_image(image, None);
+            raw.free_memory(memory, None);
+        });
+        hal.texture_from_raw(image, &hal_desc, Some(free), wgpu::hal::vulkan::TextureMemory::External)
+    };
+    let desc = wgpu::TextureDescriptor { label: Some("a buffer on the card, laid out by its driver"), size: extent, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Bgra8Unorm, usage, view_formats: &[] };
+    // SAFETY: made on this device, as `desc` says.
+    Ok(unsafe { device.create_texture_from_hal::<Vulkan>(hal_texture, &desc, initial) })
+}
+
 /// A program's buffer, all its planes, as a texture of this device: BGRA
 /// for ARGB and XRGB, RGBA for ABGR and XBGR, NV12 as it is (paint the last
 /// two into BGRA with `YuvToRgb`).

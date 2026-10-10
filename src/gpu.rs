@@ -2570,6 +2570,10 @@ impl Gpu {
     #[allow(clippy::too_many_arguments)]
     pub fn import_dmabuf(device: &wgpu::Device, fd: std::os::fd::OwnedFd, size: (u32, u32), modifier: u64, stride: u32, offset: u32, uses: wgpu::TextureUses, usage: wgpu::TextureUsages, initial: wgpu::TextureUses) -> Result<wgpu::Texture, String> {
         use wgpu::hal::api::Vulkan;
+        // A buffer nobody says the layout of: its driver knows.
+        if modifier == crate::dmabuf::NO_LAYOUT {
+            return crate::dmabuf::import_without_layout(device, fd, size, uses, usage, initial);
+        }
         let extent = wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 };
         let hal_desc = wgpu::hal::TextureDescriptor {
             label: Some("a buffer on the card"),
