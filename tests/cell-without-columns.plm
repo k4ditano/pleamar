@@ -1,0 +1,7 @@
+// expect: error «expected ','»
+// A cell says which picture and how the sheet is divided: one number is not enough.
+scene Sheet {
+    surface { size: 300, 160 }
+    image walk = file "walk.png", 512, 64
+    image walk { at: 20, 20; size: 64, 64; cell: 3 }
+}

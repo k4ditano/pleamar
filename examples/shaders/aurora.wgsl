@@ -1,8 +1,16 @@
 // An aurora: curtains of light that drift and fold, drawn by noise.
 // `s.a.x` is how bright it is (0 to 1), `s.color` and `s.color2` its two tones.
 
+// A number from 0 to 1 for each whole point, worked out in whole numbers: the
+// usual `fract(sin(…) * 43758.5)` gives the same corner two values from two
+// neighbouring cells on some cards, and the noise comes out in tiles.
 fn hash(p: vec2<f32>) -> f32 {
-    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
+    let q = vec2<u32>(vec2<i32>(floor(p)));
+    var h = q.x * 1597334673u ^ q.y * 3812015801u;
+    h = (h ^ (h >> 15u)) * 2246822519u;
+    h = (h ^ (h >> 13u)) * 3266489917u;
+    h = h ^ (h >> 16u);
+    return f32(h >> 8u) / 16777216.0;
 }
 
 fn noise(p: vec2<f32>) -> f32 {

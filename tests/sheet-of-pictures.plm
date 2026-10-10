@@ -1,0 +1,11 @@
+// A sheet of pictures: `cell:` draws one of them, and `pixels` keeps a small one sharp.
+language 0.4
+scene Sheet {
+    surface { size: 300, 160 }
+    image walk = file "walk.png", 512, 64
+    image tile = pixels "tiles.png", 128, 128
+    prop step = 0
+    spin step by 10
+    image walk { at: 20, 20; size: 64, 64; cell: floor(step), 8 }
+    image tile { at: 120, 20; size: 32, 32; cell: 5, 4, 4; tint: #ffffff; opacity: 50% }
+}

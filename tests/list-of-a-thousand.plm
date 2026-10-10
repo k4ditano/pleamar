@@ -1,0 +1,8 @@
+// A list holds up to 1024 records.
+scene Crowd {
+    surface { size: 300, 200 }
+    model crowd max 1024 { x: number; y: number }
+    for c in crowd {
+        ellipse { at: c.x, c.y; radius: 2; color: #5ef2b0 }
+    }
+}

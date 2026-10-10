@@ -1,0 +1,13 @@
+// A zone in a `repeat` inside a `for` is one for each turn of both, and so is its rule.
+scene Nested {
+    surface { size: 300, 200 }
+    event chose ->
+    model rows max 3 { tone: number }
+    for r in rows {
+        repeat j in 0..3 {
+            box { from: 20 + j * 60, 20 + r.index * 50; size: 50, 40; color: mix(#2a3340, #5ef2b0, cell.hover) }
+            zone box cell { from: 20 + j * 60, 20 + r.index * 50; size: 50, 40; cursor: pointer }
+            on press cell { emit chose(r.index * 3 + j) }
+        }
+    }
+}

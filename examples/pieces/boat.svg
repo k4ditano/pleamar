@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">
+  <g id="mast"><path d="M58 16 h4 v64 h-4 z" fill="#e9eeec"/></g>
+  <g id="sail"><path d="M65 22 C84 36 96 54 101 72 L65 72 z" fill="#5ef2b0"/></g>
+  <g id="jib"><path d="M55 32 L55 72 L24 72 C34 56 44 42 55 32 z" fill="#b9f5dc"/></g>
+  <g id="flag"><path d="M62 12 L82 18 L62 24 z" fill="#ff6f91"/></g>
+  <g id="hull"><path d="M12 78 L108 78 L95 100 C72 108 48 108 25 100 z" fill="#f5f7f5"/></g>
+  <g id="keel"><path d="M19 90 L101 90 L95 100 C72 108 48 108 25 100 z" fill="#c2d2ce"/></g>
+</svg>

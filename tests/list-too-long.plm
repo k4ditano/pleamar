@@ -1,0 +1,5 @@
+// expect: error «between 1 and 1024»
+scene Crowd {
+    surface { size: 300, 200 }
+    model crowd max 2000 { x: number }
+}

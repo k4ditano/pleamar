@@ -1,0 +1,228 @@
+// High tide. A night sea rises, fills the word with light, and what a desktop
+// is made of comes up with it: glass that bends what is behind it, shapes
+// that melt into each other, an svg that rides the swell.
+// One scene, one shader, two svgs. `pleamar --scene examples/tide.plm`
+language 0.1
+scene Tide {
+    surface { size: 960, 540; anchor: center }
+    shader sea = file "shaders/tide.wgsl"
+    figure boat = file "pieces/boat.svg"
+    figure whale = file "pieces/whale.svg"
+
+    let ink = #f5f7f5
+    let mint = #5ef2b0
+    let violet = #7a6cff
+
+    // Everything is a function of the seconds gone by, and comes back to where
+    // it was every 16.
+    let c = mod(time, 16)
+    let s1 = c * 45
+    let s2 = c * 90
+
+    // The tide: in from 1.2 s to 6.2 s, out again before the loop ends.
+    let tide = smooth(1.2, 6.2, c) - smooth(13.6, 15.9, c)
+    let level = 470 - 318 * tide
+
+    // ── the sea ──
+    shader sea { at: 0, 0; size: 960, 540; values: c, level, tide, (c - 0.45) / 0.85; colors: mint, violet }
+
+    // ── the boat: an svg, by layers, riding the same swell the shader paints ──
+    let bx = 215 + 46 * sin(c * 22.5)
+    let by = level + 9 * sin(bx * 0.75057 + s1) + 5 * sin(bx * 1.67877 + 74.485 - s2)
+    let lean = atan2(0.1179 * cos(bx * 0.75057 + s1) + 0.1465 * cos(bx * 1.67877 + 74.485 - s2), 1)
+    group {
+        pivot: bx, by
+        rotate: (lean * 1.3 + 2.5 * sin(c * 135)) * 1deg
+        figure boat.mast { at: bx, by - 26; size: 92, 92 }
+        figure boat.sail { at: bx, by - 26; size: 92, 92 }
+        figure boat.jib  { at: bx, by - 26; size: 92, 92 }
+        figure boat.flag { at: bx, by - 26; size: 92, 92; pivot: 2, -42; rotate: sin(c * 270) * 9deg }
+        figure boat.hull { at: bx, by - 26; size: 92, 92 }
+        figure boat.keel { at: bx, by - 26; size: 92, 92 }
+    }
+    // The water in front of it.
+    shader sea { at: 0, 0; size: 960, 540; values: c, level, tide, 0, 1; colors: mint, violet }
+
+    // ── the word: a ghost above the water, light under it ──
+    text "pleamar" { at: 480, 282; anchor: center; size: 168; weight: 800; family: "Inter"; color: ink; opacity: 6%
+                     letter_move: 0, sin(s2 + letter * 42) * 3; letter_scale: 1 + 0.09 * exp(-0.7 * pow((c - 5.2) * 7 - letter, 2)) }
+    group {
+        // Whatever comes after is only seen under the swell.
+        clip path {
+            move -12, 560
+            line -12, level + 9 * sin(-9.0 + s1) + 5 * sin(54.3 - s2)
+            line 12, level + 9 * sin(9.0 + s1) + 5 * sin(94.6 - s2)
+            line 36, level + 9 * sin(27.0 + s1) + 5 * sin(134.9 - s2)
+            line 60, level + 9 * sin(45.0 + s1) + 5 * sin(175.2 - s2)
+            line 84, level + 9 * sin(63.0 + s1) + 5 * sin(215.5 - s2)
+            line 108, level + 9 * sin(81.1 + s1) + 5 * sin(255.8 - s2)
+            line 132, level + 9 * sin(99.1 + s1) + 5 * sin(296.1 - s2)
+            line 156, level + 9 * sin(117.1 + s1) + 5 * sin(336.4 - s2)
+            line 180, level + 9 * sin(135.1 + s1) + 5 * sin(376.7 - s2)
+            line 204, level + 9 * sin(153.1 + s1) + 5 * sin(417.0 - s2)
+            line 228, level + 9 * sin(171.1 + s1) + 5 * sin(457.2 - s2)
+            line 252, level + 9 * sin(189.1 + s1) + 5 * sin(497.5 - s2)
+            line 276, level + 9 * sin(207.2 + s1) + 5 * sin(537.8 - s2)
+            line 300, level + 9 * sin(225.2 + s1) + 5 * sin(578.1 - s2)
+            line 324, level + 9 * sin(243.2 + s1) + 5 * sin(618.4 - s2)
+            line 348, level + 9 * sin(261.2 + s1) + 5 * sin(658.7 - s2)
+            line 372, level + 9 * sin(279.2 + s1) + 5 * sin(699.0 - s2)
+            line 396, level + 9 * sin(297.2 + s1) + 5 * sin(739.3 - s2)
+            line 420, level + 9 * sin(315.2 + s1) + 5 * sin(779.6 - s2)
+            line 444, level + 9 * sin(333.3 + s1) + 5 * sin(819.9 - s2)
+            line 468, level + 9 * sin(351.3 + s1) + 5 * sin(860.1 - s2)
+            line 492, level + 9 * sin(369.3 + s1) + 5 * sin(900.4 - s2)
+            line 516, level + 9 * sin(387.3 + s1) + 5 * sin(940.7 - s2)
+            line 540, level + 9 * sin(405.3 + s1) + 5 * sin(981.0 - s2)
+            line 564, level + 9 * sin(423.3 + s1) + 5 * sin(1021.3 - s2)
+            line 588, level + 9 * sin(441.3 + s1) + 5 * sin(1061.6 - s2)
+            line 612, level + 9 * sin(459.3 + s1) + 5 * sin(1101.9 - s2)
+            line 636, level + 9 * sin(477.4 + s1) + 5 * sin(1142.2 - s2)
+            line 660, level + 9 * sin(495.4 + s1) + 5 * sin(1182.5 - s2)
+            line 684, level + 9 * sin(513.4 + s1) + 5 * sin(1222.8 - s2)
+            line 708, level + 9 * sin(531.4 + s1) + 5 * sin(1263.1 - s2)
+            line 732, level + 9 * sin(549.4 + s1) + 5 * sin(1303.3 - s2)
+            line 756, level + 9 * sin(567.4 + s1) + 5 * sin(1343.6 - s2)
+            line 780, level + 9 * sin(585.4 + s1) + 5 * sin(1383.9 - s2)
+            line 804, level + 9 * sin(603.5 + s1) + 5 * sin(1424.2 - s2)
+            line 828, level + 9 * sin(621.5 + s1) + 5 * sin(1464.5 - s2)
+            line 852, level + 9 * sin(639.5 + s1) + 5 * sin(1504.8 - s2)
+            line 876, level + 9 * sin(657.5 + s1) + 5 * sin(1545.1 - s2)
+            line 900, level + 9 * sin(675.5 + s1) + 5 * sin(1585.4 - s2)
+            line 924, level + 9 * sin(693.5 + s1) + 5 * sin(1625.7 - s2)
+            line 948, level + 9 * sin(711.5 + s1) + 5 * sin(1666.0 - s2)
+            line 972, level + 9 * sin(729.6 + s1) + 5 * sin(1706.2 - s2)
+            line 972, 560
+            close
+        }
+        // A whale goes by in the deep: another svg, its tail and its fin each
+        // turning where they join the body.
+        let wx = 1170 - (c - 3.2) * 236
+        let wy = 456 + 9 * sin(s2)
+        group {
+            pivot: wx, wy
+            rotate: sin(s2 + 40) * 3deg
+            opacity: 78%
+            figure whale.tail  { at: wx, wy; size: 340, 136; pivot: 142, -2; rotate: sin(c * 180) * 15deg }
+            figure whale.body  { at: wx, wy; size: 340, 136 }
+            figure whale.belly { at: wx, wy; size: 340, 136 }
+            figure whale.fin   { at: wx, wy; size: 340, 136; pivot: -44, 34; rotate: sin(c * 180 + 70) * 12deg }
+            figure whale.eye   { at: wx, wy; size: 340, 136 }
+        }
+        // A shoal crosses behind the word: each fish a drop and a tail melted
+        // into one, each with its own place and its own flick.
+        repeat k in 0..18 {
+            let fx.$k = -70 - random(k) * 260 + (c - 8.7) * 255
+            let fy.$k = 236 + random(k + 40) * 150 + 7 * sin(c * 360 + k * 77)
+            body {
+                color: pick(mod(k, 3), #ffb38a, #ffd98a, #ff8fae)
+                opacity: 92%
+                ellipse { at: fx.$k, fy.$k; radius: 4.6; scale: 2.1, 1 }
+                path { at: fx.$k - 8, fy.$k; blend: 2
+                       move 0, 0
+                       line -9, -5.5 + 2.5 * sin(c * 900 + k * 50)
+                       line -9, 5.5 + 2.5 * sin(c * 900 + k * 50)
+                       close }
+            }
+        }
+        particles { at: 480, 556; area: 940, 0; count: 150; life: 2.5s .. 5s; speed: 40 .. 110
+                    direction: -90deg; spread: 16deg; size: 2.6, 1.2; colors: #d6fff0, mint; opacity: 55%, 0%; shape: dot }
+        group {
+            glow: 16, 55%, mint
+            text "pleamar" { at: 480, 282; anchor: center; size: 168; weight: 800; family: "Inter"; color: ink
+                             gradient: 0, 224 to 0, 380, #ffffff, #c9ffe9 45%, mint
+                             letter_move: 0, sin(s2 + letter * 42) * 3; letter_scale: 1 + 0.09 * exp(-0.7 * pow((c - 5.2) * 7 - letter, 2)) }
+        }
+    }
+
+    // ── bubbles: clear glass, melting into each other, bending the word ──
+    // Each one rises at its own pace, a whole number of times in the loop, and
+    // is gone at the surface.
+    let y0 = 640 - mod(c * 41.25 + 630, 660)
+    let y1 = 640 - mod(c * 123.75 + 80, 660)
+    let y2 = 640 - mod(c * 82.5 + 300, 660)
+    let y3 = 640 - mod(c * 165 + 520, 660)
+    let y4 = 640 - mod(c * 123.75 + 410, 660)
+    let y5 = 640 - mod(c * 82.5 + 150, 660)
+    let y6 = 640 - mod(c * 165 + 260, 660)
+    body {
+        color: #e6fff6
+        glass: 100%
+        frost: 0
+        refraction: 180%
+        dispersion: 230%
+        dome: 18%
+        ellipse { at: 500 + 26 * sin(s2 + 0), y0; radius: 76 * smooth(2, 30, y0 - level); blend: 12 }
+        ellipse { at: 180 + 10 * sin(s2 + 70), y1; radius: 17 * smooth(2, 30, y1 - level); blend: 12 }
+        ellipse { at: 330 + 14 * sin(s2 + 140), y2; radius: 26 * smooth(2, 30, y2 - level); blend: 12 }
+        ellipse { at: 640 + 9 * sin(s2 + 210), y3; radius: 13 * smooth(2, 30, y3 - level); blend: 12 }
+        ellipse { at: 790 + 12 * sin(s2 + 280), y4; radius: 21 * smooth(2, 30, y4 - level); blend: 12 }
+        ellipse { at: 868 + 8 * sin(s2 + 350), y5; radius: 15 * smooth(2, 30, y5 - level); blend: 12 }
+        ellipse { at: 96 + 9 * sin(s2 + 420), y6; radius: 11 * smooth(2, 30, y6 - level); blend: 12 }
+    }
+
+    // ── a desktop comes up: a dock of frosted glass, its tiles landing one by one ──
+    let dock = smooth(8.4, 9.3, c) - smooth(13.2, 14.0, c)
+    let dy = 478 + (1 - dock) * 130
+    body {
+        color: #dfe7ee
+        glass: 100%
+        frost: auto
+        shadow: 0, 8, 16, 34%
+        box { at: 480, dy; size: 392, 76; corner: 26 }
+    }
+    repeat k in 0..5 {
+        let x.$k = max(c - 9.25 - k * 0.11, 0)
+        let pop.$k = (1 - exp(-7 * x.$k) * cos(x.$k * 820)) * (1 - smooth(13.0, 13.5, c))
+        body {
+            gradient: 0, dy - 26 to 0, dy + 26, pick(k, #7df7c2, #6fdcff, #a79bff, #ff8fae, #ffd98a), pick(k, #22b889, #2a8fe0, #5a47e6, #e0457a, #f09a3a)
+            rim: 10%
+            shadow: 0, 5, 12, 30%
+            opacity: clamp(pop.$k * 3, 0, 1)
+            box { at: 336 + k * 72, dy - (1 - pop.$k) * 26; size: 52 * pop.$k, 52 * pop.$k; corner: 15 * pop.$k }
+        }
+    }
+    // What each tile holds: the five shapes everything here is made of.
+    let g = 1 - smooth(13.0, 13.5, c)
+    ellipse { at: 336, dy; radius: 11; stroke: 3.4; color: #0b3b2e; opacity: 80% * dock * g * smooth(9.4, 9.7, c) }
+    box { at: 408, dy; size: 20, 20; corner: 5; rotate: 45deg; color: #0b3350; opacity: 80% * dock * g * smooth(9.5, 9.8, c) }
+    arc { at: 480, dy + 5; radius: 11; span: 200deg; width: 3.6; color: #1f1670; opacity: 80% * dock * g * smooth(9.6, 9.9, c) }
+    line { from: 543, dy + 9; to: 561, dy - 9; width: 3.6; color: #5e1030; opacity: 80% * dock * g * smooth(9.7, 10.0, c) }
+    ellipse { at: 336, dy + 32; radius: 1.7; color: ink; opacity: 80% * dock * g * smooth(10.0, 10.3, c) }
+    ellipse { at: 480, dy + 32; radius: 1.7; color: ink; opacity: 80% * dock * g * smooth(10.1, 10.4, c) }
+    path { at: 612, dy - 10; stroke: 3.4; color: #6a3d06; opacity: 80% * dock * g * smooth(9.8, 10.1, c)
+           move 0, 16
+           curve 12, 6 via 4, -6
+           curve 24, 4 via 20, 20 }
+
+    // ── and a bar, smoked, let down from the sky ──
+    let bar = smooth(9.0, 9.9, c) - smooth(13.0, 13.8, c)
+    let ty = 34 - (1 - bar) * 80
+    body {
+        color: #3a3d47
+        glass: 100%
+        frost: auto
+        smoke: 100%
+        shadow: 0, 8, 22, 30%
+        box { at: 480, ty; size: 330, 40; corner: 20 }
+    }
+    // Workspaces: the lit one stretches on its way to the next.
+    repeat k in 0..4 {
+        ellipse { at: 348 + k * 17, ty; radius: 3.2; color: ink; opacity: 38% * bar }
+    }
+    let ws = 1.5 + 1.5 * sin(c * 67.5 - 90)
+    box { at: 348 + ws * 17, ty; size: 14 + 10 * abs(cos(c * 67.5 - 90)), 7; corner: 3.5; color: mint; opacity: bar }
+    text "pleamar" { at: 480, ty; anchor: center; size: 13.5; weight: 650; family: "Inter"; color: ink; opacity: 92% * bar }
+    text "22:41" { at: 626, ty; anchor: right center; size: 13.5; weight: 600; family: "Inter"; color: ink; opacity: 92% * bar }
+
+    // ── what it is ──
+    let say = smooth(6.6, 9.4, c)
+    text "the desktop, written as scenes that never stop moving" {
+        at: 480, 402; anchor: center; size: 19.5; weight: 500; family: "Inter"; color: #e9fff6
+        opacity: 1 - smooth(12.9, 13.6, c)
+        letter_opacity: clamp(say * (letters + 4) - letter, 0, 1)
+        shadow: 0, 2, 10, 60%, #02141c
+    }
+    text "github.com/k4ditano/pleamar" { at: 480, 428; anchor: center; size: 13; weight: 500; family: "Inter"; color: mint
+                                          opacity: 85% * (smooth(9.6, 10.4, c) - smooth(12.9, 13.6, c)) }
+}

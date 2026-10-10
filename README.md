@@ -70,6 +70,14 @@ So if you are on Hyprland and just want a new bar, pleamar is all you need.
 
 # What's new
 
+- **A logic that plays** (0.3.0): the logic can hear every frame and say where
+  things are in that very frame, know which keys are held and where the mouse
+  is, ask what touches what, make sound —a WAV, an Ogg, or a tone made on the
+  spot— and read a game controller. With it, an image can be a sheet of
+  pictures (`cell:`) or pixel art kept sharp (`pixels`). Small games on the
+  desktop, in the same file as the bar.
+- **Glass over the scene's own drawing** (0.3.0): a lens over a picture or a
+  text of the scene's now bends that too, on any compositor.
 - **Glass that behaves like glass** (0.2.35): the lens bends what is behind it as
   a pane would —a bevel, Snell's law, a colour for each index, a rim that
   mirrors—, and three new words say what kind of glass it is: `frost: auto`
@@ -99,6 +107,8 @@ Every release, with what changed: [Releases].
   An svg comes in as paths, by layers, and melts with what carries it.
 - **Luau logic in a sandbox**, on its own thread, behind permissions you approve —
   a plugin runs with what you allow it, never with everything you can do.
+- **Enough for a small game**: a handler for every frame, held keys, the mouse,
+  what touches what, sound, game controllers, sheets of pictures and pixel art.
 - **System services with no code**: clock, audio, battery, network, media,
   notifications, tray, windows and their thumbnails, brightness, files — named
   in the scene and filled.
@@ -257,6 +267,8 @@ cargo build --release
 ./target/release/pleamar --scene examples/window.plm     # a normal window, with its frame
 ./target/release/pleamar --scene examples/icons.plm      # the system tray; right-click opens an icon's menu
 ./target/release/pleamar --scene examples/settings.plm     # saves what you pick in its own folder
+./target/release/pleamar --scene examples/tide.plm       # a night sea that rises: a shader, glass, svgs by layers
+./target/release/pleamar --scene examples/catch.plm      # a small game: frames, keys, a game controller, sound
 ./target/release/pleamar --check examples/bar.plm    # reads it, says whether it is fine, exits
 ./run-tests.sh                                               # the language tests, and the examples in its reference
 ```
