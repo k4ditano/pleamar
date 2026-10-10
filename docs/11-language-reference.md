@@ -3,20 +3,20 @@
 **What this note is.** The complete, exact description of what the language accepts. [The language — the guide](09-language-v0.md) is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
 ```sh
-pleamar --version                  # pleamar 0.2.35 · language 0.3
+pleamar --version                  # pleamar 0.3.0 · language 0.4
 pleamar --check scene.plm      # reads it, with whatever it imports; says whether it is fine, exits
 ./run-tests.sh                        # tests/*.plm, examples/*.plm and the examples in this note
 ```
 
 ## 1. Version
 
-The language has a number of its own, apart from the program's: **0.3**. The first changes when something already written stops being valid; the second, when something is added. A file can say which one it needs, on its first line:
+The language has a number of its own, apart from the program's: **0.4**. The first changes when something already written stops being valid; the second, when something is added. A file can say which one it needs, on its first line:
 
 ```
 language 0.1
 ```
 
-If it asks for a different first number, or a second one higher than the program understands, it is an error on load —`this file asks for language 0.7, and this pleamar understands 0.3`— and not a half-built scene. A file that asks for 0.1 is still read by 0.3: what 0.2 added —a group's own `shader:`, workspaces, `pick`, `import … as`, `drag.over`— and what 0.3 added —what a zone tells an agent: `label:`, `agent:`, `role:`, `value:`, `checked:`, `selected:`— it simply does not use. Without that line, it is read with whatever is there. While the first is 0, nothing is promised: this is a language still being made.
+If it asks for a different first number, or a second one higher than the program understands, it is an error on load —`this file asks for language 0.7, and this pleamar understands 0.4`— and not a half-built scene. A file that asks for 0.1 is still read by 0.4: what 0.2 added —a group's own `shader:`, workspaces, `pick`, `import … as`, `drag.over`— and what 0.3 added —what a zone tells an agent: `label:`, `agent:`, `role:`, `value:`, `checked:`, `selected:`—, and what 0.4 added —a sheet of pictures' `cell:` and `pixels` for pixel art— it simply does not use. Without that line, it is read with whatever is there. While the first is 0, nothing is promised: this is a language still being made.
 
 ## 2. What it guarantees
 
@@ -1495,7 +1495,7 @@ scene Reference3 {
 This is the output of `pleamar --grammar`, copied. It is not a second list: these are the same tables (`src/language/vocabulary.rs`) the compiler consults to accept or reject a word. `./run-tests.sh` compares this block with what the program prints —if somebody adds a word and does not write it down here, it fails— and it also checks that **every word appears in some test**.
 
 ```vocabulary
-language: 0.3
+language: 0.4
 statements: surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
 library: let spring component permissions fact text model service event image figure shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate captures agent
