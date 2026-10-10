@@ -2050,6 +2050,12 @@ pub enum ToRender {
     AgentButton(u8, bool),
     /// Wheel notches: positive, upwards.
     Wheel(f32),
+    /// Nothing happened, but a round is wanted: the logic has started to
+    /// listen to every frame, and a render at rest would not tell it of any.
+    Wake,
+    /// The logic has finished with the frame it was told of: what it said
+    /// while at it came before this, and goes into the frame being made.
+    FrameSeen,
     /// The name of the key, what it types if it types anything, and what it was pressed with.
     /// And its evdev code, to hand it to a window of the scene's compositor (0 if made up).
     Key(String, Option<String>, Mods, u32),
@@ -2332,6 +2338,16 @@ pub enum Event {
     Release(&'static str),
     Wheel(&'static str, f32),
     Key(String, Option<String>),
+    /// A key went down —once, however long it is held— or came up: for a
+    /// logic that plays, which wants to know what is held and not what is typed.
+    /// By its plain name, a letter always in lower case: `Left`, `space`, `a`.
+    KeyDown(String),
+    KeyUp(String),
+    /// A frame is about to be painted, for a logic that asked to hear each one
+    /// (`on("frame", …)`): the seconds since the last it was told of, where the
+    /// mouse is on the scene if it is over it, and which of its buttons are down
+    /// (1 the left one, 2 the right one, 4 the middle one).
+    Frame(f32, Option<(f32, f32)>, u8),
     /// What a field says now, key by key.
     Text(&'static str, String),
     /// Enter in a field.
@@ -2361,6 +2377,13 @@ pub enum Event {
     /// The mouseless mode: "do the next thing you would do".
     Demo,
 }
+
+/// How many logics —the scene's, its plugins'— want to hear every frame. While
+/// it is not zero the render does not rest, and tells them of each one.
+pub static FRAME_LISTENERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// A frame was told and the logic has not finished with it: the next ones are
+/// not queued behind it, their time is added to the one it is told of next.
+pub static FRAME_OWED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// An animated property: position, velocity and where it wants to go.
 #[derive(Clone, Copy)]

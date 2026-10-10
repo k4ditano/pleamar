@@ -127,6 +127,7 @@ fn start_service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -
         "notification_history" => return notifications::history(notify),
         "tray" => return tray::service(notify),
         "thumbnails" => return thumbnails::service(notify),
+        "gamepad" => return gamepad::service(notify),
         _ => {}
     }
     // `PLEAMAR_GENERIC=1` skips the Hyprland path: it's how to test here what
@@ -890,6 +891,17 @@ pub fn start_nest(max: usize, to_render: std::sync::mpsc::Sender<crate::scene::T
     }
 }
 
+/// The sounds a scene plays itself: its mixer, and how files and tones are made.
+pub mod sound;
+#[cfg(target_os = "linux")]
+mod gamepad;
+/// How game controller number `n` (from 1) is right now: `{ name, lx, ly, a, b, … }`.
+#[cfg(target_os = "linux")]
+pub use gamepad::state as gamepad;
+#[cfg(not(target_os = "linux"))]
+pub fn gamepad(_: usize) -> Option<SysValue> {
+    None
+}
 #[cfg(target_os = "linux")]
 mod auth;
 #[cfg(target_os = "linux")]

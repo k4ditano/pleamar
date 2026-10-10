@@ -11,11 +11,11 @@ Two crates offer a copyleft licence **as one of several options**, so the
 permissive one is the one taken: `r-efi` (MIT, taken) and `self_cell` (Apache-2.0,
 taken). Neither reaches this code either way.
 
-298 crates, by licence:
+300 crates, by licence:
 
 | Licence | Crates |
 | --- | --- |
-| `MIT OR Apache-2.0` | 146 |
+| `MIT OR Apache-2.0` | 147 |
 | `MIT` | 59 |
 | `Apache-2.0 OR MIT` | 35 |
 | `Zlib OR Apache-2.0 OR MIT` | 10 |
@@ -29,7 +29,7 @@ taken). Neither reaches this code either way.
 | `MIT OR Zlib OR Apache-2.0` | 2 |
 | `BSD-3-Clause OR Apache-2.0` | 2 |
 | `Apache-2.0/MIT` | 2 |
-| `BSD-3-Clause` | 2 |
+| `BSD-3-Clause` | 3 |
 | `BSD-2-Clause OR Apache-2.0 OR MIT` | 2 |
 | `0BSD OR MIT OR Apache-2.0` | 1 |
 | `BSD-2-Clause` | 1 |
@@ -145,6 +145,7 @@ taken). Neither reaches this code either way.
 | khronos-egl | 6.0.0 | `MIT/Apache-2.0` |
 | khronos_api | 3.1.0 | `Apache-2.0` |
 | kurbo | 0.13.1 | `Apache-2.0 OR MIT` |
+| lewton | 0.10.2 | `MIT OR Apache-2.0` |
 | libc | 0.2.189 | `MIT OR Apache-2.0` |
 | libloading | 0.8.9 | `ISC` |
 | libm | 0.2.16 | `MIT` |
@@ -176,6 +177,7 @@ taken). Neither reaches this code either way.
 | objc2-io-surface | 0.3.2 | `Zlib OR Apache-2.0 OR MIT` |
 | objc2-metal | 0.3.2 | `Zlib OR Apache-2.0 OR MIT` |
 | objc2-quartz-core | 0.3.2 | `Zlib OR Apache-2.0 OR MIT` |
+| ogg | 0.8.0 | `BSD-3-Clause` |
 | once_cell | 1.21.4 | `MIT OR Apache-2.0` |
 | ordered-float | 5.5.0 | `MIT` |
 | ordered-stream | 0.2.0 | `MIT OR Apache-2.0` |

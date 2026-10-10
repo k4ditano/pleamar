@@ -519,6 +519,12 @@ pub fn run(
     // The zone a drag out was tried from, until the button is let go.
     let mut carry_tried: Option<usize> = None;
     let mut repeat: Option<(String, Option<String>, Mods, Instant)> = None;
+    // For a logic that plays: which keys are held —by their code, since the
+    // name a key has can change with Shift between going down and coming up—,
+    // which buttons of the mouse, and how long since the last frame it heard of.
+    let mut keys_held: Vec<(u32, String)> = Vec::new();
+    let mut mouse_buttons = 0u8;
+    let mut frame_told = Instant::now();
     let mut last_key = Instant::now();
     let mut last_pointer: Option<(f32, f32)> = None;
     let mut last_activity = Instant::now();
@@ -623,7 +629,7 @@ pub fn run(
         let mut wheel = 0.0f32;
         let mut keys: Vec<String> = Vec::new();
         let mut key_presses: Vec<(String, Option<String>, Mods, u32)> = Vec::new();
-        let mut key_releases: Vec<u32> = Vec::new();
+        let mut key_releases: Vec<(String, u32)> = Vec::new();
         let mut focus_changes: Vec<bool> = Vec::new();
         let mut drops: Vec<(String, String)> = Vec::new();
         // `drag.over` going back to 0 in the same round a drop arrives: after
@@ -684,6 +690,28 @@ pub fn run(
             }
             resting = false;
             last = Instant::now() - Duration::from_secs_f32(period_ms / 1000.0);
+        }
+        // A logic that plays hears every frame before it is made: how long since
+        // the last one it was told of, and where the mouse is. It is given a
+        // moment to answer, so that what it says goes into this very frame
+        // —where the ball is now, not where it was—; if it takes longer the
+        // frame is made without it, as ever, and what it says goes into the
+        // next. One at a time: while it has not finished with one, the next
+        // are not queued behind it.
+        let plays = crate::scene::FRAME_LISTENERS.load(std::sync::atomic::Ordering::Relaxed) > 0;
+        if plays && !crate::scene::FRAME_OWED.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            let now = Instant::now();
+            let _ = to_logic.send(Event::Frame((now - frame_told).as_secs_f32().min(0.1), pointer, mouse_buttons));
+            frame_told = now;
+            let until = now + FRAME_PATIENCE;
+            loop {
+                match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
+                    Ok(ToRender::FrameSeen) => break,
+                    Ok(m) => incoming.push(m),
+                    Err(RecvTimeoutError::Timeout) => break,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+            }
         }
         incoming.extend(rx.try_iter());
         if let (Some(g), Some(send)) = (&gpu, &nest) {
@@ -1146,6 +1174,9 @@ pub fn run(
                     buttons_agent.resize(buttons.len(), false);
                     buttons_agent.push(matches!(m, ToRender::AgentButton(..)));
                     buttons.push((b, down));
+                    if b < 3 {
+                        mouse_buttons = if down { mouse_buttons | 1 << b } else { mouse_buttons & !(1 << b) };
+                    }
                     if b == 0 {
                         finger_down = down;
                         if let (true, Some(p)) = (down, pointer) {
@@ -1162,6 +1193,7 @@ pub fn run(
                     wheel += d;
                     last_activity = Instant::now();
                 }
+                ToRender::Wake | ToRender::FrameSeen => {}
                 ToRender::KeyRepeat(r) => key_repeat = r,
                 ToRender::Key(name, typed, mods, code) => {
                     last_activity = Instant::now();
@@ -1175,7 +1207,7 @@ pub fn run(
                     }
                     // A key handed to a window is released in it too: after the
                     // presses of this round, which may include its own.
-                    key_releases.push(code);
+                    key_releases.push((name, code));
                 }
                 ToRender::KeyboardFocus(yes) => {
                     focus_changes.push(yes);
@@ -1794,6 +1826,12 @@ pub fn run(
                     KeyOutcome::Unhandled => {}
                 }
             }
+            // Going down, once: a repeat is the same key still held.
+            let plain = plain_key(&name);
+            if !keys_held.iter().any(|(c, n)| (code != 0 && *c == code) || *n == plain) {
+                keys_held.push((code, plain.clone()));
+                let _ = to_logic.send(Event::KeyDown(plain));
+            }
             let mut combo = String::new();
             for (on, prefix) in [(mods.ctrl, "Ctrl+"), (mods.alt, "Alt+"), (mods.logo, "Super+")] {
                 if on {
@@ -1826,7 +1864,11 @@ pub fn run(
             let _ = to_logic.send(Event::Key(combo.clone(), typed));
             keys.push(combo);
         }
-        for code in key_releases {
+        for (name, code) in key_releases {
+            let plain = plain_key(&name);
+            if let Some(k) = keys_held.iter().position(|(c, n)| if code != 0 && *c != 0 { *c == code } else { *n == plain }) {
+                let _ = to_logic.send(Event::KeyUp(keys_held.remove(k).1));
+            }
             if let (Some(send), Some(k)) = (&nest, nest_keys.iter().position(|c| *c == code)) {
                 nest_keys.remove(k);
                 send(ToNest::Key { code, down: false });
@@ -1834,6 +1876,12 @@ pub fn run(
         }
         for gained in &focus_changes {
             have_keyboard = *gained;
+            // Without the keyboard nothing is held: its coming up will not be heard.
+            if !*gained {
+                for (_, name) in keys_held.drain(..) {
+                    let _ = to_logic.send(Event::KeyUp(name));
+                }
+            }
             let _ = to_logic.send(Event::Focus(*gained));
             if *gained {
                 // On gaining the keyboard: the field it was in when it went; if
@@ -2834,7 +2882,7 @@ pub fn run(
             .as_ref()
             .map(|r| scene.gestures[r.gesture].keyframes.iter().flat_map(|f| f.values.iter().map(|(p, _)| *p)).collect())
             .unwrap_or_default();
-        let mut alive = false;
+        let mut alive = plays;
         let mut n_blink = 0;
         follows.begin(&scene.behaviors);
         for (k, behavior) in scene.behaviors.iter().enumerate() {
@@ -4164,6 +4212,19 @@ pub fn run(
             // Still now: if something overflowed, this is what stays watching.
             draw.report_pending();
         }
+    }
+}
+
+/// How long a frame waits for a logic that plays to say where things are now.
+const FRAME_PATIENCE: Duration = Duration::from_millis(3);
+
+/// A key by its plain name, for whoever asks what is held: a letter is the
+/// same key with Shift and without it.
+fn plain_key(name: &str) -> String {
+    let mut letters = name.chars();
+    match (letters.next(), letters.next()) {
+        (Some(c), None) => c.to_lowercase().collect(),
+        _ => name.to_owned(),
     }
 }
 

@@ -71,7 +71,8 @@ const HELP: &str = "pleamar [options]
   --stall MS          how long the logic blocks after every decision (600)
   --naive             the logic blocks the painting thread, as in QtQuick
   --demo              opens and closes by itself, with no mouse
-  --mouse SCRIPT      fake mouse: «360,90@1000 click@2500 down@… up@… wheel+@… out@4000» (ms)
+  --mouse SCRIPT      fake mouse: «360,90@1000 click@2500 down@… up@… wheel+@… out@4000» (ms);
+                      and keys: «key:Escape@1200 keydown:Left@1500 keyup:Left@2500 type:hello@3000»
   --seconds N         exits by itself after N seconds
   --margin PX         top margin, instead of the scene\u{2019}s
   --no-hud            without the frame graph
@@ -465,6 +466,9 @@ pub fn run_with(options: Vec<String>) {
                         }
                         tx.send(ToRender::Key(name.to_owned(), None, m, 0)).and_then(|_| tx.send(ToRender::KeyReleased(name.to_owned(), 0)))
                     }
+                    // `keydown:Left`, `keyup:Left`: a key held, and let go later.
+                    t if t.starts_with("keydown:") => tx.send(ToRender::Key(t[8..].to_owned(), None, Mods::default(), 0)),
+                    t if t.starts_with("keyup:") => tx.send(ToRender::KeyReleased(t[6..].to_owned(), 0)),
                     // `type:hello`: letter by letter, like a keyboard. A `_` is a space.
                     t if t.starts_with("type:") => {
                         for ch in t[5..].chars() {

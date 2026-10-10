@@ -87,6 +87,15 @@ struct Shared {
     unapproved: bool,
     /// Until when whatever is running may run.
     deadline: Option<Instant>,
+    /// It listens to every frame: counted in `FRAME_LISTENERS` until it lets go.
+    frames: bool,
+    /// The sounds it has started, to stop the ones still going when it is reloaded.
+    sounds: Vec<u32>,
+    /// The keys held down now, by their plain names: `held("Left")`.
+    held: std::collections::HashSet<String>,
+    /// Where the mouse is on the scene, if it is over it, and which of its
+    /// buttons are down: what `mouse.x`, `mouse.left` say.
+    mouse: (Option<(f32, f32)>, u8),
 }
 
 impl Shared {
@@ -352,6 +361,9 @@ pub struct LuauScript {
     /// If it is a plugin's logic: its name. Everything it names goes under it (`Clock.now`),
     /// so it cannot touch —or hear— anything that is not its own.
     prefix: Option<String>,
+    /// Whether it listens to every frame now: the scene's logic reads its
+    /// plugins' to know which of them to tell.
+    wants_frames: Arc<AtomicBool>,
     /// The scene's logic carries its plugins' logic with it: each one, its own Luau
     /// state **and its own thread**. One that gets stuck does not hold up the others, or the scene.
     plugins: Vec<LivePlugin>,
@@ -364,6 +376,7 @@ pub struct LuauScript {
 struct LivePlugin {
     definition: crate::scene::Plugin,
     mailbox: Sender<Event>,
+    wants_frames: Arc<AtomicBool>,
 }
 
 /// The real name of what a logic names: in a plugin, under its name.
@@ -398,14 +411,14 @@ fn qualified_listener(prefix: &Option<String>, what: &str) -> String {
 
 impl LuauScript {
     pub fn new(scene: &str, logic: &str, tx: Sender<ToRender>, to_logic: Sender<Event>, blocked: Arc<AtomicBool>) -> Self {
-        LuauScript { scene: scene.to_owned(), logic: logic.to_owned(), tx, to_logic, blocked, lua: None, c: Arc::default(), prefix: None, plugins: Vec::new(), definition: None }
+        LuauScript { scene: scene.to_owned(), logic: logic.to_owned(), tx, to_logic, blocked, lua: None, c: Arc::default(), prefix: None, wants_frames: Arc::default(), plugins: Vec::new(), definition: None }
     }
 
     /// A plugin's logic. The number is so that its timers and processes are not
     /// named the same as another logic's: they all share the mailbox.
     fn for_plugin(&self, p: &crate::scene::Plugin, number: usize) -> Self {
         let c = Shared { next: (number as u32 + 1) * 1_000_000, plugin: Some(p.name.clone()), ..Default::default() };
-        LuauScript { scene: self.scene.clone(), logic: p.logic.to_string_lossy().into_owned(), tx: self.tx.clone(), to_logic: self.to_logic.clone(), blocked: self.blocked.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefix: Some(p.name.clone()), plugins: Vec::new(), definition: Some(p.clone()) }
+        LuauScript { scene: self.scene.clone(), logic: p.logic.to_string_lossy().into_owned(), tx: self.tx.clone(), to_logic: self.to_logic.clone(), blocked: self.blocked.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefix: Some(p.name.clone()), wants_frames: Arc::default(), plugins: Vec::new(), definition: Some(p.clone()) }
     }
 
     /// Sets a plugin running on its thread. From there it tends its mailbox and its timers.
@@ -413,6 +426,7 @@ impl LuauScript {
         let (mailbox, letters) = std::sync::mpsc::channel::<Event>();
         let definition = plugin.definition.clone().expect("only a plugin's logic is started");
         let name = format!("plugin {}", definition.name);
+        let wants_frames = plugin.wants_frames.clone();
         let _ = std::thread::Builder::new().name(name).spawn(move || {
             let mut ctx = Context::for_plugin(plugin.tx.clone(), plugin.blocked.clone());
             loop {
@@ -428,12 +442,20 @@ impl LuauScript {
             }
             plugin.release();
         });
-        LivePlugin { definition, mailbox }
+        LivePlugin { definition, mailbox, wants_frames }
     }
 
     /// Stops what this logic left running: timers, handlers, processes.
     fn release(&self) {
         let mut c = self.c.lock().unwrap();
+        if std::mem::take(&mut c.frames) {
+            crate::scene::FRAME_LISTENERS.fetch_sub(1, Ordering::AcqRel);
+            self.wants_frames.store(false, Ordering::Relaxed);
+        }
+        // What it left sounding —a tune that repeats— goes with it.
+        for id in c.sounds.drain(..) {
+            crate::platform::sound::stop(Some(id));
+        }
         c.handlers.clear();
         c.timers.clear();
         c.processes.clear();
@@ -646,7 +668,7 @@ impl LuauScript {
         lua.set_memory_limit(MEMORY)?;
         // In the sandbox, Luau assumes globals do not change and reads
         // `fact.open` ONCE, when loading the script. These do change: it has to be told.
-        lua.set_compiler(mlua::chunk::Compiler::new().set_mutable_globals(["fact", "text", "model", "sys"]));
+        lua.set_compiler(mlua::chunk::Compiler::new().set_mutable_globals(["fact", "text", "model", "sys", "mouse"]));
         let g = lua.globals();
 
         // A handler that never finishes cannot keep the thread forever.
@@ -753,10 +775,141 @@ impl LuauScript {
 
         let c = self.c.clone();
         let pre = self.prefix.clone();
+        let (tx, wants_frames) = (self.tx.clone(), self.wants_frames.clone());
         g.set("on", lua.create_function(move |_, (what, f): (String, Function)| {
+            let frame = what == "frame";
             let what = qualified_listener(&pre, &what);
-            c.lock().unwrap().handlers.entry(what).or_default().push(f);
+            let mut c = c.lock().unwrap();
+            c.handlers.entry(what).or_default().push(f);
+            // Listening to every frame is what keeps them coming: the render
+            // is told, and woken if it was at rest.
+            if frame && !std::mem::replace(&mut c.frames, true) {
+                crate::scene::FRAME_LISTENERS.fetch_add(1, Ordering::AcqRel);
+                wants_frames.store(true, Ordering::Relaxed);
+                let _ = tx.send(ToRender::Wake);
+            }
             Ok(())
+        })?)?;
+
+        // For a logic that plays. `held("Left")`: whether that key is down now,
+        // by the name the rules give it (a letter, in lower case). And the
+        // mouse: `mouse.x`, `mouse.y` on the scene —nil when it is not over
+        // it—, `mouse.over`, and `mouse.left`, `mouse.right`, `mouse.middle`.
+        // A plugin has neither: the keyboard and the mouse are the scene's.
+        let c = self.c.clone();
+        g.set("held", lua.create_function(move |_, name: String| Ok(c.lock().unwrap().held.contains(&name)))?)?;
+        let c = self.c.clone();
+        let get = lua.create_function(move |_, (_, k): (Table, String)| {
+            let (at, buttons) = c.lock().unwrap().mouse;
+            Ok(match k.as_str() {
+                "x" => at.map_or(Value::Nil, |p| Value::Number(p.0 as f64)),
+                "y" => at.map_or(Value::Nil, |p| Value::Number(p.1 as f64)),
+                "over" => Value::Boolean(at.is_some()),
+                "left" => Value::Boolean(buttons & 1 != 0),
+                "right" => Value::Boolean(buttons & 2 != 0),
+                "middle" => Value::Boolean(buttons & 4 != 0),
+                _ => return Err(mlua::Error::runtime(format!("the mouse has no '{k}': it has x, y, over, left, right and middle"))),
+            })
+        })?;
+        let set = lua.create_function(|_, (_, k, _): (Table, String, Value)| -> mlua::Result<()> { Err(mlua::Error::runtime(format!("'mouse.{k}' is read, not written: the mouse is the user's"))) })?;
+        g.set("mouse", Self::live_table(&lua, get, set)?)?;
+        g.set("hit", hit_table(&lua)?)?;
+
+        // Sound of its own, with `services: "sound"`. A file from this logic's
+        // folder —a WAV or an Ogg Vorbis— or a tone made on the spot:
+        //     sound.play("coin.wav", { volume = 0.8, pitch = 1.2, pan = -0.5, loop = false })
+        //     sound.tone({ wave = "square", freq = 440, to = 880, ms = 120, volume = 0.5 })
+        // Both answer with a number, for `sound.stop(n)`; `sound.stop()` is everything.
+        let sound = lua.create_table()?;
+        let folder = std::path::Path::new(&self.logic).parent().map(std::path::Path::to_owned).unwrap_or_default();
+        let file = move |name: &str| -> mlua::Result<std::path::PathBuf> {
+            let clean = !name.is_empty() && name.split('/').all(|t| !t.is_empty() && t != ".." && t != ".");
+            if !clean || name.starts_with('/') {
+                return Err(mlua::Error::runtime(format!("sound: \"{name}\" has to be a file in this logic's folder, or in one inside it")));
+            }
+            Ok(folder.join(name))
+        };
+        fn how(t: Option<&Table>) -> mlua::Result<crate::platform::sound::How> {
+            let mut h = crate::platform::sound::How::default();
+            if let Some(t) = t {
+                let n = |k: &str, or: f32| t.get::<Option<f32>>(k).map(|v| v.unwrap_or(or));
+                (h.volume, h.pitch, h.pan) = (n("volume", 1.0)?, n("pitch", 1.0)?, n("pan", 0.0)?);
+                h.repeats = t.get::<Option<bool>>("loop")?.unwrap_or(false);
+            }
+            Ok(h)
+        }
+        let (c, path) = (self.c.clone(), file.clone());
+        sound.set("play", lua.create_function(move |_, (name, t): (String, Option<Table>)| {
+            check_service_permission(&c, "sound", false)?;
+            let id = crate::platform::sound::play(&path(&name)?, how(t.as_ref())?).map_err(mlua::Error::runtime)?;
+            let mut c = c.lock().unwrap();
+            // (Only the last few are remembered: what does not repeat ends by itself.)
+            if c.sounds.len() >= 256 {
+                c.sounds.remove(0);
+            }
+            c.sounds.push(id);
+            Ok(id)
+        })?)?;
+        let (c, path) = (self.c.clone(), file);
+        sound.set("load", lua.create_function(move |_, name: String| {
+            check_service_permission(&c, "sound", false)?;
+            crate::platform::sound::load(&path(&name)?).map_err(mlua::Error::runtime)
+        })?)?;
+        let c = self.c.clone();
+        sound.set("tone", lua.create_function(move |_, t: Table| {
+            use crate::platform::sound::{Tone, Wave};
+            check_service_permission(&c, "sound", false)?;
+            let n = |k: &str| t.get::<Option<f32>>(k);
+            let wave = match t.get::<Option<String>>("wave")?.as_deref() {
+                None | Some("square") => Wave::Square,
+                Some("sine") => Wave::Sine,
+                Some("saw") => Wave::Saw,
+                Some("triangle") => Wave::Triangle,
+                Some("noise") => Wave::Noise,
+                Some(other) => return Err(mlua::Error::runtime(format!("sound.tone: there is no wave '{other}': sine, square, saw, triangle or noise"))),
+            };
+            let from = n("freq")?.unwrap_or(440.0);
+            let seconds = n("ms")?.unwrap_or(120.0) / 1000.0;
+            let tone = Tone {
+                wave,
+                from,
+                to: n("to")?.unwrap_or(from),
+                seconds,
+                attack: n("attack")?.unwrap_or(3.0) / 1000.0,
+                release: n("release")?.map_or((seconds * 0.5).min(0.08), |ms| ms / 1000.0),
+                duty: n("duty")?.unwrap_or(0.5),
+            };
+            let id = crate::platform::sound::tone(&tone, how(Some(&t))?);
+            Ok(id)
+        })?)?;
+        let c = self.c.clone();
+        sound.set("stop", lua.create_function(move |_, id: Option<u32>| {
+            match id {
+                Some(id) => crate::platform::sound::stop(Some(id)),
+                // Everything of ITS: another logic's tune is not this one's to stop.
+                None => c.lock().unwrap().sounds.drain(..).for_each(|id| crate::platform::sound::stop(Some(id))),
+            }
+            Ok(())
+        })?)?;
+        let c = self.c.clone();
+        sound.set("volume", lua.create_function(move |_, v: f32| {
+            check_service_permission(&c, "sound", false)?;
+            crate::platform::sound::volume(v);
+            Ok(())
+        })?)?;
+        g.set("sound", sound)?;
+
+        // A game controller, with `services: "gamepad"`: `pad(1)` is how the
+        // first one is right now —`{ name, lx, ly, rx, ry, lt, rt, a, b, x, y,
+        // lb, rb, back, start, up, down, left, right, … }`—, or nil if there is none.
+        // (A press on its own is heard with `sys.watch("gamepad", …)`.)
+        let c = self.c.clone();
+        g.set("pad", lua.create_function(move |lua, n: Option<usize>| {
+            check_service_permission(&c, "gamepad", false)?;
+            match crate::platform::gamepad(n.unwrap_or(1)) {
+                Some(v) => value_to_lua(lua, &v),
+                None => Ok(Value::Nil),
+            }
         })?)?;
 
         let schedule = |c: &Arc<Mutex<Shared>>, ms: f64, f: Function, repeats: bool| {
@@ -1189,11 +1342,18 @@ impl Script for LuauScript {
         // Every plugin receives the same, but only has handlers with its name in front:
         // it does not find out about what is not its own.
         if !matches!(e, Event::NewScene(..)) {
-            for p in &self.plugins {
+            // A frame, only to the ones that listen to them: the rest would be
+            // woken sixty times a second for nothing.
+            let frame = matches!(e, Event::Frame(..));
+            for p in self.plugins.iter().filter(|p| !frame || p.wants_frames.load(Ordering::Relaxed)) {
                 let _ = p.mailbox.send(e.clone());
             }
         }
         let _ = &ctx;
+        let e_kind = match &e {
+            Event::KeyDown(_) => 1,
+            _ => 0,
+        };
         let number = |v: f32| Value::Number(v as f64);
         match e {
             // The file is executed right on the logic's thread, with the scene delivered.
@@ -1227,6 +1387,49 @@ impl Script for LuauScript {
                 let listeners = self.c.lock().unwrap().handlers.get("key").cloned().unwrap_or_default();
                 if let Ok(n) = lua.create_string(&name) {
                     listeners.iter().for_each(|f| self.call_handler(f, (n.clone(), typed.clone())));
+                }
+            }
+            Event::KeyDown(name) | Event::KeyUp(name) if self.prefix.is_none() => {
+                let down = matches!(e_kind, 1);
+                {
+                    let mut c = self.c.lock().unwrap();
+                    if down { c.held.insert(name.clone()) } else { c.held.remove(&name) };
+                }
+                self.dispatch_text(if down { "key_down" } else { "key_up" }, name);
+            }
+            Event::Frame(dt, at, buttons) => {
+                if self.prefix.is_none() {
+                    self.c.lock().unwrap().mouse = (at, buttons);
+                }
+                let what = qualified_listener(&self.prefix, "frame");
+                let listeners: Vec<Function> = self.c.lock().unwrap().handlers.get(&what).cloned().unwrap_or_default();
+                let mut failed = false;
+                for f in listeners {
+                    self.c.lock().unwrap().deadline = Some(Instant::now() + PATIENCE);
+                    if let Err(e) = f.call::<()>(dt as f64) {
+                        failed = true;
+                        match &self.prefix {
+                            Some(p) => eprintln!("logic  · plugin '{p}' · {e}"),
+                            None => eprintln!("logic  · {e}"),
+                        }
+                    }
+                    self.c.lock().unwrap().deadline = None;
+                }
+                // The same mistake sixty times a second is said once: it
+                // stops hearing frames until the logic is saved again.
+                if failed {
+                    eprintln!("logic  · it no longer hears the frames: save the logic again once that is mended");
+                    let mut c = self.c.lock().unwrap();
+                    c.handlers.remove(&what);
+                    if std::mem::take(&mut c.frames) {
+                        crate::scene::FRAME_LISTENERS.fetch_sub(1, Ordering::AcqRel);
+                        self.wants_frames.store(false, Ordering::Relaxed);
+                    }
+                }
+                // The scene's logic is the one the render waits for.
+                if self.prefix.is_none() {
+                    crate::scene::FRAME_OWED.store(false, Ordering::Release);
+                    let _ = self.tx.send(ToRender::FrameSeen);
                 }
             }
             Event::Demo => self.dispatch("demo", Value::Nil),
@@ -1365,6 +1568,78 @@ impl Script for LuauScript {
             self.call_handler(&f, ());
         }
     }
+}
+
+/// `hit`: whether two things touch, for a logic that plays. Boxes are said as
+/// the scene says them —centre and size—, circles by centre and radius.
+///
+/// ```text
+/// hit.boxes(ax, ay, aw, ah, bx, by, bw, bh)     hit.circles(ax, ay, ar, bx, by, br)
+/// hit.circle_box(cx, cy, r, bx, by, bw, bh)     hit.point(px, py, bx, by, bw, bh)
+/// hit.pairs(these, those)   every pair that touches, as { { i, j }, … }
+/// hit.first(x, y, r, those) the first of `those` a circle touches, or nil
+/// ```
+///
+/// In the lists each record has `x`, `y` and either `r` or `w` and `h`: the
+/// pairs are found here, in one go, and not in a loop of the logic's.
+fn hit_table(lua: &Lua) -> mlua::Result<Table> {
+    #[derive(Clone, Copy)]
+    enum Body {
+        Circle(f64, f64, f64),
+        Box(f64, f64, f64, f64),
+    }
+    fn touch(a: Body, b: Body) -> bool {
+        match (a, b) {
+            (Body::Circle(ax, ay, ar), Body::Circle(bx, by, br)) => (ax - bx).powi(2) + (ay - by).powi(2) <= (ar + br).powi(2),
+            (Body::Box(ax, ay, aw, ah), Body::Box(bx, by, bw, bh)) => (ax - bx).abs() * 2.0 <= aw + bw && (ay - by).abs() * 2.0 <= ah + bh,
+            (Body::Circle(cx, cy, r), Body::Box(bx, by, bw, bh)) | (Body::Box(bx, by, bw, bh), Body::Circle(cx, cy, r)) => {
+                let (dx, dy) = (((cx - bx).abs() - bw / 2.0).max(0.0), ((cy - by).abs() - bh / 2.0).max(0.0));
+                dx * dx + dy * dy <= r * r
+            }
+        }
+    }
+    fn bodies(what: &str, list: &Table) -> mlua::Result<Vec<Option<Body>>> {
+        let mut out = Vec::with_capacity(list.raw_len());
+        for (k, v) in list.sequence_values::<Value>().enumerate() {
+            let Value::Table(t) = v? else {
+                out.push(None);
+                continue;
+            };
+            let n = |f: &str| t.get::<Option<f64>>(f);
+            let (Some(x), Some(y)) = (n("x")?, n("y")?) else {
+                return Err(mlua::Error::runtime(format!("hit.{what}: record {} has no x and y", k + 1)));
+            };
+            out.push(Some(match (n("r")?, n("w")?, n("h")?) {
+                (Some(r), _, _) => Body::Circle(x, y, r),
+                (None, Some(w), Some(h)) => Body::Box(x, y, w, h),
+                _ => return Err(mlua::Error::runtime(format!("hit.{what}: record {} has neither r nor w and h", k + 1))),
+            }));
+        }
+        Ok(out)
+    }
+    let t = lua.create_table()?;
+    t.set("boxes", lua.create_function(|_, (ax, ay, aw, ah, bx, by, bw, bh): (f64, f64, f64, f64, f64, f64, f64, f64)| Ok(touch(Body::Box(ax, ay, aw, ah), Body::Box(bx, by, bw, bh))))?)?;
+    t.set("circles", lua.create_function(|_, (ax, ay, ar, bx, by, br): (f64, f64, f64, f64, f64, f64)| Ok(touch(Body::Circle(ax, ay, ar), Body::Circle(bx, by, br))))?)?;
+    t.set("circle_box", lua.create_function(|_, (cx, cy, r, bx, by, bw, bh): (f64, f64, f64, f64, f64, f64, f64)| Ok(touch(Body::Circle(cx, cy, r), Body::Box(bx, by, bw, bh))))?)?;
+    t.set("point", lua.create_function(|_, (px, py, bx, by, bw, bh): (f64, f64, f64, f64, f64, f64)| Ok(touch(Body::Circle(px, py, 0.0), Body::Box(bx, by, bw, bh))))?)?;
+    t.set("pairs", lua.create_function(|lua, (these, those): (Table, Table)| {
+        let (a, b) = (bodies("pairs", &these)?, bodies("pairs", &those)?);
+        let out = lua.create_table()?;
+        for (i, x) in a.iter().enumerate() {
+            for (j, y) in b.iter().enumerate() {
+                if let (Some(x), Some(y)) = (x, y) {
+                    if touch(*x, *y) {
+                        out.raw_push(lua.create_sequence_from([i + 1, j + 1])?)?;
+                    }
+                }
+            }
+        }
+        Ok(out)
+    })?)?;
+    t.set("first", lua.create_function(|_, (x, y, r, those): (f64, f64, f64, Table)| {
+        Ok(bodies("first", &those)?.iter().position(|b| b.is_some_and(|b| touch(Body::Circle(x, y, r), b))).map(|k| k + 1))
+    })?)?;
+    Ok(t)
 }
 
 /// The modules the logic has loaded with `require`: the reload watches them

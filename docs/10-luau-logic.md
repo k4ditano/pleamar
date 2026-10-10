@@ -26,6 +26,9 @@ focus("query")                            -- give the typing caret to a field; `
 on("layer:card", function(claim) … end)   -- a layer changed hands
 on("fact:open", function(v) … end)        -- a scene RULE changed a fact
 on("demo", …)                             -- the tick of `--demo`
+on("frame", function(dt) … end)           -- every frame, before it is made: see «A logic that plays»
+on("key_down", function(name) … end)  on("key_up", …)   -- a key going down (once) and coming up
+held("Left")   mouse.x  mouse.left   pad(1)   hit.circles(…)   sound.tone({ … })   -- the same section
 
 local t = every(1000, function() … end)   -- timers, in milliseconds
 after(500, function() … end)
@@ -53,6 +56,85 @@ busy(600)                                 -- fake work, to see that the renderer
 **Facts have a type**, the one the scene gave them: a yes-or-no is read and written with `true` and `false`; an enum (`fact mode: low | normal | critical`), with the name of its value; everything else, numbers. `on("fact:mode", function(m) … end)` receives the same. A value that does not exist is an error that says which ones there are: `'mode' cannot be 'critcal'. Did you mean 'critical'?`
 
 A misspelled name is an error there and then, with a suggestion: `the scene has no fact called 'opne'. Did you mean 'open'?`
+
+## A logic that plays
+
+Everything above is for a logic that decides now and then. A game decides
+sixty times a second: where the ball is, what it has hit, what sounds. These
+are for that, and they change nothing for a logic that does not use them.
+
+```lua
+local x, vx = 240, 0
+on("frame", function(dt)                  -- dt: seconds since the last one it heard of
+    vx = (held("Right") and 300 or 0) - (held("Left") and 300 or 0)
+    local p = pad(1)                      -- a game controller, or nil
+    if p then vx += p.lx * 300 end
+    x = math.clamp(x + vx * dt, 20, 460)
+    fact.x = x                            -- the scene draws it there: `at: x, 260`
+end)
+on("key_down", function(name)
+    if name == "space" then sound.tone({ wave = "square", freq = 440, to = 880, ms = 120 }) end
+end)
+```
+
+**`on("frame", function(dt) … end)`** is called once for each frame, right
+before it is made, with the seconds gone by since the last one it was told of
+(never more than a tenth: a pause does not become a jump). The render gives it
+three milliseconds to answer, and what it says in that time —a `fact`, a
+`text`, a `model`— goes into that very frame: the ball is drawn where it is
+now, not where it was. If it takes longer, the frame is made without waiting,
+as always, and what it said shows in the next; while it has not finished with
+one frame it is not told of another, and the time it missed comes in the next
+`dt`. Listening to frames is what keeps them coming: a scene whose logic does
+not, still rests when nothing moves. A mistake in the handler is said once and
+it stops being called, until the logic is saved again.
+
+What it moves, it moves through facts: `fact.x = 132.5`, and the scene draws
+with them (`ellipse { at: x, y; radius: 9 }`). Many things at once are a
+`model`, handed over whole each frame; only what changed travels.
+
+| | |
+| --- | --- |
+| `held("Left")` | whether that key is down right now, by the name a rule gives it (`Left`, `space`, `Escape`); a letter, in lower case whatever Shift says |
+| `on("key_down", function(name) … end)` · `on("key_up", …)` | a key going down —once, however long it is held, where `on("key", …)` repeats— and coming up. Losing the keyboard lets go of all of them. The surface has to ask for the keyboard (`keyboard: on_demand`) |
+| `mouse.x` · `mouse.y` | where the mouse is on the scene; `nil` when it is not over it |
+| `mouse.over` · `mouse.left` · `mouse.right` · `mouse.middle` | whether it is over the scene, and which of its buttons are down |
+| `pad(1)` | how the first game controller is right now, or `nil` if there is none: `name`; the sticks `lx`, `ly`, `rx`, `ry` from −1 to 1 (up is negative, like the screen); the triggers `lt`, `rt` from 0 to 1; and whether each button is down: `a`, `b`, `x`, `y`, `lb`, `rb`, `back`, `start`, `guide`, `ls`, `rs`, and the cross as `up`, `down`, `left`, `right`. A stick at rest rarely says exactly 0: leave it a little room (`if math.abs(p.lx) > 0.15`). With `services: "gamepad"` |
+| `sys.watch("gamepad", function(pads) … end)` | every pad plugged in, as a list of those same tables: told when one arrives or goes, and when a button goes down or up (not for a stick moving: that is read each frame) |
+| `hit.circles(ax, ay, ar, bx, by, br)` · `hit.boxes(ax, ay, aw, ah, bx, by, bw, bh)` · `hit.circle_box(cx, cy, r, bx, by, bw, bh)` · `hit.point(px, py, bx, by, bw, bh)` | whether two things touch. A box is said as the scene says it: its centre and its size |
+| `hit.pairs(these, those)` | every pair that touches between two lists, as `{ { i, j }, … }`: each record has `x`, `y` and either `r` (a circle) or `w` and `h` (a box). Found in one go, not in a loop of the logic's |
+| `hit.first(x, y, r, those)` | the first of `those` that a circle touches, or `nil` |
+
+**Sound**, with `services: "sound"`. A file from the logic's folder (or one
+inside it) —a WAV or an Ogg Vorbis—, or a tone made on the spot, which is most
+of what a small game needs and wants no files:
+
+```lua
+local id = sound.play("coin.wav", { volume = 0.8, pitch = 1.2, pan = -0.5 })
+local tune = sound.play("tune.ogg", { loop = true, volume = 0.4 })
+sound.tone({ wave = "square", freq = 440, to = 880, ms = 120, volume = 0.5 })   -- a jump
+sound.tone({ wave = "noise", freq = 900, to = 80, ms = 350, release = 300 })    -- a burst
+sound.stop(tune)        -- one; sound.stop() is every one this logic started
+sound.load("tune.ogg")  -- read ahead of time: a long file takes a moment the first time
+sound.volume(0.6)       -- how loud everything this program plays is
+```
+
+| | |
+| --- | --- |
+| `volume` | 1 is as it is |
+| `pitch` | 1 is as it is; 2, an octave up and half as long (files only) |
+| `pan` | −1 all to the left, 1 all to the right |
+| `loop` | it starts again when it ends, until it is stopped |
+| `wave` | `sine`, `square` (the default), `saw`, `triangle`, `noise` |
+| `freq` · `to` | the pitch it starts at and the one it slides to, in hertz (`to` left out, it stays) |
+| `ms` · `attack` · `release` | how long it lasts, how long it takes to rise and how long to fall, in milliseconds |
+| `duty` | of a square wave, how much of each turn it is up: 0.5 is even, 0.2 thin and nasal |
+
+Everything a program plays is mixed here and goes to the sound server as one
+stream (PulseAudio's protocol, which PipeWire speaks too), opened the first
+time something sounds and let go after a few seconds of silence. Up to 48
+things sound at once; what a logic left sounding stops when it is reloaded.
+On a machine with no sound server it says so once, and nothing is heard.
 
 ## The system services
 
