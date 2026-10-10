@@ -1,0 +1,77 @@
+// Glass over something that moves: a clear lens, a plate that frosts itself
+// where what is behind it is busy, a smoked capsule and a milky one.
+// `pleamar --scene examples/glass.plm`
+scene Glass {
+    surface { size: 960, 540; anchor: center }
+    shader aurora = file "shaders/aurora.wgsl"
+
+    let ink = #f5f7f5
+    // Seconds, counted: everything behind the glass drifts with it, and comes
+    // back to where it was every 8.
+    prop t = 0
+    spin t by 1
+
+    // ── what is behind ──
+    body {
+        color: #0b0f14
+        box { from: 0, 0; size: 960, 540; corner: 28 }
+    }
+    shader aurora { at: 0, 0; size: 960, 540; corner: 28; values: 1; colors: #5ef2b0, #7a6cff }
+    // Bands of colour going by…
+    repeat k in 0..9 {
+        box { from: mod(k * 130 + t * 48.75, 1170) - 130, -60; size: 44, 660; color: pick(mod(k, 3), #ff9b3d, #ff5d8f, #3fd0ff); opacity: 36%; rotate: 16deg }
+    }
+    // …a fine grid, which shows what the glass bends…
+    repeat k in 1..30 {
+        box { from: k * 32, 0; size: 1, 540; color: #ffffff; opacity: 12% }
+    }
+    repeat k in 1..17 {
+        box { from: 0, k * 32; size: 960, 1; color: #ffffff; opacity: 12% }
+    }
+    // …and words, which show what it frosts.
+    repeat k in 0..4 {
+        text "every property is a spring" { at: 70 + 50 * sin(t * 45 + k * 90), 70 + k * 128; anchor: left center; size: 28; weight: 700; color: #ffffff; opacity: 78% }
+    }
+
+    // ── the glass ──
+    // Clear (`frost: 0`): a thick lens crossing the scene, bending what it passes.
+    body {
+        color: #eceef3
+        glass: 100%
+        frost: 0
+        refraction: 170%
+        dispersion: 200%
+        shadow: 0, 10, 28, 30%
+        ellipse { at: 480 + 290 * sin(t * 45), 168; radius: 92 }
+    }
+    // `frost: auto`: clear over the plain, frosted where words or lines are behind.
+    body {
+        color: #eceef3
+        glass: 100%
+        frost: auto
+        shadow: 0, 10, 28, 30%
+        box { at: 480, 452; size: 440, 88; corner: 30 }
+    }
+    repeat k in 0..5 {
+        box { at: 316 + k * 82, 452; size: 56, 56; corner: 15; color: pick(k, #ff5d8f, #ff9b3d, #5ef2b0, #3fd0ff, #7a6cff) }
+    }
+    // Smoked, for white words; and milky, for dark ones.
+    body {
+        color: #3a3d47
+        glass: 100%
+        frost: auto
+        smoke: 100%
+        shadow: 0, 8, 22, 28%
+        box { at: 262, 330; size: 300, 66; corner: 33 }
+    }
+    text "smoke" { at: 262, 330; anchor: center; size: 20; weight: 600; color: ink }
+    body {
+        color: #eceef3
+        glass: 100%
+        frost: auto
+        milk: 100%
+        shadow: 0, 8, 22, 28%
+        box { at: 698, 330; size: 300, 66; corner: 33 }
+    }
+    text "milk" { at: 698, 330; anchor: center; size: 20; weight: 600; color: #1d1d1f }
+}
