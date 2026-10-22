@@ -2188,6 +2188,8 @@ impl<'a> Compiler<'a> {
                         return c.error("a lens bends a picture: `lens = image \"wallpaper.png\"`");
                     }
                     let shown = c.string()?;
+                    // `while expr`: the picture only while it holds; otherwise the glass captures what is behind, as without a lens.
+                    let when = if c.word("while") { Some(self.expr(&mut c)?) } else { None };
                     c.expect_end()?;
                     let written = match shown.strip_prefix("~/") {
                         Some(rest) => match std::env::var_os("HOME") {
@@ -2205,6 +2207,7 @@ impl<'a> Compiler<'a> {
                         return Err(CompileError::at(n.line, n.col, "a scene has one lens picture: this one would replace the one above".to_string()));
                     }
                     self.e.lens_image = Some(path);
+                    self.e.lens_image_while = when;
                 }
                 "measure" => {
                     let local = c.id("a name for the measure")?;

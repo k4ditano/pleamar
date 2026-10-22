@@ -303,7 +303,9 @@ impl Lens {
             wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(lw.max(1) * 4), rows_per_image: Some(lh.max(1)) },
             wgpu::Extent3d { width: lw.max(1), height: lh.max(1), depth_or_array_layers: 1 },
         );
-        self.group = Some(g.backdrop_group(&self.backgrounds[self.current].1, self.frost.result()));
+        // A capture still waiting from before (the lens captured until now) is of the screen, windows and all: not to be unmixed over the picture.
+        self.pending = None;
+                self.group = Some(g.backdrop_group(&self.backgrounds[self.current].1, self.frost.result()));
         self.bounds = [0, 0, lw as i32, lh as i32];
         self.fixed = Some(version);
         self.fixed_frost = true;
@@ -327,6 +329,9 @@ impl Lens {
             self.frosted_with = g.blur_values;
             let (lw, lh) = self.px;
             self.frost.run(g, enc, &self.backgrounds[self.current].1, (0, 0, lw, lh), scale);
+            return;
+        }
+        if self.fixed.is_some() {
             return;
         }
         let Some((presented, scissor)) = self.pending.take() else { return };

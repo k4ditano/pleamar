@@ -1939,6 +1939,8 @@ pub struct Scene {
     /// `lens = image "file"`: the picture the glass bends instead of a capture of what is
     /// behind. It is not an attachment: the file changes with the wallpaper, and the scene must not reload with it.
     pub lens_image: Option<std::path::PathBuf>,
+    /// `lens = image "file" while expr`: the picture is only bent while this holds (live capture otherwise).
+    pub lens_image_while: Option<Expr>,
     /// `keyboard: exclusive while open`: when it wants the keyboard.
     pub keyboard_while: Option<Expr>,
     pub permissions: Permissions,

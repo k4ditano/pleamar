@@ -3292,6 +3292,12 @@ impl Gpu {
         // The lens, if it shows glass and the screen lets a canvas be copied onto it.
         // A monitor of pleamar-wm's own has nothing behind it to capture: what
         // is behind its glass is what it painted itself before it.
+        // The picture was taken away (`lens = image ... while`): a lens made for it captures nothing, so it is made again.
+        if self.lens_image.borrow().is_none() && l.lens.as_ref().is_some_and(|x| x.fixed.is_some()) {
+            l.lens = None;
+            l.painted_as.clear();
+            l.damage_log.clear();
+        }
         let whole_screen = matches!(&l.target, Target::Frames(f) if f.whole_screen());
         if !l.wants_lens || !self.can_copy || whole_screen {
             l.lens = None;

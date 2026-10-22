@@ -975,6 +975,11 @@ it does not reload it. What it costs: windows never show through the glass, and
 a surface that is not the whole monitor is slightly misaligned with it. A scene
 has one `lens =`.
 
+`lens = image "file" while expr` bends the picture only while `expr` holds; when
+it does not, the glass captures what is behind it, as a scene without `lens =`
+does. It is looked at every frame, so a switch in the scene can choose between the
+cheap picture and the live windows.
+
 **`z:` — what goes on top.** Groups with `z:` that are side by side (in the
 same group, or loose in the scene, even from different iterations of a
 `repeat`) are drawn from the smallest `z` to the biggest, whatever the order

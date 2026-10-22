@@ -3864,6 +3864,12 @@ pub fn run(
             std::thread::sleep(Duration::from_millis(8));
             continue;
         };
+        // `lens = image ... while`: the picture while it holds, a capture of what is behind when it does not.
+        if let (Some(path), Some(when)) = (scene.lens_image.as_deref(), &scene.lens_image_while) {
+            let on = when.is_true(Ctx { props: &props, facts: &facts, seen: None });
+            g.set_lens_image(on.then_some(path));
+            g.set_shaders(&scene.shaders);
+        }
         // The numbers the blur is given, worked out for this frame.
         g.blur_values = match &scene.blur {
             Some(_) => {
