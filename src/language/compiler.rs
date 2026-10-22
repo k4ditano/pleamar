@@ -1468,16 +1468,14 @@ impl<'a> Compiler<'a> {
             return match length {
                 Some(n) if k < 0 || k >= n as i64 => Ok(Expr::K(-1.0)),
                 None if k < 0 => Ok(Expr::K(-1.0)),
+                // Past the last of a family that has elements: outside it too. One
+                // with none is a name that does not exist, and says so.
+                None if !self.present(&element(k), more) && self.present(&element(0), more) => Ok(Expr::K(-1.0)),
                 _ => self.index_chain(c, &element(k), more),
             };
         }
         // Without a declared length, as many as there are: `win.0.screen`, `win.1.screen`, and so on.
-        let n = length.unwrap_or_else(|| {
-            let before = self.unwatched.replace(true);
-            let n = (0..512).take_while(|k| self.index_chain(c, &element(*k), more).is_ok()).count();
-            self.unwatched.set(before);
-            n
-        });
+        let n = length.unwrap_or_else(|| (0..512).take_while(|k| self.present(&element(*k), more)).count());
         if n == 0 {
             return c.error(format!("'{base}' has no elements to read: declare it with `let {base}[N]`, or read a name that has them (`win[i].screen`)"));
         }
@@ -1487,6 +1485,24 @@ impl<'a> Compiler<'a> {
         }
         options.push(Expr::K(-1.0));
         Ok(Expr::Pick(Box::new(i.clone() + Expr::K(1.0)), options).folded_pub())
+    }
+
+    /// Whether an element exists, without saying anything if not: what
+    /// follows it is looked for at its first place (`win.3.reserved.0.top`).
+    fn present(&self, base: &str, parts: &[(Expr, String)]) -> bool {
+        if let Some(((i, rest), more)) = parts.split_first() {
+            let k = match i {
+                Expr::K(v) => v.round() as i64,
+                _ => 0,
+            };
+            return k >= 0 && self.present(&format!("{base}.{k}{rest}"), more);
+        }
+        if self.scopes.iter().any(|e| e.exprs.contains_key(base)) {
+            return true;
+        }
+        let g = self.global_quiet(base);
+        let has = |n: &str| self.lets.contains_key(n) || self.props.contains_key(n) || self.facts.contains_key(n);
+        has(&g) || self.strip_screen_suffix(&g).is_some_and(|b| has(&b))
     }
 
     /// What a name is worth here: a parameter, a `let`, a prop, a fact or an enum's value.

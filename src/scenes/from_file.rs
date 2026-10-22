@@ -814,4 +814,20 @@ mod tests {
         assert_eq!(set["c"][0], -1.0, "past the last column");
         assert_eq!(set["d"][0], -1.0, "before the first row");
     }
+
+    #[test]
+    fn a_known_place_past_the_last_is_outside() {
+        let set = set_by_rules("scene Past {
+    surface { size: 200, 40 }
+    windows win max 4
+    on demo { a = win[4].screen; b = win.order[win.max]; c = win[3].screen }
+    fact a = 0
+    fact b = 0
+    fact c = 0
+}
+", &[("win.3.screen", 2.0)]);
+        assert_eq!(set["a"][0], -1.0);
+        assert_eq!(set["b"][0], -1.0);
+        assert_eq!(set["c"][0], 2.0);
+    }
 }
