@@ -1,4 +1,4 @@
-// expect: error «a `let` of the scene declared before it»
+// expect: error «one of the scene's in a `repeat` at the scene's level»
 scene X {
     surface { size: 100, 100 }
     let total = 0

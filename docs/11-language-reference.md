@@ -1217,6 +1217,18 @@ repeat i in 0..win.max {
 }
 ```
 
+**Inside a turn or a block** a fold works the same on that turn's own `let`: a window's `repeat` can add up over the others with one inside it, and what is written after the inner `repeat` reads the total.
+
+```
+repeat i in 0..win.max {
+    let others = 0
+    repeat j in 0..win.max {
+        others += (j != i and win[j].screen == win[i].screen) * win[j].open
+    }
+    box { at: 10, 10 + 30 * i; size: 20 + 10 * others, 20; color: #9ed6bd }
+}
+```
+
 `+=`, `-=` and `*=` are short for `x = x + ...`. An argmin carries two folds, the best value and where it was, and the one that says where is written before the one it compares with.
 
 **Sorting: `sort`.** `let ord[win.max] = sort(i in win by row[i], win[i].place)` puts the slots in order of their keys: by the first, then by the next where it ties, and by slot where all tie. `ord[p]` is the slot at place `p`, and `ord.pos[i]` is the place of slot `i`. It is worked out while the scene runs, once for everyone who reads it, and again only when a key's inputs change. What to sort is `win` (its slots), an array (its length) or `0..N`, as many as the array has places. There is no filter: a leading key does it (`by not win[i].open, ...` puts the closed ones last). A fold over `ord` gives running sums in that order, and a slot reads its own through `ord.pos`:

@@ -224,6 +224,8 @@ struct Scope {
     strict: bool,
     /// Its `let`s written outside any group, and on which line.
     loose: HashMap<String, usize>,
+    /// The values of the scene's folds a `repeat` keeps (see `fold`): not a turn's own `let`s.
+    folds: bool,
 }
 
 struct Component<'a> {
@@ -5168,7 +5170,7 @@ impl<'a> Compiler<'a> {
             // scene's last link is not where a copy's chain starts.
             let mut settled = Vec::new();
             self.each_copy(|o| {
-                o.scopes.push(Rc::new(Scope::default()));
+                o.scopes.push(Rc::new(Scope { folds: true, ..Default::default() }));
                 o.fold_scope = Some(o.scopes.len() - 1);
                 o.hoist_turns(n, &var, from, until, true);
                 o.fold_scope = None;
@@ -5245,24 +5247,29 @@ impl<'a> Compiler<'a> {
     /// one more link of a chain, and after the `repeat` `x` is its last link.
     /// Nothing is ever changed: each link is a `let` of its own.
     fn fold(&mut self, n: &Node) -> R<()> {
-        if self.in_hoisted > 0 {
-            return Ok(());
-        }
-        let Some(k) = self.fold_scope.filter(|_| self.hoisting.is_some()) else {
-            let name = match n.head.first().map(|t| &t.kind) {
-                Some(TokenKind::Id(w)) => w.as_str(),
-                _ => "x",
-            };
-            return Err(CompileError::at(n.line, n.col, format!("`{name} = ...` adds up across a `repeat` at the scene's level: it goes in one, with `{name}` a `let` of the scene declared before it")));
-        };
         let mut c = Cur::new(&n.head, n.line, n.col);
         let name = c.id("a name")?;
         let op = ["+", "-", "*"].into_iter().find(|o| c.sym(o));
         c.expect_sym("=")?;
-        let g = self.global_quiet(&name);
-        if !self.lets.contains_key(&g) || self.arrays.contains_key(&g) {
-            return Err(CompileError::at(n.line, n.col, format!("'{name}' is not a `let` of the scene: declare it before the `repeat`, `let {name} = 0`")));
-        }
+        // A `let` of the turn or the block it is in (not the scene's): each
+        // link takes its place there, and what comes after reads that one.
+        let local = self.scopes.iter().rposition(|e| e.exprs.contains_key(&name)).filter(|k| !self.scopes[*k].folds);
+        let k = match local {
+            Some(k) => k,
+            None => {
+                if self.in_hoisted > 0 {
+                    return Ok(());
+                }
+                let Some(k) = self.fold_scope.filter(|_| self.hoisting.is_some()) else {
+                    return Err(CompileError::at(n.line, n.col, format!("`{name} = ...` gives a `let` a new value: one of the turn or the block it is in, or one of the scene's in a `repeat` at the scene's level. There is no `let {name}` before it here")));
+                };
+                let g = self.global_quiet(&name);
+                if !self.lets.contains_key(&g) || self.arrays.contains_key(&g) {
+                    return Err(CompileError::at(n.line, n.col, format!("'{name}' is not a `let` of the scene: declare it before the `repeat`, `let {name} = 0`")));
+                }
+                k
+            }
+        };
         let e = self.expr(&mut c)?;
         c.expect_end()?;
         let e = match op {

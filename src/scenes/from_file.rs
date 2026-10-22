@@ -705,4 +705,29 @@ mod tests {
         }).collect();
         assert_eq!(shown, ["one", "foot and ZERO and one", "foot"]);
     }
+
+    #[test]
+    fn a_fold_inside_a_turn_is_that_turns_own() {
+        let set = set_by_rules("scene Local {
+    surface { size: 200, 40 }
+    fact w.0 = 10
+    fact w.1 = 20
+    fact w.2 = 30
+    repeat i in 0..3 {
+        fact r.$i = 0
+        fact first.$i = 0
+        // What the others weigh, without itself; and the first heavier one.
+        let others = 0
+        let heavier = -1
+        repeat j in 0..3 {
+            others += (j != i) * w.$j
+            heavier = if(heavier < 0 and w.$j > w.$i, j, heavier)
+        }
+        on demo { r.$i = others; first.$i = heavier }
+    }
+}
+", &[]);
+        assert_eq!([set["r.0"][0], set["r.1"][0], set["r.2"][0]], [50.0, 40.0, 30.0]);
+        assert_eq!([set["first.0"][0], set["first.1"][0], set["first.2"][0]], [1.0, 2.0, -1.0]);
+    }
 }
