@@ -19,7 +19,7 @@ image = { version = "0.25.10", default-features = false, features = ["jpeg", "pn
 lewton = "0.10"
 mlua = { version = "0.12", features = ["luau", "send"], optional = true }
 pollster = "1.0.1"
-resvg = { version = "0.48.1", default-features = false }
+resvg = { version = "0.48.1", default-features = false, features = ["raster-images"] }
 serde_json = "1.0.151"
 typed-arena = "2.0.2"
 wgpu = "30"
