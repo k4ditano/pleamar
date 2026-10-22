@@ -1401,6 +1401,9 @@ pub fn run(
                             desks.minimized[slot] = false;
                             desks.floating[slot] = false;
                             desks.pending[slot] = n.manual;
+                            // Said with `open`, not at the next order: a rule that waits for
+                            // `open` reads it as it is.
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.pending"), n.manual as u8 as f32);
                             desks.stamp += 1;
                             desks.born[slot] = desks.stamp;
                             // What the slot showed before —a window closing, still fading— is no longer it.
