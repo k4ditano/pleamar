@@ -1480,6 +1480,8 @@ fact of its own called `locale`, are errors.
 
 A `repeat` among the effects unfolds into more effects of the same rule, in order: `on reset { repeat k in 0..16 { tre.w.$k = 0 } }` is one rule with sixteen effects, each seeing what the ones before it set, not sixteen rules.
 
+A fact can be written by its place, as it is read (§7): `tre.x[tre.nw] = tre.ax` sets the one of `tre.x.0`, `tre.x.1`... that `tre.nw` says when the rule fires, and `put[i].x = 0` writes `put.3.x` the same way. The place and the value are worked out once; a place outside them changes nothing.
+
 | Trigger | When |
 | --- | --- |
 | `press zone` · `press right zone` · `press middle zone` | it is pressed. A scene that uses `right` for anything is never closed by a right click: the prototype's emergency exit is only for scenes that do not use it |

@@ -2817,6 +2817,14 @@ pub fn run(
                         facts[h.0 as usize] = v;
                         let _ = to_logic.send(Event::Fact(scene.facts[h.0 as usize].0, v));
                     }
+                    Effect::FactAt(hs, i, v) => {
+                        let c = Ctx { props: &props, facts: &facts, seen: None };
+                        let (i, v) = (i.eval(c).round(), v.eval(c));
+                        if let Some(h) = (i >= 0.0).then(|| hs.get(i as usize)).flatten() {
+                            facts[h.0 as usize] = v;
+                            let _ = to_logic.send(Event::Fact(scene.facts[h.0 as usize].0, v));
+                        }
+                    }
                     Effect::Toggle(h) => {
                         let v = if facts[h.0 as usize] > 0.5 { 0.0 } else { 1.0 };
                         facts[h.0 as usize] = v;

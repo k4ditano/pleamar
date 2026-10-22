@@ -1811,6 +1811,9 @@ pub enum Effect {
     /// A fact becomes worth whatever the expression is worth at that moment. It can
     /// read the mouse's things: `level = clamp(local.x / 64, 0, 1)`.
     Fact(FactId, Expr),
+    /// `x[i] = v`: the fact at place `i` among these. The place and the value
+    /// are read once, when it fires; outside the list, nothing changes.
+    FactAt(Vec<FactId>, Expr, Expr),
     /// From yes to no and from no to yes.
     Toggle(FactId),
     /// A signal, with a payload if wanted: `emit opened(i)`. It is evaluated when it fires.
@@ -1891,6 +1894,7 @@ impl Effect {
         match self {
             Effect::Animate(t) => Effect::Animate(Transition { to: t.to.with_payload(v), ..t.clone() }),
             Effect::Fact(h, e) => Effect::Fact(*h, e.with_payload(v)),
+            Effect::FactAt(hs, i, e) => Effect::FactAt(hs.clone(), i.with_payload(v), e.with_payload(v)),
             Effect::Signal(s, e) => Effect::Signal(*s, e.as_ref().map(|e| e.with_payload(v))),
             Effect::Impulse(p, e) => Effect::Impulse(*p, e.with_payload(v)),
             Effect::Window(a, e) => Effect::Window(*a, e.with_payload(v)),

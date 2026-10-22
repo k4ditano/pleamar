@@ -6997,6 +6997,35 @@ impl<'a> Compiler<'a> {
         r
     }
 
+    /// `x[i] = v` in a rule: the fact `x.3` when the place is known when
+    /// loading, otherwise whichever of `x.0`, `x.1`... the place says when it fires.
+    fn indexed_write(&self, base: &str, c: &mut Cur) -> R<Effect> {
+        c.expect_sym("[")?;
+        let i = self.expr(c)?;
+        c.expect_sym("]")?;
+        let rest = match c.peek() {
+            Some(TokenKind::Id(r)) if r.starts_with('.') => {
+                c.i += 1;
+                r.clone()
+            }
+            _ => String::new(),
+        };
+        c.expect_sym("=")?;
+        let v = self.expr(c)?;
+        let fact = |k: usize| self.facts.get(&self.global_quiet(&format!("{base}.{k}{rest}"))).copied();
+        if let Expr::K(k) = i {
+            return match (k >= 0.0).then(|| fact(k.round() as usize)).flatten() {
+                Some(h) => Ok(Effect::Fact(h, v)),
+                None => c.error(format!("there is no fact '{base}.{}{rest}' to write", k.round())),
+            };
+        }
+        let all: Vec<FactId> = (0..4096).map_while(fact).collect();
+        if all.is_empty() {
+            return c.error(format!("'{base}[...]{rest}' writes a fact by its place: there is no '{base}.0{rest}'. Declare them, `repeat k in 0..16 {{ fact {base}.$k{rest} = 0 }}`"));
+        }
+        Ok(Effect::FactAt(all, i, v))
+    }
+
     /// A rule's effects, in order. A `repeat` among them is unfolded in
     /// place: `repeat k in 0..16 { tre.w.$k = 0 }` is sixteen effects of the
     /// same rule, which each see what the ones before them set.
@@ -7180,6 +7209,8 @@ impl<'a> Compiler<'a> {
                             };
                             Effect::Text(t, value)
                         }
+                        // `tre.x[tre.nw] = tre.ax`: one of a numbered family of facts.
+                        "" if matches!(c.peek(), Some(TokenKind::Sym("["))) => self.indexed_write(&p, &mut c)?,
                         _ => {
                             // `open = true`
                             c.i -= 1;

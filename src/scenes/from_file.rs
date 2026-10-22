@@ -454,6 +454,11 @@ mod tests {
                 if let crate::scene::Effect::Fact(h, e) = e {
                     let v = e.eval(crate::scene::Ctx { props: &props, facts: &facts, seen: None });
                     out.entry(scene.facts[h.0 as usize].0.to_owned()).or_insert_with(Vec::new).push(v);
+                } else if let crate::scene::Effect::FactAt(hs, i, e) = e {
+                    let c = crate::scene::Ctx { props: &props, facts: &facts, seen: None };
+                    if let Some(h) = hs.get(i.eval(c).round() as usize) {
+                        out.entry(scene.facts[h.0 as usize].0.to_owned()).or_insert_with(Vec::new).push(e.eval(c));
+                    }
                 }
             }
         }
@@ -651,5 +656,22 @@ mod tests {
 ", &[]);
         assert_eq!([set["v.0"][0], set["v.1"][0], set["v.2"][0]], [1.0, 11.0, 21.0]);
         assert_eq!(set.values().map(Vec::len).sum::<usize>(), 3, "one rule, three effects");
+    }
+
+    #[test]
+    fn a_rule_writes_the_fact_at_a_place() {
+        let set = set_by_rules("scene Writes {
+    surface { size: 200, 40 }
+    fact at = 2
+    repeat k in 0..4 {
+        fact x.$k = 0
+        fact b.$k.y = 0
+    }
+    on demo { x[at] = 7; b[at - 1].y = at * 10; x[0] = 5 }
+}
+", &[]);
+        assert_eq!(set["x.2"], vec![7.0]);
+        assert_eq!(set["b.1.y"], vec![20.0]);
+        assert_eq!(set["x.0"], vec![5.0], "a place known when loading is that fact");
     }
 }
