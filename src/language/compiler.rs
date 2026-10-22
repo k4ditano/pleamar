@@ -311,6 +311,8 @@ struct Compiler<'a> {
     unwatched: std::cell::Cell<bool>,
     /// The lines of `let`s already said to hide a fact or a prop (once, not once per monitor).
     hiding_noted: std::cell::RefCell<std::collections::HashSet<usize>>,
+    /// Where a function was given more than it takes, already said.
+    extra_noted: std::cell::RefCell<std::collections::HashSet<(usize, usize)>>,
     /// Reading a text's `letter_*` property: `letter` and `letters` mean something.
     in_letters: std::cell::Cell<bool>,
     /// Reading a `cursor:`: the cursors' names are their codes.
@@ -459,7 +461,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -1563,6 +1565,19 @@ impl<'a> Compiler<'a> {
             Expr::K(v) => Ok(*v),
             _ => Err(CompileError::at(l, col, format!("in '{name}', the first two have to be numbers"))),
         };
+        // More than it takes are not read: said, not refused, so a scene that
+        // has them still loads. `min(a, b, c)` was the smaller of `a` and `b`.
+        let takes = match name {
+            "min" | "max" | "pow" | "atan2" | "mod" | "length" | "noise" => 2,
+            "clamp" | "smooth" | "mix" | "if" => 3,
+            "pick" | "rgb" => usize::MAX,
+            _ => 1,
+        };
+        if a.len() > takes && self.extra_noted.borrow_mut().insert((l, col)) {
+            let file = self.files.get(l / super::PER_FILE).map_or("", String::as_str);
+            let extra = a.len() - takes;
+            eprintln!("note   · {file}:{}:{col}: `{name}` takes {takes} argument{}: the {extra} after {} are not read", l % super::PER_FILE, if takes == 1 { "" } else { "s" }, if takes == 1 { "it" } else { "them" });
+        }
         let mut a = a.into_iter();
         let mut take = || a.next().ok_or_else(|| CompileError::at(l, col, format!("'{name}' is missing arguments")));
         Ok(match name {
