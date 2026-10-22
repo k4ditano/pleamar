@@ -730,4 +730,63 @@ mod tests {
         assert_eq!([set["r.0"][0], set["r.1"][0], set["r.2"][0]], [50.0, 40.0, 30.0]);
         assert_eq!([set["first.0"][0], set["first.1"][0], set["first.2"][0]], [1.0, 2.0, -1.0]);
     }
+
+    #[test]
+    fn a_blocks_fold_is_what_its_rules_read() {
+        let set = set_by_rules("scene Free {
+    surface { size: 200, 40 }
+    fact used.0 = 1
+    fact used.1 = 0
+    fact used.2 = 0
+    fact got = -1
+    repeat q in 0..1 {
+        let free = -1
+        repeat j in 0..3 {
+            free = if(free < 0 and used.$j < 0.5, j, free)
+        }
+        repeat j in 0..3 {
+            on demo while free == j { got = j }
+        }
+    }
+}
+", &[]);
+        assert_eq!(set["got"], vec![0.0, 1.0, 2.0], "each rule's value");
+        let guards = set_by_rules_guards("scene Free {
+    surface { size: 200, 40 }
+    fact used.0 = 1
+    fact used.1 = 0
+    fact used.2 = 0
+    fact got = -1
+    repeat q in 0..1 {
+        let free = -1
+        repeat j in 0..3 {
+            free = if(free < 0 and used.$j < 0.5, j, free)
+        }
+        repeat j in 0..3 {
+            on demo while free == j { got = j }
+        }
+    }
+}
+");
+        assert_eq!(guards, vec![false, true, false], "only the rule of the first free one fires");
+    }
+
+    /// Whether each rule's guard holds, with the facts as they start.
+    fn set_by_rules_guards(source: &str) -> Vec<bool> {
+        let dir = std::env::temp_dir().join(format!("pleamar-guards-{}-{}", std::process::id(), source.len()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("guards.plm");
+        std::fs::write(&path, source).unwrap();
+        let scene = super::read(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        let scene = scene.unwrap_or_else(|e| panic!("{e}"));
+        let facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let mut props: Vec<crate::scene::Animated> = scene.props.iter().map(|(_, x, s)| crate::scene::Animated::at(*x, *s)).collect();
+        for b in &scene.behaviors {
+            if let crate::scene::Behavior::Bind { prop, to } = b {
+                props[prop.0 as usize].x = to.eval(crate::scene::Ctx { props: &props, facts: &facts, seen: None });
+            }
+        }
+        scene.rules.iter().map(|r| r.guard.as_ref().is_none_or(|g| g.eval(crate::scene::Ctx { props: &props, facts: &facts, seen: None }) > 0.5)).collect()
+    }
 }
