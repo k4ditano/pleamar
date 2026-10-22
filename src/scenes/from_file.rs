@@ -456,7 +456,7 @@ mod tests {
                     out.entry(scene.facts[h.0 as usize].0.to_owned()).or_insert_with(Vec::new).push(v);
                 } else if let crate::scene::Effect::FactAt(hs, i, e) = e {
                     let c = crate::scene::Ctx { props: &props, facts: &facts, seen: None };
-                    if let Some(h) = hs.get(i.eval(c).round() as usize) {
+                    if let Some(h) = Some(i.eval(c).round()).filter(|k| *k >= 0.0).and_then(|k| hs.get(k as usize)) {
                         out.entry(scene.facts[h.0 as usize].0.to_owned()).or_insert_with(Vec::new).push(e.eval(c));
                     }
                 }
@@ -871,5 +871,24 @@ mod tests {
 }
 ", &[("screen.0.width", 100.0), ("screen.1.width", 300.0)]);
         assert_eq!(set["a"], vec![-1.0, -1.0], "each copy's: the last link, not its monitor's width");
+    }
+
+    #[test]
+    fn a_sort_ties_minus_zero_with_zero() {
+        let set = set_by_rules("scene Zero {
+    surface { size: 200, 40 }
+    fact sign.0 = 1
+    fact sign.1 = -1
+    fact sign.2 = 1
+    fact sign.3 = -1
+    let ord[4] = sort(i in 0..4 by 0 * sign.$i)
+    on demo { a = ord[0]; b = ord[1]; c = ord[2]; d = ord[3] }
+    fact a = 0
+    fact b = 0
+    fact c = 0
+    fact d = 0
+}
+", &[]);
+        assert_eq!([set["a"][0], set["b"][0], set["c"][0], set["d"][0]], [0.0, 1.0, 2.0, 3.0]);
     }
 }

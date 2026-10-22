@@ -334,7 +334,8 @@ pub enum Expr {
 /// Runs a `Sort`: each slot's keys, the slots in their order, and each
 /// property written. What changed is handed to `changed`.
 pub fn run_sort(keys: &[Vec<Expr>], ord: &[PropId], pos: &[PropId], props: &mut [Animated], facts: &[f32], mut changed: impl FnMut(PropId)) {
-    let values: Vec<Vec<f32>> = keys.iter().map(|k| k.iter().map(|e| e.eval(Ctx { props: &*props, facts, seen: None })).collect()).collect();
+    // `+ 0.0` makes -0 the 0 it equals: keys that are the same tie, by slot.
+    let values: Vec<Vec<f32>> = keys.iter().map(|k| k.iter().map(|e| e.eval(Ctx { props: &*props, facts, seen: None }) + 0.0).collect()).collect();
     let mut slots: Vec<usize> = (0..keys.len()).collect();
     slots.sort_by(|a, b| values[*a].iter().zip(&values[*b]).map(|(x, y)| x.total_cmp(y)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
     for (p, slot) in slots.into_iter().enumerate() {
