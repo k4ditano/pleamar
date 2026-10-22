@@ -861,6 +861,31 @@ fn is_fold(n: &Node) -> bool {
     }
 }
 
+/// The names a `repeat` folds that are not `let`s of its own: the scene's.
+fn fold_targets(entries: &[Entry]) -> Vec<String> {
+    fn walk(entries: &[Entry], folded: &mut Vec<String>, own: &mut HashSet<String>) {
+        for e in entries {
+            let Entry::Node(n) = e else { continue };
+            match n.head.first().map(|t| &t.kind) {
+                Some(TokenKind::Id(w)) if w == "let" => {
+                    if let Some(TokenKind::Id(name)) = n.head.get(1).map(|t| &t.kind) {
+                        own.insert(name.clone());
+                    }
+                }
+                Some(TokenKind::Id(w)) if is_fold(n) && !folded.contains(w) => folded.push(w.clone()),
+                _ => {}
+            }
+            if let Some(b) = &n.body {
+                walk(b, folded, own);
+            }
+        }
+    }
+    let (mut folded, mut own) = (Vec::new(), HashSet::new());
+    walk(entries, &mut folded, &mut own);
+    folded.retain(|n| !own.contains(n));
+    folded
+}
+
 /// What a `repeat` that defines elements reads with its definitions: its
 /// `let`s, and the values it declares, which a definition may read.
 fn hoisted_with_definitions(n: &Node) -> bool {
@@ -5205,7 +5230,15 @@ impl<'a> Compiler<'a> {
             // scene's last link is not where a copy's chain starts.
             let mut settled = Vec::new();
             self.each_copy(|o| {
-                o.scopes.push(Rc::new(Scope { folds: true, ..Default::default() }));
+                // What each of the scene's `let`s it folds is worth as it begins.
+                let mut start = Scope { folds: true, ..Default::default() };
+                for name in fold_targets(n.body.as_deref().unwrap_or(&[])) {
+                    let own = o.hoisting.flatten().map(|s| format!("{name}#screen{s}")).filter(|m| o.lets.contains_key(m));
+                    if let Some(e) = own.as_ref().or(Some(&name)).and_then(|m| o.lets.get(m)) {
+                        start.exprs.insert(name, e.clone());
+                    }
+                }
+                o.scopes.push(Rc::new(start));
                 o.fold_scope = Some(o.scopes.len() - 1);
                 o.hoist_turns(n, &var, from, until, true);
                 o.fold_scope = None;
@@ -5279,6 +5312,11 @@ impl<'a> Compiler<'a> {
 
     fn hoist_turns(&mut self, n: &'a Node, var: &str, from: i64, until: i64, top: bool) {
         for v in from..until {
+            // Each turn's drawing and rules start from the folds as they were
+            // when it began, and follow its links as they come.
+            if let Some(k) = self.fold_scope.filter(|_| top) {
+                self.turns.insert((n as *const Node, self.hoisting.flatten(), v), self.scopes[k].clone());
+            }
             self.open_iteration(var, v);
             for e in n.body.as_deref().unwrap_or(&[]) {
                 let Entry::Node(s) = e else { continue };
@@ -5292,9 +5330,6 @@ impl<'a> Compiler<'a> {
                     // The declarations are read again too, and are the same ones.
                     let _ = self.statement(s, &mut 0);
                 }
-            }
-            if let Some(k) = self.fold_scope.filter(|_| top) {
-                self.turns.insert((n as *const Node, self.hoisting.flatten(), v), self.scopes[k].clone());
             }
             self.scopes.pop();
         }
@@ -5315,8 +5350,11 @@ impl<'a> Compiler<'a> {
             Some(k) => k,
             None => {
                 if self.in_hoisted > 0 {
-                    return Ok(());
-                }
+                    match self.scopes.iter().rposition(|e| e.folds && e.exprs.contains_key(&name)) {
+                        Some(k) => k,
+                        None => return Ok(()),
+                    }
+                } else {
                 let Some(k) = self.fold_scope.filter(|_| self.hoisting.is_some()) else {
                     return Err(CompileError::at(n.line, n.col, format!("`{name} = ...` gives a `let` a new value: one of the turn or the block it is in, or one of the scene's in a `repeat` at the scene's level. There is no `let {name}` before it here")));
                 };
@@ -5325,6 +5363,7 @@ impl<'a> Compiler<'a> {
                     return Err(CompileError::at(n.line, n.col, format!("'{name}' is not a `let` of the scene: declare it before the `repeat`, `let {name} = 0`")));
                 }
                 k
+                }
             }
         };
         let e = self.expr(&mut c)?;
@@ -5361,7 +5400,11 @@ impl<'a> Compiler<'a> {
                     }
                     self.lets.insert(format!("{name}#screen{s}"), e.clone());
                 }
-                Some(_) => {}
+                // The same as the scene's: a value of its own left from before the
+                // `repeat` (a start that read its monitor) would hide it.
+                Some(s) => {
+                    self.lets.remove(&format!("{name}#screen{s}"));
+                }
             }
         }
     }

@@ -1204,7 +1204,7 @@ The length is read when loading, like a `repeat`'s bounds: a number, a `let` of 
 
 **Tables: `let a[N][M]`.** Two places, each element defined once as `a[i][j] = ...` (in a `repeat` inside a `repeat`), and read the same way: `a[s][k]`. Each row is an array of its own (`a.2` has `M` elements), so `a[s]` names a row where an array is expected, and `a.2.5` is the element's `let`.
 
-**Folds: `x = ...` and `x += ...`.** In such a `repeat`, a `let` of the scene declared before it can be given a new value each turn: a sum, a count, the smallest so far and where it was. Nothing changes while the scene runs: each turn is one more `let`, made from the one before, and after the `repeat` the name is the last one. Inside it, each turn reads the value as it was at that point, and its drawing and rules as it was at the end of that turn.
+**Folds: `x = ...` and `x += ...`.** In such a `repeat`, a `let` of the scene declared before it can be given a new value each turn: a sum, a count, the smallest so far and where it was. Nothing changes while the scene runs: each turn is one more `let`, made from the one before, and after the `repeat` the name is the last one. Inside it, each turn reads the value as it is at that point: what is written before a link, its drawing and its rules too, reads the one before it.
 
 ```
 let total = 0

@@ -830,4 +830,46 @@ mod tests {
         assert_eq!(set["b"][0], -1.0);
         assert_eq!(set["c"][0], 2.0);
     }
+
+    #[test]
+    fn a_turn_reads_a_fold_as_it_is_where_it_reads_it() {
+        let set = set_by_rules("scene Where {
+    surface { size: 200, 40 }
+    fact q.0 = 3
+    fact q.1 = 5
+    let x = 0
+    let left[2]
+    repeat i in 0..2 {
+        let mine = x
+        x += q.$i
+        left[i] = mine
+        on demo { r.$i = mine; after.$i = x }
+        fact r.$i = 0
+        fact after.$i = 0
+    }
+    on demo { a = left[1] }
+    fact a = 0
+}
+", &[]);
+        assert_eq!(set["a"][0], 3.0);
+        assert_eq!([set["r.0"][0], set["r.1"][0]], [0.0, 3.0], "its rules read what it read before the link");
+        assert_eq!([set["after.0"][0], set["after.1"][0]], [3.0, 8.0]);
+    }
+
+    #[test]
+    fn a_fold_from_a_copys_own_start_ends_in_its_result() {
+        let set = set_by_rules("scene Start {
+    surface { size: full, 40; anchor: top; screens: each max 2 }
+    fact open.0 = 1
+    fact open.1 = 0
+    let x = screen.width
+    repeat i in 0..2 {
+        x = if(open.$i, 10 + i, -1)
+    }
+    on demo { a = x }
+    fact a = 0
+}
+", &[("screen.0.width", 100.0), ("screen.1.width", 300.0)]);
+        assert_eq!(set["a"], vec![-1.0, -1.0], "each copy's: the last link, not its monitor's width");
+    }
 }
