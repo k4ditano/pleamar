@@ -1478,6 +1478,8 @@ fact of its own called `locale`, are errors.
 
 `on trigger { effects }` and `every 2s..7s [while expr] { effects }`.
 
+A `repeat` among the effects unfolds into more effects of the same rule, in order: `on reset { repeat k in 0..16 { tre.w.$k = 0 } }` is one rule with sixteen effects, each seeing what the ones before it set, not sixteen rules.
+
 | Trigger | When |
 | --- | --- |
 | `press zone` · `press right zone` · `press middle zone` | it is pressed. A scene that uses `right` for anything is never closed by a right click: the prototype's emergency exit is only for scenes that do not use it |

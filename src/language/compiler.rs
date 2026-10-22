@@ -6982,101 +6982,24 @@ impl<'a> Compiler<'a> {
         r
     }
 
-    fn rule_inner(&mut self, n: &Node, word: &str, c: &mut Cur, payload_name: &mut Option<String>) -> R<()> {
-        let while_cond = |o: &Compiler, c: &mut Cur| -> R<Expr> { if c.word("while") { o.expr(c) } else { Ok(Expr::K(1.0)) } };
-        let when = if word == "every" {
-            let a = c.dur()?.as_secs_f32();
-            let b = if c.sym("..") { c.dur()?.as_secs_f32() } else { a };
-            Trigger::Every { between: (a, b), during: while_cond(self, c)? }
-        } else {
-            let what = c.id("what has to happen: press, release, scroll, drag, hold, key, submit, focus, blur, drop, enter, leave, hover, away, idle, or an event")?;
-            // Only what the vocabulary says is a trigger; anything else is the name of a signal.
-            match if vocab::TRIGGERS.contains(&what.as_str()) { what.as_str() } else { "" } {
-                // `on press orb`, or with another button: `on press right orb`.
-                "press" => {
-                    if c.word("right") {
-                        self.e.surface_mut().right_click_quits = false;
-                        Trigger::PressWith(self.zone(c)?, 1)
-                    } else if c.word("middle") {
-                        Trigger::PressWith(self.zone(c)?, 2)
-                    } else {
-                        Trigger::Press(self.zone(c)?)
-                    }
+    /// A rule's effects, in order. A `repeat` among them is unfolded in
+    /// place: `repeat k in 0..16 { tre.w.$k = 0 }` is sixteen effects of the
+    /// same rule, which each see what the ones before them set.
+    fn effects(&mut self, entries: &[Entry], effects: &mut Vec<Effect>) -> R<()> {
+        for e in entries {
+            if let Entry::Node(x) = e
+                && matches!(x.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "repeat")
+            {
+                let mut c = Cur::new(&x.head[1..], x.line, x.col);
+                let (var, from, until) = self.repeat_head(&mut c)?;
+                for v in from..until {
+                    self.open_iteration(&var, v);
+                    let r = self.effects(x.body.as_deref().unwrap_or(&[]), effects);
+                    self.scopes.pop();
+                    r?;
                 }
-                "release" => Trigger::Release(self.zone(c)?),
-                "scroll" => Trigger::Wheel(self.zone(c)?),
-                "drag" => Trigger::Drag(self.zone(c)?),
-                "hold" => {
-                    let zone = self.zone(c)?;
-                    c.expect_word("for")?;
-                    Trigger::Hold { zone, duration: c.dur()? }
-                }
-                // `on key Escape`, `on key Ctrl+k`: the name can carry a `+`.
-                "key" => {
-                    let mut name = c.id("the name of a key: Escape, Return, a, Ctrl+k…")?;
-                    while c.sym("+") {
-                        name = format!("{name}+{}", c.id("the key")?);
-                    }
-                    Trigger::Key(key_combo(&name))
-                }
-                "submit" => {
-                    let n = self.global(&c.id("the name of the input")?);
-                    match self.texts.get(&n) {
-                        Some(t) => Trigger::Submit(*t),
-                        None => return self.unknown(c, "no text", &n, self.texts.keys().collect()),
-                    }
-                }
-                "focus" => Trigger::FocusGained,
-                "blur" => Trigger::FocusLost,
-                // `on change floor(list.scroll / 34) { … }`: when that expression changes.
-                "change" => Trigger::Change(self.expr(c)?),
-                // `on still audio.volume for 1.1s { … }`: when it has stayed the same for that while.
-                "still" => {
-                    let what = self.expr(c)?;
-                    c.expect_word("for")?;
-                    Trigger::Still { value: what, duration: c.dur()? }
-                }
-                "drop" => Trigger::Receive(self.zone(c)?),
-                "carry" => Trigger::Carry(self.zone(c)?),
-                "enter" => Trigger::Enter(self.zone(c)?),
-                "leave" => Trigger::Leave(self.zone(c)?),
-                "hover" | "away" => {
-                    let zone = self.zone(c)?;
-                    c.expect_word("for")?;
-                    let duration = c.dur()?;
-                    if what == "hover" { Trigger::Above { zone, duration } } else { Trigger::Away { zone, duration } }
-                }
-                "idle" => {
-                    c.expect_word("for")?;
-                    let duration = c.dur()?;
-                    Trigger::Idle { duration, during: while_cond(self, c)? }
-                }
-                other if vocab::TRIGGERS.contains(&other) => unreachable!("'{other}' is in the vocabulary, but `rule` does not handle it"),
-                _ => {
-                    c.i -= 1;
-                    let s = self.signal(c)?;
-                    // `on chosen(v) { … }`: inside, `v` is the value it arrived with.
-                    if c.sym("(") {
-                        let v = c.id("a name for the event's value: `on chosen(v) { … }`")?;
-                        c.expect_sym(")")?;
-                        *payload_name = Some(v);
-                    }
-                    Trigger::On(s)
-                }
+                continue;
             }
-        };
-        // The event's value, by the name it was given, for the guard and the effects.
-        if let Some(v) = payload_name.as_ref() {
-            let mut here = Scope::default();
-            here.exprs.insert(v.clone(), Expr::Payload);
-            self.scopes.push(Rc::new(here));
-        }
-        // `while` works in any rule: it is checked at the moment of firing.
-        // (`idle` and `every` have already taken it: in them it also decides whether the time counts.)
-        let guard = if c.word("while") { Some(self.expr(c)?) } else { None };
-        c.expect_end()?;
-        let mut effects = Vec::new();
-        for e in n.body.as_deref().unwrap_or(&[]) {
             match e {
                 Entry::Prop { name, value, line, col } => effects.push(Effect::Animate(self.transition(name, value, *line, *col)?)),
                 Entry::Node(x) => {
@@ -7268,6 +7191,104 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn rule_inner(&mut self, n: &Node, word: &str, c: &mut Cur, payload_name: &mut Option<String>) -> R<()> {
+        let while_cond = |o: &Compiler, c: &mut Cur| -> R<Expr> { if c.word("while") { o.expr(c) } else { Ok(Expr::K(1.0)) } };
+        let when = if word == "every" {
+            let a = c.dur()?.as_secs_f32();
+            let b = if c.sym("..") { c.dur()?.as_secs_f32() } else { a };
+            Trigger::Every { between: (a, b), during: while_cond(self, c)? }
+        } else {
+            let what = c.id("what has to happen: press, release, scroll, drag, hold, key, submit, focus, blur, drop, enter, leave, hover, away, idle, or an event")?;
+            // Only what the vocabulary says is a trigger; anything else is the name of a signal.
+            match if vocab::TRIGGERS.contains(&what.as_str()) { what.as_str() } else { "" } {
+                // `on press orb`, or with another button: `on press right orb`.
+                "press" => {
+                    if c.word("right") {
+                        self.e.surface_mut().right_click_quits = false;
+                        Trigger::PressWith(self.zone(c)?, 1)
+                    } else if c.word("middle") {
+                        Trigger::PressWith(self.zone(c)?, 2)
+                    } else {
+                        Trigger::Press(self.zone(c)?)
+                    }
+                }
+                "release" => Trigger::Release(self.zone(c)?),
+                "scroll" => Trigger::Wheel(self.zone(c)?),
+                "drag" => Trigger::Drag(self.zone(c)?),
+                "hold" => {
+                    let zone = self.zone(c)?;
+                    c.expect_word("for")?;
+                    Trigger::Hold { zone, duration: c.dur()? }
+                }
+                // `on key Escape`, `on key Ctrl+k`: the name can carry a `+`.
+                "key" => {
+                    let mut name = c.id("the name of a key: Escape, Return, a, Ctrl+k…")?;
+                    while c.sym("+") {
+                        name = format!("{name}+{}", c.id("the key")?);
+                    }
+                    Trigger::Key(key_combo(&name))
+                }
+                "submit" => {
+                    let n = self.global(&c.id("the name of the input")?);
+                    match self.texts.get(&n) {
+                        Some(t) => Trigger::Submit(*t),
+                        None => return self.unknown(c, "no text", &n, self.texts.keys().collect()),
+                    }
+                }
+                "focus" => Trigger::FocusGained,
+                "blur" => Trigger::FocusLost,
+                // `on change floor(list.scroll / 34) { … }`: when that expression changes.
+                "change" => Trigger::Change(self.expr(c)?),
+                // `on still audio.volume for 1.1s { … }`: when it has stayed the same for that while.
+                "still" => {
+                    let what = self.expr(c)?;
+                    c.expect_word("for")?;
+                    Trigger::Still { value: what, duration: c.dur()? }
+                }
+                "drop" => Trigger::Receive(self.zone(c)?),
+                "carry" => Trigger::Carry(self.zone(c)?),
+                "enter" => Trigger::Enter(self.zone(c)?),
+                "leave" => Trigger::Leave(self.zone(c)?),
+                "hover" | "away" => {
+                    let zone = self.zone(c)?;
+                    c.expect_word("for")?;
+                    let duration = c.dur()?;
+                    if what == "hover" { Trigger::Above { zone, duration } } else { Trigger::Away { zone, duration } }
+                }
+                "idle" => {
+                    c.expect_word("for")?;
+                    let duration = c.dur()?;
+                    Trigger::Idle { duration, during: while_cond(self, c)? }
+                }
+                other if vocab::TRIGGERS.contains(&other) => unreachable!("'{other}' is in the vocabulary, but `rule` does not handle it"),
+                _ => {
+                    c.i -= 1;
+                    let s = self.signal(c)?;
+                    // `on chosen(v) { … }`: inside, `v` is the value it arrived with.
+                    if c.sym("(") {
+                        let v = c.id("a name for the event's value: `on chosen(v) { … }`")?;
+                        c.expect_sym(")")?;
+                        *payload_name = Some(v);
+                    }
+                    Trigger::On(s)
+                }
+            }
+        };
+        // The event's value, by the name it was given, for the guard and the effects.
+        if let Some(v) = payload_name.as_ref() {
+            let mut here = Scope::default();
+            here.exprs.insert(v.clone(), Expr::Payload);
+            self.scopes.push(Rc::new(here));
+        }
+        // `while` works in any rule: it is checked at the moment of firing.
+        // (`idle` and `every` have already taken it: in them it also decides whether the time counts.)
+        let guard = if c.word("while") { Some(self.expr(c)?) } else { None };
+        c.expect_end()?;
+        let mut effects = Vec::new();
+        self.effects(n.body.as_deref().unwrap_or(&[]), &mut effects)?;
         self.e.rule(when, effects);
         if let Some(r) = self.e.rules.last_mut() {
             r.guard = guard;

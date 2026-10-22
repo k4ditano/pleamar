@@ -636,4 +636,20 @@ mod tests {
         assert_eq!(set["p1"][0], 1.0);
         assert_eq!(set["left2"][0], 10.0, "slot 2 comes after slot 0 in its row");
     }
+
+    #[test]
+    fn a_repeat_in_a_rule_is_its_effects_in_turn() {
+        let set = set_by_rules("scene Effects {
+    surface { size: 200, 40 }
+    repeat k in 0..3 { fact v.$k = 0 }
+    on demo {
+        repeat k in 0..3 {
+            v.$k = 10 * k + 1
+        }
+    }
+}
+", &[]);
+        assert_eq!([set["v.0"][0], set["v.1"][0], set["v.2"][0]], [1.0, 11.0, 21.0]);
+        assert_eq!(set.values().map(Vec::len).sum::<usize>(), 3, "one rule, three effects");
+    }
 }
