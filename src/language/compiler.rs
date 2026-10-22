@@ -1629,7 +1629,7 @@ impl<'a> Compiler<'a> {
         if a.len() > takes && self.extra_noted.borrow_mut().insert((l, col)) {
             let file = self.files.get(l / super::PER_FILE).map_or("", String::as_str);
             let extra = a.len() - takes;
-            eprintln!("note   · {file}:{}:{col}: `{name}` takes {takes} argument{}: the {extra} after {} are not read", l % super::PER_FILE, if takes == 1 { "" } else { "s" }, if takes == 1 { "it" } else { "them" });
+            eprintln!("note   \u{b7} {file}:{}:{col}: `{name}` takes {takes} argument{}: the {extra} after {} are not read", l % super::PER_FILE, if takes == 1 { "" } else { "s" }, if takes == 1 { "it" } else { "them" });
         }
         let mut a = a.into_iter();
         let mut take = || a.next().ok_or_else(|| CompileError::at(l, col, format!("'{name}' is missing arguments")));
@@ -5515,7 +5515,7 @@ impl<'a> Compiler<'a> {
         }
         c.i = c.tokens.len();
         let made = |o: &mut Self, name: String| {
-            let p = o.e.prop_with(interned(&format!("·{name}")), 0.0, Spring::LIVELY);
+            let p = o.e.prop_with(interned(&format!("\u{b7}{name}")), 0.0, Spring::LIVELY);
             o.lets.insert(name.clone(), p.e());
             o.elements.insert(name, String::new());
             p
