@@ -1,0 +1,6 @@
+// expect: error «is never defined (nor 1 more)»
+scene X {
+    surface { size: 100, 100 }
+    let a[3]
+    a[0] = 1
+}

@@ -33,7 +33,7 @@ It is a **declarative language that always terminates**. No free loops, no recur
 | Duration | `320ms`, `14s`. Where a duration is expected, a number without a unit is not valid |
 | Color | `#151616` or `#fff` |
 | Text | `"in quotes"`. With slots, see §11 |
-| Symbols | `{ } ( ) , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
+| Symbols | `{ } ( ) [ ] , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
 
 Words of the language (they cannot be used as a name of one's own without confusing the reader, though the compiler does not forbid it): `language import scene library surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, and inside their statements `in max while for after from until at by reach within rest every inset right middle move curve close via as radial radius to change wrap true false and or not`.
 
@@ -72,6 +72,8 @@ figure_decl  = "figure" name "=" "file" text ;                                  
 shader_decl  = "shader" name "=" "file" text ;                                  (* WGSL with `fn shade(s: Shader) -> vec4<f32>`: §8.1 *)
 measure      = "measure" name ;
 let          = "let" name "=" ( expr | color ) ;
+array        = "let" name "[" expr "]" ;                                   (* its length, known when loading: `let tw[win.max]` *)
+element      = name "[" expr "]" "=" expr ;                                (* one element, in a `repeat` at the scene's level *)
 zone         = "zone" shape ;
 spring_ref   = name | "spring" "(" number "," number ")" | duration ;   (* ~620ms: gets there in that long *)
 
@@ -514,6 +516,8 @@ From weakest to strongest: `or` · `and` · `not` · `< > <= >= == !=` (they do 
 **`time`** is the seconds since the scene started. It exists if the scene names it —and has not declared a `time` of its own—, and while it does, the scene never rests: that is its point. With reduced motion (`--reduced-motion`) it stops, like `spin`.
 
 Valid as a name: a `let`, a `prop`, a `fact`, a measure (`label.width`), how much a named layout takes up and how many children it has in view (`list.width`, `list.height`, `list.count`, and with `view:` `list.content`: they can also be read before the point where it is declared, and by rules), the numeric field of a record (`r.depth`, `r.index`, `rows.count`), and the presence of a claim (`shape.rec`: 1 while it wins).
+
+**Reading by place: `a[i]`.** `a[i]` is the element of `a` at place `i`, and it reads any name with numbers in it the same way: `win[i].screen` is `win.$i.screen`, `screen[s].width` is `screen.$s.width`, `win.reserved[s].top`, `win.order[p]`. With a place known when loading (a number, a `repeat`'s counter) it is that name; with one that changes, a `pick` over every element, which evaluates only the one chosen. Before the first element or past the last, it is **-1**: `ord[p - 1]` at `p = 0` reads nothing, and says so. Without a declared length (§10), there are as many elements as names that exist from 0 up.
 
 ## 8. Drawing
 
@@ -1183,6 +1187,19 @@ An error **inside** a component also says where it was used from —`(inside 'Ba
 
 `repeat i in 0..5 { … }` unfolds five turns on load (512 at most); inside, `i` is a number and `$i` is substituted into the names.
 
+**Arrays: `let a[N]` and `a[i] = ...`.** A `let` declared in a `repeat` is that turn's own, and nothing outside it sees it. An array is declared once at the scene's level with its length, and each of its elements is defined **exactly once**, in a `repeat` there (or loose, with a number for its place); anything after it reads them, by place (§7):
+
+```
+let tw[win.max]
+repeat i in 0..win.max {
+    let share = if(win[i].open, 1, 0)
+    tw[i] = share * (W - gap) / max(win.on.0, 1)
+}
+let first = tw[0]
+```
+
+The length is read when loading, like a `repeat`'s bounds: a number, a `let` of one, or `win.max`. An element is a `let` called `tw.3`, so the names written out by hand still work. An element missing, defined twice or outside the length is an error. Such a `repeat` is read in two goes: its `let`s and definitions with the scene's `let`s, so that what comes after it can read them, and the rest (its drawing, its rules) where it is written. In a scene copied per monitor, an element that reads its monitor (`screen.width`) is each copy's own, like any other `let`.
+
 `for r in rows { … }` unfolds one turn per record that fits in the model. Inside, `r.field` is the field of that record —a text wherever a live text goes, a number in any expression— and `r.index` its position from 0. **Each turn only exists if the list reaches that far.** Valid inside a layout, loose, and inside a `popup`.
 
 ### 10.1. Pages: `pages`
@@ -1290,6 +1307,7 @@ reloads on save while the programs in it keep running.
 | `win.$i.rank` | its turn among all the windows shown, −1 if it is not (another workspace, put away, a dialog) |
 | **for all of them** | |
 | `win.count` · `win.focus` | how many are shown (on the workspaces their monitors show), and which slot has the keyboard (−1, none) |
+| `win.max` | how many slots there are, the `max` of `windows`: a number known when loading, for `repeat i in 0..win.max` and `let tw[win.max]` |
 | `win.on.$s` | how many are shown on monitor `s` (0 to 3) |
 | `win.shown.$s` · `win.pool.$s` | the workspace monitor `s` shows: its turn, and its identity |
 | `win.pools.$s` · `win.used.$s` | how many workspaces monitor `s` has (the one shown among them, even empty), and how many hold windows |

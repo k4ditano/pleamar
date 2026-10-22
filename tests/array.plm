@@ -1,0 +1,14 @@
+// expect: ok
+language 0.1
+// An array, each element defined once in a `repeat`, read by a place that changes.
+scene Arrays {
+    surface { size: 200, 60 }
+    windows win max 4
+    fact k = 0
+    let w[win.max]
+    repeat i in 0..win.max {
+        w[i] = 20 + 10 * win[i].open
+        box { at: 10 + 40 * i, 10; size: w[i], 20; color: #9ed6bd }
+    }
+    box { at: 10, 40; size: w[k] + w[k - 1], 10; color: #ef7a66 }
+}

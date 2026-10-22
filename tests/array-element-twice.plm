@@ -1,0 +1,7 @@
+// expect: error «is already defined»
+scene X {
+    surface { size: 100, 100 }
+    let a[2]
+    repeat i in 0..2 { a[i] = i }
+    a[1] = 5
+}

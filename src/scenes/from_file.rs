@@ -428,4 +428,103 @@ mod tests {
         let twins: Vec<usize> = (0..scene.rules.len()).filter(|&k| scene.twin_of[k] != k).collect();
         assert_eq!(twins.len(), 1, "twins: {:?}", scene.twin_of);
     }
+
+    /// What each fact a rule sets would be set to, with the facts as they
+    /// start (or as given) and every big `let` computed once, in order.
+    fn set_by_rules(source: &str, given: &[(&str, f32)]) -> std::collections::HashMap<String, Vec<f32>> {
+        let dir = std::env::temp_dir().join(format!("pleamar-set-{}-{}", std::process::id(), source.len()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("set.plm");
+        std::fs::write(&path, source).unwrap();
+        let scene = super::read(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        let scene = scene.unwrap_or_else(|e| panic!("{e}"));
+        let facts: Vec<f32> = scene.facts.iter().map(|(n, v)| given.iter().find(|(g, _)| g == n).map_or(*v, |g| g.1)).collect();
+        let mut props: Vec<crate::scene::Animated> = scene.props.iter().map(|(_, x, s)| crate::scene::Animated::at(*x, *s)).collect();
+        for b in &scene.behaviors {
+            if let crate::scene::Behavior::Bind { prop, to } = b {
+                props[prop.0 as usize].x = to.eval(crate::scene::Ctx { props: &props, facts: &facts, seen: None });
+            }
+        }
+        let mut out = std::collections::HashMap::new();
+        for r in &scene.rules {
+            for e in &r.effects {
+                if let crate::scene::Effect::Fact(h, e) = e {
+                    let v = e.eval(crate::scene::Ctx { props: &props, facts: &facts, seen: None });
+                    out.entry(scene.facts[h.0 as usize].0.to_owned()).or_insert_with(Vec::new).push(v);
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn an_array_is_read_by_a_place_known_or_not() {
+        let set = set_by_rules("scene Arrays {
+    surface { size: 200, 40 }
+    fact k = 2
+    fact far = 9
+    let sq[4]
+    repeat i in 0..4 {
+        let twice = i * 2
+        sq[i] = twice * twice + k * 0
+    }
+    let last = sq[3]
+    on demo { a = sq[k]; b = last; c = sq[far]; d = sq[k - 3]; e = sq[1] }
+    fact a = 0
+    fact b = 0
+    fact c = 0
+    fact d = 0
+    fact e = 0
+}
+", &[]);
+        assert_eq!(set["a"][0], 16.0);
+        assert_eq!(set["b"][0], 36.0);
+        assert_eq!(set["c"][0], -1.0, "past the last element");
+        assert_eq!(set["d"][0], -1.0, "before the first");
+        assert_eq!(set["e"][0], 4.0);
+    }
+
+    #[test]
+    fn an_index_reads_names_with_numbers_in_them() {
+        let set = set_by_rules("scene Windows {
+    surface { size: 200, 40 }
+    windows win max 4
+    fact s = 1
+    let n[win.max]
+    repeat i in 0..win.max {
+        n[i] = win[i].screen * 10 + i
+    }
+    on demo { a = n[s + 1]; b = win.reserved[s].top; c = win[s].screen }
+    fact a = 0
+    fact b = 0
+    fact c = 0
+}
+", &[("win.2.screen", 3.0), ("win.reserved.1.top", 44.0), ("win.1.screen", 1.0)]);
+        assert_eq!(set["a"][0], 32.0);
+        assert_eq!(set["b"][0], 44.0);
+        assert_eq!(set["c"][0], 1.0);
+    }
+
+    #[test]
+    fn an_element_that_reads_its_monitor_is_each_copys_own() {
+        let set = set_by_rules("scene Copies {
+    surface { size: full, 40; anchor: top; screens: each max 2 }
+    let half[2]
+    repeat i in 0..2 {
+        half[i] = screen.width / 2 + i
+    }
+    let both = half[0] + 1000
+    on demo { a = half[0]; b = both }
+    fact a = 0
+    fact b = 0
+}
+", &[("screen.0.width", 100.0), ("screen.1.width", 300.0)]);
+        let mut a = set["a"].clone();
+        a.sort_by(f32::total_cmp);
+        assert_eq!(a, vec![50.0, 150.0]);
+        let mut b = set["b"].clone();
+        b.sort_by(f32::total_cmp);
+        assert_eq!(b, vec![1050.0, 1150.0]);
+    }
 }
