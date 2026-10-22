@@ -408,6 +408,12 @@ struct Compiler<'a> {
     in_hoisted: usize,
     /// Reading those definitions: for the scene (None) or for a monitor's copy.
     hoisting: Option<Option<usize>>,
+    /// The scope the folds of the `repeat` being hoisted are kept in, and
+    /// each turn's, by `repeat`, copy and turn, for its drawing and rules.
+    fold_scope: Option<usize>,
+    turns: HashMap<(*const Node, Option<usize>, i64), Rc<Scope>>,
+    /// What each fold's last link computes for the scene.
+    folds: HashMap<String, String>,
 }
 
 /// A name the scene declares, with its location: what the editor needs to
@@ -453,7 +459,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, image_sites: HashMap::new(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -829,6 +835,18 @@ fn is_definition(n: &Node) -> bool {
     matches!((n.head.first().map(|t| &t.kind), n.head.get(1).map(|t| &t.kind)), (Some(TokenKind::Id(_)), Some(TokenKind::Sym("["))))
 }
 
+/// `x = ...`, `x += ...`: a link of a fold. Not a statement that starts the
+/// same way (`blur = file ...`).
+fn is_fold(n: &Node) -> bool {
+    let k = |i: usize| n.head.get(i).map(|t| &t.kind);
+    match k(0) {
+        Some(TokenKind::Id(w)) if !vocab::STATEMENTS.contains(&w.as_str()) => {
+            matches!(k(1), Some(TokenKind::Sym("="))) || (matches!(k(1), Some(TokenKind::Sym("+" | "-" | "*"))) && matches!(k(2), Some(TokenKind::Sym("="))))
+        }
+        _ => false,
+    }
+}
+
 /// What a `repeat` that defines elements reads with its definitions: its
 /// `let`s, and the values it declares, which a definition may read.
 fn hoisted_with_definitions(n: &Node) -> bool {
@@ -857,12 +875,12 @@ fn is_repeat(e: &Entry) -> bool {
 fn hoists(e: &Entry) -> bool {
     let Entry::Node(n) = e else { return false };
     matches!(n.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "repeat")
-        && n.body.as_deref().unwrap_or(&[]).iter().any(|e| matches!(e, Entry::Node(s) if is_definition(s)) || hoists(e))
+        && n.body.as_deref().unwrap_or(&[]).iter().any(|e| matches!(e, Entry::Node(s) if is_definition(s) || is_fold(s)) || hoists(e))
 }
 
 fn pass_of(e: &Entry) -> u8 {
     let Entry::Node(n) = e else { return 2 };
-    if is_definition(n) || hoists(e) {
+    if is_definition(n) || is_fold(n) || hoists(e) {
         return 1;
     }
     let is_assignment = matches!(n.head.get(2).map(|x| &x.kind), Some(TokenKind::Sym("=")));
@@ -1991,6 +2009,9 @@ impl<'a> Compiler<'a> {
     fn statement(&mut self, n: &'a Node, clips: &mut usize) -> R<()> {
         if is_definition(n) {
             return self.element(n);
+        }
+        if is_fold(n) {
+            return self.fold(n);
         }
         {
             let mut c = Cur::new(&n.head, n.line, n.col);
@@ -5066,21 +5087,44 @@ impl<'a> Compiler<'a> {
         }
         let (var, from, until) = head?;
         if self.hoisting.is_some() {
-            self.hoist_turns(n, &var, from, until);
+            self.hoist_turns(n, &var, from, until, false);
             return Ok(());
         }
+        let key = n as *const Node;
         if self.pass == 1 && self.scopes.is_empty() {
-            self.hoisted.insert(n as *const Node);
-            self.each_copy(|o| o.hoist_turns(n, &var, from, until));
+            self.hoisted.insert(key);
+            // Each copy's folds are settled once all have been read: the
+            // scene's last link is not where a copy's chain starts.
+            let mut settled = Vec::new();
+            self.each_copy(|o| {
+                o.scopes.push(Rc::new(Scope::default()));
+                o.fold_scope = Some(o.scopes.len() - 1);
+                o.hoist_turns(n, &var, from, until, true);
+                o.fold_scope = None;
+                settled.push((o.hoisting.flatten(), o.scopes.pop().unwrap()));
+            });
+            for (copy, folds) in settled {
+                self.settle_folds(copy, &folds);
+            }
             return Ok(());
         }
-        let hoisted = self.hoisted.contains(&(n as *const Node)) as usize;
+        let hoisted = self.hoisted.contains(&key) as usize;
         self.in_hoisted += hoisted;
+        let copy = self.screen_mark().and_then(|m| m["#screen".len()..].parse::<usize>().ok());
         for v in from..until {
             let mark = self.rules.len();
+            // A turn reads each fold as it was at the end of that turn.
+            let folds = self.turns.get(&(key, copy, v)).cloned();
+            let had_folds = folds.is_some();
+            if let Some(f) = folds {
+                self.scopes.push(f);
+            }
             self.open_iteration(&var, v);
             self.group(n.body.as_deref().unwrap_or(&[]).iter());
             self.close_scope(mark);
+            if had_folds {
+                self.scopes.pop();
+            }
         }
         self.in_hoisted -= hoisted;
         Ok(())
@@ -5103,15 +5147,15 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn hoist_turns(&mut self, n: &'a Node, var: &str, from: i64, until: i64) {
+    fn hoist_turns(&mut self, n: &'a Node, var: &str, from: i64, until: i64, top: bool) {
         for v in from..until {
             self.open_iteration(var, v);
             for e in n.body.as_deref().unwrap_or(&[]) {
                 let Entry::Node(s) = e else { continue };
-                if is_definition(s) {
-                    if let Err(f) = self.element(s) {
-                        self.push_error(f);
-                    }
+                let r = if is_definition(s) { Some(self.element(s)) } else if is_fold(s) { Some(self.fold(s)) } else { None };
+                if let Some(Err(f)) = r {
+                    self.push_error(f);
+                } else if r.is_some() {
                 } else if hoisted_with_definitions(s) {
                     // One that reads what only the drawing declares fails here,
                     // and is read again in pass 2: a definition that needs it says so.
@@ -5119,7 +5163,71 @@ impl<'a> Compiler<'a> {
                     let _ = self.statement(s, &mut 0);
                 }
             }
+            if let Some(k) = self.fold_scope.filter(|_| top) {
+                self.turns.insert((n as *const Node, self.hoisting.flatten(), v), self.scopes[k].clone());
+            }
             self.scopes.pop();
+        }
+    }
+
+    /// `x = ...`, `x += ...` in a `repeat` at the scene's level: each turn is
+    /// one more link of a chain, and after the `repeat` `x` is its last link.
+    /// Nothing is ever changed: each link is a `let` of its own.
+    fn fold(&mut self, n: &Node) -> R<()> {
+        if self.in_hoisted > 0 {
+            return Ok(());
+        }
+        let Some(k) = self.fold_scope.filter(|_| self.hoisting.is_some()) else {
+            let name = match n.head.first().map(|t| &t.kind) {
+                Some(TokenKind::Id(w)) => w.as_str(),
+                _ => "x",
+            };
+            return Err(CompileError::at(n.line, n.col, format!("`{name} = ...` adds up across a `repeat` at the scene's level: it goes in one, with `{name}` a `let` of the scene declared before it")));
+        };
+        let mut c = Cur::new(&n.head, n.line, n.col);
+        let name = c.id("a name")?;
+        let op = ["+", "-", "*"].into_iter().find(|o| c.sym(o));
+        c.expect_sym("=")?;
+        let g = self.global_quiet(&name);
+        if !self.lets.contains_key(&g) || self.arrays.contains_key(&g) {
+            return Err(CompileError::at(n.line, n.col, format!("'{name}' is not a `let` of the scene: declare it before the `repeat`, `let {name} = 0`")));
+        }
+        let e = self.expr(&mut c)?;
+        c.expect_end()?;
+        let e = match op {
+            Some(o) => {
+                let now = self.resolve(&c, &name)?;
+                match o {
+                    "+" => now + e,
+                    "-" => now - e,
+                    _ => now * e,
+                }
+            }
+            None => e,
+        };
+        let link = if e.node_count() > 8 { self.computed_once(&name, e).e() } else { e };
+        Rc::make_mut(&mut self.scopes[k]).exprs.insert(name, link);
+        Ok(())
+    }
+
+    /// After the `repeat`, each fold is its last link: the scene's, and a
+    /// copy's own where its chain is another.
+    fn settle_folds(&mut self, copy: Option<usize>, folds: &Scope) {
+        for (name, e) in &folds.exprs {
+            let raw = format!("{e:?}");
+            match copy {
+                None => {
+                    self.folds.insert(name.clone(), raw);
+                    self.lets.insert(name.clone(), e.clone());
+                }
+                Some(s) if self.folds.get(name).is_some_and(|base| *base != raw) => {
+                    if let Some(Expr::P(p)) = self.lets.get(name) {
+                        self.copy_props.insert(p.0);
+                    }
+                    self.lets.insert(format!("{name}#screen{s}"), e.clone());
+                }
+                Some(_) => {}
+            }
         }
     }
 

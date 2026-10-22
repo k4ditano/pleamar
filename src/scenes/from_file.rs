@@ -527,4 +527,73 @@ mod tests {
         b.sort_by(f32::total_cmp);
         assert_eq!(b, vec![1050.0, 1150.0]);
     }
+
+    #[test]
+    fn a_fold_adds_up_across_a_repeat() {
+        let set = set_by_rules("scene Folds {
+    surface { size: 200, 40 }
+    fact w.0 = 30
+    fact w.1 = 10
+    fact w.2 = 50
+    fact w.3 = 20
+    let total = 0
+    let best = 99999
+    let at = -1
+    let left[4]
+    repeat i in 0..4 {
+        left[i] = total
+        total += w.$i
+        at = if(w.$i < best, i, at)
+        best = min(best, w.$i)
+    }
+    on demo { a = total; b = at; c = best; d = left[2]; e = left[3] }
+    fact a = 0
+    fact b = 0
+    fact c = 0
+    fact d = 0
+    fact e = 0
+}
+", &[]);
+        assert_eq!(set["a"][0], 110.0);
+        assert_eq!(set["b"][0], 1.0, "the smallest is the second");
+        assert_eq!(set["c"][0], 10.0);
+        assert_eq!(set["d"][0], 40.0, "what the ones before it add up to");
+        assert_eq!(set["e"][0], 90.0);
+    }
+
+    #[test]
+    fn a_turn_reads_a_fold_as_it_was_then() {
+        let set = set_by_rules("scene Turns {
+    surface { size: 200, 40 }
+    let x = 0
+    repeat i in 0..3 {
+        x += 10
+        on demo { r.$i = x }
+        fact r.$i = 0
+    }
+    on demo { after = x }
+    fact after = 0
+}
+", &[]);
+        assert_eq!(set["r.0"][0], 10.0);
+        assert_eq!(set["r.2"][0], 30.0);
+        assert_eq!(set["after"][0], 30.0);
+    }
+
+    #[test]
+    fn a_fold_that_reads_its_monitor_is_each_copys_own() {
+        let set = set_by_rules("scene Copies {
+    surface { size: full, 40; anchor: top; screens: each max 2 }
+    let room = 0
+    repeat i in 0..3 {
+        room += screen.width / 10
+    }
+    on demo { a = room }
+    fact a = 0
+}
+", &[("screen.0.width", 100.0), ("screen.1.width", 300.0)]);
+        let mut a = set["a"].clone();
+        a.sort_by(f32::total_cmp);
+        assert_eq!(a, vec![30.0, 90.0]);
+    }
 }

@@ -74,6 +74,7 @@ measure      = "measure" name ;
 let          = "let" name "=" ( expr | color ) ;
 array        = "let" name "[" expr "]" ;                                   (* its length, known when loading: `let tw[win.max]` *)
 element      = name "[" expr "]" "=" expr ;                                (* one element, in a `repeat` at the scene's level *)
+fold         = name ( "=" | "+=" | "-=" | "*=" ) expr ;                     (* a link of a fold, in a `repeat` at the scene's level *)
 zone         = "zone" shape ;
 spring_ref   = name | "spring" "(" number "," number ")" | duration ;   (* ~620ms: gets there in that long *)
 
@@ -1199,6 +1200,23 @@ let first = tw[0]
 ```
 
 The length is read when loading, like a `repeat`'s bounds: a number, a `let` of one, or `win.max`. An element is a `let` called `tw.3`, so the names written out by hand still work. An element missing, defined twice or outside the length is an error. Such a `repeat` is read in two goes: its `let`s and definitions with the scene's `let`s, so that what comes after it can read them, and the rest (its drawing, its rules) where it is written. In a scene copied per monitor, an element that reads its monitor (`screen.width`) is each copy's own, like any other `let`.
+
+**Folds: `x = ...` and `x += ...`.** In such a `repeat`, a `let` of the scene declared before it can be given a new value each turn: a sum, a count, the smallest so far and where it was. Nothing changes while the scene runs: each turn is one more `let`, made from the one before, and after the `repeat` the name is the last one. Inside it, each turn reads the value as it was at that point, and its drawing and rules as it was at the end of that turn.
+
+```
+let total = 0
+let best = 99999
+let at = -1
+let left[win.max]
+repeat i in 0..win.max {
+    left[i] = total                      // what the ones before it take
+    total += win[i].open * wp[i]
+    at = if(win[i].open and d[i] < best, i, at)
+    best = if(win[i].open, min(best, d[i]), best)
+}
+```
+
+`+=`, `-=` and `*=` are short for `x = x + ...`. An argmin carries two folds, the best value and where it was, and the one that says where is written before the one it compares with.
 
 `for r in rows { … }` unfolds one turn per record that fits in the model. Inside, `r.field` is the field of that record —a text wherever a live text goes, a number in any expression— and `r.index` its position from 0. **Each turn only exists if the list reaches that far.** Valid inside a layout, loose, and inside a `popup`.
 
