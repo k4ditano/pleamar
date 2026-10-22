@@ -1,0 +1,7 @@
+// expect: error «there is nothing called 'win.5.scren'»
+scene X {
+    surface { size: 100, 100 }
+    windows win max 4
+    let s = win[5].scren
+    box { at: 0, 0; size: 10 + s, 10; color: #fff }
+}

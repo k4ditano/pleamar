@@ -1,0 +1,6 @@
+// expect: error «and 'ord' has 2 places»
+scene X {
+    surface { size: 100, 100 }
+    windows win max 4
+    let ord[2] = sort(i in win by win[i].place)
+}

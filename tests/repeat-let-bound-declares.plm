@@ -1,0 +1,10 @@
+// expect: ok
+language 0.1
+// A repeat bounded by a `let` declares its facts with the others, too.
+scene X {
+    surface { size: 100, 100 }
+    let n = 3
+    let first = g.0 + 1
+    box { at: 0, 0; size: 10 + first, 10; color: #fff }
+    repeat i in 0..n { fact g.$i = 0 }
+}

@@ -1,0 +1,6 @@
+// expect: error «`sort` makes an array»
+scene X {
+    surface { size: 100, 100 }
+    windows win max 4
+    let first = sort(i in win by win[i].place)
+}

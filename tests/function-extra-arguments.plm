@@ -1,0 +1,6 @@
+// expect: note «`min` takes 2 arguments: the 2 after them are not read»
+scene X {
+    surface { size: 100, 100 }
+    let m = min(4, 3, 1, 0)
+    box { at: 0, 0; size: 10 + m, 10; color: #fff }
+}

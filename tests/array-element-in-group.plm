@@ -1,0 +1,7 @@
+// expect: error «an element is defined at the scene's level»
+scene X {
+    surface { size: 100, 100 }
+    let a[1]
+    a[0] = 1
+    group { a[0] = 2 }
+}

@@ -331,6 +331,24 @@ pub enum Expr {
     Payload,
 }
 
+/// Runs a `Sort`: each slot's keys, the slots in their order, and each
+/// property written. What changed is handed to `changed`.
+pub fn run_sort(keys: &[Vec<Expr>], ord: &[PropId], pos: &[PropId], props: &mut [Animated], facts: &[f32], mut changed: impl FnMut(PropId)) {
+    // `+ 0.0` makes -0 the 0 it equals: keys that are the same tie, by slot.
+    let values: Vec<Vec<f32>> = keys.iter().map(|k| k.iter().map(|e| e.eval(Ctx { props: &*props, facts, seen: None }) + 0.0).collect()).collect();
+    let mut slots: Vec<usize> = (0..keys.len()).collect();
+    slots.sort_by(|a, b| values[*a].iter().zip(&values[*b]).map(|(x, y)| x.total_cmp(y)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
+    for (p, slot) in slots.into_iter().enumerate() {
+        for (prop, v) in [(ord[p], slot as f32), (pos[slot], p as f32)] {
+            let a = &mut props[prop.0 as usize];
+            if a.x.to_bits() != v.to_bits() {
+                changed(prop);
+            }
+            a.set(v);
+        }
+    }
+}
+
 impl Expr {
     /// What it reads: the properties (their value or their speed) and the
     /// facts. Nothing else goes into it —no clock, no chance—, so with those the
@@ -1047,6 +1065,8 @@ pub enum Piece {
     Span(Vec<Piece>),
     /// A text that was passed empty: it writes nothing, but counts as empty for a `{? …}`.
     Empty,
+    /// `{win[i].title}`: the live text at that place among these; outside them, none.
+    Pick(Expr, Vec<TextId>, LetterCase),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1091,6 +1111,16 @@ impl Piece {
                 }
                 Piece::Span(inner) => whole &= Piece::write_into(inner, c, texts, out),
                 Piece::Empty => whole = false,
+                Piece::Pick(i, ids, case) => {
+                    let k = i.eval(c).round();
+                    let s = (k >= 0.0).then(|| ids.get(k as usize)).flatten().and_then(|id| texts.get(id.0 as usize)).map_or("", String::as_str);
+                    whole &= !s.is_empty();
+                    match case {
+                        LetterCase::AsIs => out.push_str(s),
+                        LetterCase::Upper => out.push_str(&s.to_uppercase()),
+                        LetterCase::Lower => out.push_str(&s.to_lowercase()),
+                    }
+                }
                 Piece::Optional(inner) => {
                     let start = out.len();
                     if !Piece::write_into(inner, c, texts, out) {
@@ -1257,6 +1287,11 @@ pub enum Behavior {
     /// prop = expression, without a spring. So that something computed at the end of the
     /// drawing —the space a stack takes— can be read from the beginning.
     Bind { prop: PropId, to: Expr },
+    /// `let ord[16] = sort(i in win by a, b)`: the slots in order of their keys
+    /// (each slot's, compared in turn; ties by slot), as `ord[p]`, the slot at
+    /// place `p`, and `pos[i]`, the place of slot `i`. Worked out once, when a
+    /// key's inputs change, for every reader.
+    Sort { keys: Vec<Vec<Expr>>, ord: Vec<PropId>, pos: Vec<PropId> },
     /// prop += per_second · dt, endlessly: a hand that goes round and round.
     Advance { prop: PropId, per_second: Expr },
     /// Two properties that pull towards the pointer, with their own spring.
@@ -1789,6 +1824,9 @@ pub enum Effect {
     /// A fact becomes worth whatever the expression is worth at that moment. It can
     /// read the mouse's things: `level = clamp(local.x / 64, 0, 1)`.
     Fact(FactId, Expr),
+    /// `x[i] = v`: the fact at place `i` among these. The place and the value
+    /// are read once, when it fires; outside the list, nothing changes.
+    FactAt(Vec<FactId>, Expr, Expr),
     /// From yes to no and from no to yes.
     Toggle(FactId),
     /// A signal, with a payload if wanted: `emit opened(i)`. It is evaluated when it fires.
@@ -1818,6 +1856,9 @@ pub enum Effect {
     /// Two windows change places, in the order and on their monitors:
     /// `swap win(a) with win(b)`.
     WindowSwap(Expr, Expr),
+    /// `accept win(i)`: a window waiting under `placement manual` takes its
+    /// place in the layout.
+    Accept(Expr),
     /// A workspace shown: `workspace 3` on the monitor the pointer is on, or
     /// `workspace 3 on 1` on that one.
     Workspace(Expr, Option<Expr>),
@@ -1866,11 +1907,13 @@ impl Effect {
         match self {
             Effect::Animate(t) => Effect::Animate(Transition { to: t.to.with_payload(v), ..t.clone() }),
             Effect::Fact(h, e) => Effect::Fact(*h, e.with_payload(v)),
+            Effect::FactAt(hs, i, e) => Effect::FactAt(hs.clone(), i.with_payload(v), e.with_payload(v)),
             Effect::Signal(s, e) => Effect::Signal(*s, e.as_ref().map(|e| e.with_payload(v))),
             Effect::Impulse(p, e) => Effect::Impulse(*p, e.with_payload(v)),
             Effect::Window(a, e) => Effect::Window(*a, e.with_payload(v)),
             Effect::WindowTo(w, to) => Effect::WindowTo(w.with_payload(v), to.with_payload(v)),
             Effect::WindowSwap(a, b) => Effect::WindowSwap(a.with_payload(v), b.with_payload(v)),
+            Effect::Accept(a) => Effect::Accept(a.with_payload(v)),
             Effect::Workspace(w, on) => Effect::Workspace(w.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
             Effect::WindowToWorkspace(w, to, on) => Effect::WindowToWorkspace(w.with_payload(v), to.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
             Effect::Dock(k, on, a) => Effect::Dock(k.with_payload(v), on.as_ref().map(|e| e.with_payload(v)), *a),
@@ -2356,6 +2399,10 @@ pub struct Nest {
     /// workspace`). Without it they are tide pools: an empty one not shown
     /// dries up.
     pub kept: bool,
+    /// `placement manual`: a window that opens is left out of the layout
+    /// (`place`, `among`, `rank`, `order`, `on`) until the scene takes it
+    /// with `accept win(i)`; meanwhile `win.$i.pending` is true.
+    pub manual: bool,
 }
 
 /// A program pinned to the dock: the names its windows go by (their app id

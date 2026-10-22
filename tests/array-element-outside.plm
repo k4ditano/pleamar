@@ -1,0 +1,6 @@
+// expect: error «is not one of them»
+scene X {
+    surface { size: 100, 100 }
+    let a[2]
+    repeat i in 0..3 { a[i] = i }
+}

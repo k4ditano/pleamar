@@ -1,0 +1,21 @@
+// expect: ok
+language 0.1
+// The windows in order of their rows and their places in them: a sort, and a
+// fold over its order for where each starts.
+scene Rows {
+    surface { size: 400, 200 }
+    windows win max 8
+    repeat i in 0..win.max { fact row.$i = 0 }
+    let ord[win.max] = sort(i in win by not win[i].open, row[i], win[i].place)
+    let x = 0
+    let left[win.max]
+    repeat p in 0..win.max {
+        let s = ord[p]
+        x = if(row[s] != row[ord[p - 1]], 0, x)
+        left[p] = x
+        x += 40 * win[s].open
+    }
+    repeat i in 0..win.max {
+        box { at: 10 + left[ord.pos[i]], 10 + 30 * row[i]; size: 36, 24; color: #9ed6bd; show: win[i].open }
+    }
+}

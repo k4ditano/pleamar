@@ -1,0 +1,6 @@
+// expect: error «there is no 'x.0'»
+scene X {
+    surface { size: 100, 100 }
+    fact at = 0
+    on demo { x[at] = 1 }
+}

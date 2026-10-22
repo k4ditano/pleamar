@@ -224,6 +224,8 @@ struct Scope {
     strict: bool,
     /// Its `let`s written outside any group, and on which line.
     loose: HashMap<String, usize>,
+    /// The values of the scene's folds a `repeat` keeps (see `fold`): not a turn's own `let`s.
+    folds: bool,
 }
 
 struct Component<'a> {
@@ -311,6 +313,8 @@ struct Compiler<'a> {
     unwatched: std::cell::Cell<bool>,
     /// The lines of `let`s already said to hide a fact or a prop (once, not once per monitor).
     hiding_noted: std::cell::RefCell<std::collections::HashSet<usize>>,
+    /// Where a function was given more than it takes, already said.
+    extra_noted: std::cell::RefCell<std::collections::HashSet<(usize, usize)>>,
     /// Reading a text's `letter_*` property: `letter` and `letters` mean something.
     in_letters: std::cell::Cell<bool>,
     /// Reading a `cursor:`: the cursors' names are their codes.
@@ -395,6 +399,29 @@ struct Compiler<'a> {
     prop_sites: HashMap<String, (usize, usize)>,
     /// The transforms under which painting is happening: a zone inherits them.
     under: Vec<Transform>,
+    /// Where each image was declared, and the image: read again from there, it is the same.
+    image_sites: HashMap<String, ((usize, usize), ImageId)>,
+    /// `let a[16]`: each array's length and the line it was declared on.
+    arrays: HashMap<String, (usize, usize)>,
+    /// The elements already defined (`a.3`), and what each first copy computes:
+    /// a monitor's copy that computes something else has one of its own.
+    elements: HashMap<String, String>,
+    /// The `repeat`s at the scene's level whose definitions were read in pass 1,
+    /// and how deep inside one of them the drawing pass is.
+    hoisted: HashSet<*const Node>,
+    in_hoisted: usize,
+    /// Reading those definitions: for the scene (None) or for a monitor's copy.
+    hoisting: Option<Option<usize>>,
+    /// The scene's statements, as written.
+    top: &'a [Entry],
+    /// The arrays whose elements are arrays (`let dka[4][12]`).
+    rows: HashSet<String>,
+    /// The scope the folds of the `repeat` being hoisted are kept in, and
+    /// each turn's, by `repeat`, copy and turn, for its drawing and rules.
+    fold_scope: Option<usize>,
+    turns: HashMap<(*const Node, Option<usize>, i64), Rc<Scope>>,
+    /// What each fold's last link computes for the scene.
+    folds: HashMap<String, String>,
 }
 
 /// A name the scene declares, with its location: what the editor needs to
@@ -440,7 +467,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -456,6 +483,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     let Some(body) = scene.body.as_ref() else {
         return (Err(vec![CompileError::at(scene.line, scene.col, "this scene is missing its `{ … }` block")]), Vec::new());
     };
+    o.top = body;
     o.declare_measures_early(body);
     // `time`: the seconds since the scene started, for whoever wants something
     // that never stops —a shader's aurora, a `noise(time)` wobble—. Only if the
@@ -492,7 +520,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             }
         }
         // A `surface` is read twice: in 0 its properties, and in 2 what it draws.
-        let this_pass: Vec<&Entry> = body.iter().filter(|e| pass_of(e) == pass || (pass == 2 && is_surface(e))).collect();
+        let this_pass: Vec<&Entry> = body.iter().filter(|e| pass_of(e) == pass || (pass == 0 && is_repeat(e)) || (pass == 2 && (is_surface(e) || hoists(e)))).collect();
         // Loose drawing belongs to the scene's surface. If that one is repeated per monitor
         // (`screens: each`), it is repeated with it: one copy per screen, with its own things.
         let copies: Vec<(f32, f32, usize)> = if pass == 2 {
@@ -543,6 +571,20 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             // The rules are compiled afterwards, all in a row and in this same order:
             // here it is noted how many NODES are its own, and below it is translated into compiled ones.
             o.e.spans.push(crate::scene::Span { surface: k, instrs: i0..o.e.instrs.len(), behaviors: c0..o.e.behaviors.len(), rules: mark..o.rules.len() });
+        }
+    }
+    let mut arrays: Vec<(usize, String, usize)> = o.arrays.iter().map(|(name, (length, line))| (*line, name.clone(), *length)).collect();
+    arrays.sort();
+    for (line, name, length) in arrays.into_iter().filter(|(_, name, _)| !o.rows.contains(name)) {
+        let missing: Vec<usize> = (0..length).filter(|k| !o.elements.contains_key(&format!("{name}.{k}"))).collect();
+        if let Some(k) = missing.first() {
+            let more = if missing.len() > 1 { format!(" (nor {} more)", missing.len() - 1) } else { String::new() };
+            // A row of a table is said as the table: `at[0][1]`.
+            let (name, i) = match name.rsplit_once('.').filter(|(row, _)| o.rows.contains(*row)) {
+                Some((table, row)) => (table.to_owned(), format!("[{row}][")),
+                None => (name.clone(), "[".to_owned()),
+            };
+            o.errors.push(CompileError::at(line, 1, format!("'{name}{i}{k}]' is never defined{more}: each element of an array is defined once, `{name}{} = ...` in a `repeat`", if i.len() > 1 { "[i][j]" } else { "[i]" })));
         }
     }
     o.materialize_zones();
@@ -802,8 +844,84 @@ fn is_declaration(n: &Node) -> bool {
     matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if matches!(p.as_str(), "prop" | "pose" | "let" | "fact" | "on" | "every" | "follow" | "spin" | "wave" | "blink" | "look"))
 }
 
+/// `a[i] = ...`: an element of an array being defined.
+fn is_definition(n: &Node) -> bool {
+    matches!((n.head.first().map(|t| &t.kind), n.head.get(1).map(|t| &t.kind)), (Some(TokenKind::Id(_)), Some(TokenKind::Sym("["))))
+}
+
+/// `x = ...`, `x += ...`: a link of a fold. Not a statement that starts the
+/// same way (`blur = file ...`).
+fn is_fold(n: &Node) -> bool {
+    let k = |i: usize| n.head.get(i).map(|t| &t.kind);
+    match k(0) {
+        Some(TokenKind::Id(w)) if !vocab::STATEMENTS.contains(&w.as_str()) => {
+            matches!(k(1), Some(TokenKind::Sym("="))) || (matches!(k(1), Some(TokenKind::Sym("+" | "-" | "*"))) && matches!(k(2), Some(TokenKind::Sym("="))))
+        }
+        _ => false,
+    }
+}
+
+/// The names a `repeat` folds that are not `let`s of its own: the scene's.
+fn fold_targets(entries: &[Entry]) -> Vec<String> {
+    fn walk(entries: &[Entry], folded: &mut Vec<String>, own: &mut HashSet<String>) {
+        for e in entries {
+            let Entry::Node(n) = e else { continue };
+            match n.head.first().map(|t| &t.kind) {
+                Some(TokenKind::Id(w)) if w == "let" => {
+                    if let Some(TokenKind::Id(name)) = n.head.get(1).map(|t| &t.kind) {
+                        own.insert(name.clone());
+                    }
+                }
+                Some(TokenKind::Id(w)) if is_fold(n) && !folded.contains(w) => folded.push(w.clone()),
+                _ => {}
+            }
+            if let Some(b) = &n.body {
+                walk(b, folded, own);
+            }
+        }
+    }
+    let (mut folded, mut own) = (Vec::new(), HashSet::new());
+    walk(entries, &mut folded, &mut own);
+    folded.retain(|n| !own.contains(n));
+    folded
+}
+
+/// What a `repeat` that defines elements reads with its definitions: its
+/// `let`s, and the values it declares, which a definition may read.
+fn hoisted_with_definitions(n: &Node) -> bool {
+    declares_value(n) || matches!(n.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "let")
+}
+
+/// What declares a value of the scene (or holds such declarations): a
+/// `repeat` at the scene's level reads these in pass 0.
+fn declares_value(n: &Node) -> bool {
+    match n.head.first().map(|t| &t.kind) {
+        Some(TokenKind::Id(w)) => match w.as_str() {
+            "repeat" | "prop" | "pose" | "fact" | "event" | "measure" => true,
+            "text" => matches!(n.head.get(2).map(|t| &t.kind), Some(TokenKind::Sym("="))),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// `repeat i in 0..n { ... }`.
+fn is_repeat(e: &Entry) -> bool {
+    matches!(e, Entry::Node(n) if matches!(n.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "repeat"))
+}
+
+/// A `repeat` that defines elements, in it or in a `repeat` inside it.
+fn hoists(e: &Entry) -> bool {
+    let Entry::Node(n) = e else { return false };
+    matches!(n.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "repeat")
+        && n.body.as_deref().unwrap_or(&[]).iter().any(|e| matches!(e, Entry::Node(s) if is_definition(s) || is_fold(s)) || hoists(e))
+}
+
 fn pass_of(e: &Entry) -> u8 {
     let Entry::Node(n) = e else { return 2 };
+    if is_definition(n) || is_fold(n) || hoists(e) {
+        return 1;
+    }
     let is_assignment = matches!(n.head.get(2).map(|x| &x.kind), Some(TokenKind::Sym("=")));
     match n.head.first().map(|f| &f.kind) {
         Some(TokenKind::Id(p)) => match p.as_str() {
@@ -1335,56 +1453,138 @@ impl<'a> Compiler<'a> {
                     }
                     _ => {}
                 }
-                // First what is inside —parameters and `let`s of the component—, then what is outside.
-                if let Some(e) = self.scopes.iter().rev().find_map(|e| e.exprs.get(n)) {
-                    return Ok(e.clone());
+                if c.sym("[") {
+                    return self.indexed(n, c);
                 }
-                let n = &self.global(n);
-                // Inside a screen copy, a `let` that was read once per
-                // copy is stored with its mark: that is its own.
-                let marked = self.scopes.iter().rev().find(|e| e.suffix.starts_with("#screen")).map(|e| format!("{n}{}", e.suffix)).filter(|m| self.lets.contains_key(m));
-                let n = match &marked {
-                    Some(m) => m,
-                    None => n,
-                };
-                // Marked by the screen copy and not declared that way: it is the scene's.
-                let base = self.strip_screen_suffix(n);
-                let n = match &base {
-                    Some(base) if !self.lets.contains_key(n.as_str()) && !self.props.contains_key(n.as_str()) && !self.facts.contains_key(n.as_str()) && (self.lets.contains_key(base) || self.props.contains_key(base) || self.facts.contains_key(base)) => base,
-                    _ => n,
-                };
-                if let Some(e) = self.lets.get(n) {
-                    Ok(e.clone())
-                } else if let Some(p) = self.props.get(n) {
-                    Ok(p.e())
-                } else if let Some(h) = self.facts.get(n) {
-                    Ok(h.e())
-                } else if let Some(v) = self.values.get(n) {
-                    // The value of an enum: `mode == critical`.
-                    Ok(Expr::K(*v))
-                } else if let Some(k) = n.rsplit_once('.').and_then(|(fact, value)| match self.e.types.iter().find(|(x, _)| x == fact) {
-                    Some((_, FactType::Enum(names))) => names.iter().position(|x| x == value),
-                    _ => None,
-                }) {
-                    // The long form, which cannot be confused with anything: `mode.critical`.
-                    Ok(Expr::K(k as f32))
-                } else if self.ambiguous.contains(n.as_str()) {
-                    c.error(format!("'{n}' is a value of several enums, with different numbers: here there is no telling which. Compare it with its fact (`mode == {n}`) or write it in full (`mode.{n}`)"))
-                } else if self.in_cursor.get() {
-                    // Most likely a cursor's name, mistyped: the list is what helps.
-                    let all: Vec<String> = vocab::CURSORS.iter().map(|s| s.to_string()).collect();
-                    let hint = closest_match(n, all.iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
-                    let t = &c.tokens[c.i - 1];
-                    Err(CompileError::at(t.line, t.col, format!("there is nothing called '{n}': in a `cursor:`, a cursor is {}.{hint}", join_or(vocab::CURSORS))))
-                } else {
-                    let known: Vec<&String> = self.lets.keys().chain(self.props.keys()).chain(self.facts.keys()).chain(self.values.keys()).collect();
-                    self.unknown(c, "nothing", n, known)
-                }
+                self.resolve(c, n)
             }
             _ => c.error("expected a number, a name or a parenthesis here"),
         }
     }
+
+    /// `a[i]`, `win[i].screen`, `win.reserved[s].top`: the element at a place.
+    /// A place known when loading is that element's name (`a.3`); one that
+    /// changes is a `pick` over every element. Outside the elements, -1.
+    fn indexed(&self, base: &str, c: &mut Cur) -> R<Expr> {
+        let mut parts = Vec::new();
+        loop {
+            let i = self.expr(c)?;
+            c.expect_sym("]")?;
+            let rest = match c.peek() {
+                Some(TokenKind::Id(r)) if r.starts_with('.') => {
+                    c.i += 1;
+                    r.clone()
+                }
+                _ => String::new(),
+            };
+            parts.push((i, rest));
+            if !c.sym("[") {
+                break;
+            }
+        }
+        self.index_chain(c, base, &parts)
+    }
+
+    fn index_chain(&self, c: &Cur, base: &str, parts: &[(Expr, String)]) -> R<Expr> {
+        let Some(((i, rest), more)) = parts.split_first() else {
+            return self.resolve(c, base);
+        };
+        let element = |k: i64| format!("{base}.{k}{rest}");
+        let length = self.arrays.get(&self.global_quiet(base)).map(|a| a.0);
+        if let Expr::K(v) = i {
+            let k = v.round() as i64;
+            return match length {
+                Some(n) if k < 0 || k >= n as i64 => Ok(Expr::K(-1.0)),
+                None if k < 0 => Ok(Expr::K(-1.0)),
+                // Past the last of a family that has elements: outside it too. One
+                // with none is a name that does not exist, and says so.
+                None if !self.present(&element(k), more) && self.present(&element(0), more) => Ok(Expr::K(-1.0)),
+                _ => self.index_chain(c, &element(k), more),
+            };
+        }
+        // Without a declared length, as many as there are: `win.0.screen`, `win.1.screen`, and so on.
+        let n = length.unwrap_or_else(|| (0..512).take_while(|k| self.present(&element(*k), more)).count());
+        if n == 0 {
+            return c.error(format!("'{base}' has no elements to read: declare it with `let {base}[N]`, or read a name that has them (`win[i].screen`)"));
+        }
+        let mut options = vec![Expr::K(-1.0)];
+        for k in 0..n {
+            options.push(self.index_chain(c, &element(k as i64), more)?);
+        }
+        options.push(Expr::K(-1.0));
+        Ok(Expr::Pick(Box::new(i.clone() + Expr::K(1.0)), options).folded_pub())
+    }
+
+    /// Whether an element exists, without saying anything if not: what
+    /// follows it is looked for at its first place (`win.3.reserved.0.top`).
+    fn present(&self, base: &str, parts: &[(Expr, String)]) -> bool {
+        if let Some(((i, rest), more)) = parts.split_first() {
+            let k = match i {
+                Expr::K(v) => v.round() as i64,
+                _ => 0,
+            };
+            return k >= 0 && self.present(&format!("{base}.{k}{rest}"), more);
+        }
+        if self.scopes.iter().any(|e| e.exprs.contains_key(base)) {
+            return true;
+        }
+        let g = self.global_quiet(base);
+        let has = |n: &str| self.lets.contains_key(n) || self.props.contains_key(n) || self.facts.contains_key(n);
+        has(&g) || self.strip_screen_suffix(&g).is_some_and(|b| has(&b))
+    }
+
+    /// What a name is worth here: a parameter, a `let`, a prop, a fact or an enum's value.
+    fn resolve(&self, c: &Cur, n: &str) -> R<Expr> {
+        // First what is inside —parameters and `let`s of the component—, then what is outside.
+        if let Some(e) = self.scopes.iter().rev().find_map(|e| e.exprs.get(n)) {
+            return Ok(e.clone());
+        }
+        let n = &self.global(n);
+        // Inside a screen copy, a `let` that was read once per
+        // copy is stored with its mark: that is its own.
+        let marked = self.scopes.iter().rev().find(|e| e.suffix.starts_with("#screen")).map(|e| format!("{n}{}", e.suffix)).filter(|m| self.lets.contains_key(m));
+        let n = match &marked {
+            Some(m) => m,
+            None => n,
+        };
+        // Marked by the screen copy and not declared that way: it is the scene's.
+        let base = self.strip_screen_suffix(n);
+        let n = match &base {
+            Some(base) if !self.lets.contains_key(n.as_str()) && !self.props.contains_key(n.as_str()) && !self.facts.contains_key(n.as_str()) && (self.lets.contains_key(base) || self.props.contains_key(base) || self.facts.contains_key(base)) => base,
+            _ => n,
+        };
+        if let Some(e) = self.lets.get(n) {
+            Ok(e.clone())
+        } else if let Some(p) = self.props.get(n) {
+            Ok(p.e())
+        } else if let Some(h) = self.facts.get(n) {
+            Ok(h.e())
+        } else if let Some(v) = self.values.get(n) {
+            // The value of an enum: `mode == critical`.
+            Ok(Expr::K(*v))
+        } else if let Some(k) = n.rsplit_once('.').and_then(|(fact, value)| match self.e.types.iter().find(|(x, _)| x == fact) {
+            Some((_, FactType::Enum(names))) => names.iter().position(|x| x == value),
+            _ => None,
+        }) {
+            // The long form, which cannot be confused with anything: `mode.critical`.
+            Ok(Expr::K(k as f32))
+        } else if self.ambiguous.contains(n.as_str()) {
+            c.error(format!("'{n}' is a value of several enums, with different numbers: here there is no telling which. Compare it with its fact (`mode == {n}`) or write it in full (`mode.{n}`)"))
+        } else if self.in_cursor.get() {
+            // Most likely a cursor's name, mistyped: the list is what helps.
+            let all: Vec<String> = vocab::CURSORS.iter().map(|s| s.to_string()).collect();
+            let hint = closest_match(n, all.iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
+            let t = &c.tokens[c.i - 1];
+            Err(CompileError::at(t.line, t.col, format!("there is nothing called '{n}': in a `cursor:`, a cursor is {}.{hint}", join_or(vocab::CURSORS))))
+        } else {
+            let known: Vec<&String> = self.lets.keys().chain(self.props.keys()).chain(self.facts.keys()).chain(self.values.keys()).collect();
+            self.unknown(c, "nothing", n, known)
+        }
+    }
     fn function(&self, name: &str, c: &mut Cur) -> R<Expr> {
+        if name == "sort" {
+            return c.error("`sort` makes an array, the slots in order: `let ord[win.max] = sort(i in win by win[i].place)`");
+        }
         if !vocab::FUNCTIONS.contains(&name) {
             let all: Vec<String> = vocab::FUNCTIONS.iter().map(|s| s.to_string()).collect();
             let hint = closest_match(name, all.iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
@@ -1418,6 +1618,19 @@ impl<'a> Compiler<'a> {
             Expr::K(v) => Ok(*v),
             _ => Err(CompileError::at(l, col, format!("in '{name}', the first two have to be numbers"))),
         };
+        // More than it takes are not read: said, not refused, so a scene that
+        // has them still loads. `min(a, b, c)` was the smaller of `a` and `b`.
+        let takes = match name {
+            "min" | "max" | "pow" | "atan2" | "mod" | "length" | "noise" => 2,
+            "clamp" | "smooth" | "mix" | "if" => 3,
+            "pick" | "rgb" => usize::MAX,
+            _ => 1,
+        };
+        if a.len() > takes && self.extra_noted.borrow_mut().insert((l, col)) {
+            let file = self.files.get(l / super::PER_FILE).map_or("", String::as_str);
+            let extra = a.len() - takes;
+            eprintln!("note   \u{b7} {file}:{}:{col}: `{name}` takes {takes} argument{}: the {extra} after {} are not read", l % super::PER_FILE, if takes == 1 { "" } else { "s" }, if takes == 1 { "it" } else { "them" });
+        }
         let mut a = a.into_iter();
         let mut take = || a.next().ok_or_else(|| CompileError::at(l, col, format!("'{name}' is missing arguments")));
         Ok(match name {
@@ -1865,6 +2078,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn statement(&mut self, n: &'a Node, clips: &mut usize) -> R<()> {
+        if is_definition(n) {
+            return self.element(n);
+        }
+        if is_fold(n) {
+            return self.fold(n);
+        }
         {
             let mut c = Cur::new(&n.head, n.line, n.col);
             let word = c.id("a declaration")?;
@@ -2041,7 +2260,15 @@ impl<'a> Compiler<'a> {
                     c.expect_sym(",")?;
                     let w = c.num()?;
                     c.expect_sym(",")?;
-                    let i = self.e.image(source, w as u32, c.num()? as u32);
+                    let h = c.num()?;
+                    // Read again from the same line (a `repeat` inside a surface per
+                    // monitor), it is the same image, not one more to load.
+                    let site = (n.line, n.col);
+                    let i = match self.image_sites.get(&name) {
+                        Some((at, i)) if *at == site => *i,
+                        _ => self.e.image(source, w as u32, h as u32),
+                    };
+                    self.image_sites.insert(name.clone(), (site, i));
                     self.images.insert(name, i);
                 }
                 // `figure hat = file "wardrobe/hat.svg"`: its layers, as paths.
@@ -2198,6 +2425,9 @@ impl<'a> Compiler<'a> {
                 }
                 "let" => {
                     let name = c.id("a name")?;
+                    if c.sym("[") {
+                        return self.array(n, &name, &mut c);
+                    }
                     if n.line >= super::PER_FILE {
                         self.from_library.insert(name.clone());
                     }
@@ -3080,6 +3310,7 @@ impl<'a> Compiler<'a> {
         let k = match c.peek() {
             // `label: pick(k, "Brightness", "Volume")`: one per copy, as a `text` does.
             Some(TokenKind::Id(n)) if n == "pick" && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => self.text_pick(c)?,
+            Some(TokenKind::Id(_)) if matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("["))) => self.text_content_at(c)?,
             Some(TokenKind::Str(s)) => {
                 let s = s.clone();
                 let at = c.i;
@@ -3204,6 +3435,13 @@ impl<'a> Compiler<'a> {
             if let Some(case) = case {
                 c.i += 2;
                 let name = c.id("the name of a text")?;
+                if matches!(c.peek(), Some(TokenKind::Sym("["))) {
+                    let at = c.pos();
+                    let p = self.text_at(&name, &mut c, case)?.ok_or_else(|| CompileError::at(at.0, at.1, format!("'{name}[...]' reads a text by its place, and there are none")))?;
+                    c.expect_sym(")")?;
+                    c.expect_end()?;
+                    return Ok(p);
+                }
                 // First what is inside: a text parameter beats a text of the scene with the same name.
                 if let Some(e) = self.scopes.iter().rev().find(|e| e.strings.contains_key(&name)) {
                     if e.contents.contains_key(&name) {
@@ -3224,6 +3462,17 @@ impl<'a> Compiler<'a> {
                 c.expect_sym(")")?;
                 c.expect_end()?;
                 return Ok(Piece::Live(t, case));
+            }
+        }
+        // `{win[i].title}`: a live text by its place (a number by its place stays a number).
+        if let (Some(TokenKind::Id(n)), Some(TokenKind::Sym("["))) = (c.peek(), tokens.get(1).map(|x| &x.kind)) {
+            let n = n.clone();
+            let mut probe = Cur::new(&tokens, line, col);
+            probe.i = 1;
+            if let Ok(Some(p)) = self.text_at(&n, &mut probe, LetterCase::AsIs) {
+                if probe.at_end() {
+                    return Ok(p);
+                }
             }
         }
         if let (Some(TokenKind::Id(n)), 1) = (c.peek(), tokens.len()) {
@@ -3257,6 +3506,38 @@ impl<'a> Compiler<'a> {
         }
         c.expect_end()?;
         Ok(Piece::Number(e, 0))
+    }
+
+    /// `win[i].title` where a text goes: the live text at that place, as a
+    /// number is read by its place (`expr_atom`). `None` if those are no texts.
+    fn text_at(&self, base: &str, c: &mut Cur, case: LetterCase) -> R<Option<Piece>> {
+        c.expect_sym("[")?;
+        let i = self.expr(c)?;
+        c.expect_sym("]")?;
+        let rest = match c.peek() {
+            Some(TokenKind::Id(r)) if r.starts_with('.') => {
+                c.i += 1;
+                r.clone()
+            }
+            _ => String::new(),
+        };
+        let text = |k: usize| self.texts.get(&self.global_quiet(&format!("{base}.{k}{rest}"))).copied();
+        if let Expr::K(k) = i {
+            return Ok((k >= 0.0).then(|| text(k.round() as usize)).flatten().map(|t| Piece::Live(t, case)));
+        }
+        let all: Vec<TextId> = (0..4096).map_while(text).collect();
+        Ok((!all.is_empty()).then(|| Piece::Pick(i, all, case)))
+    }
+
+    /// The same where a whole text goes: `text win[i].title { ... }`, `label: win[i].title`.
+    fn text_content_at(&self, c: &mut Cur) -> R<Content> {
+        let base = c.id("a text")?;
+        let at = c.pos();
+        match self.text_at(&base, c, LetterCase::AsIs)? {
+            Some(Piece::Live(t, _)) => Ok(Content::Live(t)),
+            Some(p) => Ok(Content::Template(vec![p])),
+            None => Err(CompileError::at(at.0, at.1, format!("'{base}[...]' reads a text by its place, and there are none: no '{base}.0' that is a text"))),
+        }
     }
 
     /// `pick(i, "a", b, c)` where a text goes: the one at place `i`. Each
@@ -3318,6 +3599,8 @@ impl<'a> Compiler<'a> {
             // `text pick(skin, "Liquid", "Light liquid", "Classic")`: the one at
             // that place; each is a text like any other, and is translated.
             Some(TokenKind::Id(n)) if n == "pick" && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => self.text_pick(&mut c)?,
+            // `text win[i].title`: the live text at that place.
+            Some(TokenKind::Id(_)) if matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("["))) => self.text_content_at(&mut c)?,
             // A component parameter that is worth a quoted text.
             Some(TokenKind::Id(name)) if self.scopes.iter().any(|e| e.contents.contains_key(name)) => {
                 self.scopes.iter().rev().find_map(|e| e.contents.get(name)).unwrap().clone()
@@ -4905,13 +5188,413 @@ impl<'a> Compiler<'a> {
 
     /// `repeat i in 0..6 { … }`: the block, once for each value. It is unrolled
     /// when loading; there are no running loops.
+    /// One that defines elements, at the scene's level, is read twice: in
+    /// pass 1 only its `let`s and definitions, so that what comes after it can
+    /// read them; in pass 2 the rest, with the definitions already made.
     fn repeat(&mut self, n: &'a Node, c: &mut Cur) -> R<()> {
-        let (var, from, until) = self.repeat_head(c)?;
+        let mut head = self.repeat_head(c);
+        // In pass 0, one at the scene's level declares its values with the
+        // other declarations: anything can read them, wherever it is written.
+        if self.pass == 0 {
+            // Its bounds may be `let`s, which are only read in pass 1: the
+            // scene's `let`s of numbers are read for them here, and let go.
+            if head.is_err() {
+                let added = self.constant_lets();
+                head = self.repeat_head(&mut Cur::new(&n.head[1..], n.line, n.col));
+                for name in added {
+                    self.lets.remove(&name);
+                }
+            }
+            let Ok((var, from, until)) = head else { return Ok(()) };
+            for v in from..until {
+                self.open_iteration(&var, v);
+                for e in n.body.as_deref().unwrap_or(&[]) {
+                    if matches!(e, Entry::Node(s) if declares_value(s)) {
+                        let Entry::Node(s) = e else { unreachable!() };
+                        let _ = self.statement(s, &mut 0);
+                    }
+                }
+                self.scopes.pop();
+            }
+            return Ok(());
+        }
+        let (var, from, until) = head?;
+        if self.hoisting.is_some() {
+            self.hoist_turns(n, &var, from, until, false);
+            return Ok(());
+        }
+        let key = n as *const Node;
+        if self.pass == 1 && self.scopes.is_empty() {
+            self.hoisted.insert(key);
+            // Each copy's folds are settled once all have been read: the
+            // scene's last link is not where a copy's chain starts.
+            let mut settled = Vec::new();
+            self.each_copy(|o| {
+                // What each of the scene's `let`s it folds is worth as it begins.
+                let mut start = Scope { folds: true, ..Default::default() };
+                for name in fold_targets(n.body.as_deref().unwrap_or(&[])) {
+                    let own = o.hoisting.flatten().map(|s| format!("{name}#screen{s}")).filter(|m| o.lets.contains_key(m));
+                    if let Some(e) = own.as_ref().or(Some(&name)).and_then(|m| o.lets.get(m)) {
+                        start.exprs.insert(name, e.clone());
+                    }
+                }
+                o.scopes.push(Rc::new(start));
+                o.fold_scope = Some(o.scopes.len() - 1);
+                o.hoist_turns(n, &var, from, until, true);
+                o.fold_scope = None;
+                settled.push((o.hoisting.flatten(), o.scopes.pop().unwrap()));
+            });
+            for (copy, folds) in settled {
+                self.settle_folds(copy, &folds);
+            }
+            return Ok(());
+        }
+        let hoisted = self.hoisted.contains(&key) as usize;
+        self.in_hoisted += hoisted;
+        let copy = self.screen_mark().and_then(|m| m["#screen".len()..].parse::<usize>().ok());
         for v in from..until {
             let mark = self.rules.len();
+            // A turn reads each fold as it was at the end of that turn.
+            let folds = self.turns.get(&(key, copy, v)).cloned();
+            let had_folds = folds.is_some();
+            if let Some(f) = folds {
+                self.scopes.push(f);
+            }
             self.open_iteration(&var, v);
             self.group(n.body.as_deref().unwrap_or(&[]).iter());
             self.close_scope(mark);
+            if had_folds {
+                self.scopes.pop();
+            }
+        }
+        self.in_hoisted -= hoisted;
+        Ok(())
+    }
+
+    /// The scene's `let`s that are a number, or worked out from numbers and
+    /// the ones before them, put in for now: what it put, to take out again.
+    fn constant_lets(&mut self) -> Vec<String> {
+        let mut added = Vec::new();
+        for e in self.top {
+            let Entry::Node(n) = e else { continue };
+            let (Some(TokenKind::Id(w)), Some(TokenKind::Id(name)), Some(TokenKind::Sym("="))) = (n.head.first().map(|t| &t.kind), n.head.get(1).map(|t| &t.kind), n.head.get(2).map(|t| &t.kind)) else { continue };
+            if w != "let" || self.lets.contains_key(name) {
+                continue;
+            }
+            let before = self.unwatched.replace(true);
+            let mut c = Cur::new(&n.head[3..], n.line, n.col);
+            let value = self.expr(&mut c).ok().filter(|_| c.at_end());
+            self.unwatched.set(before);
+            if let Some(Expr::K(v)) = value {
+                self.lets.insert(name.clone(), Expr::K(v));
+                added.push(name.clone());
+            }
+        }
+        added
+    }
+
+    /// What defines elements is read for the scene, and again for each
+    /// monitor's copy: one that reads `screen.*` is each copy's own.
+    fn each_copy(&mut self, mut read: impl FnMut(&mut Self)) {
+        let copies: Vec<usize> = self.e.surfaces.iter().filter(|s| s.name.is_empty() && matches!(s.screens, Screens::Number(_))).map(|s| s.instance).collect();
+        for copy in std::iter::once(None).chain(copies.into_iter().map(Some)) {
+            if let Some(k) = copy {
+                self.scopes.push(Rc::new(self.screen_scope(k)));
+            }
+            self.hoisting = Some(copy);
+            read(self);
+            self.hoisting = None;
+            if copy.is_some() {
+                self.scopes.pop();
+            }
+        }
+    }
+
+    fn hoist_turns(&mut self, n: &'a Node, var: &str, from: i64, until: i64, top: bool) {
+        for v in from..until {
+            // Each turn's drawing and rules start from the folds as they were
+            // when it began, and follow its links as they come.
+            if let Some(k) = self.fold_scope.filter(|_| top) {
+                self.turns.insert((n as *const Node, self.hoisting.flatten(), v), self.scopes[k].clone());
+            }
+            self.open_iteration(var, v);
+            for e in n.body.as_deref().unwrap_or(&[]) {
+                let Entry::Node(s) = e else { continue };
+                let r = if is_definition(s) { Some(self.element(s)) } else if is_fold(s) { Some(self.fold(s)) } else { None };
+                if let Some(Err(f)) = r {
+                    self.push_error(f);
+                } else if r.is_some() {
+                } else if hoisted_with_definitions(s) {
+                    // One that reads what only the drawing declares fails here,
+                    // and is read again in pass 2: a definition that needs it says so.
+                    // The declarations are read again too, and are the same ones.
+                    let _ = self.statement(s, &mut 0);
+                }
+            }
+            self.scopes.pop();
+        }
+    }
+
+    /// `x = ...`, `x += ...` in a `repeat` at the scene's level: each turn is
+    /// one more link of a chain, and after the `repeat` `x` is its last link.
+    /// Nothing is ever changed: each link is a `let` of its own.
+    fn fold(&mut self, n: &Node) -> R<()> {
+        let mut c = Cur::new(&n.head, n.line, n.col);
+        let name = c.id("a name")?;
+        let op = ["+", "-", "*"].into_iter().find(|o| c.sym(o));
+        c.expect_sym("=")?;
+        // A `let` of the turn or the block it is in (not the scene's): each
+        // link takes its place there, and what comes after reads that one.
+        let local = self.scopes.iter().rposition(|e| e.exprs.contains_key(&name)).filter(|k| !self.scopes[*k].folds);
+        let k = match local {
+            Some(k) => k,
+            None => {
+                if self.in_hoisted > 0 {
+                    match self.scopes.iter().rposition(|e| e.folds && e.exprs.contains_key(&name)) {
+                        Some(k) => k,
+                        None => return Ok(()),
+                    }
+                } else {
+                let Some(k) = self.fold_scope.filter(|_| self.hoisting.is_some()) else {
+                    return Err(CompileError::at(n.line, n.col, format!("`{name} = ...` gives a `let` a new value: one of the turn or the block it is in, or one of the scene's in a `repeat` at the scene's level. There is no `let {name}` before it here")));
+                };
+                let g = self.global_quiet(&name);
+                if !self.lets.contains_key(&g) || self.arrays.contains_key(&g) {
+                    return Err(CompileError::at(n.line, n.col, format!("'{name}' is not a `let` of the scene: declare it before the `repeat`, `let {name} = 0`")));
+                }
+                k
+                }
+            }
+        };
+        let e = self.expr(&mut c)?;
+        c.expect_end()?;
+        let e = match op {
+            Some(o) => {
+                let now = self.resolve(&c, &name)?;
+                match o {
+                    "+" => now + e,
+                    "-" => now - e,
+                    _ => now * e,
+                }
+            }
+            None => e,
+        };
+        let link = if e.node_count() > 8 { self.computed_once(&name, e).e() } else { e };
+        Rc::make_mut(&mut self.scopes[k]).exprs.insert(name, link);
+        Ok(())
+    }
+
+    /// After the `repeat`, each fold is its last link: the scene's, and a
+    /// copy's own where its chain is another.
+    fn settle_folds(&mut self, copy: Option<usize>, folds: &Scope) {
+        for (name, e) in &folds.exprs {
+            let raw = format!("{e:?}");
+            match copy {
+                None => {
+                    self.folds.insert(name.clone(), raw);
+                    self.lets.insert(name.clone(), e.clone());
+                }
+                Some(s) if self.folds.get(name).is_some_and(|base| *base != raw) => {
+                    if let Some(Expr::P(p)) = self.lets.get(name) {
+                        self.copy_props.insert(p.0);
+                    }
+                    self.lets.insert(format!("{name}#screen{s}"), e.clone());
+                }
+                // The same as the scene's: a value of its own left from before the
+                // `repeat` (a start that read its monitor) would hide it.
+                Some(s) => {
+                    self.lets.remove(&format!("{name}#screen{s}"));
+                }
+            }
+        }
+    }
+
+    /// `let a[16]`: an array, whose elements are each defined once (`a[i] = ...`).
+    fn array(&mut self, n: &Node, name: &str, c: &mut Cur) -> R<()> {
+        let at = c.pos();
+        let length = match self.expr(c)? {
+            Expr::K(v) if v >= 1.0 && v <= 4096.0 => v as usize,
+            _ => return Err(CompileError::at(at.0, at.1, "an array's length is read when loading: a number from 1 to 4096, a `let` of one, or `win.max`")),
+        };
+        c.expect_sym("]")?;
+        // `let dka[4][12]`: each of its elements is an array of its own.
+        let columns = if c.sym("[") {
+            let at = c.pos();
+            let m = match self.expr(c)? {
+                Expr::K(v) if v >= 1.0 && v <= 4096.0 => v as usize,
+                _ => return Err(CompileError::at(at.0, at.1, "an array's length is read when loading: a number from 1 to 4096, a `let` of one, or `win.max`")),
+            };
+            c.expect_sym("]")?;
+            Some(m)
+        } else {
+            None
+        };
+        let sorted = columns.is_none() && c.sym("=");
+        if sorted {
+            c.expect_word("sort")?;
+            c.expect_sym("(")?;
+        } else {
+            c.expect_end()?;
+        }
+        if !self.scopes.is_empty() || self.pass != 1 {
+            return Err(CompileError::at(n.line, n.col, "an array is declared at the scene's level: not inside a `repeat`, a component or a surface"));
+        }
+        let g = self.declare(name);
+        if let Some(&(_, line)) = self.arrays.get(&g) {
+            if line != n.line {
+                return Err(CompileError::at(n.line, n.col, format!("there is already an array '{name}', on line {}", line % super::PER_FILE)));
+            }
+            return Ok(());
+        }
+        self.arrays.insert(g.clone(), (length, n.line));
+        if let Some(m) = columns {
+            self.rows.insert(g.clone());
+            for k in 0..length {
+                self.arrays.insert(format!("{g}.{k}"), (m, n.line));
+            }
+        }
+        if sorted {
+            return self.sort(n, &g, length, c);
+        }
+        Ok(())
+    }
+
+    /// `let ord[win.max] = sort(i in win by win[i].row, win[i].col)`: the
+    /// slots in order of their keys, compared one after another, ties by
+    /// slot. `ord[p]` is the slot at place `p`, and `ord.pos[i]` the place of
+    /// slot `i`. Worked out while the scene runs, once for every reader.
+    fn sort(&mut self, n: &Node, g: &str, length: usize, c: &mut Cur) -> R<()> {
+        let var = c.id("a name for the slot")?;
+        c.expect_word("in")?;
+        let at = c.pos();
+        let range = matches!(c.tokens.get(c.i + 1).map(|t| &t.kind), Some(TokenKind::Sym("..")));
+        let count = match c.peek() {
+            Some(TokenKind::Id(_)) if !range => {
+                let what = c.id("what to sort")?;
+                let w = self.global_quiet(&what);
+                let max = match self.lets.get(&format!("{w}.max")) {
+                    Some(Expr::K(v)) => Some(*v as usize),
+                    _ => None,
+                };
+                self.arrays.get(&w).map(|a| a.0).or(max).ok_or_else(|| CompileError::at(at.0, at.1, format!("'{what}' has no slots to sort: `win`, an array, or `0..16`")))?
+            }
+            _ => {
+                let from = self.expr(c)?;
+                c.expect_sym("..")?;
+                match (from, self.expr(c)?) {
+                    (Expr::K(a), Expr::K(b)) if a == 0.0 && b >= 1.0 => b as usize,
+                    _ => return Err(CompileError::at(at.0, at.1, "the slots a `sort` orders are known when loading, from 0: `0..16`")),
+                }
+            }
+        };
+        if count != length {
+            return Err(CompileError::at(at.0, at.1, format!("this sorts {count} slots, and '{g}' has {length} places: they are the same number")));
+        }
+        c.expect_word("by")?;
+        if !matches!(c.tokens.last().map(|t| &t.kind), Some(TokenKind::Sym(")"))) || c.i + 1 >= c.tokens.len() {
+            return c.error("a `sort` orders by at least one key, and ends its parenthesis: `sort(i in win by win[i].place)`");
+        }
+        let written = &c.tokens[c.i..c.tokens.len() - 1];
+        let mut keys = Vec::with_capacity(length);
+        for i in 0..length {
+            self.open_iteration(&var, i as i64);
+            let mut k = Cur::new(written, n.line, n.col);
+            let mut these = Vec::new();
+            let read = loop {
+                match self.expr(&mut k) {
+                    Ok(e) => these.push(e),
+                    Err(f) => break Err(f),
+                }
+                if !k.sym(",") {
+                    break k.expect_end();
+                }
+            };
+            self.scopes.pop();
+            read?;
+            keys.push(these);
+        }
+        c.i = c.tokens.len();
+        let made = |o: &mut Self, name: String| {
+            let p = o.e.prop_with(interned(&format!("\u{b7}{name}")), 0.0, Spring::LIVELY);
+            o.lets.insert(name.clone(), p.e());
+            o.elements.insert(name, String::new());
+            p
+        };
+        let ord: Vec<PropId> = (0..length).map(|p| made(self, format!("{g}.{p}"))).collect();
+        let pos: Vec<PropId> = (0..length).map(|i| made(self, format!("{g}.pos.{i}"))).collect();
+        self.arrays.insert(format!("{g}.pos"), (length, n.line));
+        self.e.behaviors.push(Behavior::Sort { keys, ord, pos });
+        Ok(())
+    }
+
+    /// `a[i] = ...`: one element of an array. Read in pass 1, with the `let`s,
+    /// as a `let` of the scene called `a.3`: anything after it can read it.
+    fn element(&mut self, n: &'a Node) -> R<()> {
+        if self.in_hoisted > 0 {
+            return Ok(());
+        }
+        if self.hoisting.is_none() {
+            if self.pass != 1 || !self.scopes.is_empty() {
+                return Err(CompileError::at(n.line, n.col, "an element is defined at the scene's level, or in a `repeat` there: not inside a group, a component or a surface"));
+            }
+            let mut result = Ok(());
+            self.each_copy(|o| {
+                if let Err(f) = o.element(n) {
+                    result = Err(f);
+                }
+            });
+            return result;
+        }
+        let copy = self.hoisting.flatten();
+        let mut c = Cur::new(&n.head, n.line, n.col);
+        let name = c.id("an array")?;
+        let mut g = self.global_quiet(&name);
+        let mut places = Vec::new();
+        if !self.arrays.contains_key(&g) {
+            return Err(CompileError::at(n.line, n.col, format!("there is no array called '{name}': declare it first, `let {name}[N]`")));
+        }
+        while c.sym("[") {
+            let at = c.pos();
+            let k = match self.expr(&mut c)? {
+                Expr::K(v) => v.round() as i64,
+                _ => return Err(CompileError::at(at.0, at.1, "which element is defined is known when loading: a number, or a `repeat`'s counter")),
+            };
+            c.expect_sym("]")?;
+            let Some(&(length, _)) = self.arrays.get(&g) else {
+                return Err(CompileError::at(at.0, at.1, format!("'{name}' has {} places: this is one more", places.len())));
+            };
+            if k < 0 || k >= length as i64 {
+                return Err(CompileError::at(at.0, at.1, format!("'{name}' has {length} elements there, from 0 to {}: {k} is not one of them", length - 1)));
+            }
+            places.push(k.to_string());
+            g = format!("{g}.{k}");
+        }
+        if self.rows.contains(&g) || self.arrays.contains_key(&g) {
+            return Err(CompileError::at(n.line, n.col, format!("'{name}' has two places: `{name}[i][j] = ...`")));
+        }
+        c.expect_sym("=")?;
+        let k = places.join("][");
+        let e = self.expr(&mut c)?;
+        c.expect_end()?;
+        let element = g;
+        let raw = format!("{e:?}");
+        match copy {
+            None => {
+                if self.elements.insert(element.clone(), raw).is_some() {
+                    return Err(CompileError::at(n.line, n.col, format!("'{name}[{k}]' is already defined: each element is defined once")));
+                }
+                let e = if e.node_count() > 8 { self.computed_once(&element, e).e() } else { e };
+                self.lets.insert(element, e);
+            }
+            // Only where this copy computes something else than the scene's.
+            Some(s) if self.elements.get(&element).is_some_and(|base| *base != raw) => {
+                if let Some(Expr::P(p)) = self.lets.get(&element) {
+                    self.copy_props.insert(p.0);
+                }
+                let own = if e.node_count() > 8 { self.computed_once(&element, e).e() } else { e };
+                self.lets.insert(format!("{element}#screen{s}"), own);
+            }
+            Some(_) => {}
         }
         Ok(())
     }
@@ -6022,6 +6705,13 @@ impl<'a> Compiler<'a> {
         } else {
             false
         };
+        // `placement manual`: the scene says where a new one goes (see `Nest::manual`).
+        let manual = if c.word("placement") {
+            c.expect_word("manual")?;
+            true
+        } else {
+            false
+        };
         // `workspaces kept`: they stay while empty (see `Nest::kept`).
         let kept = if c.word("workspaces") {
             c.expect_word("kept")?;
@@ -6054,6 +6744,7 @@ impl<'a> Compiler<'a> {
             fact(self, format!("{name}.{k}.dialog"), 0.0, true);
             fact(self, format!("{name}.{k}.minimized"), 0.0, true);
             fact(self, format!("{name}.{k}.floating"), 0.0, true);
+            fact(self, format!("{name}.{k}.pending"), 0.0, true);
             // It lets the compositor draw its frame; and what it asks, from its
             // own title bar or edges, while the button is down.
             fact(self, format!("{name}.{k}.framed"), 0.0, true);
@@ -6130,7 +6821,9 @@ impl<'a> Compiler<'a> {
         self.texts.insert(full, id);
         // The right button is the windows' as well: it no longer closes the scene.
         self.e.surface_mut().right_click_quits = false;
-        self.e.nest = Some(crate::scene::Nest { name, max, programs, kept });
+        // How many slots there are, as a number known when loading: `let tw[win.max]`.
+        self.lets.insert(format!("{name}.max"), Expr::K(max as f32));
+        self.e.nest = Some(crate::scene::Nest { name, max, programs, kept, manual });
         Ok(())
     }
 
@@ -6493,6 +7186,249 @@ impl<'a> Compiler<'a> {
         r
     }
 
+    /// `x[i] = v` in a rule: the fact `x.3` when the place is known when
+    /// loading, otherwise whichever of `x.0`, `x.1`... the place says when it fires.
+    fn indexed_write(&self, base: &str, c: &mut Cur) -> R<Effect> {
+        c.expect_sym("[")?;
+        let i = self.expr(c)?;
+        c.expect_sym("]")?;
+        let rest = match c.peek() {
+            Some(TokenKind::Id(r)) if r.starts_with('.') => {
+                c.i += 1;
+                r.clone()
+            }
+            _ => String::new(),
+        };
+        c.expect_sym("=")?;
+        let v = self.expr(c)?;
+        let fact = |k: usize| self.facts.get(&self.global_quiet(&format!("{base}.{k}{rest}"))).copied();
+        if let Expr::K(k) = i {
+            return match (k >= 0.0).then(|| fact(k.round() as usize)).flatten() {
+                Some(h) => Ok(Effect::Fact(h, v)),
+                None => c.error(format!("there is no fact '{base}.{}{rest}' to write", k.round())),
+            };
+        }
+        let all: Vec<FactId> = (0..4096).map_while(fact).collect();
+        if all.is_empty() {
+            return c.error(format!("'{base}[...]{rest}' writes a fact by its place: there is no '{base}.0{rest}'. Declare them, `repeat k in 0..16 {{ fact {base}.$k{rest} = 0 }}`"));
+        }
+        Ok(Effect::FactAt(all, i, v))
+    }
+
+    /// A rule's effects, in order. A `repeat` among them is unfolded in
+    /// place: `repeat k in 0..16 { tre.w.$k = 0 }` is sixteen effects of the
+    /// same rule, which each see what the ones before them set.
+    fn effects(&mut self, entries: &[Entry], effects: &mut Vec<Effect>) -> R<()> {
+        for e in entries {
+            if let Entry::Node(x) = e
+                && matches!(x.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "repeat")
+            {
+                let mut c = Cur::new(&x.head[1..], x.line, x.col);
+                let (var, from, until) = self.repeat_head(&mut c)?;
+                for v in from..until {
+                    self.open_iteration(&var, v);
+                    let r = self.effects(x.body.as_deref().unwrap_or(&[]), effects);
+                    self.scopes.pop();
+                    r?;
+                }
+                continue;
+            }
+            match e {
+                Entry::Prop { name, value, line, col } => effects.push(Effect::Animate(self.transition(name, value, *line, *col)?)),
+                Entry::Node(x) => {
+                    let mut c = Cur::new(&x.head, x.line, x.col);
+                    let p = c.id("an effect")?;
+                    effects.push(match if vocab::EFFECTS.contains(&p.as_str()) { p.as_str() } else { "" } {
+                        "ripple" => Effect::Ripple(self.zone(&mut c)?),
+                        "toggle" => Effect::Toggle(self.fact(&mut c)?),
+                        "blur" => Effect::FocusField(None),
+                        "focus" if self.names_window(&c) => Effect::Window(WindowAction::Focus, self.which_window(&mut c)?),
+                        // `close workspace 2 on 0`: that workspace gone, its windows to the one beside.
+                        "close" if c.word("workspace") => {
+                            if self.e.nest.is_none() {
+                                return c.error("`close workspace` closes one of the scene's windows' workspaces: declare them first, `windows win max 16`");
+                            }
+                            let n = self.expr(&mut c)?;
+                            let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
+                            Effect::WorkspaceClose(n, on)
+                        }
+                        "close" => Effect::Window(WindowAction::Close, self.which_window(&mut c)?),
+                        "promote" => Effect::Window(WindowAction::Promote, self.which_window(&mut c)?),
+                        "fullscreen" => Effect::Window(WindowAction::Fullscreen, self.which_window(&mut c)?),
+                        "minimize" => Effect::Window(WindowAction::Minimize, self.which_window(&mut c)?),
+                        "restore" => Effect::Window(WindowAction::Restore, self.which_window(&mut c)?),
+                        "float" => Effect::Window(WindowAction::Float, self.which_window(&mut c)?),
+                        "tile" => Effect::Window(WindowAction::Tile, self.which_window(&mut c)?),
+                        // `send win(win.focus) to 1`: to that monitor's copy of the scene;
+                        // `send win(win.focus) to workspace 2`: to that workspace.
+                        "send" => {
+                            // `send workspace 2 on 0 to 1`: that monitor's whole
+                            // workspace, with its windows, to the other monitor.
+                            if c.word("workspace") {
+                                if self.e.nest.is_none() {
+                                    return c.error("`send workspace` moves one of the scene's windows' workspaces: declare them first, `windows win max 16`");
+                                }
+                                let n = self.expr(&mut c)?;
+                                let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
+                                c.expect_word("to")?;
+                                effects.push(Effect::WorkspaceTo(n, on, self.expr(&mut c)?));
+                                c.expect_end()?;
+                                continue;
+                            }
+                            let which = self.which_window(&mut c)?;
+                            c.expect_word("to")?;
+                            if c.word("workspace") {
+                                // `… to workspace 2 on 1`: that workspace of another monitor.
+                                let n = self.expr(&mut c)?;
+                                let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
+                                Effect::WindowToWorkspace(which, n, on)
+                            } else {
+                                Effect::WindowTo(which, self.expr(&mut c)?)
+                            }
+                        }
+                        // `workspace 3`: shown on the monitor the pointer is on; `workspace 3 on 1`, on that one.
+                        "workspace" => {
+                            if self.e.nest.is_none() {
+                                return c.error("`workspace` shows one of the scene's windows' workspaces: declare them first, `windows win max 16`");
+                            }
+                            let n = self.expr(&mut c)?;
+                            let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
+                            Effect::Workspace(n, on)
+                        }
+                        // `pick win(x)`, `pick screen 1`, `pick none`: what the compositor
+                        // asked to be chosen (`win.picking`).
+                        "pick" => {
+                            if self.e.nest.is_none() {
+                                return c.error("`pick` answers what the scene's compositor asks: declare its windows first, `windows win max 16`");
+                            }
+                            if c.word("none") {
+                                Effect::Pick(None)
+                            } else if c.word("screen") {
+                                Effect::Pick(Some((false, self.expr(&mut c)?)))
+                            } else {
+                                Effect::Pick(Some((true, self.which_window(&mut c)?)))
+                            }
+                        }
+                        // `swap win(a) with win(b)`: they change places.
+                        "swap" => {
+                            let a = self.which_window(&mut c)?;
+                            c.expect_word("with")?;
+                            Effect::WindowSwap(a, self.which_window(&mut c)?)
+                        }
+                        // `accept win(i)`: it takes its place (see `placement manual`).
+                        "accept" => {
+                            if !self.e.nest.as_ref().is_some_and(|n| n.manual) {
+                                return c.error("`accept` takes a window the scene placed itself: declare its windows with `placement manual`, `windows win max 16 placement manual`");
+                            }
+                            Effect::Accept(self.which_window(&mut c)?)
+                        }
+                        // `dock 2 on 0`: that item of that monitor's dock.
+                        "dock" => {
+                            if self.e.nest.is_none() {
+                                return c.error("`dock` opens an item of the scene's windows' dock: declare them first, `windows win max 16`");
+                            }
+                            let k = self.expr(&mut c)?;
+                            let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
+                            // `… with drop`, `… pin`, `… unpin`, `… close`, `… new`, `… hide`.
+                            let what = if c.word("with") {
+                                c.expect_word("drop")?;
+                                DockAction::OpenDrop
+                            } else if c.word("pin") {
+                                DockAction::Pin
+                            } else if c.word("unpin") {
+                                DockAction::Unpin
+                            } else if c.word("close") {
+                                DockAction::Close
+                            } else if c.word("new") {
+                                DockAction::New
+                            } else if c.word("hide") {
+                                DockAction::Hide
+                            } else {
+                                DockAction::Go
+                            };
+                            Effect::Dock(k, on, what)
+                        }
+                        "launch" => {
+                            if self.e.nest.is_none() {
+                                return c.error("`launch` opens a program among the scene's windows: declare them first, `windows win max 6`");
+                            }
+                            Effect::Launch(c.string()?)
+                        }
+                        "focus" => {
+                            let n = self.global(&c.id("the name of the input")?);
+                            match self.texts.get(&n) {
+                                Some(t) => Effect::FocusField(Some(*t)),
+                                None => return self.unknown(&c, "no text", &n, self.texts.keys().collect()),
+                            }
+                        }
+                        // `emit opened` or, with a payload, `emit opened(i)`.
+                        "emit" => {
+                            let s = self.signal(&mut c)?;
+                            let payload = if c.sym("(") {
+                                let e = self.expr(&mut c)?;
+                                c.expect_sym(")")?;
+                                Some(e)
+                            } else {
+                                None
+                            };
+                            Effect::Signal(s, payload)
+                        }
+                        "impulse" => Effect::Impulse(self.prop(&mut c)?, self.expr(&mut c)?),
+                        "play" => {
+                            let g = self.global(&c.id("the name of a gesture")?);
+                            match self.gestures.get(&g) {
+                                Some(id) => Effect::Gesture(*id),
+                                None => return self.unknown(&c, "no gesture", &g, self.gestures.keys().collect()),
+                            }
+                        }
+                        other if vocab::EFFECTS.contains(&other) => unreachable!("'{other}' is in the vocabulary, but `rule` cannot carry it out"),
+                        // `label = ""` or `label = draft`: a live text, from words or another.
+                        "" if self.texts.contains_key(&self.global(&p)) && matches!(c.peek(), Some(TokenKind::Sym(s)) if *s == "=") => {
+                            let t = self.texts[&self.global(&p)];
+                            c.expect_sym("=")?;
+                            let value = match c.peek() {
+                                Some(TokenKind::Str(_)) => crate::scene::TextValue::Words(c.string()?),
+                                _ => {
+                                    let other = self.global(&c.id("words in quotes or another text")?);
+                                    match self.texts.get(&other) {
+                                        Some(o) => crate::scene::TextValue::Of(*o),
+                                        None => return self.unknown(&c, "no text", &other, self.texts.keys().collect()),
+                                    }
+                                }
+                            };
+                            Effect::Text(t, value)
+                        }
+                        // `tre.x[tre.nw] = tre.ax`: one of a numbered family of facts.
+                        "" if matches!(c.peek(), Some(TokenKind::Sym("["))) => self.indexed_write(&p, &mut c)?,
+                        _ => {
+                            // `open = true`
+                            c.i -= 1;
+                            let from = c.i;
+                            let h = self.fact(&mut c)?;
+                            let enum_fact = self.bare_enum(&c, from);
+                            c.expect_sym("=")?;
+                            // `mode = critical`: the value, from that fact's list.
+                            let value = match (&enum_fact, c.peek()) {
+                                (Some((fact, names)), Some(TokenKind::Id(v))) if c.tokens.len() == c.i + 1 && self.is_enum_value(v) => match names.iter().position(|n| n == v) {
+                                    Some(k) => {
+                                        c.i += 1;
+                                        Expr::K(k as f32)
+                                    }
+                                    None => return c.error(format!("'{v}' is not a value of '{fact}': it can be {}", join_or(&names.iter().map(String::as_str).collect::<Vec<_>>()))),
+                                },
+                                // An expression, which is evaluated when firing: `level = clamp(local.x / 64, 0, 1)`.
+                                _ => self.expr(&mut c)?,
+                            };
+                            Effect::Fact(h, value)
+                        }
+                    });
+                    c.expect_end()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn rule_inner(&mut self, n: &Node, word: &str, c: &mut Cur, payload_name: &mut Option<String>) -> R<()> {
         let while_cond = |o: &Compiler, c: &mut Cur| -> R<Expr> { if c.word("while") { o.expr(c) } else { Ok(Expr::K(1.0)) } };
         let when = if word == "every" {
@@ -6587,191 +7523,7 @@ impl<'a> Compiler<'a> {
         let guard = if c.word("while") { Some(self.expr(c)?) } else { None };
         c.expect_end()?;
         let mut effects = Vec::new();
-        for e in n.body.as_deref().unwrap_or(&[]) {
-            match e {
-                Entry::Prop { name, value, line, col } => effects.push(Effect::Animate(self.transition(name, value, *line, *col)?)),
-                Entry::Node(x) => {
-                    let mut c = Cur::new(&x.head, x.line, x.col);
-                    let p = c.id("an effect")?;
-                    effects.push(match if vocab::EFFECTS.contains(&p.as_str()) { p.as_str() } else { "" } {
-                        "ripple" => Effect::Ripple(self.zone(&mut c)?),
-                        "toggle" => Effect::Toggle(self.fact(&mut c)?),
-                        "blur" => Effect::FocusField(None),
-                        "focus" if self.names_window(&c) => Effect::Window(WindowAction::Focus, self.which_window(&mut c)?),
-                        // `close workspace 2 on 0`: that workspace gone, its windows to the one beside.
-                        "close" if c.word("workspace") => {
-                            if self.e.nest.is_none() {
-                                return c.error("`close workspace` closes one of the scene's windows' workspaces: declare them first, `windows win max 16`");
-                            }
-                            let n = self.expr(&mut c)?;
-                            let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
-                            Effect::WorkspaceClose(n, on)
-                        }
-                        "close" => Effect::Window(WindowAction::Close, self.which_window(&mut c)?),
-                        "promote" => Effect::Window(WindowAction::Promote, self.which_window(&mut c)?),
-                        "fullscreen" => Effect::Window(WindowAction::Fullscreen, self.which_window(&mut c)?),
-                        "minimize" => Effect::Window(WindowAction::Minimize, self.which_window(&mut c)?),
-                        "restore" => Effect::Window(WindowAction::Restore, self.which_window(&mut c)?),
-                        "float" => Effect::Window(WindowAction::Float, self.which_window(&mut c)?),
-                        "tile" => Effect::Window(WindowAction::Tile, self.which_window(&mut c)?),
-                        // `send win(win.focus) to 1`: to that monitor's copy of the scene;
-                        // `send win(win.focus) to workspace 2`: to that workspace.
-                        "send" => {
-                            // `send workspace 2 on 0 to 1`: that monitor's whole
-                            // workspace, with its windows, to the other monitor.
-                            if c.word("workspace") {
-                                if self.e.nest.is_none() {
-                                    return c.error("`send workspace` moves one of the scene's windows' workspaces: declare them first, `windows win max 16`");
-                                }
-                                let n = self.expr(&mut c)?;
-                                let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
-                                c.expect_word("to")?;
-                                effects.push(Effect::WorkspaceTo(n, on, self.expr(&mut c)?));
-                                c.expect_end()?;
-                                continue;
-                            }
-                            let which = self.which_window(&mut c)?;
-                            c.expect_word("to")?;
-                            if c.word("workspace") {
-                                // `… to workspace 2 on 1`: that workspace of another monitor.
-                                let n = self.expr(&mut c)?;
-                                let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
-                                Effect::WindowToWorkspace(which, n, on)
-                            } else {
-                                Effect::WindowTo(which, self.expr(&mut c)?)
-                            }
-                        }
-                        // `workspace 3`: shown on the monitor the pointer is on; `workspace 3 on 1`, on that one.
-                        "workspace" => {
-                            if self.e.nest.is_none() {
-                                return c.error("`workspace` shows one of the scene's windows' workspaces: declare them first, `windows win max 16`");
-                            }
-                            let n = self.expr(&mut c)?;
-                            let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
-                            Effect::Workspace(n, on)
-                        }
-                        // `pick win(x)`, `pick screen 1`, `pick none`: what the compositor
-                        // asked to be chosen (`win.picking`).
-                        "pick" => {
-                            if self.e.nest.is_none() {
-                                return c.error("`pick` answers what the scene's compositor asks: declare its windows first, `windows win max 16`");
-                            }
-                            if c.word("none") {
-                                Effect::Pick(None)
-                            } else if c.word("screen") {
-                                Effect::Pick(Some((false, self.expr(&mut c)?)))
-                            } else {
-                                Effect::Pick(Some((true, self.which_window(&mut c)?)))
-                            }
-                        }
-                        // `swap win(a) with win(b)`: they change places.
-                        "swap" => {
-                            let a = self.which_window(&mut c)?;
-                            c.expect_word("with")?;
-                            Effect::WindowSwap(a, self.which_window(&mut c)?)
-                        }
-                        // `dock 2 on 0`: that item of that monitor's dock.
-                        "dock" => {
-                            if self.e.nest.is_none() {
-                                return c.error("`dock` opens an item of the scene's windows' dock: declare them first, `windows win max 16`");
-                            }
-                            let k = self.expr(&mut c)?;
-                            let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
-                            // `… with drop`, `… pin`, `… unpin`, `… close`, `… new`, `… hide`.
-                            let what = if c.word("with") {
-                                c.expect_word("drop")?;
-                                DockAction::OpenDrop
-                            } else if c.word("pin") {
-                                DockAction::Pin
-                            } else if c.word("unpin") {
-                                DockAction::Unpin
-                            } else if c.word("close") {
-                                DockAction::Close
-                            } else if c.word("new") {
-                                DockAction::New
-                            } else if c.word("hide") {
-                                DockAction::Hide
-                            } else {
-                                DockAction::Go
-                            };
-                            Effect::Dock(k, on, what)
-                        }
-                        "launch" => {
-                            if self.e.nest.is_none() {
-                                return c.error("`launch` opens a program among the scene's windows: declare them first, `windows win max 6`");
-                            }
-                            Effect::Launch(c.string()?)
-                        }
-                        "focus" => {
-                            let n = self.global(&c.id("the name of the input")?);
-                            match self.texts.get(&n) {
-                                Some(t) => Effect::FocusField(Some(*t)),
-                                None => return self.unknown(&c, "no text", &n, self.texts.keys().collect()),
-                            }
-                        }
-                        // `emit opened` or, with a payload, `emit opened(i)`.
-                        "emit" => {
-                            let s = self.signal(&mut c)?;
-                            let payload = if c.sym("(") {
-                                let e = self.expr(&mut c)?;
-                                c.expect_sym(")")?;
-                                Some(e)
-                            } else {
-                                None
-                            };
-                            Effect::Signal(s, payload)
-                        }
-                        "impulse" => Effect::Impulse(self.prop(&mut c)?, self.expr(&mut c)?),
-                        "play" => {
-                            let g = self.global(&c.id("the name of a gesture")?);
-                            match self.gestures.get(&g) {
-                                Some(id) => Effect::Gesture(*id),
-                                None => return self.unknown(&c, "no gesture", &g, self.gestures.keys().collect()),
-                            }
-                        }
-                        other if vocab::EFFECTS.contains(&other) => unreachable!("'{other}' is in the vocabulary, but `rule` cannot carry it out"),
-                        // `label = ""` or `label = draft`: a live text, from words or another.
-                        "" if self.texts.contains_key(&self.global(&p)) && matches!(c.peek(), Some(TokenKind::Sym(s)) if *s == "=") => {
-                            let t = self.texts[&self.global(&p)];
-                            c.expect_sym("=")?;
-                            let value = match c.peek() {
-                                Some(TokenKind::Str(_)) => crate::scene::TextValue::Words(c.string()?),
-                                _ => {
-                                    let other = self.global(&c.id("words in quotes or another text")?);
-                                    match self.texts.get(&other) {
-                                        Some(o) => crate::scene::TextValue::Of(*o),
-                                        None => return self.unknown(&c, "no text", &other, self.texts.keys().collect()),
-                                    }
-                                }
-                            };
-                            Effect::Text(t, value)
-                        }
-                        _ => {
-                            // `open = true`
-                            c.i -= 1;
-                            let from = c.i;
-                            let h = self.fact(&mut c)?;
-                            let enum_fact = self.bare_enum(&c, from);
-                            c.expect_sym("=")?;
-                            // `mode = critical`: the value, from that fact's list.
-                            let value = match (&enum_fact, c.peek()) {
-                                (Some((fact, names)), Some(TokenKind::Id(v))) if c.tokens.len() == c.i + 1 && self.is_enum_value(v) => match names.iter().position(|n| n == v) {
-                                    Some(k) => {
-                                        c.i += 1;
-                                        Expr::K(k as f32)
-                                    }
-                                    None => return c.error(format!("'{v}' is not a value of '{fact}': it can be {}", join_or(&names.iter().map(String::as_str).collect::<Vec<_>>()))),
-                                },
-                                // An expression, which is evaluated when firing: `level = clamp(local.x / 64, 0, 1)`.
-                                _ => self.expr(&mut c)?,
-                            };
-                            Effect::Fact(h, value)
-                        }
-                    });
-                    c.expect_end()?;
-                }
-            }
-        }
+        self.effects(n.body.as_deref().unwrap_or(&[]), &mut effects)?;
         self.e.rule(when, effects);
         if let Some(r) = self.e.rules.last_mut() {
             r.guard = guard;

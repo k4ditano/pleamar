@@ -1,0 +1,15 @@
+// expect: ok
+language 0.1
+// A window that opens waits out of the layout until the scene says where it goes.
+scene Placed {
+    surface { size: 400, 200 }
+    windows win max 4 placement manual
+    repeat i in 0..win.max {
+        fact row.$i = 0
+        on change win.$i.open while win.$i.pending {
+            row.$i = 1
+            accept win(i)
+        }
+        window win.$i { at: 10 + 90 * max(win.$i.place, 0), 10 + 90 * row.$i; size: 80, 80; show: win.$i.open and not win.$i.pending }
+    }
+}

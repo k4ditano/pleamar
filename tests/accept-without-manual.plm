@@ -1,0 +1,6 @@
+// expect: error «declare its windows with `placement manual`»
+scene X {
+    surface { size: 100, 100 }
+    windows win max 4
+    on demo { accept win(0) }
+}

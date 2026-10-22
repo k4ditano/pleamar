@@ -24,7 +24,7 @@ pub struct Token {
     pub col: usize,
 }
 
-const SYMBOLS: [&str; 23] = ["->", "..", "<=", ">=", "==", "!=", "{", "}", "(", ")", ",", ":", ";", "=", "~", "+", "-", "*", "/", "<", ">", "%", "|"];
+const SYMBOLS: [&str; 25] = ["->", "..", "<=", ">=", "==", "!=", "{", "}", "(", ")", "[", "]", ",", ":", ";", "=", "~", "+", "-", "*", "/", "<", ">", "%", "|"];
 
 pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
     let mut tokens = Vec::new();
@@ -35,6 +35,8 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
         let mut i = 0;
         while i < c.len() {
             let (ch, col) = (c[i], i + 1);
+            // `win[i].screen`: what follows a `]` with a dot is the rest of the name.
+            let after_index = ch == '.' && matches!(tokens.last(), Some(Token { kind: TokenKind::Sym("]"), .. })) && c.get(i + 1).is_some_and(|x| x.is_alphabetic() || *x == '_' || *x == '$');
             let mut push = |kind: TokenKind| tokens.push(Token { kind, line: n + 1, col });
             if ch.is_whitespace() {
                 i += 1;
@@ -74,8 +76,8 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
                 };
                 push(kind);
                 i = j + unit.chars().count();
-            } else if ch.is_alphabetic() || ch == '_' || ch == '$' {
-                let mut j = i;
+            } else if after_index || ch.is_alphabetic() || ch == '_' || ch == '$' {
+                let mut j = i + after_index as usize;
                 while j < c.len() && (c[j].is_alphanumeric() || c[j] == '_' || c[j] == '$' || (c[j] == '.' && c.get(j + 1).is_some_and(|x| x.is_alphanumeric() || *x == '_' || *x == '$'))) {
                     j += 1;
                 }

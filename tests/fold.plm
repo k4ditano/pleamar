@@ -1,0 +1,14 @@
+// expect: ok
+language 0.1
+// A fold: each turn one more link, and after the `repeat` the last one.
+scene Folds {
+    surface { size: 300, 60 }
+    windows win max 8
+    let x = 0
+    repeat i in 0..win.max {
+        let w = 30 * win[i].open
+        box { at: 10 + x, 10; size: w, 20; color: #9ed6bd }
+        x += w + 4 * win[i].open
+    }
+    box { at: 10, 40; size: x, 10; color: #ef7a66 }
+}

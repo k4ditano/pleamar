@@ -33,7 +33,7 @@ It is a **declarative language that always terminates**. No free loops, no recur
 | Duration | `320ms`, `14s`. Where a duration is expected, a number without a unit is not valid |
 | Color | `#151616` or `#fff` |
 | Text | `"in quotes"`. With slots, see §11 |
-| Symbols | `{ } ( ) , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
+| Symbols | `{ } ( ) [ ] , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
 
 Words of the language (they cannot be used as a name of one's own without confusing the reader, though the compiler does not forbid it): `language import scene library surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, and inside their statements `in max while for after from until at by reach within rest every inset right middle move curve close via as radial radius to change wrap true false and or not`.
 
@@ -72,6 +72,10 @@ figure_decl  = "figure" name "=" "file" text ;                                  
 shader_decl  = "shader" name "=" "file" text ;                                  (* WGSL with `fn shade(s: Shader) -> vec4<f32>`: §8.1 *)
 measure      = "measure" name ;
 let          = "let" name "=" ( expr | color ) ;
+array        = "let" name "[" expr "]" [ "[" expr "]" ] ;                                   (* its length, known when loading: `let tw[win.max]` *)
+sorted       = "let" name "[" expr "]" "=" "sort" "(" name "in" ( name | number ".." number ) "by" expr { "," expr } ")" ;
+element      = name "[" expr "]" { "[" expr "]" } "=" expr ;                                (* one element, in a `repeat` at the scene's level *)
+fold         = name ( "=" | "+=" | "-=" | "*=" ) expr ;                     (* a link of a fold, in a `repeat` at the scene's level *)
 zone         = "zone" shape ;
 spring_ref   = name | "spring" "(" number "," number ")" | duration ;   (* ~620ms: gets there in that long *)
 
@@ -514,6 +518,8 @@ From weakest to strongest: `or` · `and` · `not` · `< > <= >= == !=` (they do 
 **`time`** is the seconds since the scene started. It exists if the scene names it —and has not declared a `time` of its own—, and while it does, the scene never rests: that is its point. With reduced motion (`--reduced-motion`) it stops, like `spin`.
 
 Valid as a name: a `let`, a `prop`, a `fact`, a measure (`label.width`), how much a named layout takes up and how many children it has in view (`list.width`, `list.height`, `list.count`, and with `view:` `list.content`: they can also be read before the point where it is declared, and by rules), the numeric field of a record (`r.depth`, `r.index`, `rows.count`), and the presence of a claim (`shape.rec`: 1 while it wins).
+
+**Reading by place: `a[i]`.** `a[i]` is the element of `a` at place `i`, and it reads any name with numbers in it the same way: `win[i].screen` is `win.$i.screen`, `screen[s].width` is `screen.$s.width`, `win.reserved[s].top`, `win.order[p]`. With a place known when loading (a number, a `repeat`'s counter) it is that name; with one that changes, a `pick` over every element, which evaluates only the one chosen. Before the first element or past the last, it is **-1**, also with a place known when loading (`win[win.max].screen`): `ord[p - 1]` at `p = 0` reads nothing, and says so. Without a declared length (§10), there are as many elements as names that exist from 0 up. Texts are read the same way (§11).
 
 ## 8. Drawing
 
@@ -1181,7 +1187,65 @@ A slot that does not exist is an error that says which ones there are (`'Panel' 
 
 An error **inside** a component also says where it was used from —`(inside 'Badge', used at scene.plm:6)`—, because often what is wrong is what was passed to it.
 
-`repeat i in 0..5 { … }` unfolds five turns on load (512 at most); inside, `i` is a number and `$i` is substituted into the names.
+`repeat i in 0..5 { … }` unfolds five turns on load (512 at most); inside, `i` is a number and `$i` is substituted into the names. What one at the scene's level declares (`prop glow.$i`, `fact open.$i`, an `event`, a `text`) is declared with the other declarations, so anything can read it wherever it is written; an `image` read again for each monitor's copy is still one image.
+
+**Arrays: `let a[N]` and `a[i] = ...`.** A `let` declared in a `repeat` is that turn's own, and nothing outside it sees it. An array is declared once at the scene's level with its length, and each of its elements is defined **exactly once**, in a `repeat` there (or loose, with a number for its place); anything after it reads them, by place (§7):
+
+```
+let tw[win.max]
+repeat i in 0..win.max {
+    let share = if(win[i].open, 1, 0)
+    tw[i] = share * (W - gap) / max(win.on.0, 1)
+}
+let first = tw[0]
+```
+
+The length is read when loading, like a `repeat`'s bounds: a number, a `let` of one, or `win.max`. An element is a `let` called `tw.3`, so the names written out by hand still work. An element missing, defined twice or outside the length is an error. Such a `repeat` is read in two goes: its `let`s and definitions with the scene's `let`s, so that what comes after it can read them, and the rest (its drawing, its rules) where it is written. In a scene copied per monitor, an element that reads its monitor (`screen.width`) is each copy's own, like any other `let`.
+
+**Tables: `let a[N][M]`.** Two places, each element defined once as `a[i][j] = ...` (in a `repeat` inside a `repeat`), and read the same way: `a[s][k]`. Each row is an array of its own (`a.2` has `M` elements), so `a[s]` names a row where an array is expected, and `a.2.5` is the element's `let`.
+
+**Folds: `x = ...` and `x += ...`.** In such a `repeat`, a `let` of the scene declared before it can be given a new value each turn: a sum, a count, the smallest so far and where it was. Nothing changes while the scene runs: each turn is one more `let`, made from the one before, and after the `repeat` the name is the last one. Inside it, each turn reads the value as it is at that point: what is written before a link, its drawing and its rules too, reads the one before it.
+
+```
+let total = 0
+let best = 99999
+let at = -1
+let left[win.max]
+repeat i in 0..win.max {
+    left[i] = total                      // what the ones before it take
+    total += win[i].open * wp[i]
+    at = if(win[i].open and d[i] < best, i, at)
+    best = if(win[i].open, min(best, d[i]), best)
+}
+```
+
+**Inside a turn or a block** a fold works the same on that turn's own `let`: a window's `repeat` can add up over the others with one inside it, and what is written after the inner `repeat` reads the total.
+
+```
+repeat i in 0..win.max {
+    let others = 0
+    repeat j in 0..win.max {
+        others += (j != i and win[j].screen == win[i].screen) * win[j].open
+    }
+    box { at: 10, 10 + 30 * i; size: 20 + 10 * others, 20; color: #9ed6bd }
+}
+```
+
+`+=`, `-=` and `*=` are short for `x = x + ...`. An argmin carries two folds, the best value and where it was, and the one that says where is written before the one it compares with.
+
+**Sorting: `sort`.** `let ord[win.max] = sort(i in win by row[i], win[i].place)` puts the slots in order of their keys: by the first, then by the next where it ties, and by slot where all tie. `ord[p]` is the slot at place `p`, and `ord.pos[i]` is the place of slot `i`. It is worked out while the scene runs, once for everyone who reads it, and again only when a key's inputs change. What to sort is `win` (its slots), an array (its length) or `0..N`, as many as the array has places. There is no filter: a leading key does it (`by not win[i].open, ...` puts the closed ones last). A fold over `ord` gives running sums in that order, and a slot reads its own through `ord.pos`:
+
+```
+let x = 0
+let left[win.max]
+repeat p in 0..win.max {
+    let s = ord[p]
+    x = if(row[s] != row[ord[p - 1]], 0, x)      // a new row starts again
+    left[p] = x
+    x += wp[s]
+}
+// slot i starts at left[ord.pos[i]]
+```
 
 `for r in rows { … }` unfolds one turn per record that fits in the model. Inside, `r.field` is the field of that record —a text wherever a live text goes, a number in any expression— and `r.index` its position from 0. **Each turn only exists if the list reaches that far.** Valid inside a layout, loose, and inside a `popup`.
 
@@ -1290,6 +1354,8 @@ reloads on save while the programs in it keep running.
 | `win.$i.rank` | its turn among all the windows shown, −1 if it is not (another workspace, put away, a dialog) |
 | **for all of them** | |
 | `win.count` · `win.focus` | how many are shown (on the workspaces their monitors show), and which slot has the keyboard (−1, none) |
+| `win.max` | how many slots there are, the `max` of `windows`: a number known when loading, for `repeat i in 0..win.max` and `let tw[win.max]` |
+| `win.$i.pending` | opened under `placement manual` and not accepted yet: out of the layout and of the order |
 | `win.on.$s` | how many are shown on monitor `s` (0 to 3) |
 | `win.shown.$s` · `win.pool.$s` | the workspace monitor `s` shows: its turn, and its identity |
 | `win.pools.$s` · `win.used.$s` | how many workspaces monitor `s` has (the one shown among them, even empty), and how many hold windows |
@@ -1335,6 +1401,8 @@ that holds), which are the scene's.
 
 **Workspaces that stay: `windows win max 16 workspaces kept`.** As they come, workspaces are tide pools (below): an empty one that is not shown dries up, and there is never more than one empty past the last with windows. With `workspaces kept` they are a Mac's desktops: the ones a monitor has are the ones made, empty or not, shown or not. One more is made by going one past the last (`workspace win.pools.0 + 1 on 0`), and one goes only when it is closed (`close workspace n`). `dock programs` and `workspaces kept` go in that order when both are written.
 
+**Where a new window goes: `windows win max 16 placement manual`.** Without it, a window that opens counts at once: it is in `among`, `win.on.$s`, `rank`, `win.order` and `win.count` from its first frame, and the layout makes room for it before the scene has decided where it goes. With it, a window that opens is **pending** (`win.$i.pending` is true) and in none of those, until a rule takes it with **`accept win(i)`**: then it gets its place, and the others make room. What the scene decides in between —a row, a key to sort it by, a side to dock on— is set in that same rule, before `accept`: `on change win.$i.open while win.$i.pending { row.$i = ...; accept win(i) }`. Written with the others, it goes after `dock programs` and before `workspaces kept`.
+
 **Workspaces** are a stack per monitor, each monitor its own, as tide
 pools along a shore: there are as many as hold windows, plus the one shown
 even when it is empty; one left empty dries up when the monitor shows another,
@@ -1378,6 +1446,7 @@ Inside a text in quotes that is the content of a `text` or the argument of a com
 | `{expr}` · `{expr, n}` | an expression, with n decimals (0 if unsaid) |
 | `{expr, time}` | that many seconds, the way a clock writes them: `1:07`, and `1:02:07` past the hour |
 | `{upper(name)}` · `{lower(name)}` | that text, in upper or lower case |
+| `{win[i].title}` | the live text at that place, as a number is read by its place (§7); outside them, nothing. Also `text win[i].title { … }`, `label: win[i].title` and `{upper(win[i].title)}` |
 | `{? … }` | a stretch that is only there if none of the texts inside it is empty |
 | `{{` · `}}` | a real brace |
 
@@ -1423,6 +1492,10 @@ fact of its own called `locale`, are errors.
 ## 13. Rules
 
 `on trigger { effects }` and `every 2s..7s [while expr] { effects }`.
+
+A `repeat` among the effects unfolds into more effects of the same rule, in order: `on reset { repeat k in 0..16 { tre.w.$k = 0 } }` is one rule with sixteen effects, each seeing what the ones before it set, not sixteen rules.
+
+A fact can be written by its place, as it is read (§7): `tre.x[tre.nw] = tre.ax` sets the one of `tre.x.0`, `tre.x.1`... that `tre.nw` says when the rule fires, and `put[i].x = 0` writes `put.3.x` the same way. The place and the value are worked out once; a place outside them changes nothing.
 
 | Trigger | When |
 | --- | --- |
@@ -1672,7 +1745,7 @@ properties.layout: at anchor gap padding align fill glass lens shine refraction 
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick rgb
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still
-effects: toggle emit impulse ripple play focus blur close promote fullscreen minimize restore float tile launch send swap workspace pick dock
+effects: toggle emit impulse ripple play focus blur close promote fullscreen minimize restore float tile launch send swap workspace pick dock accept
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
 classes: ambient reflex asked state

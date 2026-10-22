@@ -17,6 +17,7 @@ whole scene and compiles: `./run-tests.sh` checks them.
 - [How far into the song](#how-far-into-the-song)
 - [Every window, with its picture](#every-window-with-its-picture)
 - [Only for whoever sits there](#only-for-whoever-sits-there)
+- [Windows in rows](#windows-in-rows)
 
 ## A list of thousands
 
@@ -543,3 +544,83 @@ scene Mark {
     }
 }
 ```
+
+## Windows in rows
+
+A window manager's layout, written in the scene: windows in rows, each row
+shared out among the windows in it, as many rows as are used. A new window
+goes to the row of the one with the keyboard, and Super+Up and Super+Down move
+the one with the keyboard between rows.
+
+- `placement manual` keeps a new window out of the layout until a rule
+  has given it a row and taken it with `accept`, so the others do not make
+  room for it before it is known where it goes.
+- `sort` puts the windows in order of their row and their place in it, once
+  per frame for everyone who reads it.
+- Two folds go over that order: forward, each window's turn in its row and the
+  row's number; back, how many share each row.
+- `row[win.focus] = ...` writes the fact of the window with the keyboard.
+
+```plm
+language 0.2
+scene Rows {
+    surface { size: full, full }
+    windows win max 8 placement manual
+    let gap = 10
+    let W = screen.width
+    let H = screen.height
+    repeat i in 0..win.max { fact row.$i = 0 }
+
+    // A new window goes to the row of the one with the keyboard.
+    repeat i in 0..win.max {
+        on change win.$i.open while win.$i.pending {
+            row.$i = if(win.focus >= 0, row[win.focus], 0)
+            accept win(i)
+        }
+    }
+    on key Super+Down while win.focus >= 0 { row[win.focus] = row[win.focus] + 1 }
+    on key Super+Up while win.focus >= 0 { row[win.focus] = max(row[win.focus] - 1, 0) }
+
+    // The windows shown first, by row and by their place; the others last.
+    let ord[win.max] = sort(i in win by not win[i].open or win[i].pending, row[i], win[i].place)
+
+    // Forward: each one's turn in its row, which row it is, and how many rows there are.
+    let k = 0
+    let r = -1
+    let rows = 0
+    let turn[win.max]
+    let line[win.max]
+    repeat p in 0..win.max {
+        let s = ord[p]
+        let new = row[s] != row[ord[p - 1]]
+        k = if(new, 0, k + 1)
+        r += new
+        turn[p] = k
+        line[p] = r
+        rows = max(rows, (r + 1) * (win[s].open and not win[s].pending))
+    }
+    // Back: how many share each one's row.
+    let c = 0
+    let many[win.max]
+    repeat q in 0..win.max {
+        let p = win.max - 1 - q
+        c = if(row[ord[p]] != row[ord[p + 1]], turn[p] + 1, c)
+        many[p] = c
+    }
+
+    repeat i in 0..win.max {
+        let p = ord.pos[i]
+        let h = (H - gap) / max(rows, 1)
+        let w = (W - gap) / max(many[p], 1)
+        prop x.$i = 0 ~calm
+        prop y.$i = 0 ~calm
+        follow x.$i = gap + turn[p] * w
+        follow y.$i = gap + line[p] * h
+        window win.$i { at: x.$i, y.$i; size: w - gap, h - gap; show: win.$i.open and not win.$i.pending }
+    }
+}
+```
+
+Each window reads its own values through `ord.pos[i]`, its place in the
+order. Nothing here is written once per window: `win.max` is the one place the
+number of slots is said.

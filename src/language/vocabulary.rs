@@ -48,7 +48,7 @@ pub const TEXT_FUNCTIONS: &[&str] = &["upper", "lower"];
 /// What can go after `on`. Any other word is the name of an event.
 pub const TRIGGERS: &[&str] = &["press", "release", "scroll", "drag", "hold", "enter", "leave", "hover", "away", "idle", "key", "submit", "focus", "blur", "drop", "carry", "change", "still"];
 /// The effects with a word of their own. Also: `prop: value ~spring` and `fact = expr`.
-pub const EFFECTS: &[&str] = &["toggle", "emit", "impulse", "ripple", "play", "focus", "blur", "close", "promote", "fullscreen", "minimize", "restore", "float", "tile", "launch", "send", "swap", "workspace", "pick", "dock"];
+pub const EFFECTS: &[&str] = &["toggle", "emit", "impulse", "ripple", "play", "focus", "blur", "close", "promote", "fullscreen", "minimize", "restore", "float", "tile", "launch", "send", "swap", "workspace", "pick", "dock", "accept"];
 pub const CURVES: &[&str] = &["linear", "in_quad", "out_quad", "in_cubic", "out_cubic", "in_out_sine", "out_back", "bezier"];
 /// What a keyframe can carry besides a curve.
 pub const KEYFRAME_OPTIONS: &[&str] = &["hold", "emit"];

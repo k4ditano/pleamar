@@ -1,0 +1,5 @@
+// expect: error «is not a `let` of the scene»
+scene X {
+    surface { size: 100, 100 }
+    repeat i in 0..2 { total += i }
+}

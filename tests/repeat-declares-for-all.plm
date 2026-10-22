@@ -1,0 +1,13 @@
+// expect: ok
+language 0.1
+// What a `repeat` declares can be read before it, like any declaration.
+scene X {
+    surface { size: 100, 100 }
+    let w = 10 + glow.1 * 10
+    box { at: 0, 0; size: w, 10; color: #fff }
+    repeat k in 0..2 {
+        prop glow.$k = 0 ~calm
+        image icon.$k = icon "firefox", 16, 16
+        image icon.$k { at: 20 * k, 40; size: 16, 16 }
+    }
+}

@@ -1,0 +1,6 @@
+// expect: error «is never defined»
+scene X {
+    surface { size: 100, 100 }
+    let at[2][2]
+    repeat i in 0..2 { at[i][0] = i }
+}
