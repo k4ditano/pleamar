@@ -72,9 +72,9 @@ figure_decl  = "figure" name "=" "file" text ;                                  
 shader_decl  = "shader" name "=" "file" text ;                                  (* WGSL with `fn shade(s: Shader) -> vec4<f32>`: §8.1 *)
 measure      = "measure" name ;
 let          = "let" name "=" ( expr | color ) ;
-array        = "let" name "[" expr "]" ;                                   (* its length, known when loading: `let tw[win.max]` *)
+array        = "let" name "[" expr "]" [ "[" expr "]" ] ;                                   (* its length, known when loading: `let tw[win.max]` *)
 sorted       = "let" name "[" expr "]" "=" "sort" "(" name "in" ( name | number ".." number ) "by" expr { "," expr } ")" ;
-element      = name "[" expr "]" "=" expr ;                                (* one element, in a `repeat` at the scene's level *)
+element      = name "[" expr "]" { "[" expr "]" } "=" expr ;                                (* one element, in a `repeat` at the scene's level *)
 fold         = name ( "=" | "+=" | "-=" | "*=" ) expr ;                     (* a link of a fold, in a `repeat` at the scene's level *)
 zone         = "zone" shape ;
 spring_ref   = name | "spring" "(" number "," number ")" | duration ;   (* ~620ms: gets there in that long *)
@@ -1201,6 +1201,8 @@ let first = tw[0]
 ```
 
 The length is read when loading, like a `repeat`'s bounds: a number, a `let` of one, or `win.max`. An element is a `let` called `tw.3`, so the names written out by hand still work. An element missing, defined twice or outside the length is an error. Such a `repeat` is read in two goes: its `let`s and definitions with the scene's `let`s, so that what comes after it can read them, and the rest (its drawing, its rules) where it is written. In a scene copied per monitor, an element that reads its monitor (`screen.width`) is each copy's own, like any other `let`.
+
+**Tables: `let a[N][M]`.** Two places, each element defined once as `a[i][j] = ...` (in a `repeat` inside a `repeat`), and read the same way: `a[s][k]`. Each row is an array of its own (`a.2` has `M` elements), so `a[s]` names a row where an array is expected, and `a.2.5` is the element's `let`.
 
 **Folds: `x = ...` and `x += ...`.** In such a `repeat`, a `let` of the scene declared before it can be given a new value each turn: a sum, a count, the smallest so far and where it was. Nothing changes while the scene runs: each turn is one more `let`, made from the one before, and after the `repeat` the name is the last one. Inside it, each turn reads the value as it was at that point, and its drawing and rules as it was at the end of that turn.
 

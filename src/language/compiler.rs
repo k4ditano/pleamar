@@ -412,6 +412,8 @@ struct Compiler<'a> {
     in_hoisted: usize,
     /// Reading those definitions: for the scene (None) or for a monitor's copy.
     hoisting: Option<Option<usize>>,
+    /// The arrays whose elements are arrays (`let dka[4][12]`).
+    rows: HashSet<String>,
     /// The scope the folds of the `repeat` being hoisted are kept in, and
     /// each turn's, by `repeat`, copy and turn, for its drawing and rules.
     fold_scope: Option<usize>,
@@ -463,7 +465,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -570,11 +572,16 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     }
     let mut arrays: Vec<(usize, String, usize)> = o.arrays.iter().map(|(name, (length, line))| (*line, name.clone(), *length)).collect();
     arrays.sort();
-    for (line, name, length) in arrays {
+    for (line, name, length) in arrays.into_iter().filter(|(_, name, _)| !o.rows.contains(name)) {
         let missing: Vec<usize> = (0..length).filter(|k| !o.elements.contains_key(&format!("{name}.{k}"))).collect();
         if let Some(k) = missing.first() {
             let more = if missing.len() > 1 { format!(" (nor {} more)", missing.len() - 1) } else { String::new() };
-            o.errors.push(CompileError::at(line, 1, format!("'{name}[{k}]' is never defined{more}: each element of an array is defined once, `{name}[i] = ...` in a `repeat`")));
+            // A row of a table is said as the table: `at[0][1]`.
+            let (name, i) = match name.rsplit_once('.').filter(|(row, _)| o.rows.contains(*row)) {
+                Some((table, row)) => (table.to_owned(), format!("[{row}][")),
+                None => (name.clone(), "[".to_owned()),
+            };
+            o.errors.push(CompileError::at(line, 1, format!("'{name}{i}{k}]' is never defined{more}: each element of an array is defined once, `{name}{} = ...` in a `repeat`", if i.len() > 1 { "[i][j]" } else { "[i]" })));
         }
     }
     o.materialize_zones();
@@ -5317,7 +5324,19 @@ impl<'a> Compiler<'a> {
             _ => return Err(CompileError::at(at.0, at.1, "an array's length is read when loading: a number from 1 to 4096, a `let` of one, or `win.max`")),
         };
         c.expect_sym("]")?;
-        let sorted = c.sym("=");
+        // `let dka[4][12]`: each of its elements is an array of its own.
+        let columns = if c.sym("[") {
+            let at = c.pos();
+            let m = match self.expr(c)? {
+                Expr::K(v) if v >= 1.0 && v <= 4096.0 => v as usize,
+                _ => return Err(CompileError::at(at.0, at.1, "an array's length is read when loading: a number from 1 to 4096, a `let` of one, or `win.max`")),
+            };
+            c.expect_sym("]")?;
+            Some(m)
+        } else {
+            None
+        };
+        let sorted = columns.is_none() && c.sym("=");
         if sorted {
             c.expect_word("sort")?;
             c.expect_sym("(")?;
@@ -5335,6 +5354,12 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         self.arrays.insert(g.clone(), (length, n.line));
+        if let Some(m) = columns {
+            self.rows.insert(g.clone());
+            for k in 0..length {
+                self.arrays.insert(format!("{g}.{k}"), (m, n.line));
+            }
+        }
         if sorted {
             return self.sort(n, &g, length, c);
         }
@@ -5430,24 +5455,35 @@ impl<'a> Compiler<'a> {
         let copy = self.hoisting.flatten();
         let mut c = Cur::new(&n.head, n.line, n.col);
         let name = c.id("an array")?;
-        c.expect_sym("[")?;
-        let at = c.pos();
-        let k = match self.expr(&mut c)? {
-            Expr::K(v) => v.round() as i64,
-            _ => return Err(CompileError::at(at.0, at.1, "which element is defined is known when loading: a number, or a `repeat`'s counter")),
-        };
-        c.expect_sym("]")?;
-        c.expect_sym("=")?;
-        let g = self.global_quiet(&name);
-        let Some(&(length, _)) = self.arrays.get(&g) else {
+        let mut g = self.global_quiet(&name);
+        let mut places = Vec::new();
+        if !self.arrays.contains_key(&g) {
             return Err(CompileError::at(n.line, n.col, format!("there is no array called '{name}': declare it first, `let {name}[N]`")));
-        };
-        if k < 0 || k >= length as i64 {
-            return Err(CompileError::at(at.0, at.1, format!("'{name}' has {length} elements, from 0 to {}: {k} is not one of them", length - 1)));
         }
+        while c.sym("[") {
+            let at = c.pos();
+            let k = match self.expr(&mut c)? {
+                Expr::K(v) => v.round() as i64,
+                _ => return Err(CompileError::at(at.0, at.1, "which element is defined is known when loading: a number, or a `repeat`'s counter")),
+            };
+            c.expect_sym("]")?;
+            let Some(&(length, _)) = self.arrays.get(&g) else {
+                return Err(CompileError::at(at.0, at.1, format!("'{name}' has {} places: this is one more", places.len())));
+            };
+            if k < 0 || k >= length as i64 {
+                return Err(CompileError::at(at.0, at.1, format!("'{name}' has {length} elements there, from 0 to {}: {k} is not one of them", length - 1)));
+            }
+            places.push(k.to_string());
+            g = format!("{g}.{k}");
+        }
+        if self.rows.contains(&g) || self.arrays.contains_key(&g) {
+            return Err(CompileError::at(n.line, n.col, format!("'{name}' has two places: `{name}[i][j] = ...`")));
+        }
+        c.expect_sym("=")?;
+        let k = places.join("][");
         let e = self.expr(&mut c)?;
         c.expect_end()?;
-        let element = format!("{g}.{k}");
+        let element = g;
         let raw = format!("{e:?}");
         match copy {
             None => {

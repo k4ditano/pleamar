@@ -789,4 +789,29 @@ mod tests {
         }
         scene.rules.iter().map(|r| r.guard.as_ref().is_none_or(|g| g.eval(crate::scene::Ctx { props: &props, facts: &facts, seen: None }) > 0.5)).collect()
     }
+
+    #[test]
+    fn a_table_is_read_by_its_two_places() {
+        let set = set_by_rules("scene Table {
+    surface { size: 200, 40 }
+    fact s = 1
+    fact k = 2
+    let at[2][3]
+    repeat i in 0..2 {
+        repeat j in 0..3 {
+            at[i][j] = 10 * i + j
+        }
+    }
+    on demo { a = at[s][k]; b = at[1][0]; c = at[s][k + 5]; d = at[s - 2][0] }
+    fact a = 0
+    fact b = 0
+    fact c = 0
+    fact d = 0
+}
+", &[]);
+        assert_eq!(set["a"][0], 12.0);
+        assert_eq!(set["b"][0], 10.0);
+        assert_eq!(set["c"][0], -1.0, "past the last column");
+        assert_eq!(set["d"][0], -1.0, "before the first row");
+    }
 }
