@@ -674,4 +674,35 @@ mod tests {
         assert_eq!(set["b.1.y"], vec![20.0]);
         assert_eq!(set["x.0"], vec![5.0], "a place known when loading is that fact");
     }
+
+    #[test]
+    fn a_text_is_read_by_its_place() {
+        let dir = std::env::temp_dir().join(format!("pleamar-texts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("texts.plm");
+        std::fs::write(&path, "scene Texts {
+    surface { size: 200, 100 }
+    windows win max 3
+    fact at = 1
+    text win[at].title { at: 0, 0; size: 12; color: #fff }
+    text \"{win[at + 1].app} and {upper(win[0].title)} and {win[at].title}\" { at: 0, 20; size: 12; color: #fff }
+    text win[2].app { at: 0, 40; size: 12; color: #fff }
+}
+").unwrap();
+        let scene = super::read(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        let scene = scene.unwrap_or_else(|e| panic!("{e}"));
+        let mut texts: Vec<String> = scene.texts.iter().map(|t| t.1.clone()).collect();
+        for (name, value) in [("win.0.title", "zero"), ("win.1.title", "one"), ("win.2.app", "foot")] {
+            texts[scene.texts.iter().position(|t| t.0 == name).unwrap()] = value.to_owned();
+        }
+        let facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let props: Vec<crate::scene::Animated> = Vec::new();
+        let c = crate::scene::Ctx { props: &props, facts: &facts, seen: None };
+        let shown: Vec<String> = scene.instrs.iter().filter_map(|i| match i {
+            crate::scene::Instr::Text { content, .. } => Some(crate::gpu::content_text(content, c, &texts).into_owned()),
+            _ => None,
+        }).collect();
+        assert_eq!(shown, ["one", "foot and ZERO and one", "foot"]);
+    }
 }

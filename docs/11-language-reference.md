@@ -519,7 +519,7 @@ From weakest to strongest: `or` · `and` · `not` · `< > <= >= == !=` (they do 
 
 Valid as a name: a `let`, a `prop`, a `fact`, a measure (`label.width`), how much a named layout takes up and how many children it has in view (`list.width`, `list.height`, `list.count`, and with `view:` `list.content`: they can also be read before the point where it is declared, and by rules), the numeric field of a record (`r.depth`, `r.index`, `rows.count`), and the presence of a claim (`shape.rec`: 1 while it wins).
 
-**Reading by place: `a[i]`.** `a[i]` is the element of `a` at place `i`, and it reads any name with numbers in it the same way: `win[i].screen` is `win.$i.screen`, `screen[s].width` is `screen.$s.width`, `win.reserved[s].top`, `win.order[p]`. With a place known when loading (a number, a `repeat`'s counter) it is that name; with one that changes, a `pick` over every element, which evaluates only the one chosen. Before the first element or past the last, it is **-1**: `ord[p - 1]` at `p = 0` reads nothing, and says so. Without a declared length (§10), there are as many elements as names that exist from 0 up.
+**Reading by place: `a[i]`.** `a[i]` is the element of `a` at place `i`, and it reads any name with numbers in it the same way: `win[i].screen` is `win.$i.screen`, `screen[s].width` is `screen.$s.width`, `win.reserved[s].top`, `win.order[p]`. With a place known when loading (a number, a `repeat`'s counter) it is that name; with one that changes, a `pick` over every element, which evaluates only the one chosen. Before the first element or past the last, it is **-1**: `ord[p - 1]` at `p = 0` reads nothing, and says so. Without a declared length (§10), there are as many elements as names that exist from 0 up. Texts are read the same way (§11).
 
 ## 8. Drawing
 
@@ -1432,6 +1432,7 @@ Inside a text in quotes that is the content of a `text` or the argument of a com
 | `{expr}` · `{expr, n}` | an expression, with n decimals (0 if unsaid) |
 | `{expr, time}` | that many seconds, the way a clock writes them: `1:07`, and `1:02:07` past the hour |
 | `{upper(name)}` · `{lower(name)}` | that text, in upper or lower case |
+| `{win[i].title}` | the live text at that place, as a number is read by its place (§7); outside them, nothing. Also `text win[i].title { … }`, `label: win[i].title` and `{upper(win[i].title)}` |
 | `{? … }` | a stretch that is only there if none of the texts inside it is empty |
 | `{{` · `}}` | a real brace |
 

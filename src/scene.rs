@@ -1064,6 +1064,8 @@ pub enum Piece {
     Span(Vec<Piece>),
     /// A text that was passed empty: it writes nothing, but counts as empty for a `{? …}`.
     Empty,
+    /// `{win[i].title}`: the live text at that place among these; outside them, none.
+    Pick(Expr, Vec<TextId>, LetterCase),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1108,6 +1110,16 @@ impl Piece {
                 }
                 Piece::Span(inner) => whole &= Piece::write_into(inner, c, texts, out),
                 Piece::Empty => whole = false,
+                Piece::Pick(i, ids, case) => {
+                    let k = i.eval(c).round();
+                    let s = (k >= 0.0).then(|| ids.get(k as usize)).flatten().and_then(|id| texts.get(id.0 as usize)).map_or("", String::as_str);
+                    whole &= !s.is_empty();
+                    match case {
+                        LetterCase::AsIs => out.push_str(s),
+                        LetterCase::Upper => out.push_str(&s.to_uppercase()),
+                        LetterCase::Lower => out.push_str(&s.to_lowercase()),
+                    }
+                }
                 Piece::Optional(inner) => {
                     let start = out.len();
                     if !Piece::write_into(inner, c, texts, out) {

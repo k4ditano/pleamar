@@ -3257,6 +3257,7 @@ impl<'a> Compiler<'a> {
         let k = match c.peek() {
             // `label: pick(k, "Brightness", "Volume")`: one per copy, as a `text` does.
             Some(TokenKind::Id(n)) if n == "pick" && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => self.text_pick(c)?,
+            Some(TokenKind::Id(_)) if matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("["))) => self.text_content_at(c)?,
             Some(TokenKind::Str(s)) => {
                 let s = s.clone();
                 let at = c.i;
@@ -3381,6 +3382,13 @@ impl<'a> Compiler<'a> {
             if let Some(case) = case {
                 c.i += 2;
                 let name = c.id("the name of a text")?;
+                if matches!(c.peek(), Some(TokenKind::Sym("["))) {
+                    let at = c.pos();
+                    let p = self.text_at(&name, &mut c, case)?.ok_or_else(|| CompileError::at(at.0, at.1, format!("'{name}[...]' reads a text by its place, and there are none")))?;
+                    c.expect_sym(")")?;
+                    c.expect_end()?;
+                    return Ok(p);
+                }
                 // First what is inside: a text parameter beats a text of the scene with the same name.
                 if let Some(e) = self.scopes.iter().rev().find(|e| e.strings.contains_key(&name)) {
                     if e.contents.contains_key(&name) {
@@ -3401,6 +3409,17 @@ impl<'a> Compiler<'a> {
                 c.expect_sym(")")?;
                 c.expect_end()?;
                 return Ok(Piece::Live(t, case));
+            }
+        }
+        // `{win[i].title}`: a live text by its place (a number by its place stays a number).
+        if let (Some(TokenKind::Id(n)), Some(TokenKind::Sym("["))) = (c.peek(), tokens.get(1).map(|x| &x.kind)) {
+            let n = n.clone();
+            let mut probe = Cur::new(&tokens, line, col);
+            probe.i = 1;
+            if let Ok(Some(p)) = self.text_at(&n, &mut probe, LetterCase::AsIs) {
+                if probe.at_end() {
+                    return Ok(p);
+                }
             }
         }
         if let (Some(TokenKind::Id(n)), 1) = (c.peek(), tokens.len()) {
@@ -3434,6 +3453,38 @@ impl<'a> Compiler<'a> {
         }
         c.expect_end()?;
         Ok(Piece::Number(e, 0))
+    }
+
+    /// `win[i].title` where a text goes: the live text at that place, as a
+    /// number is read by its place (`expr_atom`). `None` if those are no texts.
+    fn text_at(&self, base: &str, c: &mut Cur, case: LetterCase) -> R<Option<Piece>> {
+        c.expect_sym("[")?;
+        let i = self.expr(c)?;
+        c.expect_sym("]")?;
+        let rest = match c.peek() {
+            Some(TokenKind::Id(r)) if r.starts_with('.') => {
+                c.i += 1;
+                r.clone()
+            }
+            _ => String::new(),
+        };
+        let text = |k: usize| self.texts.get(&self.global_quiet(&format!("{base}.{k}{rest}"))).copied();
+        if let Expr::K(k) = i {
+            return Ok((k >= 0.0).then(|| text(k.round() as usize)).flatten().map(|t| Piece::Live(t, case)));
+        }
+        let all: Vec<TextId> = (0..4096).map_while(text).collect();
+        Ok((!all.is_empty()).then(|| Piece::Pick(i, all, case)))
+    }
+
+    /// The same where a whole text goes: `text win[i].title { ... }`, `label: win[i].title`.
+    fn text_content_at(&self, c: &mut Cur) -> R<Content> {
+        let base = c.id("a text")?;
+        let at = c.pos();
+        match self.text_at(&base, c, LetterCase::AsIs)? {
+            Some(Piece::Live(t, _)) => Ok(Content::Live(t)),
+            Some(p) => Ok(Content::Template(vec![p])),
+            None => Err(CompileError::at(at.0, at.1, format!("'{base}[...]' reads a text by its place, and there are none: no '{base}.0' that is a text"))),
+        }
     }
 
     /// `pick(i, "a", b, c)` where a text goes: the one at place `i`. Each
@@ -3495,6 +3546,8 @@ impl<'a> Compiler<'a> {
             // `text pick(skin, "Liquid", "Light liquid", "Classic")`: the one at
             // that place; each is a text like any other, and is translated.
             Some(TokenKind::Id(n)) if n == "pick" && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => self.text_pick(&mut c)?,
+            // `text win[i].title`: the live text at that place.
+            Some(TokenKind::Id(_)) if matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("["))) => self.text_content_at(&mut c)?,
             // A component parameter that is worth a quoted text.
             Some(TokenKind::Id(name)) if self.scopes.iter().any(|e| e.contents.contains_key(name)) => {
                 self.scopes.iter().rev().find_map(|e| e.contents.get(name)).unwrap().clone()
