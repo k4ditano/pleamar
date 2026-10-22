@@ -412,6 +412,8 @@ struct Compiler<'a> {
     in_hoisted: usize,
     /// Reading those definitions: for the scene (None) or for a monitor's copy.
     hoisting: Option<Option<usize>>,
+    /// The scene's statements, as written.
+    top: &'a [Entry],
     /// The arrays whose elements are arrays (`let dka[4][12]`).
     rows: HashSet<String>,
     /// The scope the folds of the `repeat` being hoisted are kept in, and
@@ -465,7 +467,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -481,6 +483,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     let Some(body) = scene.body.as_ref() else {
         return (Err(vec![CompileError::at(scene.line, scene.col, "this scene is missing its `{ … }` block")]), Vec::new());
     };
+    o.top = body;
     o.declare_measures_early(body);
     // `time`: the seconds since the scene started, for whoever wants something
     // that never stops —a shader's aurora, a `noise(time)` wobble—. Only if the
@@ -5164,10 +5167,19 @@ impl<'a> Compiler<'a> {
     /// pass 1 only its `let`s and definitions, so that what comes after it can
     /// read them; in pass 2 the rest, with the definitions already made.
     fn repeat(&mut self, n: &'a Node, c: &mut Cur) -> R<()> {
-        let head = self.repeat_head(c);
+        let mut head = self.repeat_head(c);
         // In pass 0, one at the scene's level declares its values with the
         // other declarations: anything can read them, wherever it is written.
         if self.pass == 0 {
+            // Its bounds may be `let`s, which are only read in pass 1: the
+            // scene's `let`s of numbers are read for them here, and let go.
+            if head.is_err() {
+                let added = self.constant_lets();
+                head = self.repeat_head(&mut Cur::new(&n.head[1..], n.line, n.col));
+                for name in added {
+                    self.lets.remove(&name);
+                }
+            }
             let Ok((var, from, until)) = head else { return Ok(()) };
             for v in from..until {
                 self.open_iteration(&var, v);
@@ -5224,6 +5236,28 @@ impl<'a> Compiler<'a> {
         }
         self.in_hoisted -= hoisted;
         Ok(())
+    }
+
+    /// The scene's `let`s that are a number, or worked out from numbers and
+    /// the ones before them, put in for now: what it put, to take out again.
+    fn constant_lets(&mut self) -> Vec<String> {
+        let mut added = Vec::new();
+        for e in self.top {
+            let Entry::Node(n) = e else { continue };
+            let (Some(TokenKind::Id(w)), Some(TokenKind::Id(name)), Some(TokenKind::Sym("="))) = (n.head.first().map(|t| &t.kind), n.head.get(1).map(|t| &t.kind), n.head.get(2).map(|t| &t.kind)) else { continue };
+            if w != "let" || self.lets.contains_key(name) {
+                continue;
+            }
+            let before = self.unwatched.replace(true);
+            let mut c = Cur::new(&n.head[3..], n.line, n.col);
+            let value = self.expr(&mut c).ok().filter(|_| c.at_end());
+            self.unwatched.set(before);
+            if let Some(Expr::K(v)) = value {
+                self.lets.insert(name.clone(), Expr::K(v));
+                added.push(name.clone());
+            }
+        }
+        added
     }
 
     /// What defines elements is read for the scene, and again for each
