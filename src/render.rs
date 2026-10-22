@@ -965,6 +965,7 @@ pub fn run(
                         .collect();
                     // Its own shaders: the pipeline is only remade if they changed.
                     if let Some(g) = gpu.as_mut() {
+                        g.set_lens_image(scene.lens_image.as_deref());
                         g.set_shaders(&scene.shaders);
                         g.set_blur(scene.blur.as_ref());
                     }
@@ -976,6 +977,7 @@ pub fn run(
                             crate::gpu::Target::Frames(_) => None,
                         })
                     });
+                    g.set_lens_image(scene.lens_image.as_deref());
                     g.set_shaders(&scene.shaders);
                     g.set_blur(scene.blur.as_ref());
                     letters.allow_atlas(g.atlas_most());
@@ -3922,6 +3924,12 @@ pub fn run(
             std::thread::sleep(Duration::from_millis(8));
             continue;
         };
+        // `lens = image ... while`: the picture while it holds, a capture of what is behind when it does not.
+        if let (Some(path), Some(when)) = (scene.lens_image.as_deref(), &scene.lens_image_while) {
+            let on = when.is_true(Ctx { props: &props, facts: &facts, seen: None });
+            g.set_lens_image(on.then_some(path));
+            g.set_shaders(&scene.shaders);
+        }
         // The numbers the blur is given, worked out for this frame.
         g.blur_values = match &scene.blur {
             Some(_) => {
@@ -4148,7 +4156,9 @@ pub fn run(
             });
             // What the compositor blurs: the glass without a lens, and the one that has
             // it while there is still no background to show.
-            if !l.lens.as_ref().is_some_and(|x| x.ready) {
+            // A lens that bends a picture (`lens = image`) still lets some of what is really behind through:
+            // that is what the compositor blurs.
+            if !l.lens.as_ref().is_some_and(|x| x.ready && x.fixed.is_none()) {
                 without.extend(with_lens);
             }
             if without != l.blur_rects {

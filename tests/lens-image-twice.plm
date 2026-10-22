@@ -1,0 +1,6 @@
+// expect: error «a scene has one lens picture»
+scene LensImageTwice {
+    lens = image "one.png"
+    lens = image "two.png"
+    surface { size: 100, 100 }
+}

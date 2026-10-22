@@ -161,6 +161,12 @@ pub struct Lens {
     born: std::time::Instant,
     /// What the shapes shader reads: the sharp background and the frosted one.
     pub group: Option<wgpu::BindGroup>,
+    /// The background is a picture (`lens = image`), not a capture: which
+    /// version of it is in, and whether it still has to be frosted.
+    pub fixed: Option<u64>,
+    fixed_frost: bool,
+    /// The blur's values it was last frosted with: a picture is frosted again when they change.
+    frosted_with: [f32; 8],
 }
 
 impl Lens {
@@ -192,6 +198,9 @@ impl Lens {
             received: 0,
             born: std::time::Instant::now(),
             group: None,
+            fixed: None,
+            fixed_frost: false,
+            frosted_with: [0.0; 8],
         }
     }
 
@@ -221,6 +230,9 @@ impl Lens {
     /// the background is unmixed and frosted, only there. `true` if something
     /// visible has changed, and it has to be painted again.
     pub fn receive(&mut self, g: &crate::gpu::Gpu, d: Backdrop, scale: f32, bounds: [i32; 4]) -> bool {
+        if self.fixed.is_some() {
+            return false;
+        }
         let Some(presented) = self.presented else { return false };
         // A capture without data is one that failed.
         let Some(data) = d.data else { return false };
@@ -275,6 +287,31 @@ impl Lens {
         true
     }
 
+    /// The background is `picture` (version `version`), stretched over the
+    /// surface and frosted once, in place of a capture of the screen: no
+    /// screencopy, no readback, no unmixing. What is under the glass is then
+    /// the picture and never a window, but it is bent like any other.
+    pub fn set_fixed(&mut self, g: &crate::gpu::Gpu, version: u64, picture: &image::RgbaImage) {
+        let (lw, lh) = self.px;
+        let mut fitted = image::imageops::resize(picture, lw.max(1), lh.max(1), image::imageops::FilterType::Triangle);
+        for p in fitted.pixels_mut() {
+            p.0[3] = 255;
+        }
+        g.queue.write_texture(
+            self.backgrounds[self.current].0.as_image_copy(),
+            fitted.as_raw(),
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(lw.max(1) * 4), rows_per_image: Some(lh.max(1)) },
+            wgpu::Extent3d { width: lw.max(1), height: lh.max(1), depth_or_array_layers: 1 },
+        );
+        // A capture still waiting from before (the lens captured until now) is of the screen, windows and all: not to be unmixed over the picture.
+        self.pending = None;
+                self.group = Some(g.backdrop_group(&self.backgrounds[self.current].1, self.frost.result()));
+        self.bounds = [0, 0, lw as i32, lh as i32];
+        self.fixed = Some(version);
+        self.fixed_frost = true;
+        self.ready = true;
+    }
+
     /// The unmixed background as it stands, once there is one.
     pub fn background(&self) -> Option<&wgpu::TextureView> {
         self.ready.then(|| &self.backgrounds[self.current].1)
@@ -282,12 +319,21 @@ impl Lens {
 
     /// Still in its first moments: see `WARM_UP`.
     pub fn warming(&self) -> bool {
-        self.received < WARM_UP || self.born.elapsed() < WARM_UP_TIME
+        self.fixed.is_none() && self.received < WARM_UP || self.born.elapsed() < WARM_UP_TIME
     }
 
     /// Unmixes and frosts what the last capture left, in the frame's
     /// submission, before painting it.
     pub fn prepare(&mut self, g: &crate::gpu::Gpu, t: &Pipelines, enc: &mut wgpu::CommandEncoder, scale: f32) {
+        if self.fixed.is_some() && (std::mem::take(&mut self.fixed_frost) || self.frosted_with != g.blur_values) {
+            self.frosted_with = g.blur_values;
+            let (lw, lh) = self.px;
+            self.frost.run(g, enc, &self.backgrounds[self.current].1, (0, 0, lw, lh), scale);
+            return;
+        }
+        if self.fixed.is_some() {
+            return;
+        }
         let Some((presented, scissor)) = self.pending.take() else { return };
         let (Some(capture), (lw, lh)) = (self.capture.as_ref(), self.px) else { return };
         let dev = &g.device;
@@ -484,4 +530,48 @@ pub const CAPTURE_INTERVAL: std::time::Duration = std::time::Duration::from_mill
 /// the reach of the scene's blur.
 pub fn margin() -> f32 {
     crate::blur::reach() + 2.0
+}
+
+/// `lens = image "file"`: the glass bends this picture (the wallpaper, as big as
+/// the screen or smaller) instead of a capture of what is behind. The file is
+/// looked at again twice a second at most, and when it changes the glass is
+/// remade. Its version goes up each time it is read.
+pub struct FixedSource {
+    path: std::path::PathBuf,
+    stamp: Option<(std::time::SystemTime, u64)>,
+    looked: std::time::Instant,
+    version: u64,
+    picture: Option<std::sync::Arc<image::RgbaImage>>,
+}
+
+impl FixedSource {
+    /// `first` is the version before the first read: a new source (another file) must not
+    /// repeat the numbers of the one before, or a lens would think it already has the picture.
+    pub fn new(path: std::path::PathBuf, first: u64) -> FixedSource {
+        FixedSource { path, stamp: None, looked: std::time::Instant::now() - std::time::Duration::from_secs(60), version: first, picture: None }
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    pub fn poll(&mut self) -> Option<(u64, std::sync::Arc<image::RgbaImage>)> {
+        if self.looked.elapsed() >= std::time::Duration::from_millis(500) {
+            self.looked = std::time::Instant::now();
+            let stamp = std::fs::metadata(&self.path).ok().and_then(|m| Some((m.modified().ok()?, m.len())));
+            if stamp.is_some() && stamp != self.stamp {
+                // A half-written file fails to decode: it is tried again next time.
+                if let Ok(img) = image::open(&self.path) {
+                    self.picture = Some(std::sync::Arc::new(img.to_rgba8()));
+                    self.stamp = stamp;
+                    self.version += 1;
+                }
+            }
+        }
+        Some((self.version, self.picture.clone()?))
+    }
 }

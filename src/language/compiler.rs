@@ -2407,6 +2407,35 @@ impl<'a> Compiler<'a> {
                     self.e.blur = Some(plan);
                     self.e.blur_values = values;
                 }
+                // `lens = image "~/.cache/wallpaper.png"`: the glass bends this picture (the wallpaper, any size)
+                // instead of a capture of what is behind, which costs a screencopy and a readback each time something moves.
+                "lens" if matches!(c.tokens.get(1).map(|x| &x.kind), Some(TokenKind::Sym("="))) => {
+                    c.expect_sym("=")?;
+                    if !c.word("image") {
+                        return c.error("a lens bends a picture: `lens = image \"wallpaper.png\"`");
+                    }
+                    let shown = c.string()?;
+                    // `while expr`: the picture only while it holds; otherwise the glass captures what is behind, as without a lens.
+                    let when = if c.word("while") { Some(self.expr(&mut c)?) } else { None };
+                    c.expect_end()?;
+                    let written = match shown.strip_prefix("~/") {
+                        Some(rest) => match std::env::var_os("HOME") {
+                            Some(h) => std::path::PathBuf::from(h).join(rest),
+                            None => return Err(CompileError::at(n.line, n.col, "`~` needs HOME, which is not set".to_string())),
+                        },
+                        None => std::path::PathBuf::from(&shown),
+                    };
+                    let path = match self.dirs.get(n.line / super::PER_FILE) {
+                        Some(k) if written.is_relative() => k.join(written),
+                        _ => written,
+                    };
+                    // A scene copied per monitor reads it once per copy: the same one again is fine.
+                    if self.e.lens_image.as_ref().is_some_and(|p| *p != path) {
+                        return Err(CompileError::at(n.line, n.col, "a scene has one lens picture: this one would replace the one above".to_string()));
+                    }
+                    self.e.lens_image = Some(path);
+                    self.e.lens_image_while = when;
+                }
                 "measure" => {
                     let local = c.id("a name for the measure")?;
                     let name = self.declare(&local);

@@ -1998,6 +1998,11 @@ pub struct Gpu {
     pipeline_layout: wgpu::PipelineLayout,
     /// The scene's own shaders, as they went into `pipeline`.
     user_code: String,
+    /// The picture the lenses bend instead of a capture (`lens = image "file"`), and whether `pipeline` was built for it.
+    lens_image: std::cell::RefCell<Option<crate::lens::FixedSource>>,
+    built_for_image: bool,
+    /// Where the versions of the pictures start: a new file must not repeat the numbers of the one before.
+    lens_epoch: u64,
     shapes_buffer: wgpu::Buffer,
     points_buffer: wgpu::Buffer,
     stops_buffer: wgpu::Buffer,
@@ -2181,7 +2186,7 @@ impl Gpu {
         // layout, and every bind group already made keeps being valid for it.
         let pipeline_layout = Self::pipeline_layout(&device);
         let base = crate::shaders::generate(&[]);
-        let [pipeline, particles, screen, multiply] = Self::build_pipeline(&device, &pipeline_layout, format, &base).expect("pleamar's own shader does not compile");
+        let [pipeline, particles, screen, multiply] = Self::build_pipeline(&device, &pipeline_layout, format, &base, false).expect("pleamar's own shader does not compile");
         // A single atlas for glyphs and images. 2048² in RGBA is 16 MB; it
         // grows taller only when what is seen does not fit (`fit_atlas`).
         let (atlas, atlas_view) = Self::atlas_texture(&device, ATLAS_SIZE);
@@ -2214,7 +2219,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { _gl_instance: gl_instance, lens, blur, blur_sampler, blur_values: crate::blur::DEFAULT_VALUES, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group, no_picture_view, pictures: Default::default() };
+        let mut g = Gpu { _gl_instance: gl_instance, lens, blur, blur_sampler, blur_values: crate::blur::DEFAULT_VALUES, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, lens_image: Default::default(), built_for_image: false, lens_epoch: 0, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group, no_picture_view, pictures: Default::default() };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -2281,9 +2286,13 @@ impl Gpu {
     /// pleamar's shader with the scene's own ones added. An error comes back as
     /// text instead of bringing the program down: they were checked when the
     /// scene was read, but a driver can still say no.
-    fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str) -> Result<[wgpu::RenderPipeline; 4], String> {
+    fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str, picture: bool) -> Result<[wgpu::RenderPipeline; 4], String> {
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
-        let source = format!("{}{extra}", include_str!("shape.wgsl"));
+        // With a picture for a backdrop (`lens = image`) the glass is all bent picture: the
+        // 12 % that lets what is really behind through is cancelled by subtracting the backdrop, which is
+        // only right when the backdrop is what is behind.
+        let shape = if picture { include_str!("shape.wgsl").replace("const LENS_ALPHA: f32 = 0.88;", "const LENS_ALPHA: f32 = 1.0;") } else { include_str!("shape.wgsl").to_string() };
+        let source = format!("{shape}{extra}");
         let module = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape"), source: wgpu::ShaderSource::Wgsl(source.into()) });
         let make = |label, vs, fs, blend: wgpu::BlendState| {
             d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -2342,19 +2351,32 @@ impl Gpu {
     /// paint nothing, which is said once.
     pub fn set_shaders(&mut self, shaders: &[crate::shaders::UserShader]) {
         let code = crate::shaders::generate(shaders);
-        if code == self.user_code {
+        let picture = self.lens_image.borrow().is_some();
+        if code == self.user_code && picture == self.built_for_image {
             return;
         }
-        match Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &code) {
+        self.built_for_image = picture;
+        match Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &code, picture) {
             Ok([p, q, sc, mu]) => (self.pipeline, self.particles, self.screen, self.multiply) = (p, q, sc, mu),
             Err(e) => {
                 eprintln!("shader · the scene's own shaders could not be built, and they are not painted: {e}");
-                if let Ok([p, q, sc, mu]) = Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &crate::shaders::generate(&[])) {
+                if let Ok([p, q, sc, mu]) = Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &crate::shaders::generate(&[]), picture) {
                     (self.pipeline, self.particles, self.screen, self.multiply) = (p, q, sc, mu);
                 }
             }
         }
         self.user_code = code;
+    }
+
+    /// The picture the scene's lenses bend (`lens = image "file"`), or none: they capture.
+    /// Call it before `set_shaders`, which remakes the pipeline if this changed.
+    pub fn set_lens_image(&mut self, path: Option<&std::path::Path>) {
+        let image = self.lens_image.get_mut();
+        if image.as_ref().map(|s| s.path()) == path {
+            return;
+        }
+        self.lens_epoch = image.as_ref().map_or(self.lens_epoch, |s| s.version());
+        *image = path.map(|p| crate::lens::FixedSource::new(p.to_path_buf(), self.lens_epoch));
     }
 
     fn build_backdrop_group(d: &wgpu::Device, pipeline: &wgpu::RenderPipeline, sharp: &wgpu::TextureView, blurred: &wgpu::TextureView, sampler: &wgpu::Sampler) -> wgpu::BindGroup {
@@ -3270,6 +3292,12 @@ impl Gpu {
         // The lens, if it shows glass and the screen lets a canvas be copied onto it.
         // A monitor of pleamar-wm's own has nothing behind it to capture: what
         // is behind its glass is what it painted itself before it.
+        // The picture was taken away (`lens = image ... while`): a lens made for it captures nothing, so it is made again.
+        if self.lens_image.borrow().is_none() && l.lens.as_ref().is_some_and(|x| x.fixed.is_some()) {
+            l.lens = None;
+            l.painted_as.clear();
+            l.damage_log.clear();
+        }
         let whole_screen = matches!(&l.target, Target::Frames(f) if f.whole_screen());
         if !l.wants_lens || !self.can_copy || whole_screen {
             l.lens = None;
@@ -3278,6 +3306,15 @@ impl Gpu {
             // New canvases: nothing is known of what they hold.
             l.painted_as.clear();
             l.damage_log.clear();
+        }
+        // `lens = image "file"`: the lens bends a picture and never captures.
+        let fixed = self.lens_image.borrow_mut().as_mut().and_then(|s| s.poll());
+        if let (Some(lens), Some((version, picture))) = (&mut l.lens, fixed) {
+            if lens.fixed != Some(version) {
+                lens.set_fixed(self, version, &picture);
+                l.painted_as.clear();
+                l.damage_log.clear();
+            }
         }
         // A surface has what is behind it, but a glass of its with something
         // of the scene's own under it —a picture, a text, another shape— has
@@ -3936,6 +3973,10 @@ impl Sheet {
     }
 
     pub fn request_backdrop(&mut self, on_change: bool) {
+        // A lens that bends a picture (`lens = image`) has nothing to capture.
+        if self.lens.as_ref().is_some_and(|x| x.fixed.is_some()) {
+            return;
+        }
         let Some(bounds) = self.glass_box else { return };
         if let Target::Frames(frames) = &mut self.target {
             frames.settle();

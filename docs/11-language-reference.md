@@ -961,6 +961,31 @@ pass that names a function the file does not have, one that is not exactly
 `fn name(s: Blur) -> vec4<f32>`, or a size out of range is an error. A scene has
 one `blur`.
 
+**What the glass bends: `lens = image`.** A glass with a lens bends what is behind
+it, and on a layer surface only the compositor has those pixels: each time
+something moves behind the glass, a screencopy, a readback and an upload are
+paid. On a weak or hybrid GPU that is most of what a bent frame costs. A scene
+can instead say what to bend:
+
+```
+lens = image "~/.cache/myshell/wallpaper.png"
+```
+
+The glass then bends that picture (the wallpaper, any size, stretched over the
+surface) with the rim and the dispersion of any other, and nothing is captured.
+The file is looked at again twice a second at most and read again when it
+changes, so a program that rewrites it with each new wallpaper is followed; a
+half-written file is tried again. `~/` is the home folder, and any other
+relative path is next to the scene. The file is not part of the scene: changing
+it does not reload it. What it costs: windows never show through the glass, and
+a surface that is not the whole monitor is slightly misaligned with it. A scene
+has one `lens =`.
+
+`lens = image "file" while expr` bends the picture only while `expr` holds; when
+it does not, the glass captures what is behind it, as a scene without `lens =`
+does. It is looked at every frame, so a switch in the scene can choose between the
+cheap picture and the live windows.
+
 **`z:` — what goes on top.** Groups with `z:` that are side by side (in the
 same group, or loose in the scene, even from different iterations of a
 `repeat`) are drawn from the smallest `z` to the biggest, whatever the order
@@ -1718,7 +1743,7 @@ This is the output of `pleamar --grammar`, copied. It is not a second list: thes
 
 ```vocabulary
 language: 0.4
-statements: surface permissions model service spring prop pose fact event text image figure font shader blur particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
+statements: surface permissions model service spring prop pose fact event text image figure font shader blur lens particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
 library: let spring component permissions fact text model service event image figure font shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title app_id rate captures agent
 properties.permissions: run services
@@ -1753,7 +1778,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: translations surface permissions model service spring prop pose fact event text image figure font particles shader blur measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look ripple gesture posture import scene library include part language
+documented: translations surface permissions model service spring prop pose fact event text image figure font particles shader blur lens measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look ripple gesture posture import scene library include part language
 services: clock clock.seconds audio audio.level battery brightness network bluetooth media window thumbnails workspaces apps tray notifications notification_history polkit
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date

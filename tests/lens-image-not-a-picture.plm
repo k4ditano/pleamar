@@ -1,0 +1,5 @@
+// expect: error «a lens bends a picture»
+scene LensImageWrong {
+    lens = file "one.png"
+    surface { size: 100, 100 }
+}
