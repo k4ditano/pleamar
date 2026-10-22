@@ -1527,6 +1527,9 @@ impl<'a> Compiler<'a> {
         }
     }
     fn function(&self, name: &str, c: &mut Cur) -> R<Expr> {
+        if name == "sort" {
+            return c.error("`sort` makes an array, the slots in order: `let ord[win.max] = sort(i in win by win[i].place)`");
+        }
         if !vocab::FUNCTIONS.contains(&name) {
             let all: Vec<String> = vocab::FUNCTIONS.iter().map(|s| s.to_string()).collect();
             let hint = closest_match(name, all.iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
@@ -5239,18 +5242,96 @@ impl<'a> Compiler<'a> {
             _ => return Err(CompileError::at(at.0, at.1, "an array's length is read when loading: a number from 1 to 4096, a `let` of one, or `win.max`")),
         };
         c.expect_sym("]")?;
-        c.expect_end()?;
+        let sorted = c.sym("=");
+        if sorted {
+            c.expect_word("sort")?;
+            c.expect_sym("(")?;
+        } else {
+            c.expect_end()?;
+        }
         if !self.scopes.is_empty() || self.pass != 1 {
             return Err(CompileError::at(n.line, n.col, "an array is declared at the scene's level: not inside a `repeat`, a component or a surface"));
         }
         let g = self.declare(name);
-        match self.arrays.get(&g) {
-            Some(&(_, line)) if line != n.line => Err(CompileError::at(n.line, n.col, format!("there is already an array '{name}', on line {}", line % super::PER_FILE))),
-            _ => {
-                self.arrays.insert(g, (length, n.line));
-                Ok(())
+        if let Some(&(_, line)) = self.arrays.get(&g) {
+            if line != n.line {
+                return Err(CompileError::at(n.line, n.col, format!("there is already an array '{name}', on line {}", line % super::PER_FILE)));
             }
+            return Ok(());
         }
+        self.arrays.insert(g.clone(), (length, n.line));
+        if sorted {
+            return self.sort(n, &g, length, c);
+        }
+        Ok(())
+    }
+
+    /// `let ord[win.max] = sort(i in win by win[i].row, win[i].col)`: the
+    /// slots in order of their keys, compared one after another, ties by
+    /// slot. `ord[p]` is the slot at place `p`, and `ord.pos[i]` the place of
+    /// slot `i`. Worked out while the scene runs, once for every reader.
+    fn sort(&mut self, n: &Node, g: &str, length: usize, c: &mut Cur) -> R<()> {
+        let var = c.id("a name for the slot")?;
+        c.expect_word("in")?;
+        let at = c.pos();
+        let range = matches!(c.tokens.get(c.i + 1).map(|t| &t.kind), Some(TokenKind::Sym("..")));
+        let count = match c.peek() {
+            Some(TokenKind::Id(_)) if !range => {
+                let what = c.id("what to sort")?;
+                let w = self.global_quiet(&what);
+                let max = match self.lets.get(&format!("{w}.max")) {
+                    Some(Expr::K(v)) => Some(*v as usize),
+                    _ => None,
+                };
+                self.arrays.get(&w).map(|a| a.0).or(max).ok_or_else(|| CompileError::at(at.0, at.1, format!("'{what}' has no slots to sort: `win`, an array, or `0..16`")))?
+            }
+            _ => {
+                let from = self.expr(c)?;
+                c.expect_sym("..")?;
+                match (from, self.expr(c)?) {
+                    (Expr::K(a), Expr::K(b)) if a == 0.0 && b >= 1.0 => b as usize,
+                    _ => return Err(CompileError::at(at.0, at.1, "the slots a `sort` orders are known when loading, from 0: `0..16`")),
+                }
+            }
+        };
+        if count != length {
+            return Err(CompileError::at(at.0, at.1, format!("this sorts {count} slots, and '{g}' has {length} places: they are the same number")));
+        }
+        c.expect_word("by")?;
+        if !matches!(c.tokens.last().map(|t| &t.kind), Some(TokenKind::Sym(")"))) || c.i + 1 >= c.tokens.len() {
+            return c.error("a `sort` orders by at least one key, and ends its parenthesis: `sort(i in win by win[i].place)`");
+        }
+        let written = &c.tokens[c.i..c.tokens.len() - 1];
+        let mut keys = Vec::with_capacity(length);
+        for i in 0..length {
+            self.open_iteration(&var, i as i64);
+            let mut k = Cur::new(written, n.line, n.col);
+            let mut these = Vec::new();
+            let read = loop {
+                match self.expr(&mut k) {
+                    Ok(e) => these.push(e),
+                    Err(f) => break Err(f),
+                }
+                if !k.sym(",") {
+                    break k.expect_end();
+                }
+            };
+            self.scopes.pop();
+            read?;
+            keys.push(these);
+        }
+        c.i = c.tokens.len();
+        let made = |o: &mut Self, name: String| {
+            let p = o.e.prop_with(interned(&format!("·{name}")), 0.0, Spring::LIVELY);
+            o.lets.insert(name.clone(), p.e());
+            o.elements.insert(name, String::new());
+            p
+        };
+        let ord: Vec<PropId> = (0..length).map(|p| made(self, format!("{g}.{p}"))).collect();
+        let pos: Vec<PropId> = (0..length).map(|i| made(self, format!("{g}.pos.{i}"))).collect();
+        self.arrays.insert(format!("{g}.pos"), (length, n.line));
+        self.e.behaviors.push(Behavior::Sort { keys, ord, pos });
+        Ok(())
     }
 
     /// `a[i] = ...`: one element of an array. Read in pass 1, with the `let`s,

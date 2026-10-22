@@ -331,6 +331,23 @@ pub enum Expr {
     Payload,
 }
 
+/// Runs a `Sort`: each slot's keys, the slots in their order, and each
+/// property written. What changed is handed to `changed`.
+pub fn run_sort(keys: &[Vec<Expr>], ord: &[PropId], pos: &[PropId], props: &mut [Animated], facts: &[f32], mut changed: impl FnMut(PropId)) {
+    let values: Vec<Vec<f32>> = keys.iter().map(|k| k.iter().map(|e| e.eval(Ctx { props: &*props, facts, seen: None })).collect()).collect();
+    let mut slots: Vec<usize> = (0..keys.len()).collect();
+    slots.sort_by(|a, b| values[*a].iter().zip(&values[*b]).map(|(x, y)| x.total_cmp(y)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
+    for (p, slot) in slots.into_iter().enumerate() {
+        for (prop, v) in [(ord[p], slot as f32), (pos[slot], p as f32)] {
+            let a = &mut props[prop.0 as usize];
+            if a.x.to_bits() != v.to_bits() {
+                changed(prop);
+            }
+            a.set(v);
+        }
+    }
+}
+
 impl Expr {
     /// What it reads: the properties (their value or their speed) and the
     /// facts. Nothing else goes into it —no clock, no chance—, so with those the
@@ -1257,6 +1274,11 @@ pub enum Behavior {
     /// prop = expression, without a spring. So that something computed at the end of the
     /// drawing —the space a stack takes— can be read from the beginning.
     Bind { prop: PropId, to: Expr },
+    /// `let ord[16] = sort(i in win by a, b)`: the slots in order of their keys
+    /// (each slot's, compared in turn; ties by slot), as `ord[p]`, the slot at
+    /// place `p`, and `pos[i]`, the place of slot `i`. Worked out once, when a
+    /// key's inputs change, for every reader.
+    Sort { keys: Vec<Vec<Expr>>, ord: Vec<PropId>, pos: Vec<PropId> },
     /// prop += per_second · dt, endlessly: a hand that goes round and round.
     Advance { prop: PropId, per_second: Expr },
     /// Two properties that pull towards the pointer, with their own spring.

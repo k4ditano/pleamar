@@ -444,6 +444,8 @@ mod tests {
         for b in &scene.behaviors {
             if let crate::scene::Behavior::Bind { prop, to } = b {
                 props[prop.0 as usize].x = to.eval(crate::scene::Ctx { props: &props, facts: &facts, seen: None });
+            } else if let crate::scene::Behavior::Sort { keys, ord, pos } = b {
+                crate::scene::run_sort(keys, ord, pos, &mut props, &facts, |_| {});
             }
         }
         let mut out = std::collections::HashMap::new();
@@ -595,5 +597,43 @@ mod tests {
         let mut a = set["a"].clone();
         a.sort_by(f32::total_cmp);
         assert_eq!(a, vec![30.0, 90.0]);
+    }
+
+    #[test]
+    fn a_sort_orders_the_slots_by_their_keys() {
+        let set = set_by_rules("scene Sorted {
+    surface { size: 200, 40 }
+    windows win max 4
+    fact row.0 = 1
+    fact row.1 = 0
+    fact row.2 = 1
+    fact row.3 = 0
+    fact col.0 = 5
+    fact col.1 = 2
+    fact col.2 = 5
+    fact col.3 = 1
+    let ord[win.max] = sort(i in win by row.$i, col.$i)
+    // Where each one starts in its row: the widths of the ones before it there.
+    let x = 0
+    let at[win.max]
+    repeat p in 0..win.max {
+        let s = ord[p]
+        x = if(row[s] != row[ord[p - 1]], 0, x)
+        at[p] = x
+        x += 10 + s
+    }
+    on demo { o0 = ord[0]; o1 = ord[1]; o2 = ord[2]; o3 = ord[3]; p1 = ord.pos[1]; left2 = at[ord.pos[2]] }
+    fact o0 = 0
+    fact o1 = 0
+    fact o2 = 0
+    fact o3 = 0
+    fact p1 = 0
+    fact left2 = 0
+}
+", &[]);
+        let order: Vec<f32> = ["o0", "o1", "o2", "o3"].iter().map(|k| set[*k][0]).collect();
+        assert_eq!(order, vec![3.0, 1.0, 0.0, 2.0], "by row, then by column, ties by slot");
+        assert_eq!(set["p1"][0], 1.0);
+        assert_eq!(set["left2"][0], 10.0, "slot 2 comes after slot 0 in its row");
     }
 }

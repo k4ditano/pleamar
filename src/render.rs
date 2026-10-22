@@ -2651,6 +2651,10 @@ pub fn run(
                         readers.touch(*prop);
                     }
                     props[prop.0 as usize].set(v);
+                } else if let Behavior::Sort { keys, ord, pos } = behavior {
+                    if readers.dirty[k] && !absent_behaviors.iter().any(|r| r.contains(&k)) {
+                        run_sort(keys, ord, pos, &mut props, &facts, |p| readers.touch(p));
+                    }
                 }
             }
             facts_at_binds.clone_from(&facts);
@@ -3282,7 +3286,20 @@ pub fn run(
                         alive_by.push(format!("wave {}", scene.props[prop.0 as usize].0));
                     }
                 }
-                Behavior::Follow { .. } | Behavior::Bind { .. } if absent_behaviors.iter().any(|r| r.contains(&k)) => {}
+                Behavior::Follow { .. } | Behavior::Bind { .. } | Behavior::Sort { .. } if absent_behaviors.iter().any(|r| r.contains(&k)) => {}
+                Behavior::Sort { keys, ord, pos } => {
+                    if readers.dirty[k] {
+                        let mut moved = false;
+                        run_sort(keys, ord, pos, &mut props, &facts, |p| {
+                            readers.touch(p);
+                            moved = true;
+                        });
+                        alive |= moved;
+                        if timing && moved {
+                            alive_by.push("a sort whose keys changed".to_owned());
+                        }
+                    }
+                }
                 Behavior::Follow { prop, to } => {
                     let v = follows.kept_or_value(readers.dirty[k], k, to, &props, &facts);
                     props[prop.0 as usize].target = v;
@@ -3435,6 +3452,20 @@ pub fn run(
                     }
                 }
                 p.set(v);
+            } else if let Behavior::Sort { keys, ord, pos } = behavior {
+                if readers.dirty[k] && !absent_behaviors.iter().any(|r| r.contains(&k)) {
+                    let mut moved = false;
+                    run_sort(keys, ord, pos, &mut props, &facts, |p| {
+                        readers.touch(p);
+                        moved = true;
+                    });
+                    if moved {
+                        alive = true;
+                        if timing {
+                            alive_by.push("a sort whose keys moved".to_owned());
+                        }
+                    }
+                }
             }
         }
         facts_at_binds.clone_from(&facts);
@@ -5312,13 +5343,28 @@ struct Seen3 {
 
 impl Readers {
     fn build(&mut self, behaviors: &[Behavior], n_facts: usize, n_props: usize) {
-        let bind_of: std::collections::HashMap<u16, usize> = behaviors.iter().enumerate().filter_map(|(k, b)| if let Behavior::Bind { prop, .. } = b { Some((prop.0, k)) } else { None }).collect();
+        let bind_of: std::collections::HashMap<u16, usize> = behaviors
+            .iter()
+            .enumerate()
+            .flat_map(|(k, b)| match b {
+                Behavior::Bind { prop, .. } => vec![(prop.0, k)],
+                Behavior::Sort { ord, pos, .. } => ord.iter().chain(pos).map(|p| (p.0, k)).collect(),
+                _ => Vec::new(),
+            })
+            .collect();
         let direct: Vec<Option<(Vec<u16>, Vec<u16>)>> = behaviors
             .iter()
             .map(|b| match b {
                 Behavior::Follow { to, .. } | Behavior::Bind { to, .. } => {
                     let (mut props, mut facts) = (Vec::new(), Vec::new());
                     to.inputs(&mut props, &mut facts);
+                    Some((facts, props))
+                }
+                Behavior::Sort { keys, .. } => {
+                    let (mut props, mut facts) = (Vec::new(), Vec::new());
+                    for e in keys.iter().flatten() {
+                        e.inputs(&mut props, &mut facts);
+                    }
                     Some((facts, props))
                 }
                 _ => None,

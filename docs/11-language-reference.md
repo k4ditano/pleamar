@@ -73,6 +73,7 @@ shader_decl  = "shader" name "=" "file" text ;                                  
 measure      = "measure" name ;
 let          = "let" name "=" ( expr | color ) ;
 array        = "let" name "[" expr "]" ;                                   (* its length, known when loading: `let tw[win.max]` *)
+sorted       = "let" name "[" expr "]" "=" "sort" "(" name "in" ( name | number ".." number ) "by" expr { "," expr } ")" ;
 element      = name "[" expr "]" "=" expr ;                                (* one element, in a `repeat` at the scene's level *)
 fold         = name ( "=" | "+=" | "-=" | "*=" ) expr ;                     (* a link of a fold, in a `repeat` at the scene's level *)
 zone         = "zone" shape ;
@@ -1217,6 +1218,20 @@ repeat i in 0..win.max {
 ```
 
 `+=`, `-=` and `*=` are short for `x = x + ...`. An argmin carries two folds, the best value and where it was, and the one that says where is written before the one it compares with.
+
+**Sorting: `sort`.** `let ord[win.max] = sort(i in win by row[i], win[i].place)` puts the slots in order of their keys: by the first, then by the next where it ties, and by slot where all tie. `ord[p]` is the slot at place `p`, and `ord.pos[i]` is the place of slot `i`. It is worked out while the scene runs, once for everyone who reads it, and again only when a key's inputs change. What to sort is `win` (its slots), an array (its length) or `0..N`, as many as the array has places. There is no filter: a leading key does it (`by not win[i].open, ...` puts the closed ones last). A fold over `ord` gives running sums in that order, and a slot reads its own through `ord.pos`:
+
+```
+let x = 0
+let left[win.max]
+repeat p in 0..win.max {
+    let s = ord[p]
+    x = if(row[s] != row[ord[p - 1]], 0, x)      // a new row starts again
+    left[p] = x
+    x += wp[s]
+}
+// slot i starts at left[ord.pos[i]]
+```
 
 `for r in rows { … }` unfolds one turn per record that fits in the model. Inside, `r.field` is the field of that record —a text wherever a live text goes, a number in any expression— and `r.index` its position from 0. **Each turn only exists if the list reaches that far.** Valid inside a layout, loose, and inside a `popup`.
 

@@ -1,0 +1,5 @@
+// expect: error «orders by at least one key»
+scene X {
+    surface { size: 100, 100 }
+    let ord[4] = sort(i in 0..4 by)
+}
