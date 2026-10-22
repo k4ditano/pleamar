@@ -2281,7 +2281,11 @@ impl Gpu {
     /// scene was read, but a driver can still say no.
     fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str) -> Result<[wgpu::RenderPipeline; 4], String> {
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
-        let source = format!("{}{extra}", include_str!("shape.wgsl"));
+        // With a picture for a backdrop (`PLEAMAR_LENS_IMAGE`) the glass is all bent picture: the
+        // 12 % that lets what is really behind through is cancelled by subtracting the backdrop, which is
+        // only right when the backdrop is what is behind.
+        let shape = if crate::lens::fixed_enabled() { include_str!("shape.wgsl").replace("const LENS_ALPHA: f32 = 0.88;", "const LENS_ALPHA: f32 = 1.0;") } else { include_str!("shape.wgsl").to_string() };
+        let source = format!("{shape}{extra}");
         let module = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape"), source: wgpu::ShaderSource::Wgsl(source.into()) });
         let make = |label, vs, fs, blend: wgpu::BlendState| {
             d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -3277,6 +3281,14 @@ impl Gpu {
             l.painted_as.clear();
             l.damage_log.clear();
         }
+        // `PLEAMAR_LENS_IMAGE`: the lens bends a picture and never captures.
+        if let (Some(lens), Some((version, picture))) = (&mut l.lens, crate::lens::fixed_source()) {
+            if lens.fixed != Some(version) {
+                lens.set_fixed(self, version, &picture);
+                l.painted_as.clear();
+                l.damage_log.clear();
+            }
+        }
         // A surface has what is behind it, but a glass of its with something
         // of the scene's own under it —a picture, a text, another shape— has
         // that in front of what is behind: it is taken the same way, over the
@@ -3934,6 +3946,10 @@ impl Sheet {
     }
 
     pub fn request_backdrop(&mut self, on_change: bool) {
+        // A lens that bends a picture (`PLEAMAR_LENS_IMAGE`) has nothing to capture.
+        if self.lens.as_ref().is_some_and(|x| x.fixed.is_some()) {
+            return;
+        }
         let Some(bounds) = self.glass_box else { return };
         if let Target::Frames(frames) = &mut self.target {
             frames.settle();

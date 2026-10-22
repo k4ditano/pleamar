@@ -161,6 +161,12 @@ pub struct Lens {
     born: std::time::Instant,
     /// What the shapes shader reads: the sharp background and the frosted one.
     pub group: Option<wgpu::BindGroup>,
+    /// The background is a picture (`PLEAMAR_LENS_IMAGE`), not a capture: which
+    /// version of it is in, and whether it still has to be frosted.
+    pub fixed: Option<u64>,
+    fixed_frost: bool,
+    /// The blur's values it was last frosted with: a picture is frosted again when they change.
+    frosted_with: [f32; 8],
 }
 
 impl Lens {
@@ -192,6 +198,9 @@ impl Lens {
             received: 0,
             born: std::time::Instant::now(),
             group: None,
+            fixed: None,
+            fixed_frost: false,
+            frosted_with: [0.0; 8],
         }
     }
 
@@ -221,6 +230,9 @@ impl Lens {
     /// the background is unmixed and frosted, only there. `true` if something
     /// visible has changed, and it has to be painted again.
     pub fn receive(&mut self, g: &crate::gpu::Gpu, d: Backdrop, scale: f32, bounds: [i32; 4]) -> bool {
+        if self.fixed.is_some() {
+            return false;
+        }
         let Some(presented) = self.presented else { return false };
         // A capture without data is one that failed.
         let Some(data) = d.data else { return false };
@@ -275,6 +287,29 @@ impl Lens {
         true
     }
 
+    /// The background is `picture` (version `version`), stretched over the
+    /// surface and frosted once, in place of a capture of the screen: no
+    /// screencopy, no readback, no unmixing. What is under the glass is then
+    /// the picture and never a window, but it is bent like any other.
+    pub fn set_fixed(&mut self, g: &crate::gpu::Gpu, version: u64, picture: &image::RgbaImage) {
+        let (lw, lh) = self.px;
+        let mut fitted = image::imageops::resize(picture, lw.max(1), lh.max(1), image::imageops::FilterType::Triangle);
+        for p in fitted.pixels_mut() {
+            p.0[3] = 255;
+        }
+        g.queue.write_texture(
+            self.backgrounds[self.current].0.as_image_copy(),
+            fitted.as_raw(),
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(lw.max(1) * 4), rows_per_image: Some(lh.max(1)) },
+            wgpu::Extent3d { width: lw.max(1), height: lh.max(1), depth_or_array_layers: 1 },
+        );
+        self.group = Some(g.backdrop_group(&self.backgrounds[self.current].1, self.frost.result()));
+        self.bounds = [0, 0, lw as i32, lh as i32];
+        self.fixed = Some(version);
+        self.fixed_frost = true;
+        self.ready = true;
+    }
+
     /// The unmixed background as it stands, once there is one.
     pub fn background(&self) -> Option<&wgpu::TextureView> {
         self.ready.then(|| &self.backgrounds[self.current].1)
@@ -282,12 +317,18 @@ impl Lens {
 
     /// Still in its first moments: see `WARM_UP`.
     pub fn warming(&self) -> bool {
-        self.received < WARM_UP || self.born.elapsed() < WARM_UP_TIME
+        self.fixed.is_none() && self.received < WARM_UP || self.born.elapsed() < WARM_UP_TIME
     }
 
     /// Unmixes and frosts what the last capture left, in the frame's
     /// submission, before painting it.
     pub fn prepare(&mut self, g: &crate::gpu::Gpu, t: &Pipelines, enc: &mut wgpu::CommandEncoder, scale: f32) {
+        if self.fixed.is_some() && (std::mem::take(&mut self.fixed_frost) || self.frosted_with != g.blur_values) {
+            self.frosted_with = g.blur_values;
+            let (lw, lh) = self.px;
+            self.frost.run(g, enc, &self.backgrounds[self.current].1, (0, 0, lw, lh), scale);
+            return;
+        }
         let Some((presented, scissor)) = self.pending.take() else { return };
         let (Some(capture), (lw, lh)) = (self.capture.as_ref(), self.px) else { return };
         let dev = &g.device;
@@ -484,4 +525,44 @@ pub const CAPTURE_INTERVAL: std::time::Duration = std::time::Duration::from_mill
 /// the reach of the scene's blur.
 pub fn margin() -> f32 {
     crate::blur::reach() + 2.0
+}
+
+/// `PLEAMAR_LENS_IMAGE=file`: the glass bends this picture (the wallpaper, as
+/// big as the screen or smaller) instead of a capture of what is behind. The
+/// file is looked at again twice a second at most, and when it changes the
+/// glass is remade. Its version goes up each time it is read.
+pub fn fixed_source() -> Option<(u64, std::sync::Arc<image::RgbaImage>)> {
+    use std::sync::{Mutex, OnceLock};
+    struct Source {
+        path: std::path::PathBuf,
+        stamp: Option<(std::time::SystemTime, u64)>,
+        looked: std::time::Instant,
+        version: u64,
+        picture: Option<std::sync::Arc<image::RgbaImage>>,
+    }
+    static SOURCE: OnceLock<Option<Mutex<Source>>> = OnceLock::new();
+    let source = SOURCE.get_or_init(|| {
+        let path = std::path::PathBuf::from(std::env::var_os("PLEAMAR_LENS_IMAGE").filter(|p| !p.is_empty())?);
+        Some(Mutex::new(Source { path, stamp: None, looked: std::time::Instant::now() - std::time::Duration::from_secs(60), version: 0, picture: None }))
+    });
+    let mut s = source.as_ref()?.lock().ok()?;
+    if s.looked.elapsed() >= std::time::Duration::from_millis(500) {
+        s.looked = std::time::Instant::now();
+        let stamp = std::fs::metadata(&s.path).ok().and_then(|m| Some((m.modified().ok()?, m.len())));
+        if stamp.is_some() && stamp != s.stamp {
+            if let Ok(img) = image::open(&s.path) {
+                s.picture = Some(std::sync::Arc::new(img.to_rgba8()));
+                s.stamp = stamp;
+                s.version += 1;
+            }
+        }
+    }
+    let picture = s.picture.clone()?;
+    Some((s.version, picture))
+}
+
+/// Whether `PLEAMAR_LENS_IMAGE` is set: the glass is then all bent picture
+/// (`LENS_ALPHA` 1), because nothing under it is known to cancel what really is.
+pub fn fixed_enabled() -> bool {
+    std::env::var_os("PLEAMAR_LENS_IMAGE").is_some_and(|p| !p.is_empty())
 }

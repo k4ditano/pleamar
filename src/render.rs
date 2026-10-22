@@ -4088,7 +4088,9 @@ pub fn run(
             });
             // What the compositor blurs: the glass without a lens, and the one that has
             // it while there is still no background to show.
-            if !l.lens.as_ref().is_some_and(|x| x.ready) {
+            // A lens that bends a picture (`PLEAMAR_LENS_IMAGE`) still lets some of what is really behind through:
+            // that is what the compositor blurs.
+            if !l.lens.as_ref().is_some_and(|x| x.ready && x.fixed.is_none()) {
                 without.extend(with_lens);
             }
             if without != l.blur_rects {
