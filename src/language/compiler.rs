@@ -6501,6 +6501,13 @@ impl<'a> Compiler<'a> {
         } else {
             false
         };
+        // `placement manual`: the scene says where a new one goes (see `Nest::manual`).
+        let manual = if c.word("placement") {
+            c.expect_word("manual")?;
+            true
+        } else {
+            false
+        };
         // `workspaces kept`: they stay while empty (see `Nest::kept`).
         let kept = if c.word("workspaces") {
             c.expect_word("kept")?;
@@ -6533,6 +6540,7 @@ impl<'a> Compiler<'a> {
             fact(self, format!("{name}.{k}.dialog"), 0.0, true);
             fact(self, format!("{name}.{k}.minimized"), 0.0, true);
             fact(self, format!("{name}.{k}.floating"), 0.0, true);
+            fact(self, format!("{name}.{k}.pending"), 0.0, true);
             // It lets the compositor draw its frame; and what it asks, from its
             // own title bar or edges, while the button is down.
             fact(self, format!("{name}.{k}.framed"), 0.0, true);
@@ -6611,7 +6619,7 @@ impl<'a> Compiler<'a> {
         self.e.surface_mut().right_click_quits = false;
         // How many slots there are, as a number known when loading: `let tw[win.max]`.
         self.lets.insert(format!("{name}.max"), Expr::K(max as f32));
-        self.e.nest = Some(crate::scene::Nest { name, max, programs, kept });
+        self.e.nest = Some(crate::scene::Nest { name, max, programs, kept, manual });
         Ok(())
     }
 
@@ -7150,6 +7158,13 @@ impl<'a> Compiler<'a> {
                             let a = self.which_window(&mut c)?;
                             c.expect_word("with")?;
                             Effect::WindowSwap(a, self.which_window(&mut c)?)
+                        }
+                        // `accept win(i)`: it takes its place (see `placement manual`).
+                        "accept" => {
+                            if !self.e.nest.as_ref().is_some_and(|n| n.manual) {
+                                return c.error("`accept` takes a window the scene placed itself: declare its windows with `placement manual`, `windows win max 16 placement manual`");
+                            }
+                            Effect::Accept(self.which_window(&mut c)?)
                         }
                         // `dock 2 on 0`: that item of that monitor's dock.
                         "dock" => {

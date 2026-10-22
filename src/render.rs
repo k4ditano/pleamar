@@ -89,6 +89,8 @@ struct Desks {
     minimized: Vec<bool>,
     /// Floating over the layout (`float`): out of its count, not of the order.
     floating: Vec<bool>,
+    /// Opened under `placement manual` and not yet accepted: out of the layout and of the order.
+    pending: Vec<bool>,
     born: Vec<u64>,
     stamp: u64,
     focus: Option<usize>,
@@ -117,7 +119,7 @@ struct DockItem {
 
 impl Default for Desks {
     fn default() -> Self {
-        Desks { pool: Vec::new(), alive: Vec::new(), stack: [vec![1], vec![2], vec![3], vec![4]], shown: [1, 2, 3, 4], left: [0; 4], last: Default::default(), next: 5, apps: Vec::new(), icons: Vec::new(), names: Vec::new(), execs: Vec::new(), dialog: Vec::new(), minimized: Vec::new(), floating: Vec::new(), born: Vec::new(), stamp: 0, focus: None, touched: Vec::new(), programs: false, kept: false, pins: Vec::new(), items: Default::default() }
+        Desks { pool: Vec::new(), alive: Vec::new(), stack: [vec![1], vec![2], vec![3], vec![4]], shown: [1, 2, 3, 4], left: [0; 4], last: Default::default(), next: 5, apps: Vec::new(), icons: Vec::new(), names: Vec::new(), execs: Vec::new(), dialog: Vec::new(), minimized: Vec::new(), floating: Vec::new(), pending: Vec::new(), born: Vec::new(), stamp: 0, focus: None, touched: Vec::new(), programs: false, kept: false, pins: Vec::new(), items: Default::default() }
     }
 }
 
@@ -133,6 +135,7 @@ impl Desks {
             self.dialog.resize(max, false);
             self.minimized.resize(max, false);
             self.floating.resize(max, false);
+            self.pending.resize(max, false);
             self.born.resize(max, 0);
             self.touched.resize(max, 0);
         }
@@ -275,11 +278,13 @@ fn nest_places(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic:
     let screen_of = |slot: usize| screens.get(slot).copied().unwrap_or(0);
     let together = |a: usize, b: usize| screen_of(a) == screen_of(b) && desks.pool_of(a) == desks.pool_of(b);
     let shown = |slot: usize| desks.shown_here(slot, screens);
-    let visible: Vec<usize> = order.iter().copied().filter(|k| shown(*k)).collect();
+    // One waiting to be accepted (`placement manual`) is in none of it yet.
+    let pending = |k: usize| desks.pending.get(k).copied().unwrap_or(false);
+    let visible: Vec<usize> = order.iter().copied().filter(|k| shown(*k) && !pending(*k)).collect();
     // A floating window keeps its turn for the keyboard (`order`, `rank`,
     // `count`), but the layout is shared out among the others: as a dialog.
     let floats = |k: usize| desks.floating.get(k).copied().unwrap_or(false);
-    let tiled: Vec<usize> = order.iter().copied().filter(|k| !floats(*k)).collect();
+    let tiled: Vec<usize> = order.iter().copied().filter(|k| !floats(*k) && !pending(*k)).collect();
     for k in 0..n.max {
         let listed = tiled.contains(&k);
         let place = if listed { tiled.iter().take_while(|s| **s != k).filter(|s| together(**s, k)).count() as f32 } else { -1.0 };
@@ -288,6 +293,7 @@ fn nest_places(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic:
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.rank"), visible.iter().position(|s| *s == k).map_or(-1.0, |p| p as f32));
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.workspace"), desks.index(screen_of(k), desks.pool_of(k)) as f32);
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.pool"), desks.pool_of(k) as f32);
+        nest_fact(scene, facts, to_logic, &format!("{name}.{k}.pending"), pending(k) as u8 as f32);
     }
     for p in 0..n.max {
         nest_fact(scene, facts, to_logic, &format!("{name}.order.{p}"), visible.get(p).map_or(-1.0, |s| *s as f32));
@@ -1394,6 +1400,7 @@ pub fn run(
                             desks.dialog[slot] = false;
                             desks.minimized[slot] = false;
                             desks.floating[slot] = false;
+                            desks.pending[slot] = n.manual;
                             desks.stamp += 1;
                             desks.born[slot] = desks.stamp;
                             // What the slot showed before —a window closing, still fading— is no longer it.
@@ -1596,6 +1603,7 @@ pub fn run(
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.held"), 0.0);
                             if slot < desks.floating.len() {
                                 desks.floating[slot] = false;
+                                desks.pending[slot] = false;
                             }
                             if nest_grab == Some(slot) {
                                 nest_grab = None;
@@ -3032,6 +3040,16 @@ pub fn run(
                         let (a, b) = (a.eval(c).round(), b.eval(c).round());
                         if let (Some(send), true) = (&nest, a >= 0.0 && b >= 0.0 && a != b) {
                             send(ToNest::Swap(a as usize, b as usize));
+                        }
+                    }
+                    Effect::Accept(which) => {
+                        let slot = which.eval(Ctx { props: &props, facts: &facts, seen: None }).round();
+                        if let (Some(n), true) = (scene.nest.clone(), slot >= 0.0) {
+                            let slot = slot as usize;
+                            if desks.pending.get(slot).copied().unwrap_or(false) {
+                                desks.pending[slot] = false;
+                                nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                            }
                         }
                     }
                     Effect::Pick(what) => {

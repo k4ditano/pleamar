@@ -1840,6 +1840,9 @@ pub enum Effect {
     /// Two windows change places, in the order and on their monitors:
     /// `swap win(a) with win(b)`.
     WindowSwap(Expr, Expr),
+    /// `accept win(i)`: a window waiting under `placement manual` takes its
+    /// place in the layout.
+    Accept(Expr),
     /// A workspace shown: `workspace 3` on the monitor the pointer is on, or
     /// `workspace 3 on 1` on that one.
     Workspace(Expr, Option<Expr>),
@@ -1893,6 +1896,7 @@ impl Effect {
             Effect::Window(a, e) => Effect::Window(*a, e.with_payload(v)),
             Effect::WindowTo(w, to) => Effect::WindowTo(w.with_payload(v), to.with_payload(v)),
             Effect::WindowSwap(a, b) => Effect::WindowSwap(a.with_payload(v), b.with_payload(v)),
+            Effect::Accept(a) => Effect::Accept(a.with_payload(v)),
             Effect::Workspace(w, on) => Effect::Workspace(w.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
             Effect::WindowToWorkspace(w, to, on) => Effect::WindowToWorkspace(w.with_payload(v), to.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
             Effect::Dock(k, on, a) => Effect::Dock(k.with_payload(v), on.as_ref().map(|e| e.with_payload(v)), *a),
@@ -2378,6 +2382,10 @@ pub struct Nest {
     /// workspace`). Without it they are tide pools: an empty one not shown
     /// dries up.
     pub kept: bool,
+    /// `placement manual`: a window that opens is left out of the layout
+    /// (`place`, `among`, `rank`, `order`, `on`) until the scene takes it
+    /// with `accept win(i)`; meanwhile `win.$i.pending` is true.
+    pub manual: bool,
 }
 
 /// A program pinned to the dock: the names its windows go by (their app id

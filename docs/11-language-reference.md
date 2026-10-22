@@ -1341,6 +1341,7 @@ reloads on save while the programs in it keep running.
 | **for all of them** | |
 | `win.count` · `win.focus` | how many are shown (on the workspaces their monitors show), and which slot has the keyboard (−1, none) |
 | `win.max` | how many slots there are, the `max` of `windows`: a number known when loading, for `repeat i in 0..win.max` and `let tw[win.max]` |
+| `win.$i.pending` | opened under `placement manual` and not accepted yet: out of the layout and of the order |
 | `win.on.$s` | how many are shown on monitor `s` (0 to 3) |
 | `win.shown.$s` · `win.pool.$s` | the workspace monitor `s` shows: its turn, and its identity |
 | `win.pools.$s` · `win.used.$s` | how many workspaces monitor `s` has (the one shown among them, even empty), and how many hold windows |
@@ -1385,6 +1386,8 @@ that holds), which are the scene's.
 | `pick win.$i` · `pick win(x)` · `pick screen 1` · `pick none` | the answer to `win.picking`: that window, that monitor, or nothing (the program's request is turned down). The compositor stops asking: `win.picking` goes back to 0 |
 
 **Workspaces that stay: `windows win max 16 workspaces kept`.** As they come, workspaces are tide pools (below): an empty one that is not shown dries up, and there is never more than one empty past the last with windows. With `workspaces kept` they are a Mac's desktops: the ones a monitor has are the ones made, empty or not, shown or not. One more is made by going one past the last (`workspace win.pools.0 + 1 on 0`), and one goes only when it is closed (`close workspace n`). `dock programs` and `workspaces kept` go in that order when both are written.
+
+**Where a new window goes: `windows win max 16 placement manual`.** Without it, a window that opens counts at once: it is in `among`, `win.on.$s`, `rank`, `win.order` and `win.count` from its first frame, and the layout makes room for it before the scene has decided where it goes. With it, a window that opens is **pending** (`win.$i.pending` is true) and in none of those, until a rule takes it with **`accept win(i)`**: then it gets its place, and the others make room. What the scene decides in between —a row, a key to sort it by, a side to dock on— is set in that same rule, before `accept`: `on change win.$i.open while win.$i.pending { row.$i = ...; accept win(i) }`. Written with the others, it goes after `dock programs` and before `workspaces kept`.
 
 **Workspaces** are a stack per monitor, each monitor its own, as tide
 pools along a shore: there are as many as hold windows, plus the one shown
@@ -1723,7 +1726,7 @@ properties.layout: at anchor gap padding align fill glass lens shine refraction 
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick rgb
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still
-effects: toggle emit impulse ripple play focus blur close promote fullscreen minimize restore float tile launch send swap workspace pick dock
+effects: toggle emit impulse ripple play focus blur close promote fullscreen minimize restore float tile launch send swap workspace pick dock accept
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
 classes: ambient reflex asked state
