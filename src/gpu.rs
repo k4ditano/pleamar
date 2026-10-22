@@ -557,6 +557,48 @@ fn strips_of(p: &crate::shapes::FlatShape, points: &[f32]) -> Vec<[f32; 4]> {
     strips
 }
 
+/// A filled rounded box or ellipse, not rotated or skewed, centred at `(ox, oy)` on the surface, as rows one pixel tall on the surface's own
+/// pixels: in each row, the whole pixels that are inside the shape from the top of the row to its bottom. Rounded inwards, so the blur the
+/// compositor puts behind it never shows outside the edge (the edge's antialiased pixel, half glass, covers the little it leaves out); a
+/// pixel tall, so a small corner is a curve and not a staircase of two-pixel steps. The straight sides merge into one rectangle, as in
+/// `strips_of`. Any other shape is `None`, and is searched for by `strips_of`.
+fn rows_on_pixels(p: &crate::shapes::FlatShape, ox: f32, oy: f32) -> Option<Vec<[f32; 4]>> {
+    let m = p.affine.m;
+    if !((p.kind == 0 || p.kind == 1) && p.rotation == 0.0 && p.stroke == 0.0 && m[1] == 0.0 && m[2] == 0.0 && m[0] > 0.0 && m[3] > 0.0) {
+        return None;
+    }
+    let (sx, sy) = (m[0], m[3]);
+    let (half_height, half_width): (f32, Box<dyn Fn(f32) -> f32>) = if p.kind == 1 {
+        let r = p.radius.clamp(0.0, p.mx.min(p.my));
+        let (mx, my) = (p.mx, p.my);
+        (my, Box::new(move |y: f32| {
+            let dy = y.abs() - (my - r);
+            if dy <= 0.0 { mx } else { mx - r + (r * r - dy * dy).max(0.0).sqrt() }
+        }))
+    } else {
+        let (a, b) = (p.radius * p.ex, p.radius * p.ey);
+        (b, Box::new(move |y: f32| a * (1.0 - (y / b).powi(2)).max(0.0).sqrt()))
+    };
+    let mut rows: Vec<[f32; 4]> = Vec::new();
+    let bottom = oy + half_height * sy;
+    let mut y = (oy - half_height * sy).ceil();
+    while y + 1.0 <= bottom + 1e-3 {
+        // The narrowest of the row is at its end further from the centre.
+        let (ya, yb) = ((y - oy) / sy, (y + 1.0 - oy) / sy);
+        let far = if ya.abs() > yb.abs() { ya } else { yb };
+        let half = half_width(far.clamp(-half_height, half_height)) * sx;
+        let (a, b) = ((ox - half).ceil(), (ox + half).floor());
+        if b > a {
+            match rows.last_mut() {
+                Some(f) if f[0] == a && f[2] == b && f[3] == y => f[3] = y + 1.0,
+                _ => rows.push([a, y, b, y + 1.0]),
+            }
+        }
+        y += 1.0;
+    }
+    Some(rows)
+}
+
 fn union(a: Option<[f32; 4]>, b: [f32; 4]) -> [f32; 4] {
     a.map_or(b, |a| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
 }
@@ -809,6 +851,13 @@ impl DrawList {
         }
         for p in flats {
             let (ox, oy) = p.affine.apply(p.cx, p.cy);
+            // A rounded box or an ellipse is laid on the surface's pixels where it is, every frame (its formula costs nothing): strips
+            // measured at the origin and shifted by a fraction of a pixel, then rounded outwards into the region, let the blur show past
+            // the edge by up to two pixels, a stepped halo round the corners as soon as the shape is not on whole pixels.
+            if let Some(rows) = rows_on_pixels(p, ox, oy) {
+                self.glass_regions.extend(rows.into_iter().map(|f| [f[0].max(cut[0]), f[1].max(cut[1]), f[2].min(cut[2]), f[3].min(cut[3])]).filter(|f| f[2] > f[0] && f[3] > f[1]).map(|f| (f, if lens { Behind::Lens } else { Behind::Blur })));
+                continue;
+            }
             let mut at_origin = *p;
             (at_origin.cx, at_origin.cy, at_origin.affine.t) = (0.0, 0.0, [0.0, 0.0]);
             // A path is its points, which the key does not see: that one is always measured.
@@ -4036,6 +4085,48 @@ mod tests {
 
     fn flat(kind: u8, mx: f32, my: f32, radius: f32, ex: f32, ey: f32, scale: f32) -> FlatShape {
         FlatShape { kind, cx: 0.0, cy: 0.0, mx, my, radius, rotation: 0.0, ex, ey, stroke: 0.0, affine: Affine { m: [scale, 0.0, 0.0, scale], t: [0.0, 0.0] } }
+    }
+
+    /// The blur's rows never reach outside the shape, wherever it sits between pixels, and they leave
+    /// nothing out more than a pixel and a half inside its edge. Vitreus's Island at 70 % (a 425 × 38 box
+    /// with 13 px corners, its top at y = 8 and its middle at a fraction of a pixel) showed the blur up to
+    /// a pixel and a half past its corners, with the strips measured at the origin and rounded outwards.
+    #[test]
+    fn rows_stay_inside_and_cover() {
+        let shapes = [flat(1, 212.6, 18.9, 13.2, 1.0, 1.0, 1.0), flat(1, 303.75, 27.0, 18.9, 1.0, 1.0, 1.0), flat(0, 0.0, 0.0, 30.0, 1.0, 0.4, 1.5), flat(1, 60.0, 20.0, 20.0, 1.0, 1.0, 2.0)];
+        for p in shapes {
+            for (ox, oy) in [(960.0, 26.9), (960.37, 35.0), (100.5, 100.5), (33.25, 71.8)] {
+                let rows = rows_on_pixels(&p, ox, oy).expect("a rounded box or an ellipse has a formula");
+                let d = |x: f32, y: f32| p.distance_with(x - ox, y - oy, &[]);
+                let covered = |x: f32, y: f32| rows.iter().any(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3]);
+                for r in &rows {
+                    assert!(r.iter().all(|v| v.fract() == 0.0), "{r:?} is not on whole pixels");
+                    let mut y = r[1];
+                    while y < r[3] {
+                        let mut x = r[0];
+                        while x < r[2] {
+                            for (cx, cy) in [(x, y), (x + 1.0, y), (x, y + 1.0), (x + 1.0, y + 1.0)] {
+                                assert!(d(cx, cy) < 1e-3, "pixel {x},{y} of {r:?} reaches outside (kind {}, at {ox},{oy})", p.kind);
+                            }
+                            x += 1.0;
+                        }
+                        y += 1.0;
+                    }
+                }
+                let (w, h) = (p.mx.max(p.radius * p.ex) * p.affine.m[0], p.my.max(p.radius * p.ey) * p.affine.m[3]);
+                let mut y = (oy - h).floor();
+                while y < oy + h {
+                    let mut x = (ox - w).floor();
+                    while x < ox + w {
+                        if d(x + 0.5, y + 0.5) < -1.5 {
+                            assert!(covered(x, y), "pixel {x},{y} is well inside and not blurred (kind {}, at {ox},{oy})", p.kind);
+                        }
+                        x += 1.0;
+                    }
+                    y += 1.0;
+                }
+            }
+        }
     }
 
     #[test]
