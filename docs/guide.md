@@ -208,6 +208,40 @@ Each copy has **its own** properties and **its own** zones: one pill's `glow` is
 not the other's. Handing an event to a component is what gives it permission to
 emit that event, and it can touch nothing else of the scene.
 
+`repeat` does the same for a run of things that differ only by their number.
+What one turn works out stays in that turn, unless it goes into an **array**:
+declared once with its length, each element defined once in the `repeat`,
+and read anywhere after by its place. A **fold** carries a value from one turn
+to the next: here, where each bar starts is where the ones before it end.
+
+```plm
+language 0.2
+scene Meters {
+    surface { size: full, 40; anchor: top }
+    repeat k in 0..4 { fact level.$k = 0.5 }
+
+    // Each bar as wide as its level, one after the other.
+    let wide[4]
+    let at[4]
+    let x = 20
+    repeat k in 0..4 {
+        wide[k] = 40 + 200 * level.$k
+        at[k] = x
+        x += wide[k] + 10
+    }
+
+    box { from: 0, 0; size: x + 10, 40; corner: 20; color: #151616 }
+    repeat k in 0..4 {
+        box { from: at[k], 10; size: wide[k], 20; corner: 10; color: #9ed6bd }
+    }
+}
+```
+
+`x` after the `repeat` is where the last bar ends, so the background fits
+them. The same reads work for names with numbers in them that you did not
+declare as arrays: `win[i].screen`, `screen[s].width`.
+
+
 ## 7. What next
 
 - Patterns that already work, ready to copy: [recipes](recipes.md).
