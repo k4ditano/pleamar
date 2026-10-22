@@ -395,6 +395,8 @@ struct Compiler<'a> {
     prop_sites: HashMap<String, (usize, usize)>,
     /// The transforms under which painting is happening: a zone inherits them.
     under: Vec<Transform>,
+    /// Where each image was declared, and the image: read again from there, it is the same.
+    image_sites: HashMap<String, ((usize, usize), ImageId)>,
     /// `let a[16]`: each array's length and the line it was declared on.
     arrays: HashMap<String, (usize, usize)>,
     /// The elements already defined (`a.3`), and what each first copy computes:
@@ -451,7 +453,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None,
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, image_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -503,7 +505,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             }
         }
         // A `surface` is read twice: in 0 its properties, and in 2 what it draws.
-        let this_pass: Vec<&Entry> = body.iter().filter(|e| pass_of(e) == pass || (pass == 2 && (is_surface(e) || hoists(e)))).collect();
+        let this_pass: Vec<&Entry> = body.iter().filter(|e| pass_of(e) == pass || (pass == 0 && is_repeat(e)) || (pass == 2 && (is_surface(e) || hoists(e)))).collect();
         // Loose drawing belongs to the scene's surface. If that one is repeated per monitor
         // (`screens: each`), it is repeated with it: one copy per screen, with its own things.
         let copies: Vec<(f32, f32, usize)> = if pass == 2 {
@@ -825,6 +827,30 @@ fn is_declaration(n: &Node) -> bool {
 /// `a[i] = ...`: an element of an array being defined.
 fn is_definition(n: &Node) -> bool {
     matches!((n.head.first().map(|t| &t.kind), n.head.get(1).map(|t| &t.kind)), (Some(TokenKind::Id(_)), Some(TokenKind::Sym("["))))
+}
+
+/// What a `repeat` that defines elements reads with its definitions: its
+/// `let`s, and the values it declares, which a definition may read.
+fn hoisted_with_definitions(n: &Node) -> bool {
+    declares_value(n) || matches!(n.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "let")
+}
+
+/// What declares a value of the scene (or holds such declarations): a
+/// `repeat` at the scene's level reads these in pass 0.
+fn declares_value(n: &Node) -> bool {
+    match n.head.first().map(|t| &t.kind) {
+        Some(TokenKind::Id(w)) => match w.as_str() {
+            "repeat" | "prop" | "pose" | "fact" | "event" | "measure" => true,
+            "text" => matches!(n.head.get(2).map(|t| &t.kind), Some(TokenKind::Sym("="))),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// `repeat i in 0..n { ... }`.
+fn is_repeat(e: &Entry) -> bool {
+    matches!(e, Entry::Node(n) if matches!(n.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "repeat"))
 }
 
 /// A `repeat` that defines elements, in it or in a `repeat` inside it.
@@ -2142,7 +2168,15 @@ impl<'a> Compiler<'a> {
                     c.expect_sym(",")?;
                     let w = c.num()?;
                     c.expect_sym(",")?;
-                    let i = self.e.image(source, w as u32, c.num()? as u32);
+                    let h = c.num()?;
+                    // Read again from the same line (a `repeat` inside a surface per
+                    // monitor), it is the same image, not one more to load.
+                    let site = (n.line, n.col);
+                    let i = match self.image_sites.get(&name) {
+                        Some((at, i)) if *at == site => *i,
+                        _ => self.e.image(source, w as u32, h as u32),
+                    };
+                    self.image_sites.insert(name.clone(), (site, i));
                     self.images.insert(name, i);
                 }
                 // `figure hat = file "wardrobe/hat.svg"`: its layers, as paths.
@@ -5013,7 +5047,24 @@ impl<'a> Compiler<'a> {
     /// pass 1 only its `let`s and definitions, so that what comes after it can
     /// read them; in pass 2 the rest, with the definitions already made.
     fn repeat(&mut self, n: &'a Node, c: &mut Cur) -> R<()> {
-        let (var, from, until) = self.repeat_head(c)?;
+        let head = self.repeat_head(c);
+        // In pass 0, one at the scene's level declares its values with the
+        // other declarations: anything can read them, wherever it is written.
+        if self.pass == 0 {
+            let Ok((var, from, until)) = head else { return Ok(()) };
+            for v in from..until {
+                self.open_iteration(&var, v);
+                for e in n.body.as_deref().unwrap_or(&[]) {
+                    if matches!(e, Entry::Node(s) if declares_value(s)) {
+                        let Entry::Node(s) = e else { unreachable!() };
+                        let _ = self.statement(s, &mut 0);
+                    }
+                }
+                self.scopes.pop();
+            }
+            return Ok(());
+        }
+        let (var, from, until) = head?;
         if self.hoisting.is_some() {
             self.hoist_turns(n, &var, from, until);
             return Ok(());
@@ -5061,9 +5112,10 @@ impl<'a> Compiler<'a> {
                     if let Err(f) = self.element(s) {
                         self.push_error(f);
                     }
-                } else if matches!(s.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "let" || w == "repeat") {
+                } else if hoisted_with_definitions(s) {
                     // One that reads what only the drawing declares fails here,
                     // and is read again in pass 2: a definition that needs it says so.
+                    // The declarations are read again too, and are the same ones.
                     let _ = self.statement(s, &mut 0);
                 }
             }

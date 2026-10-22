@@ -1185,7 +1185,7 @@ A slot that does not exist is an error that says which ones there are (`'Panel' 
 
 An error **inside** a component also says where it was used from —`(inside 'Badge', used at scene.plm:6)`—, because often what is wrong is what was passed to it.
 
-`repeat i in 0..5 { … }` unfolds five turns on load (512 at most); inside, `i` is a number and `$i` is substituted into the names.
+`repeat i in 0..5 { … }` unfolds five turns on load (512 at most); inside, `i` is a number and `$i` is substituted into the names. What one at the scene's level declares (`prop glow.$i`, `fact open.$i`, an `event`, a `text`) is declared with the other declarations, so anything can read it wherever it is written; an `image` read again for each monitor's copy is still one image.
 
 **Arrays: `let a[N]` and `a[i] = ...`.** A `let` declared in a `repeat` is that turn's own, and nothing outside it sees it. An array is declared once at the scene's level with its length, and each of its elements is defined **exactly once**, in a `repeat` there (or loose, with a number for its place); anything after it reads them, by place (§7):
 
