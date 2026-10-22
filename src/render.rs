@@ -959,6 +959,7 @@ pub fn run(
                         .collect();
                     // Its own shaders: the pipeline is only remade if they changed.
                     if let Some(g) = gpu.as_mut() {
+                        g.set_lens_image(scene.lens_image.as_deref());
                         g.set_shaders(&scene.shaders);
                         g.set_blur(scene.blur.as_ref());
                     }
@@ -970,6 +971,7 @@ pub fn run(
                             crate::gpu::Target::Frames(_) => None,
                         })
                     });
+                    g.set_lens_image(scene.lens_image.as_deref());
                     g.set_shaders(&scene.shaders);
                     g.set_blur(scene.blur.as_ref());
                     letters.allow_atlas(g.atlas_most());
@@ -4088,7 +4090,7 @@ pub fn run(
             });
             // What the compositor blurs: the glass without a lens, and the one that has
             // it while there is still no background to show.
-            // A lens that bends a picture (`PLEAMAR_LENS_IMAGE`) still lets some of what is really behind through:
+            // A lens that bends a picture (`lens = image`) still lets some of what is really behind through:
             // that is what the compositor blurs.
             if !l.lens.as_ref().is_some_and(|x| x.ready && x.fixed.is_none()) {
                 without.extend(with_lens);

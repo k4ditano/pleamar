@@ -161,7 +161,7 @@ pub struct Lens {
     born: std::time::Instant,
     /// What the shapes shader reads: the sharp background and the frosted one.
     pub group: Option<wgpu::BindGroup>,
-    /// The background is a picture (`PLEAMAR_LENS_IMAGE`), not a capture: which
+    /// The background is a picture (`lens = image`), not a capture: which
     /// version of it is in, and whether it still has to be frosted.
     pub fixed: Option<u64>,
     fixed_frost: bool,
@@ -527,42 +527,46 @@ pub fn margin() -> f32 {
     crate::blur::reach() + 2.0
 }
 
-/// `PLEAMAR_LENS_IMAGE=file`: the glass bends this picture (the wallpaper, as
-/// big as the screen or smaller) instead of a capture of what is behind. The
-/// file is looked at again twice a second at most, and when it changes the
-/// glass is remade. Its version goes up each time it is read.
-pub fn fixed_source() -> Option<(u64, std::sync::Arc<image::RgbaImage>)> {
-    use std::sync::{Mutex, OnceLock};
-    struct Source {
-        path: std::path::PathBuf,
-        stamp: Option<(std::time::SystemTime, u64)>,
-        looked: std::time::Instant,
-        version: u64,
-        picture: Option<std::sync::Arc<image::RgbaImage>>,
-    }
-    static SOURCE: OnceLock<Option<Mutex<Source>>> = OnceLock::new();
-    let source = SOURCE.get_or_init(|| {
-        let path = std::path::PathBuf::from(std::env::var_os("PLEAMAR_LENS_IMAGE").filter(|p| !p.is_empty())?);
-        Some(Mutex::new(Source { path, stamp: None, looked: std::time::Instant::now() - std::time::Duration::from_secs(60), version: 0, picture: None }))
-    });
-    let mut s = source.as_ref()?.lock().ok()?;
-    if s.looked.elapsed() >= std::time::Duration::from_millis(500) {
-        s.looked = std::time::Instant::now();
-        let stamp = std::fs::metadata(&s.path).ok().and_then(|m| Some((m.modified().ok()?, m.len())));
-        if stamp.is_some() && stamp != s.stamp {
-            if let Ok(img) = image::open(&s.path) {
-                s.picture = Some(std::sync::Arc::new(img.to_rgba8()));
-                s.stamp = stamp;
-                s.version += 1;
-            }
-        }
-    }
-    let picture = s.picture.clone()?;
-    Some((s.version, picture))
+/// `lens = image "file"`: the glass bends this picture (the wallpaper, as big as
+/// the screen or smaller) instead of a capture of what is behind. The file is
+/// looked at again twice a second at most, and when it changes the glass is
+/// remade. Its version goes up each time it is read.
+pub struct FixedSource {
+    path: std::path::PathBuf,
+    stamp: Option<(std::time::SystemTime, u64)>,
+    looked: std::time::Instant,
+    version: u64,
+    picture: Option<std::sync::Arc<image::RgbaImage>>,
 }
 
-/// Whether `PLEAMAR_LENS_IMAGE` is set: the glass is then all bent picture
-/// (`LENS_ALPHA` 1), because nothing under it is known to cancel what really is.
-pub fn fixed_enabled() -> bool {
-    std::env::var_os("PLEAMAR_LENS_IMAGE").is_some_and(|p| !p.is_empty())
+impl FixedSource {
+    /// `first` is the version before the first read: a new source (another file) must not
+    /// repeat the numbers of the one before, or a lens would think it already has the picture.
+    pub fn new(path: std::path::PathBuf, first: u64) -> FixedSource {
+        FixedSource { path, stamp: None, looked: std::time::Instant::now() - std::time::Duration::from_secs(60), version: first, picture: None }
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    pub fn poll(&mut self) -> Option<(u64, std::sync::Arc<image::RgbaImage>)> {
+        if self.looked.elapsed() >= std::time::Duration::from_millis(500) {
+            self.looked = std::time::Instant::now();
+            let stamp = std::fs::metadata(&self.path).ok().and_then(|m| Some((m.modified().ok()?, m.len())));
+            if stamp.is_some() && stamp != self.stamp {
+                // A half-written file fails to decode: it is tried again next time.
+                if let Ok(img) = image::open(&self.path) {
+                    self.picture = Some(std::sync::Arc::new(img.to_rgba8()));
+                    self.stamp = stamp;
+                    self.version += 1;
+                }
+            }
+        }
+        Some((self.version, self.picture.clone()?))
+    }
 }

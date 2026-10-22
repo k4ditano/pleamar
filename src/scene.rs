@@ -1921,6 +1921,9 @@ pub struct Scene {
     /// and the numbers it is given (`values:`). Without one, the default.
     pub blur: Option<crate::blur::Plan>,
     pub blur_values: Vec<Expr>,
+    /// `lens = image "file"`: the picture the glass bends instead of a capture of what is
+    /// behind. It is not an attachment: the file changes with the wallpaper, and the scene must not reload with it.
+    pub lens_image: Option<std::path::PathBuf>,
     /// `keyboard: exclusive while open`: when it wants the keyboard.
     pub keyboard_while: Option<Expr>,
     pub permissions: Permissions,

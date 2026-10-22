@@ -1,0 +1,11 @@
+// expect: ok
+// The glass bends a picture instead of a capture of what is behind.
+scene LensImage {
+    surface { size: 400, 200 }
+    lens = image "~/.cache/lens-image-test.png"
+    body {
+        color: #1b2127
+        glass: 100%
+        box { at: 120, 100; size: 200, 140; corner: 20; glass: 100%; lens: true; refraction: 8 }
+    }
+}

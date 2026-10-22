@@ -6,7 +6,7 @@
 
 /// What a statement can start with (besides the name of a component).
 pub const STATEMENTS: &[&str] = &[
-    "surface", "permissions", "model", "service", "spring", "prop", "pose", "fact", "event", "text", "image", "figure", "font", "shader", "blur", "particles", "measure", "let", "zone",
+    "surface", "permissions", "model", "service", "spring", "prop", "pose", "fact", "event", "text", "image", "figure", "font", "shader", "blur", "lens", "particles", "measure", "let", "zone",
     "body", "ellipse", "box", "arc", "line", "path", "input", "clip", "group", "popup",
     "component", "children", "repeat", "for", "row", "column", "grid", "pages", "space", "between",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
@@ -77,6 +77,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("particles", "`particles { at: 200, 100; count: 300; life: 0.6s .. 1.4s; speed: 40 .. 160; direction: -90deg; spread: 60deg; gravity: 0, 120; size: 5, 0; colors: mint, #fff; emit: open }` — an emitter. Each particle is worked out on the card from its number and the time, so thousands cost what their pixels cost. `burst: event` lets them all out at once instead."),
     ("shader", "Declares one of the scene's own shaders (`shader aurora = file \"aurora.wgsl\"`, with `fn shade(s: Shader) -> vec4<f32>`) or paints a box with it (`shader aurora { at: 360, 60; size: 400, 120; values: glow; colors: mint }`)."),
     ("blur", "The frosting behind every glass of the scene, as passes of its own: `blur = file \"blur.wgsl\" { passes: down 0.5 repeat 4, up 2 repeat 3, grade 1; values: 1.5, 0.02; reach: 34 }`, each pass a `fn down(s: Blur) -> vec4<f32>` reading `prev`, `input` and `kept`."),
+    ("lens", "`lens = image \"~/.cache/wallpaper.png\"` — the glass of the scene bends this picture (the wallpaper, any size; looked at again when the file changes) instead of a capture of what is behind: no screencopy, but windows never show through the glass."),
     ("measure", "`measure label` — creates `label.width` and `label.height`, filled by the text that carries `measure: label`."),
     ("let", "`let panel.x = orb.x + 62` — a name for an expression, or for a colour. It has to come before whoever uses it."),
     ("zone", "`zone box whole { at: …; size: … }` — a shape that is not painted: it only catches the mouse."),
