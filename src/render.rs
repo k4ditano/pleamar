@@ -4691,7 +4691,18 @@ pub fn run(
                     let s = main.px.0 as f32 / main.size.0 as f32;
                     let g_box = if w.geometry[2] > 0 && w.geometry[3] > 0 { w.geometry } else { [0, 0, main.size.0 as i32, main.size.1 as i32] };
                     let size = (((g_box[2] as f32) * s).round() as u32, ((g_box[3] as f32) * s).round() as u32);
-                    let pieces: Vec<(u32, (i32, i32), (u32, u32), bool)> = w.pieces.iter().map(|p| (p.layer, (((p.at.0 - g_box[0]) as f32 * s).round() as i32, ((p.at.1 - g_box[1]) as f32 * s).round() as i32), p.px, p.opaque)).collect();
+                    // Each piece the part of its pixels it shows (`src`), stretched to
+                    // its size at this density: a piece drawn at another scale than
+                    // the main surface (a browser's page) fills its place.
+                    let pieces: Vec<(u32, (i32, i32), [u32; 4], (u32, u32), bool)> = w
+                        .pieces
+                        .iter()
+                        .map(|p| {
+                            let src = [p.src[0].max(0.0) as u32, p.src[1].max(0.0) as u32, p.src[2].round().max(0.0) as u32, p.src[3].round().max(0.0) as u32];
+                            let to = ((p.size.0 as f32 * s).round() as u32, (p.size.1 as f32 * s).round() as u32);
+                            (p.layer, (((p.at.0 - g_box[0]) as f32 * s).round() as i32, ((p.at.1 - g_box[1]) as f32 * s).round() as i32), src, to, p.opaque)
+                        })
+                        .collect();
                     if let Some(pixels) = g.read_window(&pieces, size) {
                         // Each one watching it gets it; whoever stopped listening, out.
                         let pixels = std::sync::Arc::new(pixels);
