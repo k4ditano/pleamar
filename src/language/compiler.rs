@@ -49,6 +49,24 @@ impl Drop for Cur<'_> {
     }
 }
 
+/// Where a `while` condition ends in a property that can hold several of them
+/// (`rate: 60, 20 while a, 5 while b`): at the next comma outside any brackets,
+/// so that a comma inside a call —`while mix(a, b) > 0.5`— is not one.
+fn condition_end(tokens: &[Token], from: usize) -> usize {
+    let mut depth = 0i32;
+    for (k, t) in tokens.iter().enumerate().skip(from) {
+        if let TokenKind::Sym(x) = &t.kind {
+            match *x {
+                "(" | "[" | "{" => depth += 1,
+                ")" | "]" | "}" => depth -= 1,
+                "," if depth == 0 => return k,
+                _ => {}
+            }
+        }
+    }
+    tokens.len()
+}
+
 impl<'a> Cur<'a> {
     fn new(tokens: &'a [Token], line: usize, col: usize) -> Self {
         let end = tokens.last().map_or((line, col), |u| (u.line, u.col + 1));
@@ -279,8 +297,10 @@ struct Compiler<'a> {
     pending_levels: Vec<(usize, Level, &'a [Token], (usize, usize))>,
     /// `reserve: n while expr`: read at the end, like the levels.
     pending_reserves: Vec<(usize, &'a [Token], (usize, usize))>,
-    /// `rate: 60, 20 while …`: the surface, the lower rate and its condition.
-    pending_rates: Vec<(usize, u32, &'a [Token], (usize, usize))>,
+    /// `rate: 60, 20 while …`: the surface, which step it is, the lower rate and
+    /// its condition. The step is kept because a copy of the surface reads the same
+    /// value again, and a list must not grow twice over.
+    pending_rates: Vec<(usize, usize, u32, &'a [Token], (usize, usize))>,
     /// `anchor: corner`, with `corner` a fact: which surface, which name and where.
     pending_anchors: Vec<(usize, String, (usize, usize))>,
     /// The names of the files it is made of, to say where something is.
@@ -662,14 +682,20 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             Err(f) => o.errors.push(f),
         }
     }
-    for (which, low, tokens, (l, col)) in std::mem::take(&mut o.pending_rates) {
+    for (which, step, low, tokens, (l, col)) in std::mem::take(&mut o.pending_rates) {
         o.scopes.clear();
         let mut c = Cur::new(tokens, l, col);
         match o.expr(&mut c) {
             Ok(e) => {
                 let owner = o.e.surfaces[which].name.clone();
                 for s in o.e.surfaces.iter_mut().filter(|s| s.name == owner) {
-                    s.rate_while = Some((low, e.clone()));
+                    // By its step, so that a surface read twice —a copy per monitor— ends
+                    // up with the steps it was written with, and not with them doubled.
+                    if step < s.rate_while.len() {
+                        s.rate_while[step] = (low, e.clone());
+                    } else {
+                        s.rate_while.push((low, e.clone()));
+                    }
                 }
             }
             Err(f) => o.errors.push(f),
@@ -4638,18 +4664,29 @@ impl<'a> Compiler<'a> {
                 return Err(CompileError::at(n.line, n.col, "`rate` is how many frames a second at most, from 1 to 480; without it, the monitor's"));
             }
             s.max_fps = r as u32;
-            // `rate: 60, 20 while asleep`: fewer still while that holds.
-            if c.sym(",") {
+            // `rate: 60, 20 while asleep, 5 while away`: fewer still while that holds, and
+            // then fewer again, each one lower than the one before it. The first whose
+            // condition holds is the one that rules, so they go from the busiest down.
+            let mut prev = r;
+            let mut step = 0;
+            while c.sym(",") {
                 let low = c.num()?;
-                if !(1.0..=r).contains(&low) {
-                    return Err(CompileError::at(n.line, n.col, format!("the second `rate` is the lower one, for while something holds: from 1 to {r}")));
+                if !(1.0..=prev).contains(&low) {
+                    let which_one = if step == 0 { "the second `rate` is the lower one".to_string() } else { format!("`rate` number {} is lower still", step + 2) };
+                    return Err(CompileError::at(n.line, n.col, format!("{which_one}, for while something holds: from 1 to {prev}")));
                 }
                 c.expect_word("while")?;
-                self.pending_rates.push((which, low as u32, &c.tokens[c.i..], c.pos()));
-                c.i = c.tokens.len();
-            } else {
-                c.expect_end()?;
+                // The condition reaches to the next comma that is not inside brackets, so
+                // that `while mix(a, b) > 0.5` is one condition and not two.
+                let from = c.i;
+                let at = c.pos();
+                let to = condition_end(c.tokens, from);
+                self.pending_rates.push((which, step, low as u32, &c.tokens[from..to], at));
+                c.i = to;
+                prev = low;
+                step += 1;
             }
+            c.expect_end()?;
         }
         if let Some(c) = p.get_mut("screens") {
             s.screens = if c.word("all") {

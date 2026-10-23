@@ -156,9 +156,11 @@ pub struct Surface {
     /// that breathes does not need 165 frames per second, and painting them is what
     /// costs: with this, what it consumes is the same on any screen.
     pub max_fps: u32,
-    /// `rate: 60, 20 while asleep`: fewer frames still while that holds —a
-    /// character breathing in its sleep does not need sixty a second—.
-    pub rate_while: Option<(u32, Expr)>,
+    /// `rate: 60, 20 while asleep, 5 while away`: fewer frames still while that
+    /// holds —a character breathing in its sleep does not need sixty a second—,
+    /// and as many steps as the scene has paces. The first one that holds is the
+    /// one that rules, so they are kept in the order they were written.
+    pub rate_while: Vec<(u32, Expr)>,
     pub screens: Screens,
     pub keyboard: Keyboard,
     /// The keyboard is only requested while `Scene::keyboard_while` holds.
@@ -186,7 +188,7 @@ pub enum Keyboard {
 impl Default for Surface {
     fn default() -> Self {
         // Neutral: full width, at the top, on all monitors. Whatever the scene asks for wins.
-        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, app_id: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, rate_while: None, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true, hidden_from_captures: false, agent_hidden: false }
+        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, app_id: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, rate_while: Vec::new(), screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true, hidden_from_captures: false, agent_hidden: false }
     }
 }
 

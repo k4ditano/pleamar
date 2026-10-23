@@ -4221,10 +4221,15 @@ pub fn run(
                 crate::platform::relayer(k, wants);
             }
         }
-        rate_now = match &scene.surface().rate_while {
-            Some((low, when)) if when.is_true(Ctx { props: &props, facts: &facts, seen: None }) => *low,
-            _ => scene.surface().max_fps,
-        };
+        // The first lower rate whose condition holds, in the order they were
+        // written: `rate: 60, 20 while asleep, 5 while away` goes from the busiest
+        // down, so the one that rules is the first that is true.
+        rate_now = scene
+            .surface()
+            .rate_while
+            .iter()
+            .find(|(_, when)| when.is_true(Ctx { props: &props, facts: &facts, seen: None }))
+            .map_or(scene.surface().max_fps, |(low, _)| *low);
         // And the room it keeps, while something holds (`reserve: n while …`).
         if reserves_set.len() != scene.surfaces.len() {
             reserves_set = scene.surfaces.iter().map(|s| if s.reserve_while.is_some() { -1 } else { s.exclusive_zone }).collect();
