@@ -1,0 +1,6 @@
+// expect: error «`rate` number 3 is lower still»
+scene Breath {
+    surface { size: 200, 200; rate: 60, 20 while asleep, 40 while away }
+    fact asleep = false
+    fact away = false
+}

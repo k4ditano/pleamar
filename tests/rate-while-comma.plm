@@ -1,0 +1,8 @@
+// A condition with a comma of its own inside it: the step ends at the comma outside
+// the brackets, not at the one in `mix`.
+scene Breath {
+    surface { size: 200, 200; anchor: center; rate: 60, 20 while mix(dim, 1, asleep) > 0.5 }
+    fact asleep = false
+    fact dim = 0
+    ellipse { at: 100, 100; radius: 40; color: #7fd1b9 }
+}

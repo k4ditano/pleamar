@@ -1,0 +1,8 @@
+// A surface with more than one step: 60 a second, 20 asleep, 5 while nobody is there.
+// The first whose condition holds is the one that rules, so they go from the busiest down.
+scene Breath {
+    surface { size: 200, 200; anchor: center; rate: 60, 20 while asleep, 5 while away }
+    fact asleep = false
+    fact away = false
+    ellipse { at: 100, 100; radius: 40 + sin(time * 2) * 2; color: #7fd1b9 }
+}
