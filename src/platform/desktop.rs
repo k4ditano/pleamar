@@ -179,6 +179,7 @@ pub fn launch(command: &str) -> Result<(), String> {
         }
         launch.arg("xdg-terminal-exec");
     }
+    let command = &with_accessibility(command);
     let mut child = launch.args(["sh", "-c", command]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
     std::thread::spawn(move || {
         let _ = child.wait();
@@ -186,9 +187,76 @@ pub fn launch(command: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Launchers of Electron apps that are scripts: the program they start is found
+/// at run time, so the folder of the file named says nothing.
+const ELECTRON_SCRIPTS: &[&str] = &["discord"];
+
+/// Whether `program` (as an `Exec=` names it) is an Electron app: next to it,
+/// or next to where it links, are the files every one ships with.
+fn is_electron(program: &str) -> bool {
+    let path = std::path::Path::new(program);
+    let found = if program.contains('/') {
+        Some(path.to_path_buf())
+    } else {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).map(|d| d.join(program)).find(|p| p.is_file())
+    };
+    let Some(file) = found.and_then(|f| std::fs::canonicalize(f).ok()) else { return false };
+    if file.file_name().and_then(|n| n.to_str()).is_some_and(|n| ELECTRON_SCRIPTS.contains(&n)) {
+        return true;
+    }
+    let shipped = file.parent().is_some_and(|d| d.join("chrome_100_percent.pak").is_file() && d.join("libffmpeg.so").is_file());
+    // A script that starts the Electron the distribution packages.
+    let script = std::fs::read(&file).ok().filter(|t| t.starts_with(b"#!") && t.len() < 64 * 1024).is_some_and(|t| String::from_utf8_lossy(&t).contains("/usr/lib/electron"));
+    shipped || script
+}
+
+/// Electron builds the tree of a page only if told to (it does not look at
+/// the accessibility bus): with the bus on, the apps it recognises start with
+/// that said. What an `Exec=` writes after the program is kept.
+fn with_accessibility(command: &str) -> String {
+    const FLAG: &str = "--force-renderer-accessibility";
+    if std::env::var_os("AT_SPI_BUS_ADDRESS").is_none_or(|v| v.is_empty()) || command.contains(FLAG) {
+        return command.to_owned();
+    }
+    let (program, rest) = command.split_once(' ').unwrap_or((command, ""));
+    if program.is_empty() || program.contains(['\'', '"', '=', '$']) || !is_electron(program) {
+        return command.to_owned();
+    }
+    format!("{program} {FLAG} {rest}").trim_end().to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn electron_gets_its_flag_only_when_it_is_one() {
+        let dir = std::env::temp_dir().join(format!("pleamar-electron-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["chrome_100_percent.pak", "libffmpeg.so", "app"] {
+            std::fs::write(dir.join(f), "x").unwrap();
+        }
+        std::fs::write(dir.join("plain"), "x").unwrap();
+        let app = dir.join("app");
+        let plain = dir.join("plain");
+        // SAFETY: only this test touches the variable.
+        unsafe { std::env::set_var("AT_SPI_BUS_ADDRESS", "unix:path=/x") };
+        assert_eq!(with_accessibility(&format!("{} --url", app.display())), format!("{} --force-renderer-accessibility --url", app.display()));
+        assert_eq!(with_accessibility(&app.display().to_string()), format!("{} --force-renderer-accessibility", app.display()));
+        // Already said, or not Electron (a folder with another app's files has none).
+        assert_eq!(with_accessibility(&format!("{} --force-renderer-accessibility", app.display())), format!("{} --force-renderer-accessibility", app.display()));
+        std::fs::remove_file(dir.join("libffmpeg.so")).unwrap();
+        assert_eq!(with_accessibility(&format!("{} a", app.display())), format!("{} a", app.display()));
+        assert_eq!(with_accessibility(&plain.display().to_string()), plain.display().to_string());
+        // Off with the bus.
+        unsafe { std::env::remove_var("AT_SPI_BUS_ADDRESS") };
+        std::fs::write(dir.join("libffmpeg.so"), "x").unwrap();
+        assert_eq!(with_accessibility(&app.display().to_string()), app.display().to_string());
+        for f in ["chrome_100_percent.pak", "libffmpeg.so", "app", "plain"] {
+            std::fs::remove_file(dir.join(f)).unwrap();
+        }
+        std::fs::remove_dir(&dir).unwrap();
+    }
 
     const FIREFOX: &str = "[Desktop Entry]
 Name=Firefox
