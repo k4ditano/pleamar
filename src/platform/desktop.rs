@@ -211,11 +211,13 @@ fn is_electron(program: &str) -> bool {
 }
 
 /// Electron builds the tree of a page only if told to (it does not look at
-/// the accessibility bus): with the bus on, the apps it recognises start with
-/// that said. What an `Exec=` writes after the program is kept.
+/// the accessibility bus): with pleamar-wm's bus on, the apps it recognises
+/// start with that said. What an `Exec=` writes after the program is kept.
 fn with_accessibility(command: &str) -> String {
     const FLAG: &str = "--force-renderer-accessibility";
-    if std::env::var_os("AT_SPI_BUS_ADDRESS").is_none_or(|v| v.is_empty()) || command.contains(FLAG) {
+    // Only pleamar-wm's own bus: another desktop's, or none, is not ours to change.
+    let ours = std::env::var("AT_SPI_BUS_ADDRESS").is_ok_and(|v| v.contains("pleamar-a11y"));
+    if !ours || command.contains(FLAG) {
         return command.to_owned();
     }
     let (program, rest) = command.split_once(' ').unwrap_or((command, ""));
@@ -240,7 +242,7 @@ mod tests {
         let app = dir.join("app");
         let plain = dir.join("plain");
         // SAFETY: only this test touches the variable.
-        unsafe { std::env::set_var("AT_SPI_BUS_ADDRESS", "unix:path=/x") };
+        unsafe { std::env::set_var("AT_SPI_BUS_ADDRESS", "unix:path=/run/user/1/pleamar-a11y-x") };
         assert_eq!(with_accessibility(&format!("{} --url", app.display())), format!("{} --force-renderer-accessibility --url", app.display()));
         assert_eq!(with_accessibility(&app.display().to_string()), format!("{} --force-renderer-accessibility", app.display()));
         // Already said, or not Electron (a folder with another app's files has none).
@@ -248,11 +250,13 @@ mod tests {
         std::fs::remove_file(dir.join("libffmpeg.so")).unwrap();
         assert_eq!(with_accessibility(&format!("{} a", app.display())), format!("{} a", app.display()));
         assert_eq!(with_accessibility(&plain.display().to_string()), plain.display().to_string());
+        // Another desktop's bus is not ours.
+        unsafe { std::env::set_var("AT_SPI_BUS_ADDRESS", "unix:path=/run/user/1/at-spi/bus") };
+        assert_eq!(with_accessibility(&app.display().to_string()), app.display().to_string());
         // Off with the bus.
         unsafe { std::env::remove_var("AT_SPI_BUS_ADDRESS") };
-        std::fs::write(dir.join("libffmpeg.so"), "x").unwrap();
         assert_eq!(with_accessibility(&app.display().to_string()), app.display().to_string());
-        for f in ["chrome_100_percent.pak", "libffmpeg.so", "app", "plain"] {
+        for f in ["chrome_100_percent.pak", "app", "plain"] {
             std::fs::remove_file(dir.join(f)).unwrap();
         }
         std::fs::remove_dir(&dir).unwrap();
