@@ -706,12 +706,33 @@ pub fn send(scene: Option<&str>, commands: &[String]) -> Result<(), String> {
     }
     // Everything has been said: if it was a question, now comes whatever they answer.
     let _ = s.shutdown(std::net::Shutdown::Write);
-    // A `wait` waits up to a minute; a `watch` talks for as long as it was asked.
-    let _ = s.set_read_timeout(if commands.iter().any(|c| c.starts_with("watch")) { None } else { Some(std::time::Duration::from_secs(65)) });
+    // A `wait` waits up to a minute; a `watch` talks for as long as it was asked,
+    // and every second with nothing said, it looks whether anyone still reads
+    // what it prints (`… | head -1` has gone): if not, it goes too, and the scene
+    // sees it and stops following.
+    let watching = commands.iter().any(|c| c.starts_with("watch"));
+    let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(if watching { 1 } else { 65 })));
     // Line by line, as it comes: a `watch` is read while it happens.
-    for line in std::io::BufRead::lines(std::io::BufReader::new(s)).map_while(Result::ok) {
-        println!("{line}");
-        let _ = std::io::stdout().flush();
+    let (mut from, mut line, mut to) = (std::io::BufReader::new(s), Vec::new(), std::io::stdout());
+    loop {
+        match std::io::BufRead::read_until(&mut from, b'\n', &mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                if !line.ends_with(b"\n") {
+                    line.push(b'\n');
+                }
+                if to.write_all(&line).and_then(|_| to.flush()).is_err() {
+                    break;
+                }
+                line.clear();
+            }
+            Err(e) if watching && matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => {
+                if !still_there(&to) {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
     }
     Ok(())
 }
