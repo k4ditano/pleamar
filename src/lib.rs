@@ -114,7 +114,12 @@ fn args(given: Vec<String>) -> Args {
             "--say" => {
                 // Several commands after the scene go down one connection, one line each, and
                 // the scene runs them in that order: a popup's texts are in place before its emit.
-                let (a1, rest) = (value(), it.by_ref().collect::<Vec<String>>());
+                let (a1, mut rest) = (value(), it.by_ref().collect::<Vec<String>>());
+                // But `--say wm watch 0 lay. free.` is one command, unquoted: a `watch`
+                // keeps the connection, so nothing could come after it anyway.
+                if rest.len() > 1 && rest[0] == "watch" {
+                    rest = vec![rest.join(" ")];
+                }
                 let r = match rest.is_empty() {
                     false => platform::send(Some(&a1), &rest),
                     true => platform::send(None, std::slice::from_ref(&a1)),
@@ -385,6 +390,30 @@ pub fn run_with(options: Vec<String>) {
                 let (question, answer) = std::sync::mpsc::channel();
                 let _ = tx.send(ToRender::Wait(after.to_owned(), question));
                 return Some(answer.recv_timeout(std::time::Duration::from_secs(62)).unwrap_or_else(|_| "? the render does not answer\n".into()));
+            }
+            // `watch 0 lay. free.`: the facts and texts whose names start so, a line
+            // (`fact lay.0 3`) each time one changes, for a program; `0`, until it
+            // stops reading. Nothing is written when nothing changes, so every
+            // second it is asked whether anyone is still there.
+            if let Some(asked) = (what == "watch").then(|| crate::agent::follow_asked(after)).flatten() {
+                let (secs, now, starts) = match asked {
+                    Ok(a) => a,
+                    Err(m) => return Some(format!("? {m}")),
+                };
+                let (lines, heard) = std::sync::mpsc::sync_channel(crate::agent::FOLLOW_ROOM);
+                let reader = std::sync::Arc::new(());
+                let until = secs.map(|s| std::time::Instant::now() + s);
+                let _ = tx.send(ToRender::Follow(Box::new(crate::agent::Follow::new(starts, until, lines, reader.clone(), now))));
+                loop {
+                    match heard.recv_timeout(std::time::Duration::from_secs(1)) {
+                        Ok(l) if out(&l) => {}
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) if out("") => {}
+                        // Whoever read went away, or the render let it go: its time was up.
+                        _ => break,
+                    }
+                }
+                drop(reader);
+                return None;
             }
             // `watch [10s]`: a line for each thing that happens, for that long (ten seconds if unsaid).
             if what == "watch" {

@@ -656,6 +656,168 @@ pub fn what_happened(scene: &Scene, b: &Before, c: Ctx, texts: &[String], open: 
     out
 }
 
+// ── following ───────────────────────────────────────────────────
+
+/// How many lines may wait for a reader that is slow: past that, what changes
+/// waits in the scene and is said later, as it is then (see `Follow::tell`).
+pub const FOLLOW_ROOM: usize = 1024;
+
+/// Someone following some facts and texts by how their names start —`watch 0
+/// lay. free.`, a shell following its window manager—: a line `fact NAME VALUE`
+/// or `text NAME VALUE` each time one is worth something else, for a program
+/// to read, not a person. Only the names asked for are looked at, and only
+/// while someone reads.
+pub struct Follow {
+    starts: Vec<String>,
+    until: Option<std::time::Instant>,
+    lines: std::sync::mpsc::SyncSender<String>,
+    /// Held as well by whoever passes the lines on: when this is the only
+    /// one left, nobody reads any more.
+    reader: std::sync::Arc<()>,
+    /// What they are worth is said first (`--now`), or only what changes.
+    now: bool,
+    looked: bool,
+    /// Followed: where it is in the scene, its name, and what was last said of it.
+    facts: Vec<(usize, &'static str, Option<f32>)>,
+    texts: Vec<(usize, &'static str, Option<String>)>,
+}
+
+/// What `watch` was asked, if it was asked to follow names: for how long
+/// (`None`, until the reader goes), whether to say first what they are worth,
+/// and how the names start. `None`: the `watch` for a person, as ever.
+pub fn follow_asked(after: &str) -> Option<Result<(Option<std::time::Duration>, bool, Vec<String>), String>> {
+    let mut words = after.split_whitespace();
+    let first = words.next().unwrap_or("");
+    let rest: Vec<&str> = words.collect();
+    let secs = first.trim_end_matches('s').parse::<f32>().ok().filter(|s| s.is_finite() && *s >= 0.0);
+    if rest.is_empty() && secs != Some(0.0) {
+        return None;
+    }
+    let Some(secs) = secs else { return Some(Err(format!("'{first}' is not a number of seconds: watch 0 lay. free."))) };
+    let now = rest.contains(&"--now");
+    let starts: Vec<String> = rest.iter().filter(|w| **w != "--now").map(|w| (*w).to_owned()).collect();
+    if starts.is_empty() {
+        return Some(Err("say how the names start: watch 0 lay. free.".into()));
+    }
+    Some(Ok(((secs > 0.0).then(|| std::time::Duration::from_secs_f32(secs)), now, starts)))
+}
+
+impl Follow {
+    pub fn new(starts: Vec<String>, until: Option<std::time::Instant>, lines: std::sync::mpsc::SyncSender<String>, reader: std::sync::Arc<()>, now: bool) -> Follow {
+        Follow { starts, until, lines, reader, now, looked: false, facts: Vec::new(), texts: Vec::new() }
+    }
+
+    pub fn until(&self) -> Option<std::time::Instant> {
+        self.until
+    }
+
+    /// The scene was loaded again: its names are looked for again, and what
+    /// was already said of those still there is not said twice.
+    pub fn lost(&mut self) {
+        self.looked = false;
+    }
+
+    fn find(&mut self, scene: &Scene, facts: &[f32], texts: &[String]) {
+        let first = self.facts.is_empty() && self.texts.is_empty();
+        let wanted = |n: &str| self.starts.iter().any(|s| n.starts_with(s.as_str()));
+        let found_facts: Vec<_> = scene
+            .facts
+            .iter()
+            .enumerate()
+            .filter(|(_, (n, _))| wanted(n))
+            .map(|(k, (n, _))| {
+                let told = match self.facts.iter().find(|f| f.1 == *n) {
+                    Some(f) => f.2,
+                    // Only what changes from now on, unless what it is worth was asked for.
+                    None if first && !self.now => facts.get(k).copied(),
+                    None => None,
+                };
+                (k, *n, told)
+            })
+            .collect();
+        let found_texts: Vec<_> = scene
+            .texts
+            .iter()
+            .enumerate()
+            .filter(|(_, (n, _))| wanted(n))
+            .map(|(k, (n, _))| {
+                let told = match self.texts.iter().find(|t| t.1 == *n) {
+                    Some(t) => t.2.clone(),
+                    None if first && !self.now => texts.get(k).cloned(),
+                    None => None,
+                };
+                (k, *n, told)
+            })
+            .collect();
+        // A start that nothing has is said once, as a note: it may be a typo.
+        if first {
+            for s in &self.starts {
+                if !found_facts.iter().any(|f| f.1.starts_with(s.as_str())) && !found_texts.iter().any(|t| t.1.starts_with(s.as_str())) {
+                    let _ = self.lines.try_send(format!("? no fact or text starts with '{s}'"));
+                }
+            }
+        }
+        (self.facts, self.texts, self.looked) = (found_facts, found_texts, true);
+    }
+
+    /// Says what changed since the last time. `false` when it is over: nobody
+    /// reads any more, or its time is up. A reader that does not keep up
+    /// fills its room; then the rest waits here and is said when there is
+    /// room, as it is by then: what it was worth in between is lost, never
+    /// where it ended.
+    pub fn tell(&mut self, scene: &Scene, facts: &[f32], texts: &[String], now: std::time::Instant) -> bool {
+        use std::sync::mpsc::TrySendError;
+        if std::sync::Arc::strong_count(&self.reader) == 1 || self.until.is_some_and(|u| now >= u) {
+            return false;
+        }
+        if !self.looked {
+            self.find(scene, facts, texts);
+        }
+        for f in &mut self.facts {
+            let is = facts.get(f.0).copied().unwrap_or(0.0);
+            if f.2.is_some_and(|was| was.to_bits() == is.to_bits()) {
+                continue;
+            }
+            // As `--say … fact` takes it: `3`, `true`, an enum's name.
+            let shown = match scene.types.iter().find(|(t, _)| t == f.1) {
+                Some((_, t)) => t.to_text(is),
+                None => is.to_string(),
+            };
+            match self.lines.try_send(format!("fact {} {shown}", f.1)) {
+                Ok(()) => f.2 = Some(is),
+                Err(TrySendError::Full(_)) => return true,
+                Err(TrySendError::Disconnected(_)) => return false,
+            }
+        }
+        if self.texts.iter().any(|t| t.2.as_deref() != Some(texts.get(t.0).map_or("", String::as_str))) {
+            let secrets = crate::scene::SECRETS.lock().map(|s| s.clone()).unwrap_or_default();
+            for t in &mut self.texts {
+                let is = texts.get(t.0).map_or("", String::as_str);
+                if t.2.as_deref() == Some(is) {
+                    continue;
+                }
+                // What is not told to an agent is not told here either: only that it changed.
+                let kept = secrets.contains(&t.1) || scene.zones.iter().any(|z| z.id == t.1 && z.reach != Reach::Any);
+                let line = if kept { format!("hidden {}", t.1) } else { format!("text {} {}", t.1, one_line(is)) };
+                match self.lines.try_send(line) {
+                    Ok(()) => t.2 = Some(is.to_owned()),
+                    Err(TrySendError::Full(_)) => return true,
+                    Err(TrySendError::Disconnected(_)) => return false,
+                }
+            }
+        }
+        true
+    }
+}
+
+/// A text on one line: `\` as `\\`, a line break as `\n`, a carriage return as `\r`.
+fn one_line(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.contains(['\\', '\n', '\r']) {
+        return s.into();
+    }
+    s.replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r").into()
+}
+
 // ── waiting ─────────────────────────────────────────────────────
 
 /// What `wait` waits for: `saving == false and rows.count > 0`,
@@ -1210,5 +1372,148 @@ mod tests {
         let loose: Vec<&str> = parts[0].nodes.iter().filter(|n| n.role == Role::Text).map(|n| n.label.as_str()).collect();
         assert_eq!(loose, ["Ready"]);
         assert!(to_text(&parts).contains("text            «Ready»"), "{}", to_text(&parts));
+    }
+
+    /// `tests/follow.plm` as it starts: the scene, its facts and its texts.
+    fn followed() -> (Scene, Vec<f32>, Vec<String>) {
+        let (scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/follow.plm")).unwrap();
+        let facts = scene.facts.iter().map(|f| f.1).collect();
+        let texts = scene.texts.iter().map(|t| t.1.clone()).collect();
+        (scene, facts, texts)
+    }
+
+    fn set(scene: &Scene, facts: &mut [f32], name: &str, v: f32) {
+        facts[scene.facts.iter().position(|f| f.0 == name).unwrap()] = v;
+    }
+
+    /// Who follows, the token its reader holds, and what reaches the reader.
+    fn following(starts: &[&str], now: bool, room: usize) -> (Follow, std::sync::Arc<()>, std::sync::mpsc::Receiver<String>) {
+        let (lines, heard) = std::sync::mpsc::sync_channel(room);
+        let reader = std::sync::Arc::new(());
+        (Follow::new(starts.iter().map(|s| (*s).to_owned()).collect(), None, lines, reader.clone(), now), reader, heard)
+    }
+
+    fn said(heard: &std::sync::mpsc::Receiver<String>) -> Vec<String> {
+        heard.try_iter().collect()
+    }
+
+    #[test]
+    fn following_says_one_line_for_what_changes_and_nothing_else() {
+        let (scene, mut facts, texts) = followed();
+        let (mut f, _reader, heard) = following(&["lay."], false, FOLLOW_ROOM);
+        let at = std::time::Instant::now();
+        // What it is worth when it starts is not a change.
+        assert!(f.tell(&scene, &facts, &texts, at));
+        assert_eq!(said(&heard), Vec::<String>::new());
+        // A layout and the mouse change in the same frame: only the layout is followed.
+        set(&scene, &mut facts, "lay.0", 3.0);
+        set(&scene, &mut facts, "mouse.x", 512.0);
+        set(&scene, &mut facts, "free.0", 1.0);
+        assert!(f.tell(&scene, &facts, &texts, at));
+        assert_eq!(said(&heard), ["fact lay.0 3"]);
+        // And it is said once: the next frame, if nothing changed, says nothing.
+        assert!(f.tell(&scene, &facts, &texts, at));
+        assert_eq!(said(&heard), Vec::<String>::new());
+    }
+
+    #[test]
+    fn following_says_values_as_fact_takes_them() {
+        let (scene, mut facts, mut texts) = followed();
+        let (mut f, _reader, heard) = following(&["remote.", "mode", "agt.", "pin", "lay.1"], false, FOLLOW_ROOM);
+        let at = std::time::Instant::now();
+        assert!(f.tell(&scene, &facts, &texts, at));
+        set(&scene, &mut facts, "remote.on", 1.0);
+        set(&scene, &mut facts, "mode", 1.0);
+        set(&scene, &mut facts, "lay.1", 0.25);
+        texts[scene.texts.iter().position(|t| t.0 == "agt.0").unwrap()] = "claude · ~/x\nwaits \\ asks".into();
+        texts[scene.texts.iter().position(|t| t.0 == "pin").unwrap()] = "1234".into();
+        assert!(f.tell(&scene, &facts, &texts, at));
+        // A bool and an enum by their names, a number as it is, a text on one
+        // line, and of a text kept from agents only that it changed.
+        assert_eq!(said(&heard), ["fact lay.1 0.25", "fact remote.on true", "fact mode loud", "text agt.0 claude · ~/x\\nwaits \\\\ asks", "hidden pin"]);
+    }
+
+    #[test]
+    fn following_now_says_first_what_they_are_worth() {
+        let (scene, facts, texts) = followed();
+        let (mut f, _reader, heard) = following(&["lay.", "nope."], true, FOLLOW_ROOM);
+        assert!(f.tell(&scene, &facts, &texts, std::time::Instant::now()));
+        assert_eq!(said(&heard), ["? no fact or text starts with 'nope.'", "fact lay.0 0", "fact lay.1 0", "fact lay.2 0", "fact lay.3 0"]);
+    }
+
+    #[test]
+    fn following_ends_when_nobody_reads_or_its_time_is_up() {
+        let (scene, mut facts, texts) = followed();
+        let at = std::time::Instant::now();
+        // The reader let go of its token: over, even with nothing to say.
+        let (mut f, reader, _heard) = following(&["lay."], false, FOLLOW_ROOM);
+        assert!(f.tell(&scene, &facts, &texts, at));
+        drop(reader);
+        assert!(!f.tell(&scene, &facts, &texts, at));
+        // Its lines are not taken any more: over at the next change.
+        let (mut f, _reader, heard) = following(&["lay."], false, FOLLOW_ROOM);
+        assert!(f.tell(&scene, &facts, &texts, at));
+        drop(heard);
+        set(&scene, &mut facts, "lay.0", 2.0);
+        assert!(!f.tell(&scene, &facts, &texts, at));
+        // For a while: over when it is.
+        let (lines, _heard) = std::sync::mpsc::sync_channel(4);
+        let reader = std::sync::Arc::new(());
+        let mut f = Follow::new(vec!["lay.".into()], Some(at + std::time::Duration::from_secs(5)), lines, reader.clone(), false);
+        assert!(f.tell(&scene, &facts, &texts, at));
+        assert!(!f.tell(&scene, &facts, &texts, at + std::time::Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn a_slow_reader_gets_where_things_ended() {
+        let (scene, mut facts, texts) = followed();
+        let at = std::time::Instant::now();
+        let (mut f, _reader, heard) = following(&["lay."], false, 1);
+        assert!(f.tell(&scene, &facts, &texts, at));
+        set(&scene, &mut facts, "lay.0", 1.0);
+        set(&scene, &mut facts, "lay.1", 2.0);
+        // Room for one line: the other waits in the scene, not in memory.
+        assert!(f.tell(&scene, &facts, &texts, at));
+        set(&scene, &mut facts, "lay.0", 5.0);
+        assert!(f.tell(&scene, &facts, &texts, at));
+        assert_eq!(said(&heard), ["fact lay.0 1"]);
+        assert!(f.tell(&scene, &facts, &texts, at));
+        assert_eq!(said(&heard), ["fact lay.0 5"]);
+        assert!(f.tell(&scene, &facts, &texts, at));
+        assert_eq!(said(&heard), ["fact lay.1 2"]);
+        assert!(f.tell(&scene, &facts, &texts, at));
+        assert_eq!(said(&heard), Vec::<String>::new());
+    }
+
+    #[test]
+    fn following_survives_the_scene_loaded_again() {
+        let (scene, mut facts, texts) = followed();
+        let at = std::time::Instant::now();
+        let (mut f, _reader, heard) = following(&["lay."], false, FOLLOW_ROOM);
+        set(&scene, &mut facts, "lay.2", 4.0);
+        assert!(f.tell(&scene, &facts, &texts, at));
+        assert_eq!(said(&heard), Vec::<String>::new());
+        // Loaded again, the same names: what was said is not said twice.
+        f.lost();
+        assert!(f.tell(&scene, &facts, &texts, at));
+        assert_eq!(said(&heard), Vec::<String>::new());
+        set(&scene, &mut facts, "lay.2", 1.0);
+        assert!(f.tell(&scene, &facts, &texts, at));
+        assert_eq!(said(&heard), ["fact lay.2 1"]);
+    }
+
+    #[test]
+    fn what_watch_is_asked() {
+        use std::time::Duration;
+        // For a person, as ever.
+        assert!(follow_asked("").is_none());
+        assert!(follow_asked("3").is_none());
+        assert!(follow_asked("30s").is_none());
+        // For a program: names, and `0` for as long as it reads.
+        assert_eq!(follow_asked("0 lay. free.").unwrap().unwrap(), (None, false, vec!["lay.".to_owned(), "free.".to_owned()]));
+        assert_eq!(follow_asked("30s --now lay.").unwrap().unwrap(), (Some(Duration::from_secs(30)), true, vec!["lay.".to_owned()]));
+        assert!(follow_asked("0").unwrap().unwrap_err().contains("watch 0 lay."));
+        assert!(follow_asked("0 --now").unwrap().is_err());
+        assert!(follow_asked("soon lay.").unwrap().unwrap_err().contains("'soon'"));
     }
 }

@@ -2374,6 +2374,9 @@ pub enum ToRender {
     Wait(String, std::sync::mpsc::Sender<String>),
     /// `watch`: a line for each thing that happens, until then.
     Watch(std::sync::mpsc::Sender<String>, std::time::Instant),
+    /// `watch 0 lay. free.`: the facts and texts whose names start so, a line
+    /// for a program each time one changes.
+    Follow(Box<crate::agent::Follow>),
     /// `pleamar --report`: measure every frame from now (`None`), or answer
     /// with what was measured and stop (`Some`).
     Probe(Option<std::sync::mpsc::Sender<String>>),

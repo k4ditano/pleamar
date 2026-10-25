@@ -1,0 +1,22 @@
+// What `watch 0 lay.` follows: facts and texts by how their names start, as a window manager has them.
+scene Followed {
+    surface { size: 300, 200; kind: window; title: "Followed" }
+
+    repeat k in 0..4 {
+        fact lay.$k = 0
+        fact free.$k = 0
+    }
+    fact mouse.x = 0
+    fact remote.on = false
+    fact mode: quiet | loud = quiet
+    text agt.0 = ""
+    text pin = ""
+
+    input pin { at: 10, 10; width: 100; secret: true; agent: no }
+    box layout { from: 10, 60; size: 80, 30; label: "Layout {lay.0}"; value: mode }
+    on press layout { lay.0 = 3 }
+    box shared { from: 100, 60; size: 80, 30; label: agt.0; checked: remote.on; role: toggle }
+    on press shared { toggle remote.on }
+    box pointer { from: 190, 60; size: 80, 30; label: "x {mouse.x}"; selected: free.0 > 0 }
+    on press pointer { mouse.x = 1 }
+}

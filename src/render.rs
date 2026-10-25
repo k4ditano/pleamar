@@ -475,6 +475,8 @@ pub fn run(
     // Who waits for a condition (`wait`), and who watches what happens (`watch`).
     let mut waits: Vec<(crate::agent::Cond, Instant, Instant, std::sync::mpsc::Sender<String>)> = Vec::new();
     let mut watchers: Vec<Watcher> = Vec::new();
+    // And who follows some names, for a program (`watch 0 lay.`).
+    let mut tails: Vec<crate::agent::Follow> = Vec::new();
     // The zones that have already been said to have no words: once each.
     let mut unnamed_said: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
     let mut changed: Vec<[f32; 4]> = Vec::new();
@@ -872,6 +874,8 @@ pub fn run(
                     // What was true and what the texts said also survives: on a
                     // hot reload, the scene carries on where it was.
                     let hot = !scene.props.is_empty();
+                    // Whoever follows names finds them again in the new one.
+                    tails.iter_mut().for_each(crate::agent::Follow::lost);
                     facts = fresh.facts.iter().map(|(n, initial)| scene.facts.iter().position(|h| h.0 == *n).map_or(*initial, |k| facts[k])).collect();
                     inside = vec![false; fresh.zones.len()];
                     follows = Follows::default();
@@ -1250,6 +1254,7 @@ pub fn run(
                     let _ = lines.send(format!("watching for {:.0} s", until.saturating_duration_since(Instant::now()).as_secs_f32()));
                     watchers.push(Watcher { lines, until, start: Instant::now(), before: crate::agent::before(&scene, c, &texts, open_surfaces(&scene, &sheets)) });
                 }
+                ToRender::Follow(f) => tails.push(*f),
                 ToRender::Describe(json, reply_to) => {
                     describing.push((json, reply_to));
                     draw.collect_texts = true;
@@ -3899,6 +3904,16 @@ pub fn run(
                 w.before = crate::agent::before(&scene, c, &texts, open.clone());
                 let at = (now - w.start).as_secs_f32();
                 heard.lines().all(|l| w.lines.send(format!("+{at:.2}s{l}")).is_ok())
+            });
+        }
+        // And who follows names: a line for each one worth something else. With
+        // nobody following, this is all it costs: a look at an empty list.
+        if !tails.is_empty() {
+            tails.retain_mut(|f| {
+                if let Some(u) = f.until() {
+                    appointments.push(u);
+                }
+                f.tell(&scene, &facts, &texts, now)
             });
         }
         // Particles carry themselves: while one is alive, the scene does not rest.

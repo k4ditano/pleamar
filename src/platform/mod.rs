@@ -480,7 +480,8 @@ pub fn apart(command: &mut std::process::Command) {
 
 /// What answers each line said to the scene. It returns the answer, if any;
 /// one that goes on talking (`watch`) writes its lines with `out`, which says
-/// `false` once whoever asked has gone.
+/// `false` once whoever asked has gone. An empty line is not written: it only
+/// asks whether they are still there, for one with nothing to say for a while.
 pub type Commands = std::sync::Arc<dyn Fn(String, &mut dyn FnMut(&str) -> bool) -> Option<String> + Send + Sync>;
 
 /// Commands from outside: a global compositor shortcut, a script, another
@@ -519,7 +520,10 @@ pub fn listen_for_commands(scene: &str, receive: Commands) {
                 let receive = receive.clone();
                 let _ = std::thread::Builder::new().name("command".into()).spawn(move || {
                     for line in BufReader::new(reader).lines().map_while(Result::ok) {
-                        let mut out = |l: &str| writeln!(c, "{l}").and_then(|_| c.flush()).is_ok();
+                        let mut out = |l: &str| match l.is_empty() {
+                            true => still_there(&c),
+                            false => writeln!(c, "{l}").and_then(|_| c.flush()).is_ok(),
+                        };
                         // A question (`get open`) is answered back the way it came.
                         if let Some(answer) = receive(line, &mut out) {
                             let _ = writeln!(c, "{}", answer.trim_end_matches('\n'));
@@ -529,6 +533,17 @@ pub fn listen_for_commands(scene: &str, receive: Commands) {
             }
         })
         .ok();
+}
+
+/// Whether the other end of a connection, or of a pipe, is still there,
+/// without writing to it: one that has closed it says so at once (`POLLHUP`,
+/// `POLLERR`). One that only said it has nothing more to say is still there.
+#[cfg(unix)]
+fn still_there(c: &impl std::os::fd::AsRawFd) -> bool {
+    let mut p = libc::pollfd { fd: c.as_raw_fd(), events: 0, revents: 0 };
+    // SAFETY: one descriptor of ours, looked at without waiting.
+    let r = unsafe { libc::poll(&mut p, 1, 0) };
+    r <= 0 || p.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) == 0
 }
 
 /// Where this scene listens, once it does, and the display it is shown on,
