@@ -326,6 +326,11 @@ pub fn run_with(options: Vec<String>) {
     );
     let _ = to_render.send(ToRender::Scene(scene));
     crate::platform::watch_cursor(to_render.clone());
+    // Reduced motion and the colour scheme, as the system says them, unless
+    // `--reduced-motion` already decided the first (PLEAMAR_NO_PORTAL: neither).
+    if std::env::var_os("PLEAMAR_NO_PORTAL").is_none() {
+        crate::platform::watch_appearance(to_render.clone());
+    }
     if std::path::Path::new(&a.scene).is_file() {
         scenes::from_file::watch(a.scene.clone(), to_render.clone(), to_logic.clone());
     }
