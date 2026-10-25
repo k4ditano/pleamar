@@ -3417,8 +3417,16 @@ pub fn run(
             }
         }
 
+        // With reduced motion every spring is already where it goes: what a
+        // `follow`, a hover or a `look` points it at too, not only what a rule
+        // animates (those went on chasing with their springs, against what the
+        // reference says).
         for a in &mut props {
-            a.step(dt);
+            if reduced_motion {
+                a.settle();
+            } else {
+                a.step(dt);
+            }
         }
 
         // The gesture leads the pose's properties by the hand; when it ends

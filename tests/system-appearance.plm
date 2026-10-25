@@ -1,0 +1,9 @@
+// What the system says about motion and colour: two facts every scene has, without declaring them.
+scene Appearance {
+    surface { size: 300, 120; kind: window; title: "Appearance" }
+    spring boing = 140, 5
+    prop x = 40 ~boing
+    follow x = if(motion.reduced > 0.5, 40, 260)
+    box { from: 0, 0; size: 300, 120; color: if(color.scheme == 2, #efe6dd, #1c1714) }
+    ellipse { at: x, 60; radius: 20; color: #e08a5a }
+}
