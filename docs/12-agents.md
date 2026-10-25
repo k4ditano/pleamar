@@ -126,6 +126,31 @@ watching for 3 s
 done watching
 ```
 
+### Following names, for a program: `watch 0 lay. free.`
+
+What a person reads is no good to a program, and a scene that changes its mouse fact at every move would bury what it wants. Given **how the names start**, `watch` follows only those facts and texts, and writes one line each time one is worth something else:
+
+```
+$ pleamar --say wm watch 0 lay. free. agt. remote.
+fact lay.0 3
+fact free.1 1
+text agt.5 claude · ~/x
+fact remote.on true
+```
+
+- **`watch SECONDS START…`**: `0` is for as long as someone reads; any other number, that long (`30`, `30s`). Unquoted after the scene it is still one command (`--say wm watch 0 lay.`), and quoted as ever (`--say wm "watch 0 lay."`). `watch 0` with no start is an error; `watch` and `watch 30` alone are the `watch` for a person, as before.
+- **The lines**, one per change, nothing else —no heading, no time, no last line—:
+  - `fact NAME VALUE`: the value as `--say … fact` takes it back: `3`, `0.25`, `true`, an enum's name.
+  - `text NAME VALUE`: everything after the second space, on one line: `\` is written `\\`, a line break `\n`, a carriage return `\r`.
+  - `hidden NAME`: a text kept from agents (`secret: true`, `agent: no`) changed; what it says is not given.
+  - `? …`: a note, never a value: `? no fact or text starts with 'X'`, once at the start, for a start that matches nothing (it may be a typo); or, alone, a `watch` asked wrong.
+- **What they are worth to begin with** is not a change: only what changes from then on is written. With **`--now`** among the starts (`watch 0 --now lay.`), first what each one is worth, and then the changes: a program that needs both does not ask with `get` and miss what changed in between.
+- **Each change once, in the frame it happens.** Several in the same frame, one line each, in the scene's order. A value that goes and comes back within a frame is not one.
+- **A reader that does not keep up** is not given more and more memory: 1024 lines wait for it at most. Past that, what changes waits in the scene and is written when there is room, as it is then: what it was worth in between may be lost, never where it ended.
+- **It ends cleanly when the reader goes.** Nothing is written while nothing changes, so every second the scene looks whether the other end of the socket is still there, and stops following when it is not; `pleamar --say` does the same with whoever reads what it prints (`… | head -1`). After a `watch` for some seconds, the connection just closes.
+- **The scene loaded again** (hot reload): the same names are followed in the new one without repeating what was said; names new to it are written with what they are worth.
+- **What it costs.** Nobody following: a look at an empty list each frame —no allocation, no lock—. Someone following: a comparison per followed name per frame, and a line built only for what changed; not the whole scene compared, as the `watch` for a person does.
+
 ## 6. `agent: no`: for a person's hand
 
 ```
