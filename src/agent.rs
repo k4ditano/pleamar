@@ -711,6 +711,14 @@ impl Follow {
         self.until
     }
 
+    /// What they are worth when it is asked, in the order things arrive: a
+    /// change that comes right after it, in the same round, is a change.
+    pub fn start(&mut self, scene: &Scene, facts: &[f32], texts: &[String]) {
+        if !self.looked {
+            self.find(scene, facts, texts);
+        }
+    }
+
     /// The scene was loaded again: its names are looked for again, and what
     /// was already said of those still there is not said twice.
     pub fn lost(&mut self) {
@@ -1414,6 +1422,18 @@ mod tests {
         // And it is said once: the next frame, if nothing changed, says nothing.
         assert!(f.tell(&scene, &facts, &texts, at));
         assert_eq!(said(&heard), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_change_in_the_same_round_as_the_asking_is_one() {
+        // A scene still starting takes the `watch` and a `fact` in the same
+        // round: what they were worth is taken when the `watch` arrives.
+        let (scene, mut facts, texts) = followed();
+        let (mut f, _reader, heard) = following(&["lay."], false, FOLLOW_ROOM);
+        f.start(&scene, &facts, &texts);
+        set(&scene, &mut facts, "lay.0", 3.0);
+        assert!(f.tell(&scene, &facts, &texts, std::time::Instant::now()));
+        assert_eq!(said(&heard), ["fact lay.0 3"]);
     }
 
     #[test]

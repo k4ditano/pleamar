@@ -1254,7 +1254,10 @@ pub fn run(
                     let _ = lines.send(format!("watching for {:.0} s", until.saturating_duration_since(Instant::now()).as_secs_f32()));
                     watchers.push(Watcher { lines, until, start: Instant::now(), before: crate::agent::before(&scene, c, &texts, open_surfaces(&scene, &sheets)) });
                 }
-                ToRender::Follow(f) => tails.push(*f),
+                ToRender::Follow(mut f) => {
+                    f.start(&scene, &facts, &texts);
+                    tails.push(*f);
+                }
                 ToRender::Describe(json, reply_to) => {
                     describing.push((json, reply_to));
                     draw.collect_texts = true;
