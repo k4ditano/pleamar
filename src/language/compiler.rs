@@ -493,7 +493,10 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     // render sets them when the compositor configures it.
     // …and what a rule can read from the mouse while it fires.
     // `cursor.x`, `cursor.y`: the mouse wherever it is, even far from the scene.
-    for n in ["screen.width", "screen.height", "screen.index", "pointer.x", "pointer.y", "cursor.x", "cursor.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "lock.held", "drag.over"] {
+    // `motion.reduced` (1: the system asks for less motion) and `color.scheme`
+    // (0 no preference, 1 dark, 2 light): what the system says, or what is said
+    // to the scene; the first, with `--reduced-motion`, settles every spring.
+    for n in ["screen.width", "screen.height", "screen.index", "pointer.x", "pointer.y", "cursor.x", "cursor.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "lock.held", "drag.over", "motion.reduced", "color.scheme"] {
         let h = o.e.fact(n, 0.0);
         o.facts.insert(n.into(), h);
     }

@@ -681,6 +681,11 @@ pub fn run(
     // slow frame says them, which an average of 300 does not.
     let mut sec = [0f64; 8];
     let mut sec_wait = 0f64;
+    // Reduced motion: asked at the start (`--reduced-motion`), or said by the
+    // system or from outside as the fact `motion.reduced` (where it is in the
+    // scene, kept: looked for again only if the scene changes).
+    let mut reduced_motion = op.reduced_motion;
+    let mut reduced_at: Option<usize> = None;
     loop {
         // ── 1. what has arrived ─────────────────────────────────
         let mut block = None;
@@ -1319,7 +1324,7 @@ pub fn run(
                         if let (true, Some(p)) = (down, pointer) {
                             finger = p;
                             finger_light = 1.0;
-                            if !op.reduced_motion {
+                            if !reduced_motion {
                                 ripple = Some((p, Instant::now()));
                             }
                         }
@@ -1883,7 +1888,7 @@ pub fn run(
                                 finger_down = true;
                                 finger = p;
                                 finger_light = 1.0;
-                                if !op.reduced_motion {
+                                if !reduced_motion {
                                     ripple = Some((p, now));
                                 }
                             }
@@ -2094,6 +2099,16 @@ pub fn run(
             prof_c = c;
         }
         // ── 2. advance time ─────────────────────────────────────
+        // Reduced motion from this frame on, if it was just asked for: every
+        // spring settles where it was going, and from then on at once.
+        if reduced_at.map_or(true, |k| scene.facts.get(k).map(|f| f.0) != Some("motion.reduced")) {
+            reduced_at = scene.facts.iter().position(|f| f.0 == "motion.reduced");
+        }
+        let asked = op.reduced_motion || reduced_at.is_some_and(|k| facts.get(k).is_some_and(|v| *v > 0.5));
+        if asked && !reduced_motion {
+            props.iter_mut().for_each(Animated::settle);
+        }
+        reduced_motion = asked;
         let now = Instant::now();
         let dt = (now - last).as_secs_f32();
         last = now;
@@ -3166,7 +3181,7 @@ pub fn run(
                     let _ = to_logic.send(Event::GestureRejected(requested.name));
                     continue;
                 }
-                gesture = Some(Playback::start(g, requested, &scene.pose, Ctx { props: &props, facts: &facts, seen: None }, now, op.reduced_motion));
+                gesture = Some(Playback::start(g, requested, &scene.pose, Ctx { props: &props, facts: &facts, seen: None }, now, reduced_motion));
             }
         }
 
@@ -3182,7 +3197,7 @@ pub fn run(
                     return false;
                 }
                 a.spring = t.spring;
-                if op.reduced_motion {
+                if reduced_motion {
                     a.settle();
                 }
                 false
@@ -3218,7 +3233,7 @@ pub fn run(
                 for (k, p) in layer.presences.iter().enumerate() {
                     let a = &mut props[p.0 as usize];
                     a.target = if k == winner { 1.0 } else { 0.0 };
-                    if first_time || op.reduced_motion {
+                    if first_time || reduced_motion {
                         a.settle();
                     }
                 }
@@ -3273,7 +3288,7 @@ pub fn run(
                     // stays with the eye open. Springs settle and gestures
                     // show their still face; what goes on its own and in a loop is exactly
                     // what must not keep going round.
-                    if op.reduced_motion {
+                    if reduced_motion {
                         *since = None;
                         props[prop.0 as usize].set(1.0);
                         continue;
@@ -3306,7 +3321,7 @@ pub fn run(
                     }
                     // And a wave stays at its rest —halfway through the journey—, which
                     // is where it was when it started.
-                    if op.reduced_motion {
+                    if reduced_motion {
                         props[prop.0 as usize].set(0.0);
                         continue;
                     }
@@ -3349,7 +3364,7 @@ pub fn run(
                 }
                 Behavior::Advance { prop, per_second } => {
                     // A spin has no rest to return to: it stays where it is going.
-                    if op.reduced_motion {
+                    if reduced_motion {
                         continue;
                     }
                     let v = per_second.eval(Ctx { props: &props, facts: &facts, seen: None });
@@ -3398,7 +3413,7 @@ pub fn run(
             let c = Ctx { props: &props, facts: &facts, seen: None };
             if let Some((g, _)) = scene.postures.iter().find(|(_, e)| e.is_true(c)) {
                 let k = g.0 as usize;
-                gesture = Some(Playback::start(k, &scene.gestures[k], &scene.pose, Ctx { props: &props, facts: &facts, seen: None }, now, op.reduced_motion));
+                gesture = Some(Playback::start(k, &scene.gestures[k], &scene.pose, Ctx { props: &props, facts: &facts, seen: None }, now, reduced_motion));
             }
         }
 
@@ -3437,7 +3452,7 @@ pub fn run(
             if r.keyframe >= g.keyframes.len() {
                 for (k, p) in scene.pose.iter().enumerate() {
                     let a = &mut props[p.0 as usize];
-                    a.x = if op.reduced_motion { a.target } else { r.from[k] };
+                    a.x = if reduced_motion { a.target } else { r.from[k] };
                     a.v = 0.0;
                 }
                 gesture_ended = true;
@@ -3617,7 +3632,7 @@ pub fn run(
         let zone_rank = arrangement.as_ref().filter(|_| draw.collect_texts).map(|a| a.zone_rank.clone());
         draw.order = arrangement.map(|a| a.order);
         draw.clock = t_total;
-        draw.reduced_motion = op.reduced_motion;
+        draw.reduced_motion = reduced_motion;
         if draw.signal_times.len() != scene.signals.len() {
             draw.signal_times = vec![-1.0; scene.signals.len()];
         }
@@ -3976,7 +3991,7 @@ pub fn run(
             prof_c = c;
         }
         // Resolve after layout: a tab may have appeared or moved in this very frame.
-        if let Some(z) = ripple_target.filter(|_| !op.reduced_motion) {
+        if let Some(z) = ripple_target.filter(|_| !reduced_motion) {
             let c = Ctx { props: &props, facts: &facts, seen: None };
             if let Some(p) = ripple_origin(&scene, z, c, &draw.hidden)
                 .filter(|p| sheets.iter().any(|s| s.open && crate::agent::inside_box(s.view.bounds(), *p)))
