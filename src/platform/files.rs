@@ -97,6 +97,45 @@ pub fn query(owner: &str, what: &str, args: &[SysValue]) -> Result<SysValue, Str
     }
 }
 
+/// Writes `path` (inside `folder`) so that only its owner can read it: on Unix the
+/// scene's folder is 0700 and each file 0600. A scene keeps tokens and passwords
+/// here; this keeps other users of the machine out, not other programs of the same one.
+fn write_private(folder: &Path, path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+    // Up to the folder's parent (`~/.local/share/pleamar`), as the system makes them;
+    // the folder and whatever is inside it, private.
+    if let Some(above) = folder.parent() {
+        std::fs::create_dir_all(above)?;
+    }
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.create(path.parent().unwrap_or(folder))?;
+    // A folder made before this was private gets closed too: otherwise whoever
+    // already had a token there would stay just as exposed.
+    #[cfg(unix)]
+    if std::fs::metadata(folder)?.permissions().mode() & 0o077 != 0 {
+        std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700))?;
+    }
+    // First next to it, then in its place: if the power goes out halfway, the old one
+    // is still there. The mode goes on before the rename, so it is never readable.
+    let partial = PathBuf::from(format!("{}.new", path.display()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&partial)?;
+    // A `.new` left over from a crash keeps its old mode when opened: set it anyway.
+    #[cfg(unix)]
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    file.write_all(text.as_bytes())?;
+    drop(file);
+    std::fs::rename(&partial, path)
+}
+
 /// `sys.call("files.write", "settings.json", text)` · `("files.remove", name)`
 pub fn command(owner: &str, what: &str, args: &[SysValue]) -> Result<(), String> {
     match (what, args) {
@@ -111,13 +150,7 @@ pub fn command(owner: &str, what: &str, args: &[SysValue]) -> Result<(), String>
                 SysValue::Null => String::new(),
                 table => serde_json::to_string_pretty(&to_json(table)).map(|t| t + "\n").map_err(|e| format!("cannot write '{name}': {e}"))?,
             };
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-            }
-            // First next to it, then in its place: if the power goes out halfway, the old one is still there.
-            let partial = PathBuf::from(format!("{}.new", path.display()));
-            std::fs::write(&partial, text).map_err(|e| format!("cannot write '{name}': {e}"))?;
-            std::fs::rename(&partial, &path).map_err(|e| format!("cannot write '{name}': {e}"))
+            write_private(&dir_for(owner), &path, &text).map_err(|e| format!("cannot write '{name}': {e}"))
         }
         ("files.remove", [SysValue::Text(name)]) => match std::fs::remove_file(path_in(owner, name)?) {
             Ok(()) => Ok(()),
@@ -150,4 +183,35 @@ pub fn watch(owner: &str, name: &str, dispatch: Box<dyn Fn(SysValue) + Send>) ->
             }
         })
         .is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_written_file_and_its_folder_are_private() {
+        let base = std::env::temp_dir().join(format!("pleamar-files-{}", std::process::id()));
+        let folder = base.join("scene");
+        let path = folder.join("deep/secret.json");
+        write_private(&folder, &path, "token").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "token");
+        assert!(!PathBuf::from(format!("{}.new", path.display())).exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&folder), 0o700);
+            assert_eq!(mode(&folder.join("deep")), 0o700);
+            assert_eq!(mode(&path), 0o600);
+            // A folder that was already open gets closed, and rewriting keeps the file private.
+            std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            write_private(&folder, &path, "other").unwrap();
+            assert_eq!(mode(&folder), 0o700);
+            assert_eq!(mode(&path), 0o600);
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "other");
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 }

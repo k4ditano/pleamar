@@ -394,7 +394,7 @@ second. Underneath they are `loginctl` and `systemctl`.
 
 The permissions are the scene's, and they are the same as `sys.watch`'s: `services: "clock"`. Without them the scene loads all the same, says why on the console and that field stays as it was born. `clock` reports when the minute changes and `clock.seconds` every second; neither of the two asks anybody for the time nor wakes the machine up to see whether it is time yet.
 
-**Files.** A scene has **its own folder**, and does not leave it: no paths, no `..`, like `require`. It is used from the logic, with permission `services: "files"` to read and `"files.write"` to write:
+**Files.** A scene has **its own folder**, and does not leave it: no paths, no `..`, like `require`. On Unix the folder is created with mode 0700 (an older one is tightened to it on the next write) and each file `files.write` saves gets 0600, so other users of the machine cannot read what a scene keeps there, though other programs of the same user still can. It is used from the logic, with permission `services: "files"` to read and `"files.write"` to write:
 
 | | |
 | --- | --- |
