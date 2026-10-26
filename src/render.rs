@@ -466,6 +466,7 @@ pub fn run(
     // What the drawing read the last time it was made.
     let mut compose_seen = crate::scene::Seen::default();
     let mut zone_memo = ZoneMemo::default();
+    let mut z_read = ReadMemo::default();
     // Who asked what the scene holds (`describe`): answered after the next
     // list is made, which is when where every text went is known.
     let mut describing: Vec<(bool, std::sync::mpsc::Sender<String>)> = Vec::new();
@@ -2180,11 +2181,22 @@ pub fn run(
         // The topmost one is the last declared; or, with groups with `z:`, the
         // one drawn last.
         // Worked out again only when some `z:` changed: it walks the whole drawing.
+        // And the `z:`s themselves only when something they read changed.
         let arrangement = {
             let c = Ctx { props: &props, facts: &facts, seen: None };
-            let zs: Vec<f32> = scene.zblocks.iter().map(|b| b.z.eval(c)).collect();
-            if z_memo.as_ref().is_none_or(|(before, _)| *before != zs) {
-                z_memo = Some((zs, scene.z_arrange(c)));
+            let z_read_held = z_memo.is_some() && z_read.holds(&facts, &props);
+            if !z_read_held || check_shortcuts {
+                let zs: Vec<f32> = {
+                    let seen = z_read.start(facts.len(), props.len());
+                    scene.zblocks.iter().map(|b| b.z.eval(Ctx { seen: Some(seen), ..c })).collect()
+                };
+                z_read.keep(&facts, &props);
+                if check_shortcuts && z_memo.as_ref().is_some_and(|(before, _)| *before != zs) && z_read_held {
+                    eprintln!("check  · the z: were taken as unchanged and are not");
+                }
+                if z_memo.as_ref().is_none_or(|(before, _)| *before != zs) {
+                    z_memo = Some((zs, scene.z_arrange(c)));
+                }
             }
             z_memo.as_ref().and_then(|(_, a)| a.clone())
         };
@@ -5691,6 +5703,38 @@ impl Readers {
 }
 
 /// What a draw list was made from: while all of it holds, the list holds.
+/// What a result read —facts and properties, by `scene::Seen`— and what they
+/// were: the result holds for as long as they do.
+#[derive(Default)]
+struct ReadMemo {
+    valid: bool,
+    seen: crate::scene::Seen,
+    read_facts: Vec<u16>,
+    read_props: Vec<u16>,
+    facts: Vec<f32>,
+    props: Vec<(f32, f32)>,
+}
+
+impl ReadMemo {
+    fn holds(&self, facts: &[f32], props: &[crate::scene::Animated]) -> bool {
+        self.valid
+            && self.read_facts.iter().zip(&self.facts).all(|(k, v)| facts.get(*k as usize).is_some_and(|f| f.to_bits() == v.to_bits()))
+            && self.read_props.iter().zip(&self.props).all(|(k, v)| props.get(*k as usize).is_some_and(|p| p.x.to_bits() == v.0.to_bits() && p.v.to_bits() == v.1.to_bits()))
+    }
+    /// Where to note what is read while the result is worked out.
+    fn start(&mut self, facts: usize, props: usize) -> &crate::scene::Seen {
+        self.seen.reset(facts, props);
+        &self.seen
+    }
+    /// What was read, kept with what it was now.
+    fn keep(&mut self, facts: &[f32], props: &[crate::scene::Animated]) {
+        self.seen.take(&mut self.read_facts, &mut self.read_props);
+        self.facts = self.read_facts.iter().map(|k| facts[*k as usize]).collect();
+        self.props = self.read_props.iter().map(|k| (props[*k as usize].x, props[*k as usize].v)).collect();
+        self.valid = true;
+    }
+}
+
 /// Each zone as it was last worked out —alive (not hidden, not on a copy for a
 /// monitor that is not there, `active:`) and its box—, with what that read: it
 /// is worked out again only when some of that changed. A window drawing, an
