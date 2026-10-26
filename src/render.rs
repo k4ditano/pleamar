@@ -3989,6 +3989,10 @@ pub fn run(
             g.set_lens_image(on.then_some(path));
             g.set_shaders(&scene.shaders);
         }
+        // `lens every` and `lens hold while`: how often what is behind a glass is captured, and whether at all.
+        let capture_interval = crate::lens::capture_interval(scene.lens_every.as_ref().map(|e| e.eval(Ctx { props: &props, facts: &facts, seen: None })));
+        let capture_held = scene.lens_hold_while.as_ref().is_some_and(|e| e.is_true(Ctx { props: &props, facts: &facts, seen: None }));
+        let pace = |l: &Sheet| crate::lens::Pace { interval: capture_interval, held: capture_held, warming: l.lens.as_ref().is_some_and(|x| x.warming()), since: l.capture_taken.elapsed() };
         // The numbers the blur is given, worked out for this frame.
         g.blur_values = match &scene.blur {
             Some(_) => {
@@ -4528,7 +4532,8 @@ pub fn run(
             // monitor, and with nothing moving there it does not paint. Presenting
             // again is what makes it paint. Without this, a glass or a shader
             // that stays still from its first frame never saw its background.
-            let unseen = l.lens.as_ref().is_some_and(|x| x.warming()) && l.capture == crate::gpu::BackdropCapture::AfterPresent;
+            // The same for a capture it owed and asked without presenting (`capture_forced`).
+            let unseen = (l.capture_forced || l.lens.as_ref().is_some_and(|x| x.warming())) && l.capture == crate::gpu::BackdropCapture::AfterPresent;
             if unseen && l.capture_asked.elapsed() < Duration::from_millis(100) {
                 appointments.push(l.capture_asked + Duration::from_millis(101));
             }
@@ -4662,11 +4667,16 @@ pub fn run(
             // With a lens, what was presented is captured to keep track of what is behind.
             // Not on every frame: for Hyprland each capture costs reading the screen
             // back from the card, and at 60 per second that was 14 points of a core.
-            // One every `CAPTURE_INTERVAL` at most while painting; and when it
-            // stops painting, it watches (see further down).
-            let warming = l.lens.as_ref().is_some_and(|x| x.warming());
-            if was_painted && l.lens.is_some() && (warming || l.capture_taken.elapsed() >= crate::lens::CAPTURE_INTERVAL) {
-                l.request_backdrop(false);
+            // One every `CAPTURE_INTERVAL` (or the scene's `lens every`) at most,
+            // counting the watching ones too; and when it stops painting, it
+            // watches (see further down). What it paints without capturing is owed.
+            if was_painted && l.lens.is_some() {
+                if pace(l).after_paint(nudge) {
+                    l.request_backdrop(false);
+                    l.capture_owed = false;
+                } else {
+                    l.capture_owed = true;
+                }
             }
             l.painted_now = was_painted;
             if was_painted && !l.presented {
@@ -4697,9 +4707,39 @@ pub fn run(
         // because our own frame already counts as a change and the capture would arrive
         // on every refresh; now it arrives only if something changes behind, and it brings the
         // last thing that was presented.
+        // Watching keeps to the interval as well: a capture that arrives
+        // watching counts as one, and the next waits out the interval (an
+        // appointment wakes the render for it). Without that, a paint and a
+        // watch each cycle made two captures per interval (issue 106).
         for l in &mut sheets {
-            if l.lens.is_some() && !std::mem::take(&mut l.painted_now) && l.capture == crate::gpu::BackdropCapture::Idle {
-                l.request_backdrop(true);
+            if l.lens.is_none() || std::mem::take(&mut l.painted_now) {
+                continue;
+            }
+            let pace = pace(l);
+            // Held: not even watching; and once it is let go, one capture straight away.
+            if pace.held && !pace.warming {
+                if l.capture == crate::gpu::BackdropCapture::Watching {
+                    l.cancel_backdrop();
+                }
+                l.capture_owed = true;
+                continue;
+            }
+            if l.capture != crate::gpu::BackdropCapture::Idle {
+                continue;
+            }
+            match pace.still(l.capture_owed) {
+                crate::lens::Still::Nothing => {}
+                crate::lens::Still::Wait(left) => appointments.push(Instant::now() + left),
+                // What changed behind while it could not capture is not
+                // waited for: it may already have happened.
+                crate::lens::Still::Capture => {
+                    l.request_backdrop(false);
+                    if l.capture == crate::gpu::BackdropCapture::AfterPresent {
+                        l.capture_owed = false;
+                        l.capture_forced = true;
+                    }
+                }
+                crate::lens::Still::Watch => l.request_backdrop(true),
             }
         }
         // Nothing was painted —what changed is not seen on any sheet—: what was
@@ -5049,7 +5089,12 @@ fn owe(l: &mut Sheet, rects: impl Iterator<Item = [f32; 4]>) {
 
 fn handle_backdrop(g: &Gpu, sheets: &mut [Sheet], d: Box<crate::platform::Backdrop>) -> bool {
     let Some(l) = sheets.iter_mut().find(|l| l.id == d.sheet) else { return false };
+    // One that was watching counts from when it arrives: it was read back now.
+    if l.capture == crate::gpu::BackdropCapture::Watching {
+        l.capture_taken = Instant::now();
+    }
     l.capture = crate::gpu::BackdropCapture::Idle;
+    l.capture_forced = false;
     if l.lens.is_none() {
         return false;
     }
@@ -5060,7 +5105,7 @@ fn handle_backdrop(g: &Gpu, sheets: &mut [Sheet], d: Box<crate::platform::Backdr
         owe(l, [r].into_iter());
         true
     } else {
-        l.request_backdrop(true);
+        // Nothing new: the round watches again, once the interval allows.
         false
     }
 }

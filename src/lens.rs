@@ -523,8 +523,73 @@ impl Own {
     }
 }
 
-/// At most, one capture of what is behind every so often while painting.
+/// At most, one capture of what is behind every so often, of either kind: the
+/// one asked after presenting and the one that watches for a change behind.
+/// A scene sets its own with `lens every 250ms`.
 pub const CAPTURE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// The least and the most a scene's `lens every` can say: below a refresh it
+/// would be no limit at all, and past a minute the glass is as good as frozen
+/// (`lens hold while` says that).
+pub const INTERVAL_RANGE: (f32, f32) = (0.016, 60.0);
+
+/// The interval between captures, from what `lens every` gave this round (in
+/// seconds), or the default without one.
+pub fn capture_interval(seconds: Option<f32>) -> std::time::Duration {
+    match seconds {
+        Some(s) if s.is_finite() => std::time::Duration::from_secs_f32(s.clamp(INTERVAL_RANGE.0, INTERVAL_RANGE.1)),
+        _ => CAPTURE_INTERVAL,
+    }
+}
+
+/// How a sheet with a lens goes about its captures this round. `since` is the
+/// time since its last capture (asked after presenting, or arrived while
+/// watching), `held` what `lens hold while` says, `warming` whether it is in
+/// its first moments (`WARM_UP`, which nothing holds back).
+#[derive(Clone, Copy, Debug)]
+pub struct Pace {
+    pub interval: std::time::Duration,
+    pub held: bool,
+    pub warming: bool,
+    pub since: std::time::Duration,
+}
+
+/// What a sheet that has not painted this round does about what is behind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Still {
+    /// Nothing: held, or a capture is already on the way.
+    Nothing,
+    /// Too soon after the last capture: it waits this much more (an
+    /// appointment wakes the render for it).
+    Wait(std::time::Duration),
+    /// A capture now, without waiting for a change: one it owes, because it
+    /// painted —or was held— while it could not capture.
+    Capture,
+    /// Watch: a capture as soon as something changes behind.
+    Watch,
+}
+
+impl Pace {
+    /// After painting: whether to ask the capture of what was just presented.
+    /// A nudge is a paint made only to have one answered: it always asks.
+    pub fn after_paint(&self, nudged: bool) -> bool {
+        self.warming || nudged || (!self.held && self.since >= self.interval)
+    }
+
+    /// Not painted this round, with no capture on the way.
+    pub fn still(&self, owed: bool) -> Still {
+        if self.warming {
+            return Still::Watch;
+        }
+        if self.held {
+            return Still::Nothing;
+        }
+        if self.since < self.interval {
+            return Still::Wait(self.interval - self.since);
+        }
+        if owed { Still::Capture } else { Still::Watch }
+    }
+}
 
 /// How much margin the frosting needs around a glass, in logical pixels:
 /// the reach of the scene's blur.
@@ -573,5 +638,97 @@ impl FixedSource {
             }
         }
         Some((self.version, self.picture.clone()?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// What is behind the glass changes on every refresh (a terminal scrolling
+    /// under it): rounds a refresh apart, each capture answered in the next one,
+    /// each one showing something new and so painted. Returns how many captures
+    /// arrived in ten seconds.
+    fn scrolling(interval: Duration) -> u32 {
+        #[derive(PartialEq)]
+        enum Asked {
+            Idle,
+            AfterPresent,
+            Watching,
+        }
+        let refresh = Duration::from_micros(16_667);
+        let (mut now, mut taken, mut owed, mut asked, mut to_paint, mut arrived) = (Duration::ZERO, None::<Duration>, false, Asked::Idle, true, 0);
+        let since = |now: Duration, taken: Option<Duration>| taken.map_or(Duration::from_secs(3600), |t| now - t);
+        while now < Duration::from_secs(10) {
+            // What was asked last round arrives: there is always something new.
+            if asked != Asked::Idle {
+                if asked == Asked::Watching {
+                    taken = Some(now);
+                }
+                asked = Asked::Idle;
+                arrived += 1;
+                to_paint = true;
+            }
+            let pace = Pace { interval, held: false, warming: false, since: since(now, taken) };
+            if std::mem::take(&mut to_paint) {
+                if pace.after_paint(false) {
+                    (asked, taken, owed) = (Asked::AfterPresent, Some(now), false);
+                } else {
+                    owed = true;
+                }
+            } else {
+                match pace.still(owed) {
+                    Still::Capture => (asked, taken, owed) = (Asked::AfterPresent, Some(now), false),
+                    Still::Watch => asked = Asked::Watching,
+                    Still::Wait(left) => assert!(left <= interval),
+                    Still::Nothing => {}
+                }
+            }
+            now += refresh;
+        }
+        arrived
+    }
+
+    #[test]
+    fn captures_keep_to_the_interval_watching_too() {
+        // Before issue 106 a paint and a watch each cycle made ~38 a second at 50 ms.
+        for (ms, most) in [(50, 201), (100, 101), (250, 41), (1000, 11)] {
+            let n = scrolling(Duration::from_millis(ms));
+            assert!(n <= most, "{ms} ms: {n} captures in 10 s, at most {most}");
+            assert!(n * 2 >= most, "{ms} ms: {n} captures in 10 s: the glass should still follow");
+        }
+    }
+
+    #[test]
+    fn still_it_watches_and_owed_it_captures() {
+        let p = Pace { interval: CAPTURE_INTERVAL, held: false, warming: false, since: Duration::from_secs(1) };
+        assert_eq!(p.still(false), Still::Watch);
+        assert_eq!(p.still(true), Still::Capture);
+        let soon = Pace { since: Duration::from_millis(20), ..p };
+        assert_eq!(soon.still(false), Still::Wait(Duration::from_millis(30)));
+        assert!(!soon.after_paint(false));
+        assert!(soon.after_paint(true), "a nudge always asks");
+    }
+
+    #[test]
+    fn held_nothing_is_captured_but_warming_is_not_held() {
+        let p = Pace { interval: CAPTURE_INTERVAL, held: true, warming: false, since: Duration::from_secs(5) };
+        assert_eq!(p.still(true), Still::Nothing);
+        assert!(!p.after_paint(false));
+        let warming = Pace { warming: true, ..p };
+        assert!(warming.after_paint(false));
+        assert_eq!(warming.still(false), Still::Watch);
+        // Let go, with what it owes: one capture straight away.
+        assert_eq!(Pace { held: false, ..p }.still(true), Still::Capture);
+    }
+
+    #[test]
+    fn the_scene_interval_is_kept_in_range() {
+        assert_eq!(capture_interval(None), CAPTURE_INTERVAL);
+        assert_eq!(capture_interval(Some(f32::NAN)), CAPTURE_INTERVAL);
+        assert_eq!(capture_interval(Some(0.25)), Duration::from_secs_f32(0.25));
+        assert_eq!(capture_interval(Some(0.0)), Duration::from_secs_f32(INTERVAL_RANGE.0));
+        assert_eq!(capture_interval(Some(1e6)), Duration::from_secs_f32(INTERVAL_RANGE.1));
     }
 }

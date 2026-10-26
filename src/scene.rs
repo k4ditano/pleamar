@@ -1997,6 +1997,12 @@ pub struct Scene {
     pub lens_image: Option<std::path::PathBuf>,
     /// `lens = image "file" while expr`: the picture is only bent while this holds (live capture otherwise).
     pub lens_image_while: Option<Expr>,
+    /// `lens every 250ms`: the least time between two captures of what is behind
+    /// a glass, in seconds, looked at every round. Without it, `lens::CAPTURE_INTERVAL`.
+    pub lens_every: Option<Expr>,
+    /// `lens hold while expr`: while it holds, nothing behind a glass is captured;
+    /// when it stops, one capture straight away.
+    pub lens_hold_while: Option<Expr>,
     /// `keyboard: exclusive while open`: when it wants the keyboard.
     pub keyboard_while: Option<Expr>,
     pub permissions: Permissions,
