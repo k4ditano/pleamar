@@ -326,6 +326,26 @@ fn coverage(d: f32) -> f32 {
     return clamp(0.5 - d * u.header.w, 0.0, 1.0);
 }
 
+// How much of the pixel a shape of this colour covers at its edge, as light
+// would mix it. Blended in sRGB, a pixel half covered comes out at half the
+// number between the two colours, which the eye sees as darker than half the
+// light: a dark shape on a light picture —a black pill on a sky— gets a harder,
+// steppier edge than it should, and a light one on a dark picture a thinner
+// one. What is behind is the blending's business, not ours, so the curve goes
+// by the shape's own brightness alone: a dark one gives a little of its edge
+// pixel back, a light one takes a little more, a middle grey is left as it is.
+// Only the edge pixel moves: a fill, an opacity, a gradient stay what they were.
+// (Text has its own curve, in fs_shape.)
+const EDGE_GAMMA: f32 = 1.8;
+fn edge_coverage(d: f32, color: vec3<f32>) -> f32 {
+    let cv = coverage(d);
+    if (cv <= 0.0 || cv >= 1.0) { return cv; }
+    let lum = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let g = 1.0 + (EDGE_GAMMA - 1.0) * abs(lum * 2.0 - 1.0);
+    if (lum < 0.5) { return 1.0 - pow(1.0 - cv, 1.0 / g); }
+    return pow(cv, 1.0 / g);
+}
+
 fn over(below: vec4<f32>, color: vec3<f32>, a: f32) -> vec4<f32> {
     return vec4<f32>(color * a, a) + below * (1.0 - a);
 }
@@ -692,7 +712,7 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
     } else {
         // Without it, the fill is a tint: it lets what is behind show through
         // (which the compositor blurs) and keeps its colour; and on top, its light.
-        c = over(c, tone, coverage(d) * alpha * mix(1.0, 0.36, glass));
+        c = over(c, tone, edge_coverage(d, tone) * alpha * mix(1.0, 0.36, glass));
         // Smoke and milk over what the compositor blurs, which we never see:
         // a veil of black or of white, as near as it gets.
         c = over(c, vec3<f32>(0.0), coverage(d) * alpha * glass * el.dest.z * 0.35);
@@ -702,7 +722,7 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
         }
     }
     if (el.light.w > 0.0) {
-        c = over(c, el.border.rgb, coverage(abs(d + el.light.w * 0.5) - el.light.w * 0.5) * alpha);
+        c = over(c, el.border.rgb, edge_coverage(abs(d + el.light.w * 0.5) - el.light.w * 0.5, el.border.rgb) * alpha);
     }
     return c;
 }
