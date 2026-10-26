@@ -1530,7 +1530,7 @@ A fact can be written by its place, as it is read (§7): `tre.x[tre.nw] = tre.ax
 | `release zone` | what was pressed there is released, wherever the mouse is by then |
 | `hold zone for 500ms` | it has been held down that long |
 | `enter zone` · `leave zone` | the mouse enters or leaves |
-| `hover zone for 320ms` · `away zone for 420ms` | it has been over it that long; it was over it and has been away that long |
+| `hover zone for 320ms` · `away zone for 420ms` · `away button, panel for 320ms` | it has been over it that long; it was over it and has been away that long. Several zones count as one —over any of them is over—: a button and the panel it opens close when the mouse has left both, not when it crosses the gap between them |
 | `scroll zone` | the wheel, over any zone underneath it. Read in `wheel` |
 | `drag zone` | it moves with the button down; it keeps going even if it leaves, until release. `local.x`, `drag.dx`. Like the wheel, it works for any zone that was underneath at the press, not only the topmost one: that is how a list is dragged by grabbing it by a row |
 | `change expr` | that computation stops being worth what it was worth. Being born does not count: it fires on changing |

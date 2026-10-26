@@ -1808,10 +1808,11 @@ pub enum Trigger {
     Receive(ZoneId),
     /// What it carries (`carries:`) has just been dragged out of it, to another program.
     Carry(ZoneId),
-    /// The mouse has been over it for this long.
-    Above { zone: ZoneId, duration: Duration },
-    /// It has been over it and has been outside for this long.
-    Away { zone: ZoneId, duration: Duration },
+    /// The mouse has been over it (or over any of `also`) for this long.
+    Above { zone: ZoneId, also: Vec<ZoneId>, duration: Duration },
+    /// It has been over it (or over any of `also`: a button and the panel it
+    /// opens) and has been outside all of them for this long.
+    Away { zone: ZoneId, also: Vec<ZoneId>, duration: Duration },
     /// Nobody has touched the mouse for this long, while the condition holds.
     Idle { duration: Duration, during: Expr },
     /// Every now and then, at random, while the condition holds.
