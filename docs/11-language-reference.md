@@ -517,6 +517,8 @@ From weakest to strongest: `or` · `and` · `not` · `< > <= >= == !=` (they do 
 
 **`time`** is the seconds since the scene started. It exists if the scene names it —and has not declared a `time` of its own—, and while it does, the scene never rests: that is its point. With reduced motion (`--reduced-motion`) it stops, like `spin`.
 
+**`motion.reduced`** and **`color.scheme`** are what the system says about motion and colour, in every scene. `motion.reduced` is 1 when it asks for less motion, and then the scene is as with `--reduced-motion` **from that frame on, without starting again**: every spring settles where it was going, and from then on at once; the loops go quiet. Back to 0, it moves again. `color.scheme` is 0 with no preference, 1 dark, 2 light: nothing changes by itself, a scene reads it (`color: if(color.scheme == 2, paper, coal)`). Both come from the desktop portal (`org.freedesktop.portal.Settings`, `org.freedesktop.appearance`: `reduced-motion` and `color-scheme`), at the start and each time they change; where the portal does not say `reduced-motion` —GTK's backend—, GNOME's `enable-animations` says it the other way round. Only read: pleamar changes no setting. Without a portal both stay 0. They are facts like any other: the logic or `--say … fact motion.reduced 1` can set them too (a shell's own switch), and the next change in the system says its own again. `--reduced-motion` keeps it on whatever they say; `PLEAMAR_NO_PORTAL=1` does not ask the portal.
+
 Valid as a name: a `let`, a `prop`, a `fact`, a measure (`label.width`), how much a named layout takes up and how many children it has in view (`list.width`, `list.height`, `list.count`, and with `view:` `list.content`: they can also be read before the point where it is declared, and by rules), the numeric field of a record (`r.depth`, `r.index`, `rows.count`), and the presence of a claim (`shape.rec`: 1 while it wins).
 
 **Reading by place: `a[i]`.** `a[i]` is the element of `a` at place `i`, and it reads any name with numbers in it the same way: `win[i].screen` is `win.$i.screen`, `screen[s].width` is `screen.$s.width`, `win.reserved[s].top`, `win.order[p]`. With a place known when loading (a number, a `repeat`'s counter) it is that name; with one that changes, a `pick` over every element, which evaluates only the one chosen. Before the first element or past the last, it is **-1**, also with a place known when loading (`win[win.max].screen`): `ord[p - 1]` at `p = 0` reads nothing, and says so. Without a declared length (§10), there are as many elements as names that exist from 0 up. Texts are read the same way (§11).
@@ -1600,7 +1602,7 @@ shortcut can say `pleamar --say ripple "fact selected true"`.
 | `follow chip.w = label.width + 32` | chases the expression, with its spring |
 | `look gx, gy at cx, cy reach 5, 3.2 within 140 rest rx, ry` | two properties that pull towards the mouse |
 
-With reduced motion (`--reduced-motion`) the first three go quiet: `blink`
+With reduced motion (`--reduced-motion`, or `motion.reduced`) the first three go quiet: `blink`
 stays open, `wave` rests at the middle of its travel and `spin` stops where it
 was. What carries itself is exactly what must not be left going round on its
 own. `follow` and `look` are not loops —they chase something— so they stay,

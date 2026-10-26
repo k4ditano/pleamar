@@ -1121,6 +1121,16 @@ pub fn watch_cursor(to_render: std::sync::mpsc::Sender<crate::scene::ToRender>) 
     let _ = to_render;
 }
 
+/// What the system says about motion and colour (the desktop portal's
+/// `org.freedesktop.appearance`), as the facts `motion.reduced` and
+/// `color.scheme`, at the start and each time it changes. Elsewhere, nothing.
+pub fn watch_appearance(to_render: std::sync::mpsc::Sender<crate::scene::ToRender>) {
+    #[cfg(target_os = "linux")]
+    appearance::watch(to_render);
+    #[cfg(not(target_os = "linux"))]
+    let _ = to_render;
+}
+
 /// pleamar-wm's `cursor.sock`: a line, `x y` in units of the desktop, each
 /// time the mouse moves. Connected only while a scene wants it, and let go of
 /// when it no longer does; the monitors, to place it, from the `desktop` file
@@ -1296,6 +1306,8 @@ pub fn json_encode(v: &SysValue) -> String {
     files::to_json(v).to_string()
 }
 mod clock;
+#[cfg(target_os = "linux")]
+mod appearance;
 #[cfg(target_os = "linux")]
 mod desktop;
 #[cfg(target_os = "linux")]
