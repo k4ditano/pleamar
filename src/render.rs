@@ -1037,7 +1037,13 @@ pub fn run(
                     // arrived later it TRAMPLED `screen.0.name` with its monitor. With the
                     // corner on DP-3, both copies said "DP-3" and the logic did not
                     // know which was which.
-                    if let Some(its_own) = scene.surfaces.get(n.view.surface).filter(|s| s.name.is_empty()) {
+                    // A scene whose surfaces all have a name —a shell: a background, a bar,
+                    // panels— has no main one: then the copies of its FIRST surface say it,
+                    // and only those (the others would trample them as above). Without
+                    // them `screen.width` was 0 inside every one of its surfaces.
+                    let no_main = !scene.surfaces.iter().any(|s| s.name.is_empty());
+                    let first = scene.surfaces.first().map(|s| s.name.as_str()).unwrap_or("");
+                    if let Some(its_own) = scene.surfaces.get(n.view.surface).filter(|s| s.name.is_empty() || (no_main && s.name == first)) {
                         let k = its_own.instance;
                         if let Some(i) = scene.texts.iter().position(|t| t.0 == format!("screen.{k}.name")) {
                             texts.resize(scene.texts.len().max(texts.len()), String::new());
