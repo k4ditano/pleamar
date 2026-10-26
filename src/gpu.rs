@@ -1541,7 +1541,6 @@ impl DrawList {
                     if a <= 0.001 {
                         continue;
                     }
-                    self.timed |= time.is_some();
                     let d = [target.0.eval(c), target.1.eval(c), target.2.eval(c).max(0.0), target.3.eval(c).max(0.0)];
                     let b = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
                     // What is behind it is captured like a lens's: its box.
@@ -1558,6 +1557,7 @@ impl DrawList {
                     let (px, py) = pointer.as_ref().map_or((-1e6, -1e6), |(x, y)| (x.eval(c), y.eval(c)));
                     let over = (px >= d[0] && px <= d[0] + d[2] && py >= d[1] && py <= d[1] + d[3]) as u8 as f32;
                     let corner = corner.eval(c).max(0.0);
+                    let emitted_before = self.elements.len();
                     self.element(3.0, [b[0] - 1.0, b[1] - 1.0, b[2] + 1.0, b[3] + 1.0], &clips, |e| {
                         affine.encode(&mut e[44..52]);
                         e[1] = *shader as f32;
@@ -1575,6 +1575,12 @@ impl DrawList {
                         e[36..40].copy_from_slice(&d);
                         e[40] = corner;
                     });
+                    // Its clock goes on only if it is really painted: one that falls on no
+                    // surface —in a `screens: each` copy with no monitor, whose `show:`
+                    // reads `screen.index`— kept the whole scene awake for nothing.
+                    if self.elements.len() > emitted_before {
+                        self.timed |= time.is_some();
+                    }
                 }
                 Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret, passive } => {
                     let k = text.0 as usize;
