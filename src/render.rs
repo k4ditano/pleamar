@@ -2071,12 +2071,29 @@ pub fn run(
                 // none, somewhere to type that is on show —the first one drawn—.
                 // Not in a window manager: there the windows are what is typed
                 // into, and a field only takes the keys when a rule focuses it.
+                // If a surface asked for it exclusively, the field is one of its own or
+                // none: a field on another surface (the bar's, behind a sheet with no
+                // field) sent the keyboard back to "on demand" there (see `elsewhere`),
+                // it was lost, the field went with it, the sheet asked again… forever.
                 if editing.is_none() && scene.nest.is_none() {
-                    editing = parked.take().or_else(|| {
+                    let exclusive: Vec<[f32; 4]> = sheets
+                        .iter()
+                        .filter(|l| (l.open || l.view.popup.is_some()) && l.keyboard_mode == Some(Keyboard::Always))
+                        .map(|l| l.view.bounds())
+                        .collect();
+                    let on_exclusive = |f: &&crate::gpu::PlacedField| {
+                        exclusive.is_empty()
+                            || scene.zones.iter().filter(|z| z.id == f.zone).filter_map(|z| z.bounds(Ctx { props: &props, facts: &facts, seen: None })).any(|b| exclusive.iter().any(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]))
+                    };
+                    // The one it was in, if it is there; if not, it stays parked for later.
+                    let here = parked.as_ref().is_some_and(|e| exclusive.is_empty() || draw.fields.iter().filter(|f| f.text == e.field).any(|f| on_exclusive(&f)));
+                    let parked_here = if here { parked.take() } else { None };
+                    editing = parked_here.or_else(|| {
                         draw.fields
-                            .first()
+                            .iter()
+                            .find(on_exclusive)
                             .map(|f| f.text)
-                            .or_else(|| scene.instrs.iter().find_map(|i| if let Instr::Field { text, .. } = i { Some(text.0 as usize) } else { None }))
+                            .or_else(|| if exclusive.is_empty() { scene.instrs.iter().find_map(|i| if let Instr::Field { text, .. } = i { Some(text.0 as usize) } else { None }) } else { None })
                             .map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() })
                     });
                 }

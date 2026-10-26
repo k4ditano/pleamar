@@ -687,14 +687,19 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             Err(f) => o.errors.push(f),
         }
     }
-    // A surface that does not say `keyboard:` asks for it as the first one does, and
-    // any surface without a condition of its own follows the scene's: so a scene that
-    // said it once, on its first surface, behaves as it always did.
-    if let Some(first) = o.e.surfaces.first().map(|s| s.keyboard) {
+    // A surface that does not say `keyboard:` asks for it as the first one does —its
+    // mode and its condition—, and one that says it without a `while` follows the
+    // scene's: so a scene that said it once, on its first surface, behaves as it always
+    // did, and a `while` on another surface (a sheet asking for it while open) does not
+    // become the condition of the ones that said nothing.
+    if let Some((first, first_when)) = o.e.surfaces.first().map(|s| (s.keyboard, s.keyboard_when.clone())) {
         let scene_when = o.e.keyboard_while.is_some();
         for s in o.e.surfaces.iter_mut() {
             if !s.keyboard_said {
                 s.keyboard = first;
+                if s.keyboard_when.is_none() {
+                    s.keyboard_when = first_when.clone();
+                }
             }
             s.keyboard_while = s.keyboard_when.is_some() || scene_when;
         }
