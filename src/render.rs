@@ -2543,10 +2543,15 @@ pub fn run(
         // The keyboard, only while the scene wants it: a closed launcher cannot
         // keep it. And if it asked for the focus for a field without having it,
         // exclusively until it arrives (see `Effect::FocusField`).
-        let keyboard_wanted = match &scene.keyboard_while {
+        // Each surface by its own `keyboard: … while`, or the scene's without one.
+        let wants = |s: &crate::scene::Surface| match s.keyboard_when.as_ref().or(scene.keyboard_while.as_ref()) {
             Some(when) => when.is_true(Ctx { props: &props, facts: &facts, seen: None }),
             None => true,
         };
+        let any_condition = scene.keyboard_while.is_some() || scene.surfaces.iter().any(|s| s.keyboard_when.is_some());
+        // The scene wants it while an open surface does (with no condition anywhere, always).
+        let keyboard_wanted = !any_condition
+            || sheets.iter().filter(|l| l.open || l.view.popup.is_some()).any(|l| scene.surfaces.get(l.view.surface).is_some_and(|s| s.keyboard != Keyboard::Never && wants(s)));
         // The loan lasts while the scene wants the keyboard: giving it back on
         // receiving the focus does not work, because on going back to "on demand" Hyprland
         // gives it again to the previous window. It is what any launcher does:
@@ -2570,13 +2575,17 @@ pub fn run(
         } else {
             loan_grace = None;
         }
-        let mode = if keyboard_lent.is_some() {
-            Keyboard::Always
-        } else if !keyboard_wanted {
-            Keyboard::Never
-        } else {
-            scene.surface().keyboard
+        // What each surface asks for: lent, all of it; not wanted, none; else its own.
+        let mode_of = |s: &crate::scene::Surface| {
+            if keyboard_lent.is_some() {
+                Keyboard::Always
+            } else if !wants(s) {
+                Keyboard::Never
+            } else {
+                s.keyboard
+            }
         };
+        let mode = mode_of(scene.surface());
         // With no condition and no loan, the keyboard is the one asked for when creating it.
         // Each surface gets it while it is OPEN, and no other: a closed one
         // never asks for the keyboard. Handed to all of them, a closed
@@ -2603,17 +2612,18 @@ pub fn run(
                     .collect()
             })
             .unwrap_or_default();
-        if keyboard_set.is_some() || scene.keyboard_while.is_some() || keyboard_lent.is_some() {
+        if keyboard_set.is_some() || any_condition || keyboard_lent.is_some() || scene.surfaces.iter().any(|s| s.keyboard != scene.surface().keyboard) {
             keyboard_set = Some(mode);
             for l in &mut sheets {
                 let v = l.view.bounds();
                 let elsewhere = !typing_at.is_empty() && !typing_at.iter().any(|b| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]);
+                let own = scene.surfaces.get(l.view.surface).map_or(mode, &mode_of);
                 let its = if !(l.open || l.view.popup.is_some()) {
                     Keyboard::Never
-                } else if mode == Keyboard::Always && elsewhere {
+                } else if own == Keyboard::Always && elsewhere {
                     Keyboard::OnDemand
                 } else {
-                    mode
+                    own
                 };
                 if l.keyboard_mode != Some(its) {
                     l.keyboard(its);
