@@ -297,6 +297,8 @@ struct Compiler<'a> {
     pending_levels: Vec<(usize, Level, &'a [Token], (usize, usize))>,
     /// `reserve: n while expr`: read at the end, like the levels.
     pending_reserves: Vec<(usize, &'a [Token], (usize, usize))>,
+    /// Each surface's own `keyboard: … while` condition, read at the end.
+    pending_keyboards: Vec<(usize, &'a [Token], (usize, usize))>,
     /// `rate: 60, 20 while …`: the surface, which step it is, the lower rate and
     /// its condition. The step is kept because a copy of the surface reads the same
     /// value again, and a list must not grow twice over.
@@ -487,7 +489,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -670,6 +672,31 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             if per_copy {
                 o.scopes.pop();
             }
+        }
+    }
+    for (which, tokens, (l, col)) in std::mem::take(&mut o.pending_keyboards) {
+        o.scopes.clear();
+        let mut c = Cur::new(tokens, l, col);
+        match o.expr(&mut c) {
+            Ok(e) => {
+                let owner = o.e.surfaces[which].name.clone();
+                for s in o.e.surfaces.iter_mut().filter(|s| s.name == owner) {
+                    s.keyboard_when = Some(e.clone());
+                }
+            }
+            Err(f) => o.errors.push(f),
+        }
+    }
+    // A surface that does not say `keyboard:` asks for it as the first one does, and
+    // any surface without a condition of its own follows the scene's: so a scene that
+    // said it once, on its first surface, behaves as it always did.
+    if let Some(first) = o.e.surfaces.first().map(|s| s.keyboard) {
+        let scene_when = o.e.keyboard_while.is_some();
+        for s in o.e.surfaces.iter_mut() {
+            if !s.keyboard_said {
+                s.keyboard = first;
+            }
+            s.keyboard_while = s.keyboard_when.is_some() || scene_when;
         }
     }
     for (which, tokens, (l, col)) in std::mem::take(&mut o.pending_reserves) {
@@ -4637,11 +4664,15 @@ impl<'a> Compiler<'a> {
                 "exclusive" => Keyboard::Always,
                 _ => unreachable!(),
             };
-            // `keyboard: exclusive while open`: only while that is true.
+            s.keyboard_said = true;
+            // `keyboard: exclusive while open`: only while that is true, for this
+            // surface; and, as it always was, the scene's condition for the
+            // surfaces that do not write one of their own (the last one written).
             // The condition is read at the end: it can name a fact declared further down.
             if c.word("while") {
                 s.keyboard_while = true;
                 self.pending_keyboard = Some((&c.tokens[c.i..], c.pos()));
+                self.pending_keyboards.push((which, &c.tokens[c.i..], c.pos()));
                 c.i = c.tokens.len();
             } else {
                 c.expect_end()?;

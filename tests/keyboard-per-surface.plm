@@ -1,0 +1,8 @@
+// expect: ok
+// Each surface asks for the keyboard by its own condition.
+scene KeyboardPerSurface {
+    fact a = false
+    fact b = false
+    surface one { size: 200, 60; anchor: top_left; keyboard: exclusive while a }
+    surface two { size: 200, 60; anchor: top_right; keyboard: on_demand while b }
+}
