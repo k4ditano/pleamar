@@ -1409,7 +1409,7 @@ that holds), which are the scene's.
 
 | effect | |
 | --- | --- |
-| `launch "kitty"` | starts a program so that it opens here |
+| `launch "kitty"` · `launch "foot -e htop -p {pid.$i}"` | starts a program so that it opens here. The command is a text like any other: its holes are filled in when the rule fires (a monitor, a window, a fact), so one rule serves where four nearly equal ones were written |
 | `focus win.$i` · `focus win(expr)` | the keyboard goes to that window |
 | `close win.$i` · `close win(win.focus)` | asks it to close, as its own close button would |
 | `promote win.$i` | it goes first in the layout: `place` 0 |

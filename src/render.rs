@@ -3100,7 +3100,8 @@ pub fn run(
                     }
                     Effect::Launch(command) => {
                         if let Some(send) = &nest {
-                            send(ToNest::Launch(command));
+                            let c = Ctx { props: &props, facts: &facts, seen: None };
+                            send(ToNest::Launch(crate::gpu::content_text(&command, c, &texts).into_owned()));
                         }
                     }
                     Effect::Text(t, value) => {

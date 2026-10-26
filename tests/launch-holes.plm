@@ -1,0 +1,9 @@
+// expect: ok
+// `launch` with holes: the command is filled in with the facts when the rule fires.
+scene LaunchHoles {
+    surface { size: 200, 100 }
+    windows win max 4
+    fact mon = 2
+    event open_here
+    on open_here { launch "pleamar --say other 'fact screen.wanted {mon}'" }
+}
