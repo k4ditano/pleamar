@@ -1,0 +1,7 @@
+// expect: ok
+// A text chosen by a condition: `if(cond, "yes", "no")`, the same as `pick(cond, "no", "yes")`.
+scene TextIf {
+    surface { size: 300, 100 }
+    fact online = true
+    text if(online, "wifi", "wifi_off") { at: 150, 50; anchor: center; size: 20 }
+}

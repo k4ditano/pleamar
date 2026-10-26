@@ -3367,7 +3367,7 @@ impl<'a> Compiler<'a> {
     fn label(&self, c: &mut Cur) -> R<Content> {
         let k = match c.peek() {
             // `label: pick(k, "Brightness", "Volume")`: one per copy, as a `text` does.
-            Some(TokenKind::Id(n)) if n == "pick" && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => self.text_pick(c)?,
+            Some(TokenKind::Id(n)) if (n == "pick" || n == "if") && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => self.text_pick(c)?,
             Some(TokenKind::Id(_)) if matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("["))) => self.text_content_at(c)?,
             Some(TokenKind::Str(s)) => {
                 let s = s.clone();
@@ -3600,8 +3600,10 @@ impl<'a> Compiler<'a> {
 
     /// `pick(i, "a", b, c)` where a text goes: the one at place `i`. Each
     /// option is a quoted text (translated like any other), a live text of the
-    /// scene, or a component's text parameter.
+    /// scene, or a component's text parameter. And `if(cond, "yes", "no")`, the
+    /// same choice said the way it is thought: `pick(cond, "no", "yes")`.
     fn text_pick(&self, c: &mut Cur) -> R<Content> {
+        let is_if = matches!(c.peek(), Some(TokenKind::Id(n)) if n == "if");
         c.i += 2;
         let i = self.expr(c)?;
         let mut options = Vec::new();
@@ -3634,6 +3636,13 @@ impl<'a> Compiler<'a> {
             options.push(option);
         }
         c.expect_sym(")")?;
+        if is_if {
+            if options.len() != 2 {
+                return c.error("a text's `if` takes a condition and two texts: `if(cond, \"yes\", \"no\")`");
+            }
+            options.swap(0, 1);
+            return Ok(Content::Pick(i, options));
+        }
         if options.is_empty() {
             return c.error("`pick` needs a place and texts to choose from: `pick(i, \"a\", \"b\")`");
         }
@@ -3656,7 +3665,7 @@ impl<'a> Compiler<'a> {
             }
             // `text pick(skin, "Liquid", "Light liquid", "Classic")`: the one at
             // that place; each is a text like any other, and is translated.
-            Some(TokenKind::Id(n)) if n == "pick" && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => self.text_pick(&mut c)?,
+            Some(TokenKind::Id(n)) if (n == "pick" || n == "if") && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => self.text_pick(&mut c)?,
             // `text win[i].title`: the live text at that place.
             Some(TokenKind::Id(_)) if matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("["))) => self.text_content_at(&mut c)?,
             // A component parameter that is worth a quoted text.
@@ -5003,7 +5012,7 @@ impl<'a> Compiler<'a> {
                     c.i += 1;
                 }
                 // `Tile("Language", pick(mode, "System", "English"), …)`: a text chosen by place.
-                Some(TokenKind::Id(x)) if x == "pick" && matches!(c.tokens.get(c.i + 1).map(|t| &t.kind), Some(TokenKind::Sym("("))) => {
+                Some(TokenKind::Id(x)) if (x == "pick" || x == "if") && matches!(c.tokens.get(c.i + 1).map(|t| &t.kind), Some(TokenKind::Sym("("))) => {
                     let k = self.text_pick(c)?;
                     env.contents.insert(name.clone(), k);
                 }

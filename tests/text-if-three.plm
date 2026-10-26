@@ -1,0 +1,6 @@
+// expect: error «a text's `if` takes a condition and two texts»
+scene TextIfThree {
+    surface { size: 300, 100 }
+    fact online = true
+    text if(online, "a", "b", "c") { at: 150, 50; anchor: center; size: 20 }
+}
