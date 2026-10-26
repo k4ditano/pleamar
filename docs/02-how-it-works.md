@@ -133,6 +133,17 @@ A `popup` is not another scene: it is **another window onto the same one**. What
 
 The renderer decides when (the `open:` fact and the geometry, looked at after the rules) and calls `platform::popup`; the platform creates the `xdg_popup` from that same thread —Wayland's objects allow it—, and when the compositor configures it, the render surface reaches the renderer like any other. The mouse inside a popup arrives with the origin already added. On closing, the renderer first lets go of what it was painting and then the surface is destroyed.
 
+## Doing only what changed
+
+A round of a big scene costs what changed in it, not how big it is. Each result a round works out is kept with **what it read** (`scene::Seen`: the facts, the properties and the speeds it reached, not the ones it names) and is worked out again only when one of those changed:
+
+- **The drawing** (`render.rs`, `ComposeMemo`): nothing it read changed, and the list already on the card is the one.
+- **Stretches of the drawing** (`gpu.rs`, `Kept`): when something did change, the list is put together again stretch by stretch. A stretch is a run of whole groups —whatever it opens, it closes— of up to about 400 instructions. One that read nothing that changed, comes in with the same move, clips and opacity, and starts at the same place in every list as the frame before, is copied from it instead of being made: the same numbers at the same places, so every index in it still holds. Anything that moves by itself (particles, a shader that reads the time, an image that moves) is always made. Anything the whole drawing depends on besides facts and properties —the size, the order of `z:`, the texts, the windows' textures, the atlas— changing, and nothing is copied that frame. An agent's light breathing in a window manager's title bar made its 32 000 instructions again 165 times a second; now it makes its stretch, and copies the other ninety.
+- **The zones** (`render.rs`, `ZoneMemo`): whether each one is alive and its box. The mouse is tested against the kept boxes, and against a zone's shape only inside its box; the input region comes from them too. And the `z:` of the groups.
+- **`follow` and `bind`** (`Readers`): only those whose inputs changed are asked again.
+
+`PLEAMAR_CHECK_SHORTCUTS=1` does each of these anyway and says any difference (`check  · …`): to try a scene with them; it is slow. `PLEAMAR_DEBUG_STRETCHES=1` says how a scene's drawing was cut into stretches. `PLEAMAR_TIMING=1` says, every 300 rounds, how many stretches were copied and how many made.
+
 ## At rest
 
 If no property is moving and no behavior is alive, the renderer does not paint: it waits for a message, for a delay to come due, or for the next blink. Zero frames.

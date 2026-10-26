@@ -144,6 +144,23 @@ pub struct DrawList {
     /// a shader that reads the time, an image that moves—: comparing elements
     /// cannot say where the frame changed, so it is painted whole.
     pub timed: bool,
+    /// The stretches of the drawing (see `Stretch`), by where each starts in the
+    /// order of painting, and for which instructions and order they were found.
+    stretch_list: Vec<Stretch>,
+    stretch_at: Vec<u32>,
+    stretches_for: Option<((usize, usize), Option<Vec<usize>>)>,
+    /// What each made last time (see `Kept`), and the frame they are copied from.
+    kept: Vec<Option<Kept>>,
+    last: LastFrame,
+    copy_key: Option<CopyKey>,
+    /// What the whole drawing read, while each stretch's own reads are told apart.
+    reads: Seen,
+    one_stretch: Seen,
+    /// Put together whole, copying nothing (to compare, see PLEAMAR_CHECK_SHORTCUTS).
+    pub no_copy: bool,
+    /// This frame: stretches copied, and stretches put together.
+    pub copied: (u32, u32),
+    plan: Plan,
 }
 
 /// A window of the scene's compositor as the card has it: where the window
@@ -248,6 +265,7 @@ impl PreviousFrame {
     }
 
     /// That the coming frame is not compared with this one: what was in the atlas is no longer valid.
+    /// (And see `DrawList::forget_kept`.)
     pub fn forget(&mut self) {
         self.valid = false;
     }
@@ -266,6 +284,7 @@ pub struct FieldView {
 /// A text that can be selected, where it was painted: what it said, how it
 /// was laid out, its corner and the transform it was under, and the box that
 /// clipped it (what is outside is not seen, and so not pressed).
+#[derive(Clone)]
 pub struct PlacedText {
     pub at: usize,
     pub text: String,
@@ -304,6 +323,7 @@ pub struct SeenText {
     pub clipped: bool,
 }
 
+#[derive(Clone)]
 pub struct PlacedField {
     pub text: usize,
     pub zone: &'static str,
@@ -333,6 +353,135 @@ enum OpacityGroup {
     /// Invisible: nothing inside is emitted.
     Hidden,
     Layer { alpha: f32, index: usize, first_element: usize, fx: Option<Fx> },
+}
+
+/// A stretch of the drawing that can be put together on its own: from where
+/// something opens (an opacity, a fade, effects, a move, a clip) to where it
+/// closes, in the order the instructions are painted. What comes after it
+/// depends on how much it made, not on how it made it.
+#[derive(Clone, Copy)]
+struct Stretch {
+    from: usize,
+    to: usize,
+}
+
+/// How long each of the lists a drawing makes is, at some point of it.
+#[derive(Clone, Copy, PartialEq, Default)]
+struct Lens {
+    shapes: usize,
+    shape_bounds: usize,
+    points: usize,
+    stops: usize,
+    elements: usize,
+    offscreen_groups: usize,
+    particle_marks: usize,
+    blend_marks: usize,
+    picture_marks: usize,
+    glass_marks: usize,
+    glass_regions: usize,
+    windows_drawn: usize,
+    fields: usize,
+    selectable: usize,
+    measurements: usize,
+}
+
+/// What a stretch made the last time it was put together, and from what: if
+/// nothing it read changed, it comes in as it came in then and starts where it
+/// started then, what it makes is what it made, number for number —the same
+/// shapes at the same places, so every index in it still holds—. It is copied
+/// from the frame before instead of being put together again: a window's frame
+/// with an agent's light breathing in its title made all of a window manager's
+/// thirty thousand instructions again, every frame, for those few.
+struct Kept {
+    entry: u64,
+    starts: Lens,
+    ends: Lens,
+    facts: Vec<u16>,
+    props: Vec<u16>,
+    fact_values: Vec<f32>,
+    prop_values: Vec<(f32, f32)>,
+    keys: Vec<crate::text::WorkingKey>,
+    /// Some instruction in it was inside a hidden group.
+    any_hidden: bool,
+    /// Nothing in it changes by itself (particles, a shader that reads the
+    /// time, an image that moves) and it closes what it opens.
+    copyable: bool,
+}
+
+/// The lists of the frame before, to copy kept stretches from.
+#[derive(Default)]
+struct LastFrame {
+    shapes: Vec<f32>,
+    shape_bounds: Vec<[f32; 4]>,
+    points: Vec<f32>,
+    stops: Vec<f32>,
+    elements: Vec<f32>,
+    offscreen_groups: Vec<(Range<u32>, usize)>,
+    particle_marks: Vec<(u32, u32)>,
+    blend_marks: Vec<(u32, u8)>,
+    picture_marks: Vec<(u32, u32)>,
+    glass_marks: Vec<u32>,
+    glass_regions: Vec<([f32; 4], Behind)>,
+    windows_drawn: Vec<(usize, [f32; 4], Affine)>,
+    fields: Vec<PlacedField>,
+    selectable: Vec<PlacedText>,
+    measurements: Vec<(PropId, f32)>,
+    hidden: Vec<bool>,
+}
+
+/// What the whole drawing depends on besides facts and properties: if any of
+/// it changed, no stretch is copied this frame.
+#[derive(Clone, PartialEq)]
+struct CopyKey {
+    instrs: (usize, usize),
+    size: (f32, f32),
+    hud: bool,
+    scale: f32,
+    reduced_motion: bool,
+    field: Option<FieldView>,
+    selected: Option<(usize, usize, usize)>,
+    skip: Vec<std::ops::Range<usize>>,
+    order: Option<Vec<usize>>,
+    views: Vec<[f32; 4]>,
+    texts: Vec<String>,
+    window_tex: Vec<Option<WindowTex>>,
+}
+
+/// The order a drawing is painted in and what goes with it —what is not looked
+/// at, where each group closes, how many emitters come before each place—,
+/// worked out again only when the instructions, their order or what is asleep
+/// change: making them every frame was half of putting a window manager's
+/// drawing together.
+#[derive(Default)]
+struct Plan {
+    made_for: Option<((usize, usize), Option<Vec<usize>>, Vec<std::ops::Range<usize>>)>,
+    sequence: Vec<usize>,
+    asleep: Vec<bool>,
+    closes: Vec<usize>,
+    emitters_before: Vec<u32>,
+}
+
+/// A stretch being put together, to be kept when it closes.
+struct Open {
+    which: usize,
+    from: usize,
+    to: usize,
+    entry: u64,
+    starts: Lens,
+    depth: (usize, usize, usize),
+    /// What the frame had of these before it: the stretch's own are told apart.
+    before: (bool, bool, Option<f32>, usize),
+}
+
+/// A hash of numbers, by their bits: each one mixed in whole.
+struct Fnv(u64);
+impl Fnv {
+    fn u(&mut self, v: u64) {
+        self.0 = (self.0 ^ v).wrapping_mul(0x9E3779B97F4A7C15).rotate_left(29);
+    }
+    fn f(&mut self, v: f32) {
+        self.u(v.to_bits() as u64);
+    }
 }
 
 /// Where a group painted on a layer reaches (see `share_layers`).
@@ -683,6 +832,193 @@ impl Pending {
 }
 
 impl DrawList {
+    /// That nothing is copied from this frame: what was in the atlas is no
+    /// longer valid, and a letter may have moved without changing its number.
+    pub fn forget_kept(&mut self) {
+        self.copy_key = None;
+    }
+
+    /// What was just put together, copying stretches, against putting it all
+    /// together again (`compose`, with nothing copied): the first difference, if any.
+    pub fn check_copy(&mut self, compose: impl FnOnce(&mut Self)) -> Option<String> {
+        fn bits(v: &[f32]) -> Vec<u32> {
+            v.iter().map(|x| x.to_bits()).collect()
+        }
+        let before = (
+            bits(&self.shapes),
+            self.shape_bounds.iter().map(|b| bits(b)).collect::<Vec<_>>(),
+            bits(&self.points),
+            bits(&self.stops),
+            bits(&self.elements),
+            self.offscreen_groups.clone(),
+            self.blend_marks.clone(),
+            self.picture_marks.clone(),
+            self.glass_marks.clone(),
+            self.hidden.clone(),
+            self.windows_drawn.iter().map(|(s, b, _)| (*s, bits(b))).collect::<Vec<_>>(),
+            self.measurements.iter().map(|(p, v)| (p.0, v.to_bits())).collect::<Vec<_>>(),
+            self.fields.len(),
+        );
+        self.no_copy = true;
+        compose(self);
+        self.no_copy = false;
+        let after = (
+            bits(&self.shapes),
+            self.shape_bounds.iter().map(|b| bits(b)).collect::<Vec<_>>(),
+            bits(&self.points),
+            bits(&self.stops),
+            bits(&self.elements),
+            self.offscreen_groups.clone(),
+            self.blend_marks.clone(),
+            self.picture_marks.clone(),
+            self.glass_marks.clone(),
+            self.hidden.clone(),
+            self.windows_drawn.iter().map(|(s, b, _)| (*s, bits(b))).collect::<Vec<_>>(),
+            self.measurements.iter().map(|(p, v)| (p.0, v.to_bits())).collect::<Vec<_>>(),
+            self.fields.len(),
+        );
+        let first = |a: &[u32], b: &[u32]| (0..a.len().max(b.len())).find(|k| a.get(*k) != b.get(*k));
+        if before.4 != after.4 {
+            let k = first(&before.4, &after.4).unwrap_or(0);
+            return Some(format!("elements: {} copied vs {} whole, first different number at {} (element {}, field {})", before.4.len() / PER_ELEMENT, after.4.len() / PER_ELEMENT, k, k / PER_ELEMENT, k % PER_ELEMENT));
+        }
+        let names = ["shapes", "", "points", "stops"];
+        if before.0 != after.0 {
+            return Some(format!("{}: first different at {:?}", names[0], first(&before.0, &after.0)));
+        }
+        if before.1 != after.1 {
+            return Some("shape bounds".into());
+        }
+        if before.2 != after.2 {
+            return Some(format!("points: first different at {:?}", first(&before.2, &after.2)));
+        }
+        if before.3 != after.3 {
+            return Some(format!("stops: first different at {:?}", first(&before.3, &after.3)));
+        }
+        if before.5 != after.5 || before.6 != after.6 || before.7 != after.7 || before.8 != after.8 {
+            return Some("the marks (layers, blends, pictures, glass)".into());
+        }
+        if before.9 != after.9 {
+            return Some(format!("hidden: first different at {:?}", (0..before.9.len()).find(|k| before.9.get(*k) != after.9.get(*k))));
+        }
+        if before.10 != after.10 {
+            return Some("the windows drawn".into());
+        }
+        if before.11 != after.11 || before.12 != after.12 {
+            return Some("the measurements or the fields".into());
+        }
+        None
+    }
+
+    fn lens(&self, stops: usize) -> Lens {
+        Lens {
+            shapes: self.shapes.len(),
+            shape_bounds: self.shape_bounds.len(),
+            points: self.points.len(),
+            stops,
+            elements: self.elements.len(),
+            offscreen_groups: self.offscreen_groups.len(),
+            particle_marks: self.particle_marks.len(),
+            blend_marks: self.blend_marks.len(),
+            picture_marks: self.picture_marks.len(),
+            glass_marks: self.glass_marks.len(),
+            glass_regions: self.glass_regions.len(),
+            windows_drawn: self.windows_drawn.len(),
+            fields: self.fields.len(),
+            selectable: self.selectable.len(),
+            measurements: self.measurements.len(),
+        }
+    }
+
+    /// The stretches of these instructions in this order: from each opening to
+    /// its close, the outermost ones of at most `MOST` instructions, not inside
+    /// one another (a group too big is looked into for smaller ones); and then
+    /// those side by side —nothing opening or closing between them— joined, up
+    /// to `RUN`: a window manager's drawing is a few big groups and, inside,
+    /// hundreds of little ones, and a stretch copied costs a little however small.
+    fn find_stretches(instrs: &[Instr], sequence: &[usize]) -> Vec<Stretch> {
+        const MOST: usize = 2500;
+        const LEAST: usize = 3;
+        let mut open: Vec<usize> = Vec::new();
+        let mut groups: Vec<Stretch> = Vec::new();
+        for (p, idx) in sequence.iter().enumerate() {
+            match &instrs[*idx] {
+                Instr::Opacity(Some(_)) | Instr::Fade(_) | Instr::Effect(_) | Instr::Transform(Some(_)) | Instr::Clip(Some(_)) => open.push(p),
+                Instr::Opacity(None) | Instr::Transform(None) | Instr::Clip(None) => {
+                    if let Some(o) = open.pop() {
+                        groups.push(Stretch { from: o, to: p + 1 });
+                    }
+                }
+                _ => {}
+            }
+        }
+        groups.sort_by_key(|g| (g.from, usize::MAX - g.to));
+        let mut chosen: Vec<Stretch> = Vec::new();
+        let mut past = 0;
+        for g in groups {
+            let n = g.to - g.from;
+            if g.from >= past && (LEAST..=MOST).contains(&n) {
+                past = g.to;
+                chosen.push(g);
+            }
+        }
+        const RUN: usize = 400;
+        let opens_or_closes = |p: usize| {
+            matches!(
+                &instrs[sequence[p]],
+                Instr::Opacity(_) | Instr::Fade(_) | Instr::Effect(_) | Instr::Transform(_) | Instr::Clip(_) | Instr::Group { .. } | Instr::Fill { .. }
+            )
+        };
+        let mut runs: Vec<Stretch> = Vec::new();
+        for s in chosen {
+            if let Some(r) = runs.last_mut()
+                && s.to - r.from <= RUN
+                && !(r.to..s.from).any(opens_or_closes)
+            {
+                r.to = s.to;
+                continue;
+            }
+            runs.push(s);
+        }
+        runs
+    }
+
+    /// A stretch just closed: what it made and read is kept, to copy it in the
+    /// frames where nothing it read has changed.
+    #[allow(clippy::too_many_arguments)]
+    fn keep(&mut self, o: Open, c: Ctx, tip: &mut Texts, stops: usize, depth: (usize, usize, usize), closed: bool, sequence: &[usize]) {
+        let ends = self.lens(stops);
+        let any_hidden = sequence.get(o.from..o.to).is_some_and(|s| s.iter().any(|i| self.hidden.get(*i).copied().unwrap_or(false)));
+        let (timed, particles, wake) = (self.timed, self.particles_alive, self.wake_at);
+        let copyable = closed
+            && depth == o.depth
+            && !timed
+            && !particles
+            && wake.is_none()
+            && self.texts_seen.len() == o.before.3
+            && ends.particle_marks == o.starts.particle_marks;
+        // The frame's own again, with the stretch's added.
+        self.timed |= o.before.0;
+        self.particles_alive |= o.before.1;
+        self.wake_at = match (o.before.2, wake) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let (mut facts, mut props) = (Vec::new(), Vec::new());
+        if let Some(seen) = c.seen {
+            self.one_stretch.reset(c.facts.len(), c.props.len());
+            self.one_stretch.take_from(seen);
+            seen.pass_to(&self.reads);
+            self.one_stretch.take(&mut facts, &mut props);
+        }
+        let keys = tip.recorded();
+        let fact_values = facts.iter().map(|k| c.facts.get(*k as usize).copied().unwrap_or(f32::NAN)).collect();
+        let prop_values = props.iter().map(|k| c.props.get(*k as usize).map_or((f32::NAN, f32::NAN), |p| (p.x, p.v))).collect();
+        if let Some(slot) = self.kept.get_mut(o.which) {
+            *slot = Some(Kept { entry: o.entry, starts: o.starts, ends, facts, props, fact_values, prop_values, keys, any_hidden, copyable });
+        }
+    }
+
     pub fn element_count(&self) -> usize {
         self.elements.len() / PER_ELEMENT
     }
@@ -995,6 +1331,61 @@ impl DrawList {
 
     pub fn compose(&mut self, instrs: &[Instr], c: Ctx, texts: &[String], tip: &mut Texts, field: Option<FieldView>, size: (f32, f32), hud: bool) {
         tip.begin_frame();
+        // Stretches copied from the frame before (see `Kept`): only if nothing the
+        // whole drawing depends on besides facts and properties changed, and
+        // knowing what is read.
+        // (Compared where they are; copied only when they changed.)
+        let instrs_id = (instrs.as_ptr() as usize, instrs.len());
+        let same_key = self.copy_key.as_ref().is_some_and(|k| {
+            k.instrs == instrs_id
+                && k.size == size
+                && k.hud == hud
+                && k.scale == tip.scale()
+                && k.reduced_motion == self.reduced_motion
+                && k.field == field
+                && k.selected == self.selected
+                && k.skip == self.skip
+                && k.order == self.order
+                && k.views == self.views
+                && k.texts == texts
+                && k.window_tex == self.window_tex
+        });
+        let copying = !self.no_copy && c.seen.is_some() && !self.collect_texts && same_key;
+        if !same_key {
+            self.copy_key = Some(CopyKey {
+                instrs: instrs_id,
+                size,
+                hud,
+                scale: tip.scale(),
+                reduced_motion: self.reduced_motion,
+                field,
+                selected: self.selected,
+                skip: self.skip.clone(),
+                order: self.order.clone(),
+                views: self.views.clone(),
+                texts: texts.to_vec(),
+                window_tex: self.window_tex.clone(),
+            });
+        }
+        // What this frame makes goes into the lists of two frames ago; the last one's are kept to copy from.
+        std::mem::swap(&mut self.shapes, &mut self.last.shapes);
+        std::mem::swap(&mut self.shape_bounds, &mut self.last.shape_bounds);
+        std::mem::swap(&mut self.points, &mut self.last.points);
+        std::mem::swap(&mut self.stops, &mut self.last.stops);
+        std::mem::swap(&mut self.elements, &mut self.last.elements);
+        std::mem::swap(&mut self.offscreen_groups, &mut self.last.offscreen_groups);
+        std::mem::swap(&mut self.particle_marks, &mut self.last.particle_marks);
+        std::mem::swap(&mut self.blend_marks, &mut self.last.blend_marks);
+        std::mem::swap(&mut self.picture_marks, &mut self.last.picture_marks);
+        std::mem::swap(&mut self.glass_marks, &mut self.last.glass_marks);
+        std::mem::swap(&mut self.glass_regions, &mut self.last.glass_regions);
+        std::mem::swap(&mut self.windows_drawn, &mut self.last.windows_drawn);
+        std::mem::swap(&mut self.fields, &mut self.last.fields);
+        std::mem::swap(&mut self.selectable, &mut self.last.selectable);
+        std::mem::swap(&mut self.measurements, &mut self.last.measurements);
+        std::mem::swap(&mut self.hidden, &mut self.last.hidden);
+        self.reads.reset(c.facts.len(), c.props.len());
+        let (mut copied, mut made) = (0u32, 0u32);
         self.measurements.clear();
         self.fields.clear();
         self.selectable.clear();
@@ -1034,40 +1425,86 @@ impl DrawList {
 
         // What is not looked at this frame, by instruction; and in which order
         // (groups with `z:` drawn over their siblings as it says).
-        let mut asleep = vec![false; instrs.len()];
-        for r in &self.skip {
-            let end = r.end.min(asleep.len());
-            for k in r.start.min(end)..end {
-                asleep[k] = true;
+        let mut plan = std::mem::take(&mut self.plan);
+        if plan.made_for.as_ref().is_none_or(|(i, o, s)| *i != instrs_id || *o != self.order || *s != self.skip) {
+            plan.asleep = vec![false; instrs.len()];
+            for r in &self.skip {
+                let end = r.end.min(plan.asleep.len());
+                for k in r.start.min(end)..end {
+                    plan.asleep[k] = true;
+                }
             }
-        }
-        let sequence: Vec<usize> = match &self.order {
-            Some(o) => o.clone(),
-            None => (0..instrs.len()).collect(),
-        };
-        // Where each group that opens in the sequence closes, and how many
-        // emitters come before each place: a group that is hidden is jumped
-        // over whole, instead of being looked at instruction by instruction
-        // (a window manager's sixteen slots, most of them empty, are most of
-        // its drawing). Not one with an emitter inside: an emitter keeps
-        // count of its own while hidden, so it does not burst late on appearing.
-        let mut closes = vec![usize::MAX; sequence.len()];
-        let mut emitters_before = vec![0u32; sequence.len() + 1];
-        {
+            plan.sequence = match &self.order {
+                Some(o) => o.clone(),
+                None => (0..instrs.len()).collect(),
+            };
+            // Where each group that opens in the sequence closes, and how many
+            // emitters come before each place: a group that is hidden is jumped
+            // over whole, instead of being looked at instruction by instruction
+            // (a window manager's sixteen slots, most of them empty, are most of
+            // its drawing). Not one with an emitter inside: an emitter keeps
+            // count of its own while hidden, so it does not burst late on appearing.
+            plan.closes = vec![usize::MAX; plan.sequence.len()];
+            plan.emitters_before = vec![0u32; plan.sequence.len() + 1];
             let mut open: Vec<usize> = Vec::new();
-            for (p, idx) in sequence.iter().enumerate() {
-                emitters_before[p + 1] = emitters_before[p] + matches!(instrs[*idx], Instr::Particles(_)) as u32;
+            for (p, idx) in plan.sequence.iter().enumerate() {
+                plan.emitters_before[p + 1] = plan.emitters_before[p] + matches!(instrs[*idx], Instr::Particles(_)) as u32;
                 match &instrs[*idx] {
                     Instr::Opacity(Some(_)) | Instr::Fade(_) | Instr::Effect(_) => open.push(p),
                     Instr::Opacity(None) => {
                         if let Some(o) = open.pop() {
-                            closes[o] = p;
+                            plan.closes[o] = p;
                         }
                     }
                     _ => {}
                 }
             }
+            plan.made_for = Some((instrs_id, self.order.clone(), self.skip.clone()));
         }
+        let (asleep, sequence, closes, emitters_before) = (&plan.asleep, &plan.sequence, &plan.closes, &plan.emitters_before);
+        if self.stretches_for.as_ref().is_none_or(|(i, o)| *i != instrs_id || *o != self.order) {
+            self.stretch_list = Self::find_stretches(instrs, sequence);
+            if std::env::var_os("PLEAMAR_DEBUG_STRETCHES").is_some() {
+                let covered: usize = self.stretch_list.iter().map(|s| s.to - s.from).sum();
+                let mut sizes: Vec<usize> = self.stretch_list.iter().map(|s| s.to - s.from).collect();
+                sizes.sort_unstable();
+                let q = |f: f32| sizes.get(((sizes.len() as f32 - 1.0) * f) as usize).copied().unwrap_or(0);
+                // Loose: what is between stretches, by kind.
+                let mut inside = vec![false; sequence.len()];
+                for s in &self.stretch_list {
+                    for x in &mut inside[s.from..s.to] {
+                        *x = true;
+                    }
+                }
+                let mut kinds: std::collections::BTreeMap<&str, usize> = Default::default();
+                for (p, idx) in sequence.iter().enumerate() {
+                    if !inside[p] {
+                        let kind = match &instrs[*idx] {
+                            Instr::Opacity(_) | Instr::Fade(_) | Instr::Effect(_) => "opacity",
+                            Instr::Transform(_) => "move",
+                            Instr::Clip(_) => "clip",
+                            Instr::Group { .. } | Instr::Shape { .. } | Instr::Fill { .. } => "body",
+                            Instr::Text { .. } => "text",
+                            _ => "other",
+                        };
+                        *kinds.entry(kind).or_default() += 1;
+                    }
+                }
+                eprintln!("stretches · {} of them over {} of {} instructions · sizes: median {} · 90 % {} · largest {} · left out, by kind: {:?}", self.stretch_list.len(), covered, sequence.len(), q(0.5), q(0.9), sizes.last().copied().unwrap_or(0), kinds);
+            }
+            self.stretch_at = vec![u32::MAX; sequence.len()];
+            for (k, s) in self.stretch_list.iter().enumerate() {
+                self.stretch_at[s.from] = k as u32;
+            }
+            self.kept = (0..self.stretch_list.len()).map(|_| None).collect();
+            self.stretches_for = Some((instrs_id, self.order.clone()));
+        }
+        if !copying {
+            for k in &mut self.kept {
+                *k = None;
+            }
+        }
+        let mut open_stretch: Option<Open> = None;
         // Jumped over from `p` (an opening that turned out hidden): past its close.
         let jump = |p: usize| -> Option<usize> {
             let close = *closes.get(p)?;
@@ -1090,6 +1527,121 @@ impl DrawList {
         let mut next = 0usize;
         while next < sequence.len() {
             let here = next;
+            // A stretch that has just closed is kept.
+            if open_stretch.as_ref().is_some_and(|o| here >= o.to) {
+                if let Some(o) = open_stretch.take() {
+                    let closed = body.is_none() && text_fx.is_none() && text_select.is_none();
+                    self.keep(o, c, tip, placed_stops.len(), (transforms.len(), clips.len(), opacity_groups.len()), closed, sequence);
+                }
+            }
+            // One that starts here: copied from the frame before if nothing it
+            // read has changed, as it came in and where it started then;
+            // otherwise put together, and kept.
+            if open_stretch.is_none() && body.is_none() && text_fx.is_none() && text_select.is_none() {
+                if let Some(which) = self.stretch_at.get(here).copied().filter(|k| *k != u32::MAX).map(|k| k as usize) {
+                    let to = self.stretch_list[which].to;
+                    let entry = {
+                        let mut h = Fnv(0xcbf29ce484222325);
+                        let a = transforms.last().copied().unwrap_or(Affine::IDENTITY);
+                        for v in a.m.iter().chain(&a.t) {
+                            h.f(*v);
+                        }
+                        h.u(clips.len() as u64);
+                        for (k, r) in &clips {
+                            h.u(*k as u64);
+                            for v in r {
+                                h.f(*v);
+                            }
+                        }
+                        h.u(opacity_groups.len() as u64);
+                        for g in &opacity_groups {
+                            match g {
+                                OpacityGroup::Multiply(a) => {
+                                    h.u(1);
+                                    h.f(*a);
+                                }
+                                OpacityGroup::Hidden => h.u(2),
+                                OpacityGroup::Layer { alpha, .. } => {
+                                    h.u(3);
+                                    h.f(*alpha);
+                                }
+                            }
+                        }
+                        h.0
+                    };
+                    let starts = self.lens(placed_stops.len());
+                    let last = &self.last;
+                    let fits = |k: &Kept| {
+                        let e = &k.ends;
+                        e.shapes <= last.shapes.len()
+                            && e.shape_bounds <= last.shape_bounds.len()
+                            && e.points <= last.points.len()
+                            && e.stops <= last.stops.len()
+                            && e.elements <= last.elements.len()
+                            && e.offscreen_groups <= last.offscreen_groups.len()
+                            && e.blend_marks <= last.blend_marks.len()
+                            && e.picture_marks <= last.picture_marks.len()
+                            && e.glass_marks <= last.glass_marks.len()
+                            && e.glass_regions <= last.glass_regions.len()
+                            && e.windows_drawn <= last.windows_drawn.len()
+                            && e.fields <= last.fields.len()
+                            && e.selectable <= last.selectable.len()
+                            && e.measurements <= last.measurements.len()
+                    };
+                    let same = |k: &Kept| {
+                        k.copyable
+                            && k.entry == entry
+                            && k.starts == starts
+                            && fits(k)
+                            && k.facts.iter().zip(&k.fact_values).all(|(f, v)| c.facts.get(*f as usize).is_some_and(|x| x.to_bits() == v.to_bits()))
+                            && k.props.iter().zip(&k.prop_values).all(|(p, v)| c.props.get(*p as usize).is_some_and(|x| x.x.to_bits() == v.0.to_bits() && x.v.to_bits() == v.1.to_bits()))
+                    };
+                    if copying && self.kept.get(which).and_then(Option::as_ref).is_some_and(same) {
+                        let k = self.kept[which].as_ref().unwrap();
+                        let (a, b) = (k.starts, k.ends);
+                        let last = &self.last;
+                        self.shapes.extend_from_slice(&last.shapes[a.shapes..b.shapes]);
+                        self.shape_bounds.extend_from_slice(&last.shape_bounds[a.shape_bounds..b.shape_bounds]);
+                        self.points.extend_from_slice(&last.points[a.points..b.points]);
+                        placed_stops.extend_from_slice(&last.stops[a.stops..b.stops]);
+                        self.elements.extend_from_slice(&last.elements[a.elements..b.elements]);
+                        self.offscreen_groups.extend_from_slice(&last.offscreen_groups[a.offscreen_groups..b.offscreen_groups]);
+                        self.blend_marks.extend_from_slice(&last.blend_marks[a.blend_marks..b.blend_marks]);
+                        self.picture_marks.extend_from_slice(&last.picture_marks[a.picture_marks..b.picture_marks]);
+                        self.glass_marks.extend_from_slice(&last.glass_marks[a.glass_marks..b.glass_marks]);
+                        self.glass_regions.extend_from_slice(&last.glass_regions[a.glass_regions..b.glass_regions]);
+                        self.windows_drawn.extend_from_slice(&last.windows_drawn[a.windows_drawn..b.windows_drawn]);
+                        self.fields.extend_from_slice(&last.fields[a.fields..b.fields]);
+                        self.selectable.extend_from_slice(&last.selectable[a.selectable..b.selectable]);
+                        self.measurements.extend_from_slice(&last.measurements[a.measurements..b.measurements]);
+                        if k.any_hidden {
+                            for &i in &sequence[here..to] {
+                                if let Some(h) = self.hidden.get_mut(i) {
+                                    *h = last.hidden.get(i).copied().unwrap_or(false);
+                                }
+                            }
+                        }
+                        tip.note_again(&k.keys);
+                        for f in &k.facts {
+                            self.reads.fact(*f as usize);
+                        }
+                        for p in &k.props {
+                            self.reads.prop(*p as usize);
+                        }
+                        copied += 1;
+                        next = to;
+                        continue;
+                    }
+                    if let Some(seen) = c.seen {
+                        seen.pass_to(&self.reads);
+                    }
+                    tip.record();
+                    let before = (self.timed, self.particles_alive, self.wake_at, self.texts_seen.len());
+                    (self.timed, self.particles_alive, self.wake_at) = (false, false, None);
+                    open_stretch = Some(Open { which, from: here, to, entry, starts, depth: (transforms.len(), clips.len(), opacity_groups.len()), before });
+                    made += 1;
+                }
+            }
             let idx = sequence[here];
             next += 1;
             if asleep[idx] {
@@ -1793,6 +2345,17 @@ impl DrawList {
                 }
             }
         }
+        if let Some(o) = open_stretch.take() {
+            let closed = body.is_none() && text_fx.is_none() && text_select.is_none();
+            self.keep(o, c, tip, placed_stops.len(), (transforms.len(), clips.len(), opacity_groups.len()), closed, sequence);
+        }
+        // What the whole drawing read: each stretch's, the copied ones', and what is between them.
+        if let Some(seen) = c.seen {
+            seen.pass_to(&self.reads);
+            seen.take_from(&self.reads);
+        }
+        self.copied = (copied, made);
+        self.plan = plan;
         for message in [self.shadow.end_frame(true), self.clipping.end_frame(false)].into_iter().flatten() {
             eprintln!("{message}");
         }

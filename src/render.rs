@@ -466,6 +466,8 @@ pub fn run(
     // What the drawing read the last time it was made.
     let mut compose_seen = crate::scene::Seen::default();
     let mut zone_memo = ZoneMemo::default();
+    // Stretches of the drawing copied and put together (see `gpu::Kept`), for the timing report.
+    let (mut stretches_copied, mut stretches_made) = (0u64, 0u64);
     let mut z_read = ReadMemo::default();
     // Who asked what the scene holds (`describe`): answered after the next
     // list is made, which is when where every text went is known.
@@ -1098,6 +1100,7 @@ pub fn run(
                 ToRender::Workshop(p) => {
                     letters.receive(*p);
                     compose_memo = None;
+                    draw.forget_kept();
                 }
                 // A window someone stretches: the sheet changes, and with it what the
                 // scene reads in `screen.width` and `screen.height`.
@@ -3890,6 +3893,15 @@ pub fn run(
         if !same_scene {
             compose_seen.reset(facts.len(), props.len());
             draw.compose(to_paint, Ctx { seen: Some(&compose_seen), ..c }, &texts, &mut letters, view, size, op.hud);
+            stretches_copied += draw.copied.0 as u64;
+            stretches_made += draw.copied.1 as u64;
+            // With stretches copied: put together whole again, and compared.
+            if check_shortcuts && draw.copied.0 > 0 {
+                compose_seen.reset(facts.len(), props.len());
+                if let Some(diff) = draw.check_copy(|d| d.compose(to_paint, Ctx { seen: Some(&compose_seen), ..c }, &texts, &mut letters, view, size, op.hud)) {
+                    eprintln!("check  · stretches copied from the frame before are not what putting it together gives: {diff}");
+                }
+            }
             if draw.collect_texts {
                 let gone = |at: usize| draw.hidden.get(at).copied().unwrap_or(false) || absent.iter().any(|r| r.contains(&at));
                 let sight = crate::agent::Sight {
@@ -4052,6 +4064,7 @@ pub fn run(
         if !letters.pending_upload.is_empty() || !letters.pending_fit.is_empty() || !letters.pending_pictures.is_empty() {
             previous.forget();
             compose_memo = None;
+            draw.forget_kept();
         }
         // (What is written to the card waits in memory for the next thing submitted to it.)
         let wrote = !letters.pending_upload.is_empty() || !letters.pending_pictures.is_empty() || !same_scene;
@@ -5015,6 +5028,14 @@ pub fn run(
                     "timing · CPU per round: input {:.2} · rules and springs {:.2} · windows' frames to the card {:.2} · compose {:.2} · regions {:.2} · paint {:.2} · rest {:.2} ms",
                     prof_cpu[0] / f, (prof_cpu[1] + prof_cpu[2]) / f, prof_cpu[7] / f, prof_cpu[3] / f, prof_cpu[4] / f, prof_cpu[5] / f, prof_cpu[6] / f
                 );
+                // How much of the drawing was copied from the frame before instead of being put together.
+                if stretches_copied + stretches_made > 0 {
+                    println!(
+                        "timing · stretches of the drawing, in 300 rounds: {stretches_copied} copied from the frame before, {stretches_made} put together ({:.0} % copied)",
+                        100.0 * stretches_copied as f64 / (stretches_copied + stretches_made) as f64
+                    );
+                    (stretches_copied, stretches_made) = (0, 0);
+                }
                 // What the sections above leave out: a round that looks cheap and is not.
                 if prof_outside[0] + prof_outside[1] > 0.3 * f {
                     let arrived: Vec<String> = ["frames shown", "the mouse elsewhere", "the mouse", "facts", "texts", "the logic's orders", "texts shaped", "pictures of what is behind", "windows", "other"].iter().zip(prof_arrived).filter(|(_, n)| *n > 0).map(|(w, n)| format!("{w} {n}")).collect();

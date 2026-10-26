@@ -272,6 +272,20 @@ impl Seen {
             })
         })
     }
+    /// What is noted here, added to `into` too, and forgotten here: one
+    /// stretch's reads kept apart from the next one's (see `DrawList::compose`).
+    pub fn pass_to(&self, into: &Seen) {
+        for (mine, theirs) in self.facts.iter().zip(&into.facts).chain(self.props.iter().zip(&into.props)) {
+            theirs.set(theirs.get() | mine.get());
+            mine.set(0);
+        }
+    }
+    /// What `from` noted, noted here instead (and nothing else).
+    pub fn take_from(&self, from: &Seen) {
+        for (mine, theirs) in self.facts.iter().zip(&from.facts).chain(self.props.iter().zip(&from.props)) {
+            mine.set(theirs.get());
+        }
+    }
     /// What was read, into those lists, and nothing read again: for whoever
     /// keeps one of these for many evaluations, one after another.
     pub fn take(&self, facts: &mut Vec<u16>, props: &mut Vec<u16>) {

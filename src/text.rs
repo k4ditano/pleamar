@@ -643,6 +643,13 @@ impl Typesetter {
 
 type LiveKey = (String, (u32, u32));
 
+/// One thing a stretch of the drawing noted in the working set: a text's layout or a live picture.
+#[derive(Clone)]
+pub enum WorkingKey {
+    Layout(LayoutKey),
+    Live(LiveKey),
+}
+
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct WorkingSet {
     layouts: HashSet<LayoutKey>,
@@ -730,6 +737,10 @@ pub struct Texts {
     generation: u32,
     scale: f32,
     working: WorkingSet,
+    /// While a stretch of the drawing is being put together to be kept
+    /// (`DrawList::compose`): what it notes in the working set, to note it again
+    /// in the frames it is copied instead of being put together.
+    recording: Option<Vec<WorkingKey>>,
     exhausted: bool,
     rebuilding: bool,
     /// An oversized working set is reported once, not rebuilt every frame.
@@ -761,7 +772,7 @@ impl Texts {
     }
 
     fn new(to_workshop: Sender<Job>) -> Self {
-        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), live_version: HashMap::new(), last_live: HashMap::new(), pending_upload: Vec::new(), pending_fit: Vec::new(), pending_pictures: Vec::new(), dropped_pictures: Vec::new(), pictures: HashSet::new(), unseen: HashMap::new(), generation: 0, scale: 1.0, working: WorkingSet::default(), exhausted: false, rebuilding: false, too_large: None, height: ATLAS_SIZE, most: ATLAS_SIZE }
+        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), live_version: HashMap::new(), last_live: HashMap::new(), pending_upload: Vec::new(), pending_fit: Vec::new(), pending_pictures: Vec::new(), dropped_pictures: Vec::new(), pictures: HashSet::new(), unseen: HashMap::new(), generation: 0, scale: 1.0, working: WorkingSet::default(), recording: None, exhausted: false, rebuilding: false, too_large: None, height: ATLAS_SIZE, most: ATLAS_SIZE }
     }
 
     pub fn scale(&self) -> f32 {
@@ -901,6 +912,28 @@ impl Texts {
         }
     }
 
+    /// From now on, what is noted in the working set is also kept apart.
+    pub fn record(&mut self) {
+        self.recording = Some(Vec::new());
+    }
+    /// What was noted since `record`, and no more keeping apart.
+    pub fn recorded(&mut self) -> Vec<WorkingKey> {
+        self.recording.take().unwrap_or_default()
+    }
+    /// Noted again, as a stretch copied from the frame before would have.
+    pub fn note_again(&mut self, keys: &[WorkingKey]) {
+        for k in keys {
+            match k {
+                WorkingKey::Layout(l) => {
+                    self.working.layouts.insert(l.clone());
+                }
+                WorkingKey::Live(v) => {
+                    self.working.live.insert(v.clone());
+                }
+            }
+        }
+    }
+
     pub fn begin_frame(&mut self) {
         self.working.layouts.clear();
         self.working.live.clear();
@@ -941,6 +974,9 @@ impl Texts {
     /// A text's layout, if it is ready; if not, it is ordered and the last one
     /// seen at that place is returned. `place` is the position in the draw list.
     pub fn layout(&mut self, place: usize, key: LayoutKey) -> Option<Arc<Layout>> {
+        if let Some(r) = &mut self.recording {
+            r.push(WorkingKey::Layout(key.clone()));
+        }
         self.working.layouts.insert(key.clone());
         if let Some(m) = self.layouts.get(&key) {
             self.last.insert(place, m.clone());
@@ -978,6 +1014,9 @@ impl Texts {
             return self.images.get(k).copied().flatten();
         };
         let name = texts.get(t.0 as usize).filter(|n| !n.is_empty())?;
+        if let Some(r) = &mut self.recording {
+            r.push(WorkingKey::Live((name.clone(), *size)));
+        }
         self.working.live.insert((name.clone(), *size));
         let (base, version) = live_name(name);
         let key = (base.to_string(), *size);
