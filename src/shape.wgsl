@@ -316,10 +316,12 @@ fn shape_distance(k: u32, point: vec2<f32>) -> f32 {
     return d * f.t1.z;
 }
 
-// The edge is smoothed over three quarters of a REAL pixel: at scale 2, half
-// that width in logical pixels, or everything would come out blurry.
+// The edge is smoothed over one REAL pixel (half of it each side): at scale 2,
+// half that width in logical pixels, or everything would come out blurry. It
+// was a pixel and a half: a dark shape on a light picture —a pill on a sky—
+// took three pixels to go from one to the other, and read as soft.
 fn coverage(d: f32) -> f32 {
-    let m = 0.75 / u.header.w;
+    let m = 0.5 / u.header.w;
     return 1.0 - smoothstep(-m, m, d);
 }
 
