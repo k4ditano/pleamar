@@ -468,12 +468,6 @@ pub fn run(
     let mut zone_memo = ZoneMemo::default();
     let mut rule_index = RuleIndex::default();
     let mut awake = AwakeBehaviors::default();
-    // PROVISIONAL (PLEAMAR_FINE=1): reglas y muelles por partes.
-    let fine_on = std::env::var_os("PLEAMAR_FINE").is_some();
-    let mut fine = [0f64; 10];
-    let mut fine_t = Instant::now();
-    let mut fine_n = 0u32;
-    let mut fine_counted = false;
     // Stretches of the drawing copied and put together (see `gpu::Kept`), for the timing report.
     let (mut stretches_copied, mut stretches_made) = (0u64, 0u64);
     let mut z_read = ReadMemo::default();
@@ -2175,20 +2169,6 @@ pub fn run(
         let absent_behaviors: Vec<std::ops::Range<usize>> = absent_spans.iter().map(|t| t.behaviors.clone()).collect();
         awake.update(&scene.behaviors, &absent_behaviors);
         // Zones: who has the mouse over them.
-        if fine_on && !fine_counted {
-            fine_counted = true;
-            let mut kinds: std::collections::BTreeMap<&str, usize> = Default::default();
-            for b in &scene.behaviors {
-                *kinds.entry(match b { Behavior::Blink { .. } => "blink", Behavior::Wave { .. } => "wave", Behavior::Follow { .. } => "follow", Behavior::Bind { .. } => "bind", Behavior::Sort { .. } => "sort", Behavior::Advance { .. } => "spin", Behavior::Gaze { .. } => "gaze" }).or_default() += 1;
-            }
-            let mut triggers: std::collections::BTreeMap<&str, usize> = Default::default();
-            for r in &scene.rules {
-                *triggers.entry(match &r.when { Trigger::Enter(_) | Trigger::Leave(_) => "enter/leave", Trigger::Press(_) | Trigger::PressWith(..) | Trigger::Release(_) => "press", Trigger::Change(_) => "change", Trigger::Still { .. } => "still", Trigger::On(_) => "on signal", Trigger::Key(_) => "key", Trigger::Above { .. } | Trigger::Away { .. } => "hover/away", Trigger::Every { .. } => "every", Trigger::Idle { .. } => "idle", _ => "other" }).or_default() += 1;
-            }
-            let guards = scene.rules.iter().filter(|r| r.guard.is_some()).count();
-            println!("timing · PROVISIONAL counts: {} props, {} facts, {} zones, {} spans · behaviors {:?} · rules {:?} ({} with a guard)", props.len(), facts.len(), scene.zones.len(), scene.spans.len(), kinds, triggers, guards);
-        }
-        if fine_on { fine_t = Instant::now(); }
         let mut edges: Vec<(bool, usize)> = Vec::new(); // (enters, zone)
         {
             let c = Ctx { props: &props, facts: &facts, seen: None };
@@ -2230,7 +2210,6 @@ pub fn run(
             Some(a) => inside.iter().enumerate().filter(|(_, d)| **d).max_by_key(|(k, _)| (a.zone_rank[*k], *k)).map(|(k, _)| k),
             None => inside.iter().rposition(|d| *d),
         };
-        if fine_on { let n = Instant::now(); fine[0] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         if std::env::var_os("PLEAMAR_DEBUG_ZONES").is_some() && !edges.is_empty() {
             let names: Vec<String> = inside
                 .iter()
@@ -2610,7 +2589,6 @@ pub fn run(
             }
         }
 
-        if fine_on { let n = Instant::now(); fine[1] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         // The keyboard, only while the scene wants it: a closed launcher cannot
         // keep it. And if it asked for the focus for a field without having it,
         // exclusively until it arrives (see `Effect::FocusField`).
@@ -2755,7 +2733,6 @@ pub fn run(
         // pleamar-wm took the keyboard going to a window on the other monitor
         // for one going to a window on the same one, and a maximized window
         // went back to its tile.
-        if fine_on { let n = Instant::now(); fine[2] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         if facts != facts_at_binds {
             follows.begin(&scene.behaviors);
             readers.look(0, &scene.behaviors, &facts, &props, &absent_behaviors);
@@ -2783,7 +2760,6 @@ pub fn run(
             facts_at_binds.clone_from(&facts);
         }
 
-        if fine_on { let n = Instant::now(); fine[3] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         // Rules: all of this happens here, whatever state the logic is in.
         // Only the ones that can fire this round (see `RuleIndex`).
         if rule_index.of != (scene.rules.as_ptr() as usize, scene.rules.len()) {
@@ -2968,7 +2944,6 @@ pub fn run(
             _ => rule_index.awake_always = looked_at,
         }
 
-        if fine_on { let n = Instant::now(); fine[4] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         // Effects and signals, until there are none left (with a cap: a rule
         // that fires itself does not hang the render).
         //
@@ -3363,7 +3338,6 @@ pub fn run(
         });
         appointments.extend(pending.iter().map(|p| p.0));
 
-        if fine_on { let n = Instant::now(); fine[5] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         // Layers: the first claim that holds wins.
         for (layer, st) in scene.layers.iter().zip(layers.iter_mut()) {
             let c = Ctx { props: &props, facts: &facts, seen: None };
@@ -3409,7 +3383,6 @@ pub fn run(
             }
         }
 
-        if fine_on { let n = Instant::now(); fine[6] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         // Behaviors: the scene's own life. Whatever a gesture is
         // moving right now they do not touch: a gesture rules over the ambient.
         let from_a_gesture: Vec<PropId> = gesture
@@ -3424,9 +3397,7 @@ pub fn run(
         }
         let mut n_blink = 0;
         follows.begin(&scene.behaviors);
-        let look_t = Instant::now();
         readers.look(1, &scene.behaviors, &facts, &props, &absent_behaviors);
-        if fine_on { fine[9] += look_t.elapsed().as_secs_f64() * 1000.0; }
         for &k in &awake.all {
             let k = k as usize;
             let behavior = &scene.behaviors[k];
@@ -3585,7 +3556,6 @@ pub fn run(
             }
         }
 
-        if fine_on { let n = Instant::now(); fine[7] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         // Postures: gestures that repeat on their own while something is true.
         if gesture.is_none() {
             let c = Ctx { props: &props, facts: &facts, seen: None };
@@ -3830,7 +3800,6 @@ pub fn run(
         if profiling {
             let n = Instant::now();
             { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[2] += d; sec[2] += d; }
-            if fine_on { fine[8] += (n - fine_t).as_secs_f64() * 1000.0; fine_n += 1; }
             prof_t = n;
             let c = thread_cpu_ms();
             prof_cpu[2] += c - prof_c;
@@ -5146,12 +5115,6 @@ pub fn run(
                     "timing · CPU per round: input {:.2} · rules and springs {:.2} · windows' frames to the card {:.2} · compose {:.2} · regions {:.2} · paint {:.2} · rest {:.2} ms",
                     prof_cpu[0] / f, (prof_cpu[1] + prof_cpu[2]) / f, prof_cpu[7] / f, prof_cpu[3] / f, prof_cpu[4] / f, prof_cpu[5] / f, prof_cpu[6] / f
                 );
-                if fine_on && fine_n > 0 {
-                    let n = fine_n as f64;
-                    println!("timing · PROVISIONAL rules and springs by parts: zones {:.3} · input {:.3} · keyboard+asleep {:.3} · binds {:.3} · rules {:.3} · effects {:.3} · layers {:.3} · behaviors {:.3} (of which look {:.3}) · rest {:.3} ms", fine[0]/n, fine[1]/n, fine[2]/n, fine[3]/n, fine[4]/n, fine[5]/n, fine[6]/n, fine[7]/n, fine[9]/n, fine[8]/n);
-                    fine = [0.0; 10];
-                    fine_n = 0;
-                }
                 // How much of the drawing was copied from the frame before instead of being put together.
                 if stretches_copied + stretches_made > 0 {
                     println!(
