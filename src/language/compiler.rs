@@ -2465,6 +2465,32 @@ impl<'a> Compiler<'a> {
                     self.e.lens_image = Some(path);
                     self.e.lens_image_while = when;
                 }
+                // `lens every 250ms`: at most one capture of what is behind the glass that often.
+                // `lens hold while expr`: none at all while it holds, one as soon as it stops.
+                // A scene copied per monitor reads them once per copy: the last one stays.
+                "lens" if matches!(c.tokens.get(1).map(|x| &x.kind), Some(TokenKind::Id(w)) if w == "every" || w == "hold") => {
+                    if c.word("every") {
+                        let at = c.i;
+                        let every = self.expr(&mut c)?;
+                        c.expect_end()?;
+                        if let Expr::K(s) = &every {
+                            let (least, most) = crate::lens::INTERVAL_RANGE;
+                            if !(least..=most).contains(s) {
+                                c.i = at;
+                                return c.error(format!("a lens captures every {}ms to {}s: write the time with its unit, like `lens every 250ms`; `lens hold while …` stops the captures", (least * 1000.0).round(), most));
+                            }
+                        }
+                        self.e.lens_every = Some(every);
+                    } else {
+                        c.expect_word("hold")?;
+                        if !c.word("while") {
+                            return c.error("a lens holds its captures while something holds: `lens hold while opening`");
+                        }
+                        let when = self.expr(&mut c)?;
+                        c.expect_end()?;
+                        self.e.lens_hold_while = Some(when);
+                    }
+                }
                 "measure" => {
                     let local = c.id("a name for the measure")?;
                     let name = self.declare(&local);

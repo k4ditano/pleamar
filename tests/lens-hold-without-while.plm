@@ -1,0 +1,6 @@
+// expect: error «a lens holds its captures while something holds»
+scene LensHoldWithoutWhile {
+    surface { size: 100, 100 }
+    fact busy = 0
+    lens hold busy
+}

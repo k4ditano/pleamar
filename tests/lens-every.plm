@@ -1,0 +1,14 @@
+// expect: ok
+// How often the glass captures what is behind it, and a pause while a panel opens.
+scene LensEvery {
+    surface { size: 400, 200 }
+    fact slow = 0
+    prop open = 0 ~calm
+    lens every 50ms + 950ms * slow
+    lens hold while open > 0.01 and open < 0.99
+    body {
+        color: #1b2127
+        glass: 100%
+        box { at: 200, 100; size: 300, 140; corner: 20 }
+    }
+}

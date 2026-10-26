@@ -605,7 +605,8 @@ compositor has them: it asks for a screenshot of what is under the surface
 works the background out, because it knows exactly what it painted itself:
 screenshot = ours + (1 − our alpha) · background. It takes one after presenting,
 at most every 50 ms while something moves, and when nothing moves it waits for
-something behind to change: still, it costs nothing. `lens: false` keeps the glass
+something behind to change: still, it costs nothing. The scene can set that
+pace (`lens every`, `lens hold while`: see `lens = image` below). `lens: false` keeps the glass
 and leaves the bending out: the compositor blurs what is behind it instead,
 which costs less; like `glass`, it is an expression, so a setting can switch
 it while the scene runs. It works on layers, normal
@@ -987,6 +988,28 @@ has one `lens =`.
 it does not, the glass captures what is behind it, as a scene without `lens =`
 does. It is looked at every frame, so a switch in the scene can choose between the
 cheap picture and the live windows.
+
+**How often the glass captures: `lens every` and `lens hold while`.** A glass
+that bends what is behind it takes at most one capture every 50 ms, whether it
+was asked after a frame of the scene or while watching for something to change
+behind; each one is a screencopy, a readback and an upload. A scene can make
+that slower, or stop it for a while:
+
+```
+lens every 50ms + 950ms * slow
+lens hold while open > 0.01 and open < 0.99
+```
+
+`lens every` is the least time between two captures, an expression looked at
+every frame, so a setting can move it while the scene runs: from `16ms` to
+`60s`, written with its unit (a constant out of that range is an error). Slower,
+the bend trails what moves fast behind the glass; it still catches up with the
+last of it once the interval is over. `lens hold while` takes none at all while
+its condition holds —a panel opening or closing, so the readback does not
+compete with the animation— and one as soon as it stops holding. Neither applies
+to a glass bending a picture (`lens = image`), which captures nothing, nor to a
+lens's first moments, when it captures back to back to see what is behind it.
+A scene has one of each: a second one replaces the first.
 
 **`z:` — what goes on top.** Groups with `z:` that are side by side (in the
 same group, or loose in the scene, even from different iterations of a

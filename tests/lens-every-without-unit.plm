@@ -1,0 +1,5 @@
+// expect: error «write the time with its unit»
+scene LensEveryWithoutUnit {
+    surface { size: 100, 100 }
+    lens every 250
+}
