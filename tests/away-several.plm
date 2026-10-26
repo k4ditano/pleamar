@@ -1,0 +1,10 @@
+// expect: ok
+// A button and the panel it opens close together: away from both.
+scene AwaySeveral {
+    surface { size: 400, 300 }
+    fact open = true
+    zone box button { from: 0, 0; size: 80, 40 }
+    zone box panel { from: 0, 48; size: 300, 200 }
+    on away button, panel for 320ms { open = false }
+    on hover button, panel for 100ms { open = true }
+}

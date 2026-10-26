@@ -2765,11 +2765,12 @@ pub fn run(
                     Trigger::FocusLost => focus_changes.contains(&false),
                     Trigger::Receive(z) => !drops.is_empty() && inside[z.0 as usize],
                     Trigger::Carry(z) => carried_now == Some(z.0 as usize),
-                    Trigger::Above { zone, duration } => {
-                        e.sustained(inside[zone.0 as usize], *duration, now, &mut appointments)
+                    Trigger::Above { zone, also, duration } => {
+                        let over = inside[zone.0 as usize] || also.iter().any(|z| inside[z.0 as usize]);
+                        e.sustained(over, *duration, now, &mut appointments)
                     }
-                    Trigger::Away { zone, duration } => {
-                        let is_inside = inside[zone.0 as usize];
+                    Trigger::Away { zone, also, duration } => {
+                        let is_inside = inside[zone.0 as usize] || also.iter().any(|z| inside[z.0 as usize]);
                         e.armed |= is_inside;
                         let done = e.sustained(e.armed && !is_inside, *duration, now, &mut appointments);
                         if done {

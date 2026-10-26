@@ -188,9 +188,9 @@ impl Script for Marea {
         //  closes, falls asleep and highlights its button all the same.
         use Trigger::*;
         e.rule(Enter(z_orb), vec![Effect::Fact(asleep, 0.0.into())]);
-        e.rule(Above { zone: z_orb, duration: ms(320) }, vec![Effect::Fact(open, 1.0.into())]);
+        e.rule(Above { zone: z_orb, also: Vec::new(), duration: ms(320) }, vec![Effect::Fact(open, 1.0.into())]);
         e.rule(Press(z_orb), vec![Effect::Toggle(open)]);
-        e.rule(Away { zone: whole, duration: ms(420) }, vec![Effect::Fact(open, 0.0.into())]);
+        e.rule(Away { zone: whole, also: Vec::new(), duration: ms(420) }, vec![Effect::Fact(open, 0.0.into())]);
         e.rule(Enter(z_view), vec![Effect::Animate(go_to(button, 1.0, Spring::QUICK, 0))]);
         e.rule(Leave(z_view), vec![Effect::Animate(go_to(button, 0.0, Spring::QUICK, 0))]);
         e.rule(Press(z_dismiss), vec![Effect::Fact(open, 0.0.into())]);

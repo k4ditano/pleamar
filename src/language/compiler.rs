@@ -7556,11 +7556,17 @@ impl<'a> Compiler<'a> {
                 "carry" => Trigger::Carry(self.zone(c)?),
                 "enter" => Trigger::Enter(self.zone(c)?),
                 "leave" => Trigger::Leave(self.zone(c)?),
+                // `away button, panel for 320ms`: several zones count as one —over any of
+                // them is over—, so a button and the panel it opens close together.
                 "hover" | "away" => {
                     let zone = self.zone(c)?;
+                    let mut also = Vec::new();
+                    while c.sym(",") {
+                        also.push(self.zone(c)?);
+                    }
                     c.expect_word("for")?;
                     let duration = c.dur()?;
-                    if what == "hover" { Trigger::Above { zone, duration } } else { Trigger::Away { zone, duration } }
+                    if what == "hover" { Trigger::Above { zone, also, duration } } else { Trigger::Away { zone, also, duration } }
                 }
                 "idle" => {
                     c.expect_word("for")?;
