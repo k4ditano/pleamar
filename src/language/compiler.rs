@@ -704,6 +704,14 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             Err(f) => o.errors.push(f),
         }
     }
+    // A surface that does not say `rate:` keeps the first one's: so a scene that said
+    // it once, on its first surface, goes at the pace it always went.
+    if let Some((fps, steps)) = o.e.surfaces.first().map(|s| (s.max_fps, s.rate_while.clone())) {
+        for s in o.e.surfaces.iter_mut().filter(|s| !s.rate_said) {
+            s.max_fps = fps;
+            s.rate_while = steps.clone();
+        }
+    }
     for (which, raised, tokens, (l, col)) in std::mem::take(&mut o.pending_levels) {
         o.scopes.clear();
         let mut c = Cur::new(tokens, l, col);
@@ -4667,6 +4675,7 @@ impl<'a> Compiler<'a> {
                 return Err(CompileError::at(n.line, n.col, "`rate` is how many frames a second at most, from 1 to 480; without it, the monitor's"));
             }
             s.max_fps = r as u32;
+            s.rate_said = true;
             // `rate: 60, 20 while asleep, 5 while away`: fewer still while that holds, and
             // then fewer again, each one lower than the one before it. The first whose
             // condition holds is the one that rules, so they go from the busiest down.

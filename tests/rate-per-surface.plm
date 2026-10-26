@@ -1,0 +1,7 @@
+// expect: ok
+// Each surface its own pace: a slow background beside a bar.
+scene RatePerSurface {
+    fact calm = true
+    surface back { size: full, full; level: background; rate: 15 }
+    surface bar { size: full, 40; anchor: top; rate: 60, 20 while calm }
+}

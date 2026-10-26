@@ -4265,12 +4265,21 @@ pub fn run(
         // The first lower rate whose condition holds, in the order they were
         // written: `rate: 60, 20 while asleep, 5 while away` goes from the busiest
         // down, so the one that rules is the first that is true.
-        rate_now = scene
-            .surface()
-            .rate_while
+        // Each surface has its own pace (`rate:`), and the scene's step is that of
+        // its fastest open one: 0 —the monitor's— if one of them says none.
+        let paces: Vec<u32> = sheets
             .iter()
-            .find(|(_, when)| when.is_true(Ctx { props: &props, facts: &facts, seen: None }))
-            .map_or(scene.surface().max_fps, |(low, _)| *low);
+            .filter(|l| l.open && l.view.popup.is_none())
+            .filter_map(|l| scene.surfaces.get(l.view.surface))
+            .map(|s| surface_rate(s, Ctx { props: &props, facts: &facts, seen: None }))
+            .collect();
+        rate_now = if paces.is_empty() {
+            surface_rate(scene.surface(), Ctx { props: &props, facts: &facts, seen: None })
+        } else if paces.contains(&0) {
+            0
+        } else {
+            paces.iter().copied().max().unwrap_or(0)
+        };
         // And the room it keeps, while something holds (`reserve: n while …`).
         if reserves_set.len() != scene.surfaces.len() {
             reserves_set = scene.surfaces.iter().map(|s| if s.reserve_while.is_some() { -1 } else { s.exclusive_zone }).collect();
@@ -4520,6 +4529,21 @@ pub fn run(
                 up_to_date += 1;
                 continue;
             }
+            // Its own `rate:`, slower than the scene's step (another surface goes
+            // faster): it skips the rounds in between —what changed is owed, as in
+            // any skipped round— and asks to be woken when its turn comes.
+            if l.open && l.view.popup.is_none() {
+                let r = scene.surfaces.get(l.view.surface).map_or(0, |s| surface_rate(s, Ctx { props: &props, facts: &facts, seen: None }));
+                if r > 0 && (rate_now == 0 || r < rate_now) {
+                    let period = Duration::from_secs_f64(1.0 / r as f64);
+                    if let Some(last) = l.rate_last.filter(|t| t.elapsed() + Duration::from_millis(2) < period) {
+                        skip(l);
+                        appointments.push(last + period);
+                        up_to_date += 1;
+                        continue;
+                    }
+                }
+            }
             // With a lens: if the capture of the last presented frame has not arrived yet, it
             // waits for it —it arrives in less than a refresh— and paints afterwards.
             // If it was only watching, that capture is forgotten and it paints.
@@ -4610,6 +4634,9 @@ pub fn run(
             let with_owed: Option<Vec<[f32; 4]>> = (!l.owed_damage.is_empty()).then(|| changed.iter().chain(&l.owed_damage).copied().collect());
             l.owed_damage.clear();
             let was_painted = g.paint(l, &draw, &uniforms, asks || others || fifo, (knows_where && l.painted == Some(where_)).then(|| with_owed.as_deref().unwrap_or(&changed[..])));
+            if was_painted {
+                l.rate_last = Some(Instant::now());
+            }
             if was_painted && ((others && answers.contains(&l.id)) || (fifo && l.open)) {
                 in_flight.retain(|f| f.0 != l.id);
                 in_flight.push((l.id, Instant::now()));
@@ -5917,4 +5944,11 @@ fn cursor_place(scene: &Scene, s: &Sheet, p: (f32, f32)) -> (crate::platform::Cu
         true => (crate::platform::CursorOn::Window, (local.0 * s.scale, local.1 * s.scale)),
         false => (crate::platform::CursorOn::Panel(s.view.size.0.round() as u32, s.view.size.1.round() as u32), local),
     }
+}
+
+/// A surface's pace now: the first lower `rate:` whose condition holds, from the
+/// busiest down (`rate: 60, 20 while asleep, 5 while away`), or its `rate:`; 0 is
+/// the monitor's own.
+fn surface_rate(s: &crate::scene::Surface, c: Ctx) -> u32 {
+    s.rate_while.iter().find(|(_, when)| when.is_true(c)).map_or(s.max_fps, |(low, _)| *low)
 }
