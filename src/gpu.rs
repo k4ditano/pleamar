@@ -238,6 +238,15 @@ impl PreviousFrame {
         known
     }
 
+    /// The list was not composed again this round, so it is the one compared last
+    /// time, element for element: nothing in it changed, and there is nothing to
+    /// compare or copy. Unless what was in the atlas stopped being valid (`forget`):
+    /// then, as for a list not known, all of it.
+    pub fn unchanged(&mut self, rects: &mut Vec<[f32; 4]>) -> bool {
+        rects.clear();
+        self.valid
+    }
+
     /// That the coming frame is not compared with this one: what was in the atlas is no longer valid.
     pub fn forget(&mut self) {
         self.valid = false;

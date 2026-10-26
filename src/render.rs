@@ -459,8 +459,13 @@ pub fn run(
     let mut previous = crate::gpu::PreviousFrame::default();
     // What the last list was made from (see `same_scene`).
     let mut compose_memo: Option<ComposeMemo> = None;
+    // `PLEAMAR_CHECK_SHORTCUTS=1`: each shortcut a round takes (work skipped
+    // because nothing it would look at changed) is checked against doing the
+    // work, and a difference is said. To try them on a scene; slow.
+    let check_shortcuts = std::env::var_os("PLEAMAR_CHECK_SHORTCUTS").is_some();
     // What the drawing read the last time it was made.
     let mut compose_seen = crate::scene::Seen::default();
+    let mut zone_memo = ZoneMemo::default();
     // Who asked what the scene holds (`describe`): answered after the next
     // list is made, which is when where every text went is known.
     let mut describing: Vec<(bool, std::sync::mpsc::Sender<String>)> = Vec::new();
@@ -2160,8 +2165,11 @@ pub fn run(
         let mut edges: Vec<(bool, usize)> = Vec::new(); // (enters, zone)
         {
             let c = Ctx { props: &props, facts: &facts, seen: None };
+            zone_memo.update(&scene, &facts, &props, &draw.hidden, &absent, check_shortcuts);
             for (k, (z, was_inside)) in scene.zones.iter().zip(inside.iter_mut()).enumerate() {
-                let is_inside = !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)) && z.active.is_true(c) && pointer.is_some_and(|(x, y)| z.contains(c, x, y));
+                // Its box first: the shape is only measured when the mouse is in it.
+                let in_box = |x: f32, y: f32| zone_memo.bounds[k].is_some_and(|b| x >= b[0] - 1.0 && x <= b[2] + 1.0 && y >= b[1] - 1.0 && y <= b[3] + 1.0);
+                let is_inside = zone_memo.live[k] && pointer.is_some_and(|(x, y)| in_box(x, y) && z.contains(c, x, y));
                 if is_inside != *was_inside {
                     *was_inside = is_inside;
                     edges.push((is_inside, k));
@@ -4064,7 +4072,22 @@ pub fn run(
                 ripple = Some((p, Instant::now()));
             }
         }
-        let all_changed = !previous.changed_rects(&draw, &mut changed) || op.hud || finger_light > 0.0 || ripple.is_some();
+        // A list not composed again is the one compared last time: comparing it
+        // whole, and copying it, was work for nothing in every round a window drew.
+        let known = if same_scene {
+            let known = previous.unchanged(&mut changed);
+            if check_shortcuts {
+                let mut full = Vec::new();
+                let full_known = previous.changed_rects(&draw, &mut full);
+                if full_known != known || !full.is_empty() {
+                    eprintln!("check  · the list was taken as unchanged and is not: known {known} → {full_known}, {} pieces changed", full.len());
+                }
+            }
+            known
+        } else {
+            previous.changed_rects(&draw, &mut changed)
+        };
+        let all_changed = !known || op.hud || finger_light > 0.0 || ripple.is_some();
         // A window that drew something new changes what its box covers, and nothing else.
         for slot in std::mem::take(&mut nest_changed) {
             changed.extend(draw.windows_drawn.iter().filter(|w| w.0 == slot).map(|(_, d, affine)| {
@@ -4145,12 +4168,13 @@ pub fn run(
             .map(|l| l.view.bounds())
             .chain(scene.surfaces.iter().filter(|s| s.open.as_ref().is_some_and(|e| !e.is_true(c))).map(|s| [s.origin.0, s.origin.1, s.origin.0 + s.width.max(1) as f32, s.origin.1 + s.height.max(1) as f32]))
             .collect();
-        let boxes: Vec<[i32; 4]> = scene
-            .zones
+        // From the zones as they are now: the rules may have moved some since the mouse looked.
+        zone_memo.update(&scene, &facts, &props, &draw.hidden, &absent, check_shortcuts);
+        let boxes: Vec<[i32; 4]> = zone_memo
+            .bounds
             .iter()
-            .filter(|z| !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)))
-            .filter(|z| z.active.is_true(c))
-            .filter_map(|z| z.bounds(c))
+            .flatten()
+            .copied()
             .filter(|b| !closed.iter().any(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]))
             .map(|b| [(b[0] - 3.0).floor() as i32, (b[1] - 3.0).floor() as i32, (b[2] + 3.0).ceil() as i32, (b[3] + 3.0).ceil() as i32])
             .collect();
@@ -5667,6 +5691,68 @@ impl Readers {
 }
 
 /// What a draw list was made from: while all of it holds, the list holds.
+/// Each zone as it was last worked out —alive (not hidden, not on a copy for a
+/// monitor that is not there, `active:`) and its box—, with what that read: it
+/// is worked out again only when some of that changed. A window drawing, an
+/// effect turning, the mouse moving: none of them moves a zone, and every round
+/// went through all of them (2600 in pleamar-wm's scene) to find the same.
+#[derive(Default)]
+struct ZoneMemo {
+    valid: bool,
+    seen: crate::scene::Seen,
+    read_facts: Vec<u16>,
+    read_props: Vec<u16>,
+    facts: Vec<f32>,
+    props: Vec<(f32, f32)>,
+    hidden: Vec<bool>,
+    absent: Vec<std::ops::Range<usize>>,
+    live: Vec<bool>,
+    bounds: Vec<Option<[f32; 4]>>,
+}
+
+impl ZoneMemo {
+    /// Whether what was worked out still holds.
+    fn holds(&self, facts: &[f32], props: &[crate::scene::Animated], hidden: &[bool], absent: &[std::ops::Range<usize>]) -> bool {
+        self.valid
+            && self.hidden == hidden
+            && self.absent == absent
+            && self.read_facts.iter().zip(&self.facts).all(|(k, v)| facts.get(*k as usize).is_some_and(|f| f.to_bits() == v.to_bits()))
+            && self.read_props.iter().zip(&self.props).all(|(k, v)| props.get(*k as usize).is_some_and(|p| p.x.to_bits() == v.0.to_bits() && p.v.to_bits() == v.1.to_bits()))
+    }
+
+    /// Each zone alive or not, and its box, as they are now.
+    fn fresh(scene: &Scene, c: Ctx, hidden: &[bool], absent: &[std::ops::Range<usize>]) -> (Vec<bool>, Vec<Option<[f32; 4]>>) {
+        let live: Vec<bool> = scene.zones.iter().map(|z| !hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)) && z.active.is_true(c)).collect();
+        let bounds = scene.zones.iter().zip(&live).map(|(z, l)| if *l { z.bounds(c) } else { None }).collect();
+        (live, bounds)
+    }
+
+    /// Worked out again, if something it read changed. `check`: when it holds, it
+    /// is worked out anyway and a difference is said.
+    fn update(&mut self, scene: &Scene, facts: &[f32], props: &[crate::scene::Animated], hidden: &[bool], absent: &[std::ops::Range<usize>], check: bool) {
+        if self.holds(facts, props, hidden, absent) {
+            if check {
+                let (live, bounds) = Self::fresh(scene, Ctx { props, facts, seen: None }, hidden, absent);
+                if live != self.live || bounds != self.bounds {
+                    let k = (0..live.len()).find(|k| live[*k] != self.live[*k] || bounds[*k] != self.bounds[*k]).unwrap_or(0);
+                    eprintln!("check  · the zones were taken as unchanged and are not: '{}' alive {} → {}, {:?} → {:?}", scene.zones[k].id, self.live[k], live[k], self.bounds[k], bounds[k]);
+                }
+            }
+            return;
+        }
+        self.seen.reset(facts.len(), props.len());
+        let (live, bounds) = Self::fresh(scene, Ctx { props, facts, seen: Some(&self.seen) }, hidden, absent);
+        self.seen.take(&mut self.read_facts, &mut self.read_props);
+        self.facts = self.read_facts.iter().map(|k| facts[*k as usize]).collect();
+        self.props = self.read_props.iter().map(|k| (props[*k as usize].x, props[*k as usize].v)).collect();
+        self.hidden = hidden.to_vec();
+        self.absent = absent.to_vec();
+        self.live = live;
+        self.bounds = bounds;
+        self.valid = true;
+    }
+}
+
 struct ComposeMemo {
     size: (f32, f32),
     view: Option<crate::gpu::FieldView>,
