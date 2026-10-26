@@ -316,13 +316,14 @@ fn shape_distance(k: u32, point: vec2<f32>) -> f32 {
     return d * f.t1.z;
 }
 
-// The edge is smoothed over one REAL pixel (half of it each side): at scale 2,
-// half that width in logical pixels, or everything would come out blurry. It
-// was a pixel and a half: a dark shape on a light picture —a pill on a sky—
-// took three pixels to go from one to the other, and read as soft.
+// How much of a REAL pixel the shape covers: a straight ramp one pixel wide,
+// which is what a pixel's box sees of an edge (at scale 2, half that in logical
+// pixels, or everything would come out blurry). An edge on the pixel grid is
+// one pixel from one colour to the other, and a curve keeps its steps soft. It
+// was a smoothstep over a pixel and a half —three pixels from a sky to a black
+// pill, soft— and over one it was steeper than a pixel sees: the curves stepped.
 fn coverage(d: f32) -> f32 {
-    let m = 0.5 / u.header.w;
-    return 1.0 - smoothstep(-m, m, d);
+    return clamp(0.5 - d * u.header.w, 0.0, 1.0);
 }
 
 fn over(below: vec4<f32>, color: vec3<f32>, a: f32) -> vec4<f32> {
