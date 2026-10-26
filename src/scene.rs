@@ -155,6 +155,8 @@ pub struct Surface {
     /// scene and not by whatever monitor it lands on. 0 is "the monitor's". A bar
     /// that breathes does not need 165 frames per second, and painting them is what
     /// costs: with this, what it consumes is the same on any screen.
+    /// Whether it says `rate:` itself; one that does not keeps the first surface's pace.
+    pub rate_said: bool,
     pub max_fps: u32,
     /// `rate: 60, 20 while asleep, 5 while away`: fewer frames still while that
     /// holds —a character breathing in its sleep does not need sixty a second—,
@@ -194,7 +196,7 @@ pub enum Keyboard {
 impl Default for Surface {
     fn default() -> Self {
         // Neutral: full width, at the top, on all monitors. Whatever the scene asks for wins.
-        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, app_id: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, rate_while: Vec::new(), screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, keyboard_said: false, keyboard_when: None, right_click_quits: true, hidden_from_captures: false, agent_hidden: false }
+        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, app_id: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, rate_said: false, rate_while: Vec::new(), screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, keyboard_said: false, keyboard_when: None, right_click_quits: true, hidden_from_captures: false, agent_hidden: false }
     }
 }
 
