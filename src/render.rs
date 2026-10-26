@@ -466,6 +466,14 @@ pub fn run(
     // What the drawing read the last time it was made.
     let mut compose_seen = crate::scene::Seen::default();
     let mut zone_memo = ZoneMemo::default();
+    let mut rule_index = RuleIndex::default();
+    let mut awake = AwakeBehaviors::default();
+    // PROVISIONAL (PLEAMAR_FINE=1): reglas y muelles por partes.
+    let fine_on = std::env::var_os("PLEAMAR_FINE").is_some();
+    let mut fine = [0f64; 10];
+    let mut fine_t = Instant::now();
+    let mut fine_n = 0u32;
+    let mut fine_counted = false;
     // Stretches of the drawing copied and put together (see `gpu::Kept`), for the timing report.
     let (mut stretches_copied, mut stretches_made) = (0u64, 0u64);
     let mut z_read = ReadMemo::default();
@@ -2165,7 +2173,22 @@ pub fn run(
         // Nor do their `follow`s follow: nothing of theirs is seen. When the
         // monitor comes, they catch up with what changed meanwhile.
         let absent_behaviors: Vec<std::ops::Range<usize>> = absent_spans.iter().map(|t| t.behaviors.clone()).collect();
+        awake.update(&scene.behaviors, &absent_behaviors);
         // Zones: who has the mouse over them.
+        if fine_on && !fine_counted {
+            fine_counted = true;
+            let mut kinds: std::collections::BTreeMap<&str, usize> = Default::default();
+            for b in &scene.behaviors {
+                *kinds.entry(match b { Behavior::Blink { .. } => "blink", Behavior::Wave { .. } => "wave", Behavior::Follow { .. } => "follow", Behavior::Bind { .. } => "bind", Behavior::Sort { .. } => "sort", Behavior::Advance { .. } => "spin", Behavior::Gaze { .. } => "gaze" }).or_default() += 1;
+            }
+            let mut triggers: std::collections::BTreeMap<&str, usize> = Default::default();
+            for r in &scene.rules {
+                *triggers.entry(match &r.when { Trigger::Enter(_) | Trigger::Leave(_) => "enter/leave", Trigger::Press(_) | Trigger::PressWith(..) | Trigger::Release(_) => "press", Trigger::Change(_) => "change", Trigger::Still { .. } => "still", Trigger::On(_) => "on signal", Trigger::Key(_) => "key", Trigger::Above { .. } | Trigger::Away { .. } => "hover/away", Trigger::Every { .. } => "every", Trigger::Idle { .. } => "idle", _ => "other" }).or_default() += 1;
+            }
+            let guards = scene.rules.iter().filter(|r| r.guard.is_some()).count();
+            println!("timing · PROVISIONAL counts: {} props, {} facts, {} zones, {} spans · behaviors {:?} · rules {:?} ({} with a guard)", props.len(), facts.len(), scene.zones.len(), scene.spans.len(), kinds, triggers, guards);
+        }
+        if fine_on { fine_t = Instant::now(); }
         let mut edges: Vec<(bool, usize)> = Vec::new(); // (enters, zone)
         {
             let c = Ctx { props: &props, facts: &facts, seen: None };
@@ -2207,6 +2230,7 @@ pub fn run(
             Some(a) => inside.iter().enumerate().filter(|(_, d)| **d).max_by_key(|(k, _)| (a.zone_rank[*k], *k)).map(|(k, _)| k),
             None => inside.iter().rposition(|d| *d),
         };
+        if fine_on { let n = Instant::now(); fine[0] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         if std::env::var_os("PLEAMAR_DEBUG_ZONES").is_some() && !edges.is_empty() {
             let names: Vec<String> = inside
                 .iter()
@@ -2586,6 +2610,7 @@ pub fn run(
             }
         }
 
+        if fine_on { let n = Instant::now(); fine[1] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         // The keyboard, only while the scene wants it: a closed launcher cannot
         // keep it. And if it asked for the focus for a field without having it,
         // exclusively until it arrives (see `Effect::FocusField`).
@@ -2730,10 +2755,16 @@ pub fn run(
         // pleamar-wm took the keyboard going to a window on the other monitor
         // for one going to a window on the same one, and a maximized window
         // went back to its tile.
+        if fine_on { let n = Instant::now(); fine[2] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         if facts != facts_at_binds {
             follows.begin(&scene.behaviors);
             readers.look(0, &scene.behaviors, &facts, &props, &absent_behaviors);
-            for (k, behavior) in scene.behaviors.iter().enumerate() {
+            for &k in &awake.binds {
+                let k = k as usize;
+                let behavior = &scene.behaviors[k];
+                if !readers.dirty[k] {
+                    continue;
+                }
                 if let Behavior::Bind { prop, to } = behavior {
                     if !readers.dirty[k] || absent_behaviors.iter().any(|r| r.contains(&k)) {
                         continue;
@@ -2752,13 +2783,66 @@ pub fn run(
             facts_at_binds.clone_from(&facts);
         }
 
+        if fine_on { let n = Instant::now(); fine[3] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         // Rules: all of this happens here, whatever state the logic is in.
+        // Only the ones that can fire this round (see `RuleIndex`).
+        if rule_index.of != (scene.rules.as_ptr() as usize, scene.rules.len()) {
+            rule_index.build(&scene.rules);
+        }
+        rule_index.look(&facts, &props);
+        let asleep_rules: Vec<std::ops::Range<usize>> = asleep.iter().map(|t| t.rules.clone()).collect();
+        rule_index.wake(&asleep_rules, &scene.rules);
+        let some_event = !edges.is_empty()
+            || pressed.is_some()
+            || pressed_with.is_some()
+            || released.is_some()
+            || !keys.is_empty()
+            || !submitted.is_empty()
+            || !focus_changes.is_empty()
+            || wheel != 0.0
+            || dragged.is_some()
+            || !drops.is_empty()
+            || carried_now.is_some();
+        // Nothing changed, nothing woke, nothing happened: the `on change`s that read only facts and properties cannot fire.
+        let quiet = !some_event && !rule_index.any_changed && !rule_index.woke;
+        if quiet && check_shortcuts {
+            let c = Ctx { props: &props, facts: &facts, seen: None };
+            for &k in &rule_index.awake_pure_changes {
+                if let (Trigger::Change(x), Some(last)) = (&scene.rules[k as usize].when, rules[k as usize].last_value) {
+                    let v = x.eval(c);
+                    if v.to_bits() != last.to_bits() && (v - last).abs() > 0.001 {
+                        eprintln!("check  · a quiet round skipped an `on change` that would fire: rule {k}, {last} → {v}");
+                    }
+                }
+            }
+        }
+        let which = if some_event { 0 } else if quiet { 1 } else { 2 };
+        let looked_at = std::mem::take(match which {
+            0 => &mut rule_index.awake_with_events,
+            1 => &mut rule_index.awake_quiet,
+            _ => &mut rule_index.awake_always,
+        });
         {
             let c = Ctx { props: &props, facts: &facts, seen: None };
             let mut acted: Vec<usize> = Vec::new();
-            for (k, (r, e)) in scene.rules.iter().zip(rules.iter_mut()).enumerate() {
-                if rule_asleep(k) {
-                    continue;
+            for &k in &looked_at {
+                let k = k as usize;
+                let (Some(r), Some(e)) = (scene.rules.get(k), rules.get_mut(k)) else { continue };
+                // (Asleep ones are not in the list: `RuleIndex::wake`.)
+                debug_assert!(!rule_asleep(k));
+                // Nothing it reads changed since it was worked out the round before: it is worth the same.
+                let same = rule_index.unchanged(k) && e.last_value.is_some();
+                rule_index.looked[k] = rule_index.round;
+                if same && check_shortcuts {
+                    let x = match &r.when {
+                        Trigger::Change(x) => x,
+                        Trigger::Still { value, .. } => value,
+                        _ => unreachable!(),
+                    };
+                    let v = x.eval(c);
+                    if e.last_value.is_some_and(|l| l.to_bits() != v.to_bits()) {
+                        eprintln!("check  · an `on change` taken as unchanged is not: rule {k}, {:?} → {v}", e.last_value);
+                    }
                 }
                 let fires = match &r.when {
                     Trigger::Enter(z) => edges.contains(&(true, z.0 as usize)),
@@ -2789,7 +2873,7 @@ pub fn run(
                     }
                     // `on change floor(list.scroll / 34) { … }`: when that changes.
                     Trigger::Change(x) => {
-                        let now = x.eval(c);
+                        let now = if same { e.last_value.unwrap_or(0.0) } else { x.eval(c) };
                         let before = e.last_value.replace(now);
                         before.is_some_and(|v| (v - now).abs() > 0.001)
                     }
@@ -2797,7 +2881,7 @@ pub fn run(
                     // long. Each change resets the clock to zero, so six
                     // taps in a row on the volume key are a single wait.
                     Trigger::Still { value, duration } => {
-                        let value = value.eval(c);
+                        let value = if same { e.last_value.unwrap_or(0.0) } else { value.eval(c) };
                         let before = e.last_value.replace(value);
                         if before.is_some_and(|v| (v - value).abs() > 0.001) {
                             e.armed = true;
@@ -2878,7 +2962,13 @@ pub fn run(
                 }
             }
         }
+        match which {
+            0 => rule_index.awake_with_events = looked_at,
+            1 => rule_index.awake_quiet = looked_at,
+            _ => rule_index.awake_always = looked_at,
+        }
 
+        if fine_on { let n = Instant::now(); fine[4] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         // Effects and signals, until there are none left (with a cap: a rule
         // that fires itself does not hang the render).
         //
@@ -3273,6 +3363,7 @@ pub fn run(
         });
         appointments.extend(pending.iter().map(|p| p.0));
 
+        if fine_on { let n = Instant::now(); fine[5] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         // Layers: the first claim that holds wins.
         for (layer, st) in scene.layers.iter().zip(layers.iter_mut()) {
             let c = Ctx { props: &props, facts: &facts, seen: None };
@@ -3318,6 +3409,7 @@ pub fn run(
             }
         }
 
+        if fine_on { let n = Instant::now(); fine[6] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         // Behaviors: the scene's own life. Whatever a gesture is
         // moving right now they do not touch: a gesture rules over the ambient.
         let from_a_gesture: Vec<PropId> = gesture
@@ -3332,8 +3424,25 @@ pub fn run(
         }
         let mut n_blink = 0;
         follows.begin(&scene.behaviors);
+        let look_t = Instant::now();
         readers.look(1, &scene.behaviors, &facts, &props, &absent_behaviors);
-        for (k, behavior) in scene.behaviors.iter().enumerate() {
+        if fine_on { fine[9] += look_t.elapsed().as_secs_f64() * 1000.0; }
+        for &k in &awake.all {
+            let k = k as usize;
+            let behavior = &scene.behaviors[k];
+            // A `bind` nothing it reads changed for is what it was: its property
+            // (a big `let`'s) is written by nobody else.
+            if matches!(behavior, Behavior::Bind { .. }) && !readers.dirty[k] {
+                if check_shortcuts {
+                    if let Behavior::Bind { prop, to } = behavior {
+                        let v = to.eval(Ctx { props: &props, facts: &facts, seen: None });
+                        if props[prop.0 as usize].x.to_bits() != v.to_bits() {
+                            eprintln!("check  · a bind taken as unchanged is not: {} {} → {v}", scene.props[prop.0 as usize].0, props[prop.0 as usize].x);
+                        }
+                    }
+                }
+                continue;
+            }
             if let Behavior::Blink { prop, .. } | Behavior::Wave { prop, .. } | Behavior::Advance { prop, .. } = behavior {
                 readers.touch(*prop);
             }
@@ -3398,7 +3507,6 @@ pub fn run(
                         alive_by.push(format!("wave {}", scene.props[prop.0 as usize].0));
                     }
                 }
-                Behavior::Follow { .. } | Behavior::Bind { .. } | Behavior::Sort { .. } if absent_behaviors.iter().any(|r| r.contains(&k)) => {}
                 Behavior::Sort { keys, ord, pos } => {
                     if readers.dirty[k] {
                         let mut moved = false;
@@ -3414,7 +3522,10 @@ pub fn run(
                 }
                 Behavior::Follow { prop, to } => {
                     let v = follows.kept_or_value(readers.dirty[k], k, to, &props, &facts);
-                    props[prop.0 as usize].target = v;
+                    let t = &mut props[prop.0 as usize].target;
+                    if t.to_bits() != v.to_bits() {
+                        *t = v;
+                    }
                 }
                 Behavior::Bind { prop, to } => {
                     let v = follows.kept_or_value(readers.dirty[k], k, to, &props, &facts);
@@ -3474,6 +3585,7 @@ pub fn run(
             }
         }
 
+        if fine_on { let n = Instant::now(); fine[7] += (n - fine_t).as_secs_f64() * 1000.0; fine_t = n; }
         // Postures: gestures that repeat on their own while something is true.
         if gesture.is_none() {
             let c = Ctx { props: &props, facts: &facts, seen: None };
@@ -3555,7 +3667,12 @@ pub fn run(
         // that did change asks for another round: whatever follows it, or is
         // decided by it, read the old one above.
         readers.look(2, &scene.behaviors, &facts, &props, &absent_behaviors);
-        for (k, behavior) in scene.behaviors.iter().enumerate() {
+        for &k in &awake.binds {
+            let k = k as usize;
+            let behavior = &scene.behaviors[k];
+            if !readers.dirty[k] {
+                continue;
+            }
             if let Behavior::Bind { prop, to } = behavior {
                 if absent_behaviors.iter().any(|r| r.contains(&k)) {
                     continue;
@@ -3713,6 +3830,7 @@ pub fn run(
         if profiling {
             let n = Instant::now();
             { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[2] += d; sec[2] += d; }
+            if fine_on { fine[8] += (n - fine_t).as_secs_f64() * 1000.0; fine_n += 1; }
             prof_t = n;
             let c = thread_cpu_ms();
             prof_cpu[2] += c - prof_c;
@@ -5028,6 +5146,12 @@ pub fn run(
                     "timing · CPU per round: input {:.2} · rules and springs {:.2} · windows' frames to the card {:.2} · compose {:.2} · regions {:.2} · paint {:.2} · rest {:.2} ms",
                     prof_cpu[0] / f, (prof_cpu[1] + prof_cpu[2]) / f, prof_cpu[7] / f, prof_cpu[3] / f, prof_cpu[4] / f, prof_cpu[5] / f, prof_cpu[6] / f
                 );
+                if fine_on && fine_n > 0 {
+                    let n = fine_n as f64;
+                    println!("timing · PROVISIONAL rules and springs by parts: zones {:.3} · input {:.3} · keyboard+asleep {:.3} · binds {:.3} · rules {:.3} · effects {:.3} · layers {:.3} · behaviors {:.3} (of which look {:.3}) · rest {:.3} ms", fine[0]/n, fine[1]/n, fine[2]/n, fine[3]/n, fine[4]/n, fine[5]/n, fine[6]/n, fine[7]/n, fine[9]/n, fine[8]/n);
+                    fine = [0.0; 10];
+                    fine_n = 0;
+                }
                 // How much of the drawing was copied from the frame before instead of being put together.
                 if stretches_copied + stretches_made > 0 {
                     println!(
@@ -5420,6 +5544,174 @@ impl LayerState {
     }
 }
 
+/// The behaviors a round goes through: all but the `follow`s, `bind`s and
+/// `sort`s of the copies for monitors that are not there (those are not even
+/// looked at), and of those, the `bind`s and `sort`s alone (the passes before
+/// the rules and after the springs). Made again when what is absent changes.
+/// With `screens: each max 4` and one monitor, three quarters of every pass
+/// were spent finding behaviors to skip.
+#[derive(Default)]
+struct AwakeBehaviors {
+    of: (usize, usize),
+    absent: Vec<std::ops::Range<usize>>,
+    all: Vec<u32>,
+    binds: Vec<u32>,
+}
+
+impl AwakeBehaviors {
+    fn update(&mut self, behaviors: &[Behavior], absent: &[std::ops::Range<usize>]) {
+        let of = (behaviors.as_ptr() as usize, behaviors.len());
+        if self.of == of && self.absent == absent {
+            return;
+        }
+        self.of = of;
+        self.absent = absent.to_vec();
+        self.all.clear();
+        self.binds.clear();
+        for (k, b) in behaviors.iter().enumerate() {
+            let owned = matches!(b, Behavior::Follow { .. } | Behavior::Bind { .. } | Behavior::Sort { .. });
+            if owned && absent.iter().any(|r| r.contains(&k)) {
+                continue;
+            }
+            self.all.push(k as u32);
+            if matches!(b, Behavior::Bind { .. } | Behavior::Sort { .. }) {
+                self.binds.push(k as u32);
+            }
+        }
+    }
+}
+
+/// The rules by when they can fire, and what each `on change` and `on still`
+/// reads: a round looks at the event rules —a press, a key, a zone entered—
+/// only when that kind of thing happened, and works out an `on change` again
+/// only when something it reads changed since it was last worked out. A window
+/// manager's scene has 12 600 rules, 4 180 of them `on change`, and a round
+/// went through every one of them and evaluated every `on change` to find, most
+/// rounds, that nothing had happened.
+#[derive(Default)]
+struct RuleIndex {
+    of: (usize, usize),
+    /// Rules that can fire in any round (watching a value or a clock), in order.
+    always: Vec<u32>,
+    /// Rules that fire only with some event, in order; and all but the signals', in order.
+    with_events: Vec<u32>,
+    /// What an `on change` / `on still` reads, when that is all it depends on.
+    inputs: Vec<Option<(Vec<u16>, Vec<u16>)>>,
+    /// The round each one was last looked at (to know whether "unchanged since last round" holds).
+    looked: Vec<u64>,
+    round: u64,
+    /// Facts and properties at the rules of the round before, and what changed since.
+    facts: Vec<f32>,
+    props: Vec<(f32, f32)>,
+    changed_facts: Vec<bool>,
+    changed_props: Vec<bool>,
+    /// Of `always` and `with_events`, those of the copies awake, for these asleep:
+    /// the rules of a copy that is asleep are not even looked at.
+    asleep: Vec<std::ops::Range<usize>>,
+    awake_always: Vec<u32>,
+    awake_with_events: Vec<u32>,
+    /// Of `awake_always`, all but the `on change`s that depend only on facts and
+    /// properties: in a round where none of those changed —a window drawing, a
+    /// clock waiting— none of them can fire, and they are not looked at at all.
+    awake_quiet: Vec<u32>,
+    /// Those `on change`s, for the checks.
+    awake_pure_changes: Vec<u32>,
+    /// Something changed this round (`look`), or what is awake did (`wake`).
+    any_changed: bool,
+    woke: bool,
+}
+
+impl RuleIndex {
+    fn wake(&mut self, asleep: &[std::ops::Range<usize>], rules: &[crate::scene::Rule]) {
+        self.woke = false;
+        if self.asleep == asleep && !(self.awake_always.is_empty() && !self.always.is_empty()) {
+            return;
+        }
+        self.woke = true;
+        self.asleep = asleep.to_vec();
+        let awake = |k: &&u32| !asleep.iter().any(|r| r.contains(&(**k as usize)));
+        self.awake_always = self.always.iter().filter(awake).copied().collect();
+        self.awake_with_events = self.with_events.iter().filter(awake).copied().collect();
+        let pure_change = |k: &u32| matches!(rules[*k as usize].when, Trigger::Change(_)) && self.inputs[*k as usize].is_some();
+        self.awake_quiet = self.awake_always.iter().copied().filter(|k| !pure_change(k)).collect();
+        self.awake_pure_changes = self.awake_always.iter().copied().filter(|k| pure_change(k)).collect();
+    }
+
+    fn build(&mut self, rules: &[crate::scene::Rule]) {
+        self.of = (rules.as_ptr() as usize, rules.len());
+        self.always.clear();
+        self.with_events.clear();
+        self.inputs.clear();
+        for (k, r) in rules.iter().enumerate() {
+            let every_round = matches!(
+                r.when,
+                Trigger::Change(_) | Trigger::Still { .. } | Trigger::Hold { .. } | Trigger::Above { .. } | Trigger::Away { .. } | Trigger::Idle { .. } | Trigger::Every { .. }
+            );
+            if every_round {
+                self.always.push(k as u32);
+            }
+            if !matches!(r.when, Trigger::On(_)) {
+                self.with_events.push(k as u32);
+            }
+            let watched = match &r.when {
+                Trigger::Change(x) => Some(x),
+                Trigger::Still { value, .. } => Some(value),
+                _ => None,
+            };
+            self.inputs.push(watched.filter(|x| x.only_inputs()).map(|x| {
+                let (mut props, mut facts) = (Vec::new(), Vec::new());
+                x.inputs(&mut props, &mut facts);
+                (facts, props)
+            }));
+        }
+        self.looked = vec![0; rules.len()];
+        self.asleep.clear();
+        self.awake_always.clear();
+        self.awake_with_events.clear();
+        self.facts.clear();
+        self.props.clear();
+    }
+
+    /// What changed since the rules of the round before.
+    fn look(&mut self, facts: &[f32], props: &[crate::scene::Animated]) {
+        self.round += 1;
+        let fresh = self.facts.len() != facts.len() || self.props.len() != props.len();
+        if fresh {
+            self.facts = facts.to_vec();
+            self.props = props.iter().map(|a| (a.x, a.v)).collect();
+            self.changed_facts = vec![true; facts.len()];
+            self.changed_props = vec![true; props.len()];
+            self.any_changed = true;
+            return;
+        }
+        let mut any = false;
+        for ((before, now), changed) in self.facts.iter_mut().zip(facts).zip(self.changed_facts.iter_mut()) {
+            *changed = before.to_bits() != now.to_bits();
+            if *changed {
+                *before = *now;
+                any = true;
+            }
+        }
+        for ((before, now), changed) in self.props.iter_mut().zip(props).zip(self.changed_props.iter_mut()) {
+            *changed = before.0.to_bits() != now.x.to_bits() || before.1.to_bits() != now.v.to_bits();
+            if *changed {
+                *before = (now.x, now.v);
+                any = true;
+            }
+        }
+        self.any_changed = any;
+    }
+
+    /// An `on change` / `on still` looked at the round before, and none of what it reads changed since.
+    fn unchanged(&self, k: usize) -> bool {
+        self.looked.get(k).is_some_and(|r| *r + 1 == self.round)
+            && self.inputs.get(k).and_then(Option::as_ref).is_some_and(|(facts, props)| {
+                facts.iter().all(|h| !self.changed_facts.get(*h as usize).copied().unwrap_or(true))
+                    && props.iter().all(|p| !self.changed_props.get(*p as usize).copied().unwrap_or(true))
+            })
+    }
+}
+
 #[derive(Default)]
 struct RuleState {
     /// What the expression of an `on change` was worth the last time.
@@ -5683,26 +5975,30 @@ impl Readers {
         let all = s.facts.len() != facts.len() || s.props.len() != props.len() || s.absent != absent;
         dirty.clear();
         dirty.resize(behaviors.len(), all);
-        if !all {
-            for (i, (a, b)) in facts.iter().zip(&s.facts).enumerate() {
+        if all {
+            s.facts.clear();
+            s.facts.extend_from_slice(facts);
+            s.props.clear();
+            s.props.extend(props.iter().map(|a| (a.x, a.v)));
+        } else {
+            // Compared and brought up to date in one go: only what changed is written.
+            for (i, (a, b)) in facts.iter().zip(s.facts.iter_mut()).enumerate() {
                 if a.to_bits() != b.to_bits() {
+                    *b = *a;
                     for &k in &by_fact[i] {
                         dirty[k as usize] = true;
                     }
                 }
             }
-            for (i, (a, b)) in props.iter().zip(&s.props).enumerate() {
+            for (i, (a, b)) in props.iter().zip(s.props.iter_mut()).enumerate() {
                 if a.x.to_bits() != b.0.to_bits() || a.v.to_bits() != b.1.to_bits() {
+                    *b = (a.x, a.v);
                     for &k in &by_prop[i] {
                         dirty[k as usize] = true;
                     }
                 }
             }
         }
-        s.facts.clear();
-        s.facts.extend_from_slice(facts);
-        s.props.clear();
-        s.props.extend(props.iter().map(|a| (a.x, a.v)));
         if s.absent != absent {
             s.absent = absent.to_vec();
         }

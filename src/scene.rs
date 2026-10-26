@@ -377,6 +377,20 @@ impl Expr {
     /// What it reads: the properties (their value or their speed) and the
     /// facts. Nothing else goes into it —no clock, no chance—, so with those the
     /// same, it is worth the same.
+    /// Whether it depends on nothing but the facts and properties `inputs` gives:
+    /// not on an event's payload, nor on the letter being painted. Then, with
+    /// those the same, it is worth the same (`random` and `noise` are seeded).
+    pub fn only_inputs(&self) -> bool {
+        match self {
+            Expr::Payload | Expr::Letter(_) => false,
+            Expr::K(_) | Expr::P(_) | Expr::Vel(_) | Expr::H(_) => true,
+            Expr::Abs(a) | Expr::Floor(a) | Expr::Sin(a) | Expr::Cos(a) | Expr::Ceil(a) | Expr::Not(a) | Expr::Un(_, a) | Expr::Smoothstep(_, _, a) => a.only_inputs(),
+            Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) | Expr::Div(a, b) | Expr::Min(a, b) | Expr::Max(a, b) | Expr::Gt(a, b) | Expr::And(a, b) | Expr::Or(a, b) | Expr::Bin(_, a, b) => a.only_inputs() && b.only_inputs(),
+            Expr::Mix(a, b, t) => a.only_inputs() && b.only_inputs() && t.only_inputs(),
+            Expr::Pick(i, list) => i.only_inputs() && list.iter().all(Expr::only_inputs),
+        }
+    }
+
     pub fn inputs(&self, props: &mut Vec<u16>, facts: &mut Vec<u16>) {
         match self {
             Expr::P(p) | Expr::Vel(p) => {
