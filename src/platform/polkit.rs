@@ -444,31 +444,226 @@ fn session(c: &Connection) -> Option<String> {
     Proxy::new(c, "org.freedesktop.login1", path.as_str().to_owned(), "org.freedesktop.login1.Session").ok()?.get_property::<String>("Id").ok()
 }
 
-fn register() -> Result<Connection, String> {
-    let c = zbus::blocking::connection::Builder::system().and_then(|b| b.serve_at(AGENT_PATH, Agent)).and_then(|b| b.build()).map_err(|e| e.to_string())?;
-    let session = session(&c).ok_or("this process is in no login session")?;
+/// The connection the agent answers on, with the agent at its path: made once,
+/// and registered with polkit as many times as polkit comes and goes.
+fn connect() -> Result<Connection, String> {
+    zbus::blocking::connection::Builder::system().and_then(|b| b.serve_at(AGENT_PATH, Agent)).and_then(|b| b.build()).map_err(|e| e.to_string())
+}
+
+fn register(c: &Connection, session: &str) -> Result<(), String> {
     let subject = ("unix-session", HashMap::from([("session-id", Value::from(session))]));
     let locale = std::env::var("LANG").ok().filter(|l| !l.is_empty()).unwrap_or_else(|| "C".into());
-    let authority = Proxy::new(&c, AUTHORITY, AUTHORITY_PATH, AUTHORITY_IFACE).map_err(|e| e.to_string())?;
+    let authority = Proxy::new(c, AUTHORITY, AUTHORITY_PATH, AUTHORITY_IFACE).map_err(|e| e.to_string())?;
     authority.call_method("RegisterAuthenticationAgent", &(subject, locale, AGENT_PATH)).map_err(|e| e.to_string())?;
-    Ok(c)
+    Ok(())
+}
+
+/// Why registering did not work, which decides when to try again.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Refusal {
+    /// Another agent answers for the session: its slot frees without a word
+    /// from polkit, so it is asked again now and then.
+    Taken,
+    /// There is no polkit on the bus, nor one to start: it is waited for.
+    Absent,
+    /// Anything else: tried again, more slowly each time.
+    Other,
+}
+
+fn refusal(error: &str) -> Refusal {
+    if error.contains("already exists") {
+        Refusal::Taken
+    } else if error.contains("ServiceUnknown") || error.contains("NameHasNoOwner") {
+        Refusal::Absent
+    } else {
+        Refusal::Other
+    }
+}
+
+/// The first wait before trying again, and the longest.
+const RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(2);
+const RETRY_LONGEST: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Whether this process is the session's agent, and when to try to be it if it
+/// is not. No bus in it: what happens is told to it, and it says what to do.
+#[derive(Debug)]
+struct Standing {
+    ready: bool,
+    /// How long to wait before trying again; `None`, until polkit appears.
+    retry: Option<std::time::Duration>,
+    /// The last refusal said aloud, so that one that repeats is said once.
+    said: Option<Refusal>,
+}
+
+impl Standing {
+    fn new() -> Self {
+        Standing { ready: false, retry: None, said: None }
+    }
+
+    /// What registering gave: what to say about it, if anything.
+    fn registered(&mut self, result: Result<(), String>) -> Option<String> {
+        match result {
+            Ok(()) => {
+                let again = self.said.take().is_some();
+                self.ready = true;
+                self.retry = None;
+                again.then(|| "polkit · I am the one asked for the password again".to_owned())
+            }
+            Err(e) => {
+                let why = refusal(&e);
+                self.ready = false;
+                self.retry = match why {
+                    Refusal::Absent => None,
+                    _ => Some(self.retry.map_or(RETRY_FIRST, |d| (d * 2).min(RETRY_LONGEST))),
+                };
+                let say = self.said != Some(why);
+                self.said = Some(why);
+                say.then(|| match why {
+                    Refusal::Taken => format!("polkit · I cannot be the one asked for the password: another agent is, and I will ask again now and then ({e})"),
+                    Refusal::Absent => format!("polkit · this system has no polkit yet; I will be its agent when it comes ({e})"),
+                    Refusal::Other => format!("polkit · I cannot be the one asked for the password ({e})"),
+                })
+            }
+        }
+    }
+
+    /// polkit left the bus: it forgot its agents. Tried again soon, which
+    /// starts it if it is started on demand and nobody restarts it.
+    fn vanished(&mut self) -> Option<String> {
+        let was = std::mem::replace(&mut self.ready, false);
+        self.retry = Some(RETRY_FIRST);
+        self.said = Some(Refusal::Absent);
+        was.then(|| "polkit · polkit went away; I will be its agent again when it is back".to_owned())
+    }
+
+    /// polkit came (back) to the bus: whether to register with it now. Not if
+    /// this process already did —it was started by that very registration, and
+    /// is heard of after it—: a polkit that went first would have been heard
+    /// going, and that leaves `ready` false.
+    fn appeared(&mut self) -> bool {
+        if self.ready {
+            return false;
+        }
+        self.retry = None;
+        true
+    }
+}
+
+/// What the agent's thread hears: polkit's name changing hands.
+enum Heard {
+    Appeared,
+    Vanished,
+}
+
+/// Stays the session's agent across polkit's restarts: polkit's name on the
+/// bus is watched, and the agent registered again whenever it comes back, or
+/// now and then while another agent holds the session.
+fn keep(c: Connection, session: String, heard: Receiver<Heard>, mut standing: Standing) {
+    use std::sync::mpsc::RecvTimeoutError;
+    loop {
+        let event = match standing.retry {
+            Some(wait) => match heard.recv_timeout(wait) {
+                Ok(h) => Some(h),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => return,
+            },
+            None => match heard.recv() {
+                Ok(h) => Some(h),
+                Err(_) => return,
+            },
+        };
+        match event {
+            Some(Heard::Vanished) => {
+                if let Some(line) = standing.vanished() {
+                    eprintln!("{line}");
+                }
+            }
+            Some(Heard::Appeared) if !standing.appeared() => {}
+            Some(Heard::Appeared) | None => {
+                if let Some(line) = standing.registered(register(&c, &session)) {
+                    eprintln!("{line}");
+                }
+            }
+        }
+        let changed = {
+            let mut s = STATE.lock().unwrap();
+            std::mem::replace(&mut s.ready, standing.ready) != standing.ready
+        };
+        if changed {
+            tell();
+        }
+    }
+}
+
+/// Hears polkit's name change hands on the bus, until the connection goes.
+fn watch(c: &Connection) -> Result<Receiver<Heard>, String> {
+    use zbus::{blocking::MessageIterator, MatchRule};
+    let rule = MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .sender("org.freedesktop.DBus")
+        .and_then(|b| b.interface("org.freedesktop.DBus"))
+        .and_then(|b| b.member("NameOwnerChanged"))
+        .and_then(|b| b.arg(0, AUTHORITY))
+        .map(|b| b.build())
+        .map_err(|e| e.to_string())?;
+    // Subscribed here, before the first registration, so that no change is missed in between.
+    let messages = MessageIterator::for_match_rule(rule, c, Some(16)).map_err(|e| e.to_string())?;
+    let (tx, rx) = channel();
+    std::thread::Builder::new()
+        .name("polkit-watch".into())
+        .spawn(move || {
+            for m in messages.flatten() {
+                let Ok((name, old, new)) = m.body().deserialize::<(String, String, String)>() else { continue };
+                if name != AUTHORITY {
+                    continue;
+                }
+                // A name that changes hands is the one going and the other coming.
+                let gone = (!old.is_empty()).then_some(Heard::Vanished);
+                let come = (!new.is_empty()).then_some(Heard::Appeared);
+                for h in gone.into_iter().chain(come) {
+                    if tx.send(h).is_err() {
+                        return;
+                    }
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rx)
 }
 
 /// Becomes the session's agent, if it is not yet, and tells whoever asked how things stand.
 pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
     LISTENERS.lock().unwrap().push(dispatch);
     if AGENT.get().is_none() {
-        match register() {
-            Ok(c) => {
-                let _ = AGENT.set(c);
-                STATE.lock().unwrap().ready = true;
-            }
-            // Another agent has the session, or there is no polkit: the scene is told, in `ready`.
-            Err(e) => eprintln!("polkit · I cannot be the one asked for the password ({e})"),
-        }
+        start();
     }
     tell();
     true
+}
+
+/// The first registration, and the thread that keeps it.
+fn start() {
+    let c = match connect() {
+        Ok(c) => c,
+        Err(e) => return eprintln!("polkit · I cannot be the one asked for the password ({e})"),
+    };
+    if AGENT.set(c.clone()).is_err() {
+        return;
+    }
+    let Some(session) = session(&c) else { return eprintln!("polkit · I cannot be the one asked for the password (this process is in no login session)") };
+    let heard = watch(&c).map_err(|e| eprintln!("polkit · polkit coming back will go unnoticed ({e})")).ok();
+    let mut standing = Standing::new();
+    // Another agent has the session, or there is no polkit: the scene is told, in `ready`.
+    if let Some(line) = standing.registered(register(&c, &session)) {
+        eprintln!("{line}");
+    }
+    STATE.lock().unwrap().ready = standing.ready;
+    if let Some(heard) = heard {
+        let kept = std::thread::Builder::new().name("polkit-agent".into()).spawn(move || keep(c, session, heard, standing));
+        if kept.is_err() {
+            eprintln!("polkit · no thread to stay the agent on; polkit restarting will leave this scene out");
+        }
+    }
 }
 
 pub fn command(what: &str, args: &[SysValue]) -> Result<(), String> {
@@ -560,6 +755,86 @@ mod tests {
         assert_eq!(converse(ours.try_clone().unwrap(), ours, &answers), None);
         assert!(STATE.lock().unwrap().now.as_ref().unwrap().cancelled);
         STATE.lock().unwrap().now = None;
+    }
+
+    const TAKEN: &str = "org.freedesktop.PolicyKit1.Error.Failed: An authentication agent already exists for the given subject";
+    const ABSENT: &str = "org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.PolicyKit1 was not provided by any .service files";
+
+    #[test]
+    fn why_registering_failed_is_told_apart() {
+        assert_eq!(refusal(TAKEN), Refusal::Taken);
+        assert_eq!(refusal(ABSENT), Refusal::Absent);
+        assert_eq!(refusal("org.freedesktop.DBus.Error.NameHasNoOwner: nobody"), Refusal::Absent);
+        assert_eq!(refusal("org.freedesktop.DBus.Error.NoReply: timed out"), Refusal::Other);
+    }
+
+    /// The issue's first half: polkit restarts under a registered agent.
+    #[test]
+    fn polkit_restarting_is_registered_with_again() {
+        let mut s = Standing::new();
+        assert_eq!(s.registered(Ok(())), None);
+        assert!(s.ready && s.retry.is_none());
+        // It goes: `ready` falls, said once, and it is tried again soon.
+        assert!(s.vanished().is_some());
+        assert!(!s.ready);
+        assert_eq!(s.retry, Some(RETRY_FIRST));
+        assert_eq!(s.vanished(), None);
+        // It comes back: registered with at once, and the recovery said.
+        assert!(s.appeared());
+        assert!(s.registered(Ok(())).is_some());
+        assert!(s.ready && s.retry.is_none());
+    }
+
+    /// Registering is what starts a polkit started on demand: hearing it
+    /// appear afterwards does not register a second time, which polkit would
+    /// refuse as another agent and leave the scene out of its own slot.
+    #[test]
+    fn the_polkit_registered_with_is_not_registered_with_twice() {
+        let mut s = Standing::new();
+        s.vanished();
+        s.registered(Ok(()));
+        assert!(!s.appeared());
+        assert!(s.ready);
+    }
+
+    /// The issue's second half: another agent holds the session.
+    #[test]
+    fn a_taken_session_is_asked_for_again_more_slowly_and_said_once() {
+        let mut s = Standing::new();
+        assert!(s.registered(Err(TAKEN.into())).is_some());
+        assert_eq!(s.retry, Some(RETRY_FIRST));
+        let mut last = RETRY_FIRST;
+        for _ in 0..10 {
+            assert_eq!(s.registered(Err(TAKEN.into())), None, "a refusal that repeats is said once");
+            let now = s.retry.unwrap();
+            assert!(now >= last && now <= RETRY_LONGEST);
+            last = now;
+        }
+        assert_eq!(last, RETRY_LONGEST);
+        // The slot frees: it is the agent again, and says so.
+        assert!(s.registered(Ok(())).is_some());
+        assert!(s.ready && s.retry.is_none());
+        // polkit coming back starts the waits over.
+        s.vanished();
+        assert!(s.appeared());
+        assert!(s.registered(Err(TAKEN.into())).is_some());
+        assert_eq!(s.retry, Some(RETRY_FIRST));
+    }
+
+    /// With no polkit on the bus there is nothing to ask until it appears.
+    #[test]
+    fn no_polkit_is_waited_for_not_polled() {
+        let mut s = Standing::new();
+        assert!(s.registered(Err(ABSENT.into())).is_some());
+        assert_eq!(s.retry, None);
+        assert!(!s.ready);
+        // It goes and does not come back by itself: one try to start it, then the wait.
+        s.vanished();
+        assert_eq!(s.registered(Err(ABSENT.into())), None);
+        assert_eq!(s.retry, None);
+        assert!(s.appeared());
+        s.registered(Ok(()));
+        assert!(s.ready);
     }
 
     /// These share the one state a process has: one at a time.
