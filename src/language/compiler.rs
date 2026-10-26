@@ -7421,7 +7421,10 @@ impl<'a> Compiler<'a> {
                             if self.e.nest.is_none() {
                                 return c.error("`launch` opens a program among the scene's windows: declare them first, `windows win max 6`");
                             }
-                            Effect::Launch(c.string()?)
+                            // A command with holes, like any text: filled in when the rule fires.
+                            let at = c.i;
+                            let s = c.string()?;
+                            Effect::Launch(self.content_of_one(&s, &c.tokens[at])?)
                         }
                         "focus" => {
                             let n = self.global(&c.id("the name of the input")?);

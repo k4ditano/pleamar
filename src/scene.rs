@@ -1847,8 +1847,10 @@ pub enum Effect {
     /// Something done to a window of the compositor inside the scene: which
     /// one is an expression, `close win(win.focus)`.
     Window(WindowAction, Expr),
-    /// A program started inside the scene's compositor: `launch "kitty"`.
-    Launch(String),
+    /// A program started inside the scene's compositor: `launch "kitty"`. The
+    /// command can have holes, like any text: `launch "foot -e top -p {pid}"`,
+    /// filled in when the rule fires.
+    Launch(Content),
     /// `dock k on s`: that item of monitor `s`'s dock: its window (the next
     /// one, if one of them has the keyboard; brought back, if put away), or
     /// the program started.
