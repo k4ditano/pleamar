@@ -238,7 +238,14 @@ pub struct Ctx<'a> {
 pub struct Seen {
     facts: Vec<std::cell::Cell<u64>>,
     props: Vec<std::cell::Cell<u64>>,
+    /// While something is worked out on its own (`log_from_here`), each read
+    /// too, in order: facts with `SEEN_FACT` on.
+    logging: std::cell::Cell<bool>,
+    log: std::cell::RefCell<Vec<u32>>,
 }
+
+/// In `Seen`'s log, what is a fact and not a property.
+pub const SEEN_FACT: u32 = 1 << 31;
 
 impl Seen {
     /// Nothing read yet, with room for that many of each.
@@ -253,12 +260,32 @@ impl Seen {
         if let Some(w) = self.facts.get(k >> 6) {
             w.set(w.get() | 1 << (k & 63));
         }
+        if self.logging.get() {
+            self.log.borrow_mut().push(k as u32 | SEEN_FACT);
+        }
     }
     #[inline]
     pub fn prop(&self, k: usize) {
         if let Some(w) = self.props.get(k >> 6) {
             w.set(w.get() | 1 << (k & 63));
         }
+        if self.logging.get() {
+            self.log.borrow_mut().push(k as u32);
+        }
+    }
+    /// From here on, each read is also written down, until `log_into`.
+    pub fn log_from_here(&self) {
+        self.log.borrow_mut().clear();
+        self.logging.set(true);
+    }
+    /// What was read since `log_from_here`, once each, into `out`; and no more writing it down.
+    pub fn log_into(&self, out: &mut Vec<u32>) {
+        self.logging.set(false);
+        let mut log = self.log.borrow_mut();
+        log.sort_unstable();
+        log.dedup();
+        out.clear();
+        out.extend_from_slice(&log);
     }
     fn each(words: &[std::cell::Cell<u64>]) -> impl Iterator<Item = usize> + '_ {
         words.iter().enumerate().flat_map(|(w, bits)| {
@@ -289,13 +316,24 @@ impl Seen {
     /// What was read, into those lists, and nothing read again: for whoever
     /// keeps one of these for many evaluations, one after another.
     pub fn take(&self, facts: &mut Vec<u16>, props: &mut Vec<u16>) {
-        facts.clear();
-        facts.extend(Seen::each(&self.facts).map(|k| k as u16));
-        props.clear();
-        props.extend(Seen::each(&self.props).map(|k| k as u16));
-        for w in self.facts.iter().chain(&self.props) {
-            w.set(0);
+        // A word at a time, and only the words with something: a scene with
+        // sixteen thousand properties has hundreds of them, nearly all empty.
+        fn drain(words: &[std::cell::Cell<u64>], out: &mut Vec<u16>) {
+            out.clear();
+            for (w, bits) in words.iter().enumerate() {
+                let mut left = bits.get();
+                if left == 0 {
+                    continue;
+                }
+                bits.set(0);
+                while left != 0 {
+                    out.push((w * 64 + left.trailing_zeros() as usize) as u16);
+                    left &= left - 1;
+                }
+            }
         }
+        drain(&self.facts, facts);
+        drain(&self.props, props);
     }
     /// The facts read, by their index.
     pub fn facts(&self) -> impl Iterator<Item = usize> + '_ {
@@ -2810,6 +2848,28 @@ mod tests {
 
     fn animated(props: &[f32]) -> Vec<Animated> {
         props.iter().map(|&x| Animated { x, v: 0.0, target: x, spring: Spring::LIVELY }).collect()
+    }
+
+    #[test]
+    fn a_log_says_what_was_read_since_it_began_once_each() {
+        // fact 1 + prop 0 + prop 0, with something read before the log began.
+        let e = Expr::Add(Box::new(Expr::Add(Box::new(Expr::H(FactId(1))), Box::new(Expr::P(PropId(0))))), Box::new(Expr::P(PropId(0))));
+        let props = animated(&[3.0, 4.0]);
+        let mut seen = Seen::default();
+        seen.reset(2, 2);
+        let c = Ctx { props: &props, facts: &[0.0, 5.0], seen: Some(&seen) };
+        Expr::P(PropId(1)).eval(c);
+        seen.log_from_here();
+        assert_eq!(e.eval(c), 11.0);
+        let mut log = Vec::new();
+        seen.log_into(&mut log);
+        assert_eq!(log, [0, 1 | SEEN_FACT]);
+        // It no longer writes down, and the bits were noted as ever.
+        Expr::P(PropId(1)).eval(c);
+        seen.log_into(&mut log);
+        assert_eq!(log, [0, 1 | SEEN_FACT]);
+        assert_eq!(seen.props().collect::<Vec<_>>(), [0, 1]);
+        assert_eq!(seen.facts().collect::<Vec<_>>(), [1]);
     }
 
     #[test]

@@ -959,6 +959,8 @@ pub fn run(
                     z_memo = None;
                     window_instrs = None;
                     draw.hidden.clear();
+                    draw.new_scene();
+                    zone_memo = ZoneMemo::default();
                     if let Some(n) = &scene.nest {
                         if nest.is_none() {
                             nest = crate::platform::start_nest(n.max, op.to_self.clone());
@@ -5811,9 +5813,14 @@ impl Follows {
 
     fn value(&mut self, k: usize, to: &Expr, props: &[Animated], facts: &[f32]) -> f32 {
         let Some(r) = self.each.get_mut(k).and_then(Option::as_mut) else { return to.eval(Ctx { props, facts, seen: None }) };
-        let now = r.facts.iter().map(|h| facts[*h as usize]).chain(r.props.iter().flat_map(|p| [props[*p as usize].x, props[*p as usize].v]));
         if let Some(v) = r.value {
-            if now.clone().eq(r.seen.iter().copied()) {
+            let (was_facts, was_props) = r.seen.split_at(r.facts.len());
+            let same = r.facts.iter().zip(was_facts).all(|(h, w)| facts[*h as usize].to_bits() == w.to_bits())
+                && r.props.iter().zip(was_props.chunks_exact(2)).all(|(p, w)| {
+                    let a = &props[*p as usize];
+                    a.x.to_bits() == w[0].to_bits() && a.v.to_bits() == w[1].to_bits()
+                });
+            if same {
                 return v;
             }
         }
@@ -6046,6 +6053,19 @@ struct ZoneMemo {
     absent: Vec<std::ops::Range<usize>>,
     live: Vec<bool>,
     bounds: Vec<Option<[f32; 4]>>,
+    /// Each zone's own: whether it could be alive (not hidden, not absent),
+    /// what its `active:` and its box read, and what that was. When something
+    /// changed, only the zones that read it are worked out again: a panel
+    /// sliding in moves its own zones, not the other two thousand.
+    each: Vec<OneZone>,
+}
+
+#[derive(Default)]
+struct OneZone {
+    done: bool,
+    could: bool,
+    reads: Vec<u32>,
+    values: Vec<(f32, f32)>,
 }
 
 impl ZoneMemo {
@@ -6079,14 +6099,70 @@ impl ZoneMemo {
             return;
         }
         self.seen.reset(facts.len(), props.len());
-        let (live, bounds) = Self::fresh(scene, Ctx { props, facts, seen: Some(&self.seen) }, hidden, absent);
+        let c = Ctx { props, facts, seen: Some(&self.seen) };
+        let n = scene.zones.len();
+        if self.each.len() != n || self.live.len() != n || self.bounds.len() != n {
+            self.each.clear();
+            self.each.resize_with(n, OneZone::default);
+            self.live = vec![false; n];
+            self.bounds = vec![None; n];
+        }
+        for (k, z) in scene.zones.iter().enumerate() {
+            let could = !hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at));
+            let one = &mut self.each[k];
+            if !could {
+                (one.done, one.could) = (true, false);
+                one.reads.clear();
+                one.values.clear();
+                (self.live[k], self.bounds[k]) = (false, None);
+                continue;
+            }
+            let holds = one.done
+                && one.could
+                && one.reads.iter().zip(&one.values).all(|(r, v)| {
+                    if r & crate::scene::SEEN_FACT != 0 {
+                        facts.get((r & !crate::scene::SEEN_FACT) as usize).is_some_and(|f| f.to_bits() == v.0.to_bits())
+                    } else {
+                        props.get(*r as usize).is_some_and(|p| p.x.to_bits() == v.0.to_bits() && p.v.to_bits() == v.1.to_bits())
+                    }
+                });
+            if holds {
+                for r in &one.reads {
+                    if r & crate::scene::SEEN_FACT != 0 {
+                        self.seen.fact((r & !crate::scene::SEEN_FACT) as usize);
+                    } else {
+                        self.seen.prop(*r as usize);
+                    }
+                }
+                continue;
+            }
+            self.seen.log_from_here();
+            let live = z.active.is_true(c);
+            self.bounds[k] = if live { z.bounds(c) } else { None };
+            self.live[k] = live;
+            self.seen.log_into(&mut one.reads);
+            one.values.clear();
+            one.values.extend(one.reads.iter().map(|r| {
+                if r & crate::scene::SEEN_FACT != 0 {
+                    (facts.get((r & !crate::scene::SEEN_FACT) as usize).copied().unwrap_or(f32::NAN), 0.0)
+                } else {
+                    props.get(*r as usize).map_or((f32::NAN, 0.0), |p| (p.x, p.v))
+                }
+            }));
+            (one.done, one.could) = (true, true);
+        }
+        if check {
+            let (live, bounds) = Self::fresh(scene, Ctx { props, facts, seen: None }, hidden, absent);
+            if live != self.live || bounds != self.bounds {
+                let k = (0..live.len()).find(|k| live[*k] != self.live[*k] || bounds[*k] != self.bounds[*k]).unwrap_or(0);
+                eprintln!("check  · a zone was taken as unchanged and is not: '{}' alive {} → {}, {:?} → {:?}", scene.zones[k].id, self.live[k], live[k], self.bounds[k], bounds[k]);
+            }
+        }
         self.seen.take(&mut self.read_facts, &mut self.read_props);
         self.facts = self.read_facts.iter().map(|k| facts[*k as usize]).collect();
         self.props = self.read_props.iter().map(|k| (props[*k as usize].x, props[*k as usize].v)).collect();
         self.hidden = hidden.to_vec();
         self.absent = absent.to_vec();
-        self.live = live;
-        self.bounds = bounds;
         self.valid = true;
     }
 }

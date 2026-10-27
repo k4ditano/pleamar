@@ -161,6 +161,25 @@ pub struct DrawList {
     /// This frame: stretches copied, and stretches put together.
     pub copied: (u32, u32),
     plan: Plan,
+    /// Each body shape as it came out the last time, by instruction, and for
+    /// which instructions (see `ShapeMemo`).
+    shape_memo: Vec<Option<Box<ShapeMemo>>>,
+    shape_memo_for: (usize, usize),
+}
+
+/// A body's shape as it came out the last time it was worked out —before what
+/// it is under moves it—, its fusion, and the facts and properties it read
+/// then, with their values. A stretch is put together again when anything in
+/// it changed, or when what it is under moves: a panel sliding in made each of
+/// its two thousand shapes again, every frame, to get the same numbers. A shape
+/// whose reads hold comes out as it came out then, without evaluating it.
+#[derive(Default)]
+struct ShapeMemo {
+    reads: Vec<u32>,
+    values: Vec<(f32, f32)>,
+    flat: Option<crate::shapes::FlatShape>,
+    points: Vec<f32>,
+    fusion: f32,
 }
 
 /// A window of the scene's compositor as the card has it: where the window
@@ -838,6 +857,62 @@ impl DrawList {
         self.copy_key = None;
     }
 
+    /// Another scene: nothing of the one before holds, even if its
+    /// instructions happen to be where those were and as many.
+    pub fn new_scene(&mut self) {
+        self.copy_key = None;
+        self.shape_memo.clear();
+    }
+
+    /// A body's shape and its fusion, from `shape_memo` if what it read the last
+    /// time still holds; worked out, and remembered, if not.
+    fn shape_once(&mut self, idx: usize, shape: &Shape, fusion: &Expr, c: Ctx, seen: &Seen) -> (crate::shapes::FlatShape, f32) {
+        let m = &mut self.shape_memo[idx];
+        if let Some(m) = m {
+            let holds = m.reads.iter().zip(&m.values).all(|(r, v)| {
+                if r & SEEN_FACT != 0 {
+                    c.facts.get((r & !SEEN_FACT) as usize).is_some_and(|x| x.to_bits() == v.0.to_bits())
+                } else {
+                    c.props.get(*r as usize).is_some_and(|x| x.x.to_bits() == v.0.to_bits() && x.v.to_bits() == v.1.to_bits())
+                }
+            });
+            if let (true, Some(mut p)) = (holds, m.flat) {
+                for r in &m.reads {
+                    if r & SEEN_FACT != 0 {
+                        seen.fact((r & !SEEN_FACT) as usize);
+                    } else {
+                        seen.prop(*r as usize);
+                    }
+                }
+                // A path's points go where the list is now.
+                if p.kind == 4 {
+                    p.radius = (self.points.len() / 2) as f32;
+                }
+                self.points.extend_from_slice(&m.points);
+                return (p, m.fusion);
+            }
+        }
+        let m = m.get_or_insert_with(Box::default);
+        let first = self.points.len();
+        seen.log_from_here();
+        let p = shape.flatten_into(c, &mut self.points);
+        let k = fusion.eval(c).max(0.0);
+        seen.log_into(&mut m.reads);
+        m.values.clear();
+        m.values.extend(m.reads.iter().map(|r| {
+            if r & SEEN_FACT != 0 {
+                (c.facts.get((r & !SEEN_FACT) as usize).copied().unwrap_or(f32::NAN), 0.0)
+            } else {
+                c.props.get(*r as usize).map_or((f32::NAN, 0.0), |x| (x.x, x.v))
+            }
+        }));
+        m.flat = Some(p);
+        m.points.clear();
+        m.points.extend_from_slice(&self.points[first..]);
+        m.fusion = k;
+        (p, k)
+    }
+
     /// What was just put together, copying stretches, against putting it all
     /// together again (`compose`, with nothing copied): the first difference, if any.
     pub fn check_copy(&mut self, compose: impl FnOnce(&mut Self)) -> Option<String> {
@@ -1351,6 +1426,11 @@ impl DrawList {
                 && k.window_tex == self.window_tex
         });
         let copying = !self.no_copy && c.seen.is_some() && !self.collect_texts && same_key;
+        if self.shape_memo_for != instrs_id || self.shape_memo.len() != instrs.len() {
+            self.shape_memo_for = instrs_id;
+            self.shape_memo.clear();
+            self.shape_memo.resize_with(instrs.len(), || None);
+        }
         if !same_key {
             self.copy_key = Some(CopyKey {
                 instrs: instrs_id,
@@ -1888,8 +1968,11 @@ impl DrawList {
                     body = Some(OpenBody { first: self.shapes.len() / PER_SHAPE, n: 0, bounds: None, slack: 0.0, shadow: shadow.clone(), flats: Vec::new() })
                 }
                 Instr::Shape { shape, fusion: blend } => {
-                    let p = flatten(shape, &transforms, &mut self.points);
-                    let k = blend.eval(c).max(0.0);
+                    let (mut p, k) = match c.seen {
+                        Some(seen) if !self.no_copy => self.shape_once(idx, shape, blend, c, seen),
+                        _ => (shape.flatten_into(c, &mut self.points), blend.eval(c).max(0.0)),
+                    };
+                    p.affine = affine;
                     let bounds = p.bounds();
                     self.push_shape(p, k);
                     if let Some(g) = &mut body {
