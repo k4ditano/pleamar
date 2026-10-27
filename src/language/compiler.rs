@@ -4666,10 +4666,15 @@ impl<'a> Compiler<'a> {
                 "window" => s.window = Some(String::new()),
                 // `kind: lock`: the lock screen. It takes the whole monitor
                 // —how big it is, the compositor says— and goes on all of them.
+                // Its keyboard is its own, whatever the first surface says: taken
+                // from a first surface with none, a lock screen never asked for
+                // the keyboard and its password could not be typed (pleamar-wm#38).
                 "lock" => {
                     s.lock_screen = true;
                     s.screens = Screens::All;
                     s.keyboard = Keyboard::Always;
+                    s.keyboard_said = true;
+                    s.keyboard_when = None;
                 }
                 _ => {}
             }
