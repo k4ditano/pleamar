@@ -430,6 +430,15 @@ mod tests {
     }
 
     #[test]
+    fn a_lock_screen_has_the_keyboard_whatever_the_first_surface_says() {
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/lock-keyboard-own.plm")).unwrap();
+        let lock = scene.surfaces.iter().find(|s| s.lock_screen).unwrap();
+        assert_eq!(lock.keyboard, crate::scene::Keyboard::Always);
+        assert!(lock.keyboard_when.is_none());
+        assert_eq!(scene.surfaces[0].keyboard, crate::scene::Keyboard::Never);
+    }
+
+    #[test]
     fn where_the_rows_of_a_long_column_fall_is_computed_once() {
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/long-column.plm")).unwrap();
         let lines: Vec<&crate::scene::Zone> = scene.zones.iter().filter(|z| z.id.starts_with("line#")).collect();
