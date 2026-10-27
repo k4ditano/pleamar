@@ -1814,7 +1814,7 @@ pub fn run(
                 shown: sheets.iter().filter(|s| s.open).map(|s| crate::agent::Shown { surface: s.view.surface, popup: s.view.popup, bounds: s.view.bounds(), scale: s.scale }).collect(),
                 texts_seen: &[],
                 gone: &gone,
-                rank: rank.as_deref(),
+                rank: rank.as_ref().map(|r| r.as_slice()),
             };
             let now = Instant::now();
             if acting.is_none()
@@ -3995,7 +3995,7 @@ pub fn run(
                     shown: sheets.iter().filter(|s| s.open).map(|s| crate::agent::Shown { surface: s.view.surface, popup: s.view.popup, bounds: s.view.bounds(), scale: s.scale }).collect(),
                     texts_seen: &draw.texts_seen,
                     gone: &gone,
-                    rank: zone_rank.as_deref(),
+                    rank: zone_rank.as_ref().map(|r| r.as_slice()),
                 };
                 let parts = crate::agent::describe(&scene, c, &texts, &sight);
                 if std::env::var_os("PLEAMAR_DEBUG_DESCRIBE").is_some() {
@@ -4019,20 +4019,34 @@ pub fn run(
                 draw.collect_texts = false;
                 draw.texts_seen.clear();
             }
-            compose_memo = Some(ComposeMemo {
+            // Written over the last one: a round composed is not a round of allocations.
+            let m = compose_memo.get_or_insert_with(|| ComposeMemo {
                 size,
                 view,
-                views: draw.views.clone(),
-                facts: facts.clone(),
-                texts: texts.clone(),
-                window_tex: draw.window_tex.clone(),
-                props: props.iter().map(|a| (a.x, a.v)).collect(),
-                seen: compose_seen.clone(),
-                skip: draw.skip.clone(),
-                order: draw.order.clone(),
-                selected: draw.selected,
-                signal_times: draw.signal_times.clone(),
+                views: Vec::new(),
+                facts: Vec::new(),
+                texts: Vec::new(),
+                window_tex: Vec::new(),
+                props: Vec::new(),
+                seen: Default::default(),
+                skip: Vec::new(),
+                order: None,
+                selected: None,
+                signal_times: Vec::new(),
             });
+            m.size = size;
+            m.view = view;
+            m.views.clone_from(&draw.views);
+            m.facts.clone_from(&facts);
+            m.texts.clone_from(&texts);
+            m.window_tex.clone_from(&draw.window_tex);
+            m.props.clear();
+            m.props.extend(props.iter().map(|a| (a.x, a.v)));
+            m.seen.clone_from(&compose_seen);
+            m.skip.clone_from(&draw.skip);
+            m.order.clone_from(&draw.order);
+            m.selected = draw.selected;
+            m.signal_times.clone_from(&draw.signal_times);
         }
         // An agent's action: when its steps are done and the scene has stopped
         // answering —its rules, its logic—, it is told what happened.
@@ -6093,7 +6107,7 @@ struct ComposeMemo {
     /// What else the list is made from: the parts asleep, the order of what
     /// has a `z:`, the text selected, and when each event last happened.
     skip: Vec<std::ops::Range<usize>>,
-    order: Option<Vec<usize>>,
+    order: Option<std::sync::Arc<Vec<usize>>>,
     selected: Option<(usize, usize, usize)>,
     signal_times: Vec<f32>,
 }

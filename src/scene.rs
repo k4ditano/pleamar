@@ -1534,10 +1534,12 @@ pub struct ZBlock {
 
 /// Where the groups with `z:` are drawn this frame: the instructions in the
 /// order they are painted, and each zone's place in it (bigger, on top).
+/// Shared: a round hands it on to the drawing without copying it, and two
+/// rounds that have the same one see so without going through it.
 #[derive(Clone)]
 pub struct ZArrangement {
-    pub order: Vec<usize>,
-    pub zone_rank: Vec<(usize, u8, usize)>,
+    pub order: std::sync::Arc<Vec<usize>>,
+    pub zone_rank: std::sync::Arc<Vec<(usize, u8, usize)>>,
 }
 
 impl Scene {
@@ -1594,7 +1596,7 @@ impl Scene {
                 None => (z.at, 0, 0),
             })
             .collect();
-        Some(ZArrangement { order, zone_rank })
+        Some(ZArrangement { order: order.into(), zone_rank: std::sync::Arc::new(zone_rank) })
     }
 }
 

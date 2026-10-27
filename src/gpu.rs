@@ -121,7 +121,7 @@ pub struct DrawList {
     /// per-screen copy whose surface is closed.
     pub skip: Vec<std::ops::Range<usize>>,
     /// The order the instructions are painted in, if groups with `z:` changed it.
-    pub order: Option<Vec<usize>>,
+    pub order: Option<std::sync::Arc<Vec<usize>>>,
     /// By instruction: inside a group that was hidden the last time it was
     /// put together. Its zones catch nothing, and are not even looked at.
     pub hidden: Vec<bool>,
@@ -148,7 +148,7 @@ pub struct DrawList {
     /// order of painting, and for which instructions and order they were found.
     stretch_list: Vec<Stretch>,
     stretch_at: Vec<u32>,
-    stretches_for: Option<((usize, usize), Option<Vec<usize>>)>,
+    stretches_for: Option<((usize, usize), Option<std::sync::Arc<Vec<usize>>>)>,
     /// What each made last time (see `Kept`), and the frame they are copied from.
     kept: Vec<Option<Kept>>,
     last: LastFrame,
@@ -441,7 +441,7 @@ struct CopyKey {
     field: Option<FieldView>,
     selected: Option<(usize, usize, usize)>,
     skip: Vec<std::ops::Range<usize>>,
-    order: Option<Vec<usize>>,
+    order: Option<std::sync::Arc<Vec<usize>>>,
     views: Vec<[f32; 4]>,
     texts: Vec<String>,
     window_tex: Vec<Option<WindowTex>>,
@@ -454,7 +454,7 @@ struct CopyKey {
 /// drawing together.
 #[derive(Default)]
 struct Plan {
-    made_for: Option<((usize, usize), Option<Vec<usize>>, Vec<std::ops::Range<usize>>)>,
+    made_for: Option<((usize, usize), Option<std::sync::Arc<Vec<usize>>>, Vec<std::ops::Range<usize>>)>,
     sequence: Vec<usize>,
     asleep: Vec<bool>,
     closes: Vec<usize>,
@@ -1435,7 +1435,7 @@ impl DrawList {
                 }
             }
             plan.sequence = match &self.order {
-                Some(o) => o.clone(),
+                Some(o) => o.to_vec(),
                 None => (0..instrs.len()).collect(),
             };
             // Where each group that opens in the sequence closes, and how many
