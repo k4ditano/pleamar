@@ -11,6 +11,12 @@ scene Told {
 
     input query { at: 10, 10; width: 200; placeholder: "Search"; label: "Search notes"; agent: yes }
     input pin { at: 220, 10; width: 100; secret: true; agent: no }
+    // Two pages over the same place: the hidden one's field does not cover the shown one's.
+    text name = ""
+    text other = ""
+    fact page = 0
+    input name { at: 200, 200; width: 90; label: "Name"; show: page == 0 }
+    input other { at: 200, 200; width: 90; label: "Other name"; show: page == 1 }
 
     fact level = 0.3
     fact mode: quiet | loud = loud

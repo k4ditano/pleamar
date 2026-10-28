@@ -4023,9 +4023,14 @@ impl<'a> Compiler<'a> {
             Some(c) => self.expr(c)?,
             None => Expr::K(1.0),
         };
-        // `show:` multiplies the opacity: what is not there is not seen.
-        let alpha = match p.get_mut("show") {
-            Some(c) => alpha * self.expr(c)?.clamp(0.0, 1.0),
+        // `show:` multiplies the opacity: what is not there is not seen. And its zone goes with it:
+        // a hidden field took the clicks (and the focus) meant for what was under it.
+        let shown = match p.get_mut("show") {
+            Some(c) => Some(self.expr(c)?.clamp(0.0, 1.0)),
+            None => None,
+        };
+        let alpha = match &shown {
+            Some(v) => alpha * v.clone(),
             None => alpha,
         };
         let height = style.px * style.line_height;
@@ -4037,7 +4042,7 @@ impl<'a> Compiler<'a> {
             at: self.e.instrs.len(),
             zblock: self.zblock,
             shape: Shape::Rect { center: (at.0.clone() + width.clone() * 0.5, at.1.clone() + height * 0.5), half_size: (width.clone() * 0.5, (height * 0.5 + 3.0).into()), radius: 0.0.into() },
-            active: None, visible: None, under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None,
+            active: None, visible: shown, under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None,
         });
         self.last_size = Some((width.clone(), height.into()));
         self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret, passive });
@@ -4345,7 +4350,10 @@ impl<'a> Compiler<'a> {
         // The time only if it reads it: a shader that does not move must let the
         // surface rest. It is the scene's `time`, created now if nobody named it.
         let time = u.animated.then(|| self.time_prop().e());
-        let pointer = u.pointer.then(|| (self.facts["pointer.x"].e(), self.facts["pointer.y"].e()));
+        // Over the box it is drawn in, which is this surface's own: a shader in
+        // a surface of its own, or in a monitor's copy, reads it as the rules do.
+        let here = |n: &str| self.scopes.iter().rev().find_map(|e| e.exprs.get(n)).cloned().unwrap_or_else(|| self.facts[n].e());
+        let pointer = u.pointer.then(|| (here("pointer.x"), here("pointer.y")));
         self.e.paint(Instr::Shader { shader: k, target: (x, y, w, h), corner, alpha, values, colors, time, pointer, behind: u.behind });
         Ok(())
     }
@@ -4526,13 +4534,32 @@ impl<'a> Compiler<'a> {
                 let mark = self.rules.len();
                 // With `screens: each`, each copy has its own: its properties, its zones
                 // and its rules. `$screen` is its number, and `screen.name` that of its monitor.
-                if per_screen {
-                    self.scopes.push(Rc::new(self.screen_scope(instance)));
+                let mut env = if per_screen {
+                    Some(self.screen_scope(instance))
                 } else if lock {
                     let mut env = Scope::default();
                     for part in ["width", "height"] {
                         env.alias.insert(format!("screen.{part}"), format!("{name}.{part}"));
                     }
+                    Some(env)
+                } else {
+                    None
+                };
+                // Its piece of the plane is out of the way, and the mouse
+                // arrives in the plane's coordinates: a rule reads it the way
+                // this surface draws, from its own corner, as the scene's
+                // surface's copies do. Read raw, a press at the top of a
+                // surface said `pointer.y` 90 000.
+                if ox != 0.0 || oy != 0.0 {
+                    let env = env.get_or_insert_with(Scope::default);
+                    for (n, off) in [("pointer.x", ox), ("pointer.y", oy)] {
+                        if off != 0.0 {
+                            env.exprs.insert(n.to_owned(), Expr::Sub(Box::new(self.facts[n].e()), Box::new(Expr::K(off))));
+                        }
+                    }
+                }
+                let scoped = env.is_some();
+                if let Some(env) = env {
                     self.scopes.push(Rc::new(env));
                 }
                 let t = Transform { translate: (ox.into(), oy.into()), ..Transform::at((0.0.into(), 0.0.into())) };
@@ -4543,7 +4570,7 @@ impl<'a> Compiler<'a> {
                 self.e.paint(Instr::Transform(None));
                 if per_screen {
                     self.close_scope(mark);
-                } else if lock {
+                } else if scoped {
                     self.scopes.pop();
                 }
             }

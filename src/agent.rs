@@ -1346,6 +1346,9 @@ mod tests {
         assert!(at("save").unwrap_err().contains("inactive"));
         // Hidden is not even there to be found.
         assert_eq!(locate(&scene, c, "private", &sight), None);
+        // A field shown, with a hidden one declared over it: the hidden one covers nothing.
+        assert!(at("name").is_ok_and(|p| p.is_some()), "{:?}", at("name"));
+        assert!(at("other").is_err());
     }
 
     #[test]
