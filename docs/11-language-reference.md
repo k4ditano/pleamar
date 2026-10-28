@@ -1165,6 +1165,14 @@ go of the selection.
 text r.text { at: 2, 2; width: 520; size: 13.5; color: ink; selectable: true; selection: #2f5a50 }
 ```
 
+**As wide as what it says.** With a `width:`, a text breaks its lines there and takes up that width, even if it says «Ey». With **`tight: true`** it takes up only what its longest line does (up to its width): a bubble around it is as wide as its words. Only a text aligned to the left: centred or to the right, its width is what places it.
+
+```
+row { padding: 10; fill: #2f5a50; corner: 14; place: end
+    text m.text { width: 420; tight: true; size: 13.5; color: ink }
+}
+```
+
 **What a model writes.** With `markdown: true` a text shows what its marks mean instead of the marks: `**bold**`, `*italic*` (and `_italic_` outside a word), `` `code` `` in the monospace font, `# a title` in bold, `- a point` as `• a point`, `> a quote` in italics, `[a link](…)` as its words, and a block between ` ``` ` lines in monospace. A star between spaces (`2 * 3`) or an underscore inside a name stays as it is, and `\*` is a star. A mark still open at the end —a model halfway through `**this`— does not show. Everything else reads the text without its marks: its letters (`letter_*`), what is selected and copied, and what an agent is told.
 
 ```
@@ -1796,7 +1804,7 @@ properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
 properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight opacity show
-properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown place
+properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown place tight
 properties.image: at size opacity tint cell fit show grow place
 properties.window: at size ask opacity show
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow place

@@ -15,7 +15,7 @@ scene Chat {
         for m in said {
             // Mine to the right, theirs to the left: `place:` is each one's own `align:`.
             row { padding: 10; fill: if(m.mine, #2f5a50, #232526); corner: 14; place: if(m.mine, 1, 0)
-                text m.text { size: 13; width: 200; color: ink; markdown: true }
+                text m.text { size: 13; width: 200; tight: true; color: ink; markdown: true }
             }
         }
     }

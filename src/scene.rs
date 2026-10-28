@@ -1231,6 +1231,9 @@ pub struct Style {
     pub max_lines: Option<usize>,
     /// `markdown: true`: its marks are read, not shown (`crate::markdown`).
     pub markdown: bool,
+    /// `tight: true`: with a `width`, it breaks its lines there but takes up only
+    /// what its longest line does (left-aligned): a bubble as wide as its text.
+    pub tight: bool,
     /// Its size when it changes while the scene runs (`size: 12 + 4 * lane`),
     /// worked out at every frame; otherwise it is `px`.
     pub size: Option<Expr>,
@@ -1242,7 +1245,7 @@ pub struct Style {
 
 impl Style {
     pub fn new(px: f32, color: Color) -> Self {
-        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, size: None, weight_of: None, lines_of: None }
+        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, tight: false, size: None, weight_of: None, lines_of: None }
     }
     pub fn weight(mut self, p: u16) -> Self {
         self.weight = p;

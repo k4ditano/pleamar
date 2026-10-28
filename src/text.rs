@@ -122,6 +122,8 @@ pub struct LayoutKey {
     width: Option<u32>,
     align: TextAlign,
     max_lines: Option<usize>,
+    /// As wide as its longest line, not its `width` (`Style::tight`).
+    tight: bool,
     /// Stretches of it (byte ranges) bold, italic or code: `crate::markdown`.
     marks: Vec<(u32, u32, u8)>,
 }
@@ -130,7 +132,7 @@ impl LayoutKey {
     pub fn new(text: &str, e: &Style, width: Option<f32>) -> LayoutKey {
         LayoutKey {
             text: text.to_owned(), family: e.family, px: e.px.to_bits(), weight: e.weight, line_height: e.line_height.to_bits(),
-            width: width.map(|a| a.round().max(1.0) as u32), align: e.align, max_lines: e.max_lines, marks: Vec::new(),
+            width: width.map(|a| a.round().max(1.0) as u32), align: e.align, max_lines: e.max_lines, tight: e.tight, marks: Vec::new(),
         }
     }
 
@@ -345,7 +347,13 @@ impl Typesetter {
         if cursors.is_empty() {
             cursors.push((0, 0.0));
         }
-        Layout { glyphs, size: (width.unwrap_or(w), h), cursors, lines }
+        // Tight, left-aligned: what its longest line takes, up to its width (its letters are already where they go).
+        let across = match width {
+            Some(fixed) if c.tight && c.align == TextAlign::Left => w.min(fixed),
+            Some(fixed) => fixed,
+            None => w,
+        };
+        Layout { glyphs, size: (across, h), cursors, lines }
     }
 
     fn glyph(&mut self, key: CacheKey, full: &mut bool) -> Option<(AtlasSlot, i32, i32, bool)> {
@@ -1308,6 +1316,20 @@ mod tests {
 
     fn spanish() -> LayoutKey {
         LayoutKey::new("Hoy · Nada todavía. Captura de pantalla copiada.", &Style::new(14.0, crate::scene::color(1.0, 1.0, 1.0)), None)
+    }
+
+    #[test]
+    fn a_tight_text_is_as_wide_as_its_longest_line() {
+        let mut t = Typesetter::new();
+        let mut style = Style::new(14.0, crate::scene::color(1.0, 1.0, 1.0));
+        let wide = t.lay_out(&LayoutKey::new("Ey", &style, Some(470.0)));
+        assert_eq!(wide.size.0, 470.0, "without tight, its width");
+        style.tight = true;
+        let short = t.lay_out(&LayoutKey::new("Ey", &style, Some(470.0)));
+        assert!(short.size.0 > 5.0 && short.size.0 < 40.0, "{}", short.size.0);
+        // A long one breaks its lines at its width, and takes no more than it.
+        let long = t.lay_out(&LayoutKey::new(&"palabra ".repeat(80), &style, Some(200.0)));
+        assert!(long.size.0 <= 200.0 && long.size.0 > 150.0 && long.size.1 > 40.0, "{:?}", long.size);
     }
 
     #[test]

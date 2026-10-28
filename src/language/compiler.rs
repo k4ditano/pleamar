@@ -3791,6 +3791,16 @@ impl<'a> Compiler<'a> {
             }
             c.expect_end()?;
         }
+        // `tight: true`: with a width, only as wide as its longest line.
+        if let Some(c) = p.get_mut("tight") {
+            let v = c.id("true or false")?;
+            c.expect_end()?;
+            style.tight = match v.as_str() {
+                "true" => true,
+                "false" => false,
+                _ => return Err(CompileError::at(n.line, n.col, "`tight` is true or false")),
+            };
+        }
         if let Some(c) = p.get_mut("markdown") {
             let v = c.id("true or false")?;
             c.expect_end()?;
