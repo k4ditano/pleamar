@@ -4345,7 +4345,10 @@ impl<'a> Compiler<'a> {
         // The time only if it reads it: a shader that does not move must let the
         // surface rest. It is the scene's `time`, created now if nobody named it.
         let time = u.animated.then(|| self.time_prop().e());
-        let pointer = u.pointer.then(|| (self.facts["pointer.x"].e(), self.facts["pointer.y"].e()));
+        // Over the box it is drawn in, which is this surface's own: a shader in
+        // a surface of its own, or in a monitor's copy, reads it as the rules do.
+        let here = |n: &str| self.scopes.iter().rev().find_map(|e| e.exprs.get(n)).cloned().unwrap_or_else(|| self.facts[n].e());
+        let pointer = u.pointer.then(|| (here("pointer.x"), here("pointer.y")));
         self.e.paint(Instr::Shader { shader: k, target: (x, y, w, h), corner, alpha, values, colors, time, pointer, behind: u.behind });
         Ok(())
     }
@@ -4526,13 +4529,32 @@ impl<'a> Compiler<'a> {
                 let mark = self.rules.len();
                 // With `screens: each`, each copy has its own: its properties, its zones
                 // and its rules. `$screen` is its number, and `screen.name` that of its monitor.
-                if per_screen {
-                    self.scopes.push(Rc::new(self.screen_scope(instance)));
+                let mut env = if per_screen {
+                    Some(self.screen_scope(instance))
                 } else if lock {
                     let mut env = Scope::default();
                     for part in ["width", "height"] {
                         env.alias.insert(format!("screen.{part}"), format!("{name}.{part}"));
                     }
+                    Some(env)
+                } else {
+                    None
+                };
+                // Its piece of the plane is out of the way, and the mouse
+                // arrives in the plane's coordinates: a rule reads it the way
+                // this surface draws, from its own corner, as the scene's
+                // surface's copies do. Read raw, a press at the top of a
+                // surface said `pointer.y` 90 000.
+                if ox != 0.0 || oy != 0.0 {
+                    let env = env.get_or_insert_with(Scope::default);
+                    for (n, off) in [("pointer.x", ox), ("pointer.y", oy)] {
+                        if off != 0.0 {
+                            env.exprs.insert(n.to_owned(), Expr::Sub(Box::new(self.facts[n].e()), Box::new(Expr::K(off))));
+                        }
+                    }
+                }
+                let scoped = env.is_some();
+                if let Some(env) = env {
                     self.scopes.push(Rc::new(env));
                 }
                 let t = Transform { translate: (ox.into(), oy.into()), ..Transform::at((0.0.into(), 0.0.into())) };
@@ -4543,7 +4565,7 @@ impl<'a> Compiler<'a> {
                 self.e.paint(Instr::Transform(None));
                 if per_screen {
                     self.close_scope(mark);
-                } else if lock {
+                } else if scoped {
                     self.scopes.pop();
                 }
             }
