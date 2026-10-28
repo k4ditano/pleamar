@@ -360,14 +360,34 @@ pub fn brightness_command(what: &str, args: &[SysValue]) -> Result<(), String> {
 /// what the kernel knows of being connected, whoever brought the link up.
 pub(super) fn default_route() -> Option<(String, bool)> {
     let routes = std::fs::read_to_string("/proc/net/route").unwrap_or_default();
-    // Interface · destination · gateway…: the default route is the one with destination 0.
-    let interface = routes.lines().skip(1).find_map(|l| {
-        let mut c = l.split_whitespace();
-        let (name, destination) = (c.next()?, c.next()?);
-        (destination == "00000000").then(|| name.to_owned())
-    })?;
+    let interface = way_out(&routes, |name| std::path::Path::new(&format!("/sys/class/net/{name}/device")).exists())?;
     let wifi = std::path::Path::new(&format!("/sys/class/net/{interface}/wireless")).exists();
     Some((interface, wifi))
+}
+
+/// Of `/proc/net/route` (interface · destination · gateway · flags · refcnt · use
+/// · metric…), the interface traffic really leaves by: of those with a default
+/// route (destination 0), one with hardware behind it (`hardware`: a real or USB
+/// card has `/sys/class/net/<if>/device`; a tunnel —a VPN's tun, wireguard—, a
+/// tap or a dummy has not), the lowest metric first. A tunnel with a default
+/// route of its own carries its traffic over the wifi or the cable: it is not
+/// the link (issue #108: a wifi-only laptop with sing-box said «Ethernet»). With
+/// only tunnels (a wireguard-only host), the first of them: online, not none.
+fn way_out(routes: &str, hardware: impl Fn(&str) -> bool) -> Option<String> {
+    let defaults: Vec<(&str, u32)> = routes
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let c: Vec<&str> = l.split_whitespace().collect();
+            (c.get(1) == Some(&"00000000")).then(|| (c[0], c.get(6).and_then(|m| m.parse().ok()).unwrap_or(u32::MAX)))
+        })
+        .collect();
+    defaults
+        .iter()
+        .filter(|(name, _)| hardware(name))
+        .min_by_key(|(_, metric)| *metric)
+        .or_else(|| defaults.first())
+        .map(|(name, _)| (*name).to_owned())
 }
 
 /// `{ online, kind = "wired" | "wifi" | "none", name, strength }`. It comes from the
@@ -412,6 +432,32 @@ pub fn network(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    /// Issue #108, its own table: a tun of sing-box and the wifi, both with a default route.
+    const TUNNEL_AND_WIFI: &str = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
+happ-xray\t00000000\t00000000\t0001\t0\t0\t1\t00000000\t0\t0\t0
+wlan0\t00000000\t011FA8C0\t0003\t0\t0\t203\t00000000\t0\t0\t0
+wlan0\t001FA8C0\t00000000\t0001\t0\t0\t203\t00FFFFFF\t0\t0\t0";
+
+    #[test]
+    fn a_tunnel_with_a_default_route_is_not_the_link() {
+        assert_eq!(super::way_out(TUNNEL_AND_WIFI, |n| n == "wlan0").as_deref(), Some("wlan0"));
+    }
+
+    #[test]
+    fn with_only_a_tunnel_it_is_still_online() {
+        let only = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\twg0\nwg0\t00000000\t00000000\t0001\t0\t0\t0";
+        assert_eq!(super::way_out(only, |_| false).as_deref(), Some("wg0"));
+        assert_eq!(super::way_out("Iface\tDestination\nlo\t0000007F", |_| true), None);
+    }
+
+    #[test]
+    fn of_two_cards_the_lower_metric() {
+        let two = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric
+wlan0\t00000000\t011FA8C0\t0003\t0\t0\t600
+enp3s0\t00000000\t0101A8C0\t0003\t0\t0\t100";
+        assert_eq!(super::way_out(two, |_| true).as_deref(), Some("enp3s0"));
+    }
     use super::*;
 
     #[test]
