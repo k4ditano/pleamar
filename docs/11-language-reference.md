@@ -777,7 +777,7 @@ A layout with `view:` **is dragged** without declaring anything: on being presse
 
 **`size: w, h`** says how big the layout is, instead of it being however much its children came to. Its background and its zone are that size even if the children do not reach it, and —this is what it is for— it is what **`grow:`** shares out. Across the axis it is also the box that `align:` aligns in, so `align: center` in a card with `size: 173, 66` centres its contents in those 66 and not around the tallest child.
 
-**`place:`** on a child puts **it alone** across the layout —its own `align:`—: `start`, `center`, `end`, or a number from 0 (start) to 1 (end) that may change. In a chat's column, `place: if(m.mine, 1, 0)` sends mine to the right and the rest to the left, each bubble as wide as its text. Across, the layout is as wide as its widest child, or what its `size:` or `view:` says.
+**`place:`** on a child puts **it alone** across the layout —its own `align:`—: `start`, `center`, `end`, or a number from 0 (start) to 1 (end) that may change. In a chat's column, `place: if(m.mine, 1, 0)` sends mine to the right and the rest to the left, each bubble as wide as its text. Across, the layout is as wide as its widest child, or what its `size:` or `view:` says —with `view:`, `align:` and `place:` work across what is seen—. A `tight` text in it takes the slot of what it measures.
 
 **`grow: 1`** on a child asks for the room that is left along the layout's axis, divided among those who ask in proportion to what they asked (`grow: 2` takes twice as much). What is left is the layout's size minus its padding, its gaps and whatever the children that do not grow take. Without `size:` on the layout it is an error: there is no *left over* if nobody said of how much.
 

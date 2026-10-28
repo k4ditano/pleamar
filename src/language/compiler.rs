@@ -3869,7 +3869,8 @@ impl<'a> Compiler<'a> {
             None => self.imposed_measure.take(),
         };
         if let Some((w, h)) = measure {
-            self.last_size = Some((width.clone().unwrap_or(w.e()), h.e()));
+            // (Tight, its slot is what it measures —its longest line—, not its width.)
+            self.last_size = Some((if style.tight { w.e() } else { width.clone().unwrap_or(w.e()) }, h.e()));
         }
         // Its effects, if it has any: they go right before it.
         let gradient = match p.get_mut("gradient") {
@@ -6240,6 +6241,14 @@ impl<'a> Compiler<'a> {
         if let Some((tw, th)) = &given_size {
             let given = if is_row { th.clone() } else { tw.clone() };
             max_across = max_across.max((given - padding.clone() * 2.0).max(Expr::K(0.0)));
+        }
+        // With `view:` the same: across, what is seen —a chat's bubbles placed at its
+        // end go to the end of the window, not of the widest bubble—.
+        if given_size.is_none()
+            && let Some((vw, vh)) = &view
+        {
+            let seen = if is_row { vh.clone() } else { vw.clone() };
+            max_across = max_across.max((seen - padding.clone() * 2.0).max(Expr::K(0.0)));
         }
         let max_across = self.shared("across", max_across);
         // With `wrap`, the cell measures what the biggest child does, and each one goes to its own.
