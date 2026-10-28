@@ -439,6 +439,56 @@ mod tests {
     }
 
     #[test]
+    fn a_list_that_sticks_to_its_end_follows_it_while_it_is_there() {
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/list-sticks-to-end.plm")).unwrap();
+        let pinned = scene.facts.iter().position(|f| f.0 == "list.pinned").expect("list.pinned");
+        assert_eq!(scene.facts[pinned].1, 1.0, "it starts at its end");
+        // What is inside grows: while pinned, it goes to the end; scrolled up, it stays.
+        let follow = scene.rules.iter().find(|r| matches!(r.when, crate::scene::Trigger::Change(_)) && r.guard.is_some()).expect("the rule that follows the end");
+        let props: Vec<Animated> = scene.props.iter().map(|(_, x, s)| Animated::at(*x, *s)).collect();
+        let mut facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let guard = follow.guard.as_ref().unwrap();
+        assert!(guard.eval(Ctx { props: &props, facts: &facts, seen: None }) > 0.5);
+        facts[pinned] = 0.0;
+        assert!(guard.eval(Ctx { props: &props, facts: &facts, seen: None }) < 0.5);
+        // The wheel and the drag say whether they left it at the end.
+        let says = scene.rules.iter().filter(|r| r.effects.iter().any(|e| matches!(e, crate::scene::Effect::Fact(f, _) if f.0 as usize == pinned))).count();
+        assert_eq!(says, 2);
+    }
+
+    #[test]
+    fn how_many_lines_a_text_takes_can_follow_a_fact() {
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/text-lines-follow.plm")).unwrap();
+        let styles: Vec<&crate::scene::Style> = scene.instrs.iter().filter_map(|i| if let crate::scene::Instr::Text { style, .. } = i { Some(style) } else { None }).collect();
+        let open = scene.facts.iter().position(|f| f.0 == "open").unwrap();
+        let mut facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let lines = styles[0].lines_of.as_ref().expect("worked out at every frame");
+        assert_eq!(lines.eval(Ctx { props: &[], facts: &facts, seen: None }), 2.0);
+        facts[open] = 1.0;
+        assert_eq!(lines.eval(Ctx { props: &[], facts: &facts, seen: None }), 12.0);
+        // 0: as many as it has.
+        assert!(styles[1].max_lines.is_none() && styles[1].lines_of.is_none());
+    }
+
+    #[test]
+    fn a_child_placed_goes_to_its_side_of_the_layout() {
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/place-in-a-column.plm")).unwrap();
+        let props: Vec<Animated> = settled(&scene, &scene.facts.iter().map(|f| f.1).collect::<Vec<_>>());
+        let facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let c = Ctx { props: &props, facts: &facts, seen: None };
+        let left = |name: &str| {
+            let z = scene.zones.iter().find(|z| z.id == name).unwrap_or_else(|| panic!("{name}"));
+            let x: f32 = z.under.iter().map(|t| t.translate.0.eval(c)).sum();
+            let Shape::Rect { center, half_size, .. } = &z.shape else { panic!("a box") };
+            x + center.0.eval(c) - half_size.0.eval(c)
+        };
+        // The column is 200 wide: at its start, at its end (200 - 60) and in its middle ((200 - 100) / 2).
+        assert_eq!(left("first"), 0.0);
+        assert_eq!(left("second"), 140.0);
+        assert_eq!(left("third"), 50.0);
+    }
+
+    #[test]
     fn where_the_rows_of_a_long_column_fall_is_computed_once() {
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/long-column.plm")).unwrap();
         let lines: Vec<&crate::scene::Zone> = scene.zones.iter().filter(|z| z.id.starts_with("line#")).collect();

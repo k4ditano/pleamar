@@ -1236,11 +1236,13 @@ pub struct Style {
     pub size: Option<Expr>,
     /// The same for its weight (`weight: 500 + 200 * if(today, 1, 0)`).
     pub weight_of: Option<Expr>,
+    /// And for how many lines it takes (`lines: if(open, 12, 2)`): 0 or less, as many as it has.
+    pub lines_of: Option<Expr>,
 }
 
 impl Style {
     pub fn new(px: f32, color: Color) -> Self {
-        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, size: None, weight_of: None }
+        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, size: None, weight_of: None, lines_of: None }
     }
     pub fn weight(mut self, p: u16) -> Self {
         self.weight = p;

@@ -2317,6 +2317,12 @@ impl DrawList {
                         Some(e) => key.weighted((e.eval(c) / 100.0).round().clamp(1.0, 9.0) as u16 * 100),
                         None => key,
                     };
+                    // How many lines, if it changes (`lines: if(open, 12, 2)`): whole ones, and
+                    // none or fewer is as many as it has.
+                    let key = match &style.lines_of {
+                        Some(e) => key.lined(Some(e.eval(c).round()).filter(|n| *n >= 1.0).map(|n| n.min(10_000.0) as usize)),
+                        None => key,
+                    };
                     let text: &str = &text;
                     // It is ordered even if not visible: so that when it appears, it is already there.
                     let Some(m) = tip.layout(idx, key) else { continue };

@@ -1,8 +1,0 @@
-// expect: error «is read once, when the scene loads»
-// A text's `lines:` is laid out once: worked out from numbers and lets, but not from a fact.
-language 0.4
-scene LinesOnce {
-    surface { size: 200, 60 }
-    fact many: number = 2
-    text "a long text" { at: 0, 0; width: 100; lines: 1 + many }
-}

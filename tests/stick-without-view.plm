@@ -1,0 +1,8 @@
+// expect: error «is for a layout with `view:`»
+language 0.4
+scene StickNoView {
+    surface { size: 200, 100 }
+    column list { at: 0, 0; stick: end
+        box { size: 100, 20; color: #ffffff }
+    }
+}

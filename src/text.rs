@@ -146,6 +146,12 @@ impl LayoutKey {
         self
     }
 
+    /// The same, with another most of lines (`None`: as many as it has).
+    pub fn lined(mut self, lines: Option<usize>) -> LayoutKey {
+        self.max_lines = lines;
+        self
+    }
+
     /// A text already without its marks, and what they marked.
     pub fn marked(text: String, marks: Vec<(u32, u32, u8)>, e: &Style, width: Option<f32>) -> LayoutKey {
         LayoutKey { text, marks, ..LayoutKey::new("", e, width) }

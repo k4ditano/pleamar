@@ -1,0 +1,8 @@
+// expect: error «`stick` says where a list with `view:` stays»
+language 0.4
+scene StickWhere {
+    surface { size: 200, 100 }
+    column list { at: 0, 0; view: 200, 100; stick: start
+        box { size: 100, 20; color: #ffffff }
+    }
+}

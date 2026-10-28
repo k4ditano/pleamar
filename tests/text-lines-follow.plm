@@ -1,0 +1,10 @@
+// expect: ok
+// A text's `lines:` is like its size: a number, or an expression worked out at every frame —here, two lines
+// closed and twelve open—; 0 or less is as many as it has.
+language 0.4
+scene LinesFollow {
+    surface { size: 200, 60 }
+    fact open: bool = false
+    text "a long text that takes more than two lines when it is open, and only two when it is not" { at: 0, 0; width: 100; lines: if(open, 12, 2) }
+    text "and this one, as many as it has" { at: 100, 0; width: 100; lines: 0 }
+}

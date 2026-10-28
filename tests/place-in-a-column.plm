@@ -1,0 +1,17 @@
+// expect: ok
+language 0.4
+// `place:` puts one child across its layout where the layout's `align:` would not: here the column aligns to its
+// start, and the second box goes to its end and the third to its middle.
+scene Place {
+    surface { size: 200, 120 }
+    column col { at: 0, 0; size: 200, 120; gap: 4
+        box first { size: 60, 20; color: #ffffff }
+        box second { size: 60, 20; color: #ffffff; place: end }
+        box third { size: 100, 20; color: #ffffff; place: center }
+    }
+    // (Pressed, each says which: they are zones, and where each fell can be read.)
+    fact hit = 0
+    on press first { hit = 1 }
+    on press second { hit = 2 }
+    on press third { hit = 3 }
+}

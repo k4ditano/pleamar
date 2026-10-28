@@ -1,0 +1,23 @@
+// expect: ok
+language 0.4
+// A chat: `stick: end` starts it at its end, and keeps it there while what is inside grows, unless it was
+// scrolled up to read; back at the end, it sticks again. `list.pinned` says whether it is. And each bubble on its
+// side with `place:`.
+scene Chat {
+    surface { size: 300, 240 }
+    let ink = #f5f7f5
+    model said max 40 { text: text; mine: bool }
+    column list {
+        at: 16, 16
+        view: 268, 208
+        stick: end
+        gap: 8
+        for m in said {
+            // Mine to the right, theirs to the left: `place:` is each one's own `align:`.
+            row { padding: 10; fill: if(m.mine, #2f5a50, #232526); corner: 14; place: if(m.mine, 1, 0)
+                text m.text { size: 13; width: 200; color: ink; markdown: true }
+            }
+        }
+    }
+    text "↓" { at: 280, 220; anchor: center; size: 14; color: ink; opacity: if(list.pinned, 0%, 100%) }
+}

@@ -284,7 +284,7 @@ struct Compiler<'a> {
     /// Synthesized syntax must survive the deferred passes, but not the load.
     generated: &'a typed_arena::Arena<Node>,
     /// Stacks that scroll: their zone, their property, how far, how much per notch and with which spring.
-    scrolls: Vec<(String, PropId, Expr, Expr, Spring, FactId)>,
+    scrolls: Vec<(String, PropId, Expr, Expr, Spring, FactId, Option<FactId>)>,
     /// Of the stacks that scroll, which ones are rows: they are dragged sideways.
     row_scrolls: std::collections::HashSet<String>,
     /// Surfaces whose `open:` is resolved at the end: (which one, the fact, where it is written).
@@ -3781,8 +3781,15 @@ impl<'a> Compiler<'a> {
         if let Some(c) = p.get_mut("line_height") {
             style.line_height = self.constant(c, "a text's `line_height:`")?;
         }
+        // How many lines: a number, or —like its size— an expression worked out
+        // at every frame (`lines: if(open, 12, 2)`); 0 is as many as it has.
         if let Some(c) = p.get_mut("lines") {
-            style.max_lines = Some(self.constant(c, "a text's `lines:`")? as usize);
+            match self.expr(c)? {
+                Expr::K(v) if v >= 1.0 => style.max_lines = Some(v as usize),
+                Expr::K(_) => style.max_lines = None,
+                e => style.lines_of = Some(e),
+            }
+            c.expect_end()?;
         }
         if let Some(c) = p.get_mut("markdown") {
             let v = c.id("true or false")?;
@@ -5872,6 +5879,22 @@ impl<'a> Compiler<'a> {
             Some(c) => self.expr(c)?,
             None => Expr::K(60.0),
         };
+        // `stick: end`: it starts at its end and stays there while what is inside
+        // grows —a chat, a log—, unless it was moved away from it; back at the end, it sticks again.
+        let stick_end = match p.get_mut("stick") {
+            Some(c) => {
+                let w = c.id("end")?;
+                c.expect_end()?;
+                if w != "end" {
+                    return Err(CompileError::at(n.line, n.col, "`stick` says where a list with `view:` stays: `stick: end`"));
+                }
+                if view.is_none() {
+                    return Err(CompileError::at(n.line, n.col, "`stick: end` is for a layout with `view:`: one that scrolls"));
+                }
+                true
+            }
+            None => false,
+        };
         // `wrap: 5`: five per line and on to the next. A grid, with the cell the
         // size of the biggest child; what is not there leaves no gap.
         let wrap = match p.get_mut("wrap") {
@@ -5958,6 +5981,8 @@ impl<'a> Compiler<'a> {
             separator: bool,
             /// `grow: 2`: how much of what is left over it asks for. 0 is the normal: its size.
             grow: f32,
+            /// `place: end`: where it goes across its layout, if not where the layout's `align:` puts every child.
+            place: Option<Expr>,
             /// Its instructions, to be able to tell it its width when it is known.
             own_instrs: std::ops::Range<usize>,
         }
@@ -6032,11 +6057,30 @@ impl<'a> Compiler<'a> {
             // And `grow:`, how much of what is left over along the axis it asks for.
             let mut visible = Expr::K(1.0);
             let mut grow = 0.0f32;
+            let mut place: Option<Expr> = None;
             for e in child.body.as_deref().unwrap_or(&[]) {
                 if let Entry::Prop { name, value, line, col } = e {
                     let mut c = Cur::new(value, *line, *col);
                     match name.as_str() {
                         "show" => visible = self.expr(&mut c)?,
+                        // `place: end`: this child, at the end across its layout —its own
+                        // `align:` for it alone—; or a number from 0 (start) to 1 (end) that
+                        // may change (`place: if(m.mine, 1, 0)`: a chat's two sides).
+                        "place" => {
+                            place = Some(match c.peek() {
+                                Some(TokenKind::Id(w)) if matches!(w.as_str(), "start" | "center" | "end") && c.i + 1 == c.tokens.len() => {
+                                    let k = match w.as_str() {
+                                        "start" => 0.0,
+                                        "center" => 0.5,
+                                        _ => 1.0,
+                                    };
+                                    c.i += 1;
+                                    Expr::K(k)
+                                }
+                                _ => self.expr(&mut c)?.clamp(0.0, 1.0),
+                            });
+                            c.expect_end()?;
+                        }
                         "grow" => {
                             grow = c.num()?;
                             c.expect_end()?;
@@ -6118,6 +6162,7 @@ impl<'a> Compiler<'a> {
                 visible,
                 separator: forced.is_some(),
                 grow,
+                place,
                 own_instrs: instr + 1..self.e.instrs.len(),
             };
             match forced {
@@ -6222,7 +6267,11 @@ impl<'a> Compiler<'a> {
                 }
             }
             // At the start of the breadth nothing is left to share out: it is the padding.
-            let across = grid_across.unwrap_or_else(|| if align_factor == 0.0 { padding.clone() } else { padding.clone() + (max_across.clone() - breadth_of(p)) * align_factor });
+            let across = grid_across.unwrap_or_else(|| match &p.place {
+                Some(f) => padding.clone() + (max_across.clone() - breadth_of(p)) * f.clone(),
+                None if align_factor == 0.0 => padding.clone(),
+                None => padding.clone() + (max_across.clone() - breadth_of(p)) * align_factor,
+            });
             let translate = if is_row { (along, across) } else { (across, along) };
             if let Instr::Transform(Some(t)) = &mut self.e.instrs[p.instr] {
                 t.translate = translate.clone();
@@ -6330,7 +6379,13 @@ impl<'a> Compiler<'a> {
                 if is_row {
                     self.row_scrolls.insert(name.clone());
                 }
-                self.scrolls.push((name.clone(), *prop, until, step.clone(), spring.unwrap_or(Spring::QUICK), grab));
+                // `stick: end`: `list.pinned`, whether it is at its end (1 when it starts).
+                let pinned = stick_end.then(|| {
+                    let f = self.e.fact(interned(&format!("{name}.pinned")), 1.0);
+                    self.facts.insert(format!("{name}.pinned"), f);
+                    f
+                });
+                self.scrolls.push((name.clone(), *prop, until, step.clone(), spring.unwrap_or(Spring::QUICK), grab, pinned));
             }
             let target = match self.scopes.last_mut().map(Rc::make_mut) {
                 Some(e) => &mut e.exprs,
@@ -7342,17 +7397,32 @@ impl<'a> Compiler<'a> {
         // And the rules of the stacks that scroll, now that their zones exist.
         let wheel = self.facts["wheel"].e();
         let (dx, dy) = (self.facts["drag.dx"].e(), self.facts["drag.dy"].e());
-        for (name, prop, until, step, spring, grab) in std::mem::take(&mut self.scrolls) {
+        for (name, prop, until, step, spring, grab, pinned) in std::mem::take(&mut self.scrolls) {
             let Some(zone) = self.zones.get(&name).copied() else { continue };
             self.e.zones[zone.0 as usize].scrolls = Some(prop);
+            // `stick: end`: whether it is at its end (two pixels' leeway), said by the
+            // wheel and the drag that move it; and while it is, it follows the end.
+            let at_end = |to: &Expr| to.clone().gt(until.clone() - Expr::K(2.0));
             let a = (prop.e() - wheel.clone() * step).max(Expr::K(0.0)).min(until.clone());
-            self.e.rule(Trigger::Wheel(zone), vec![Effect::Animate(Transition { prop, to: a, spring, delay: Duration::ZERO })]);
+            let mut on_wheel = vec![Effect::Animate(Transition { prop, to: a.clone(), spring, delay: Duration::ZERO })];
+            if let Some(f) = pinned {
+                on_wheel.push(Effect::Fact(f, at_end(&a)));
+            }
+            self.e.rule(Trigger::Wheel(zone), on_wheel);
             // Dragging it: on press, where it was is noted, and while it moves it goes from there.
             // The stack's zone is under those of its children, and the drag reaches it all the same.
             let amount = if self.row_scrolls.contains(&name) { dx.clone() } else { dy.clone() };
             self.e.rule(Trigger::Press(zone), vec![Effect::Fact(grab, prop.e())]);
-            let a = (grab.e() - amount).max(Expr::K(0.0)).min(until);
-            self.e.rule(Trigger::Drag(zone), vec![Effect::Animate(Transition { prop, to: a, spring: Spring::QUICK, delay: Duration::ZERO })]);
+            let a = (grab.e() - amount).max(Expr::K(0.0)).min(until.clone());
+            let mut on_drag = vec![Effect::Animate(Transition { prop, to: a.clone(), spring: Spring::QUICK, delay: Duration::ZERO })];
+            if let Some(f) = pinned {
+                on_drag.push(Effect::Fact(f, at_end(&a)));
+            }
+            self.e.rule(Trigger::Drag(zone), on_drag);
+            if let Some(f) = pinned {
+                // What is inside grows (or the window shrinks): there it goes, if it was at the end.
+                self.e.rules.push(Rule { when: Trigger::Change(until.clone()), guard: Some(f.e().gt(Expr::K(0.5))), effects: vec![Effect::Animate(Transition { prop, to: until.clone(), spring, delay: Duration::ZERO })] });
+            }
         }
     }
 

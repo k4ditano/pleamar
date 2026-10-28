@@ -552,9 +552,11 @@ Each element accepts these properties and no others; another one is an error, wi
 **A text's `size:` and `weight:`, and a body's `rim:`, are expressions** like
 its `at:` and its `opacity:`: `size: 21 * u` is 21 times `u`, `size: 12 + 4 * lane`
 follows `lane` as it changes, `weight: 500 + 200 * if(today, 1, 0)` is bold on one
-day, and `rim: 10% + 12% * hover` lights up under the mouse. What is read only
-once, when the scene loads —an input's `size:`, a text's `line_height:` and
-`lines:`— takes a number or one worked out from numbers and `let`s of numbers
+day, and `rim: 10% + 12% * hover` lights up under the mouse. A text's `lines:` too:
+`lines: if(open, 12, 2)` lays it out again when `open` changes, and `lines: 0`
+(or anything below one) is as many lines as it has. What is read only
+once, when the scene loads —an input's `size:` and a text's `line_height:`—
+takes a number or one worked out from numbers and `let`s of numbers
 (`40 * 2`, `1.5 * rung`), and says so if it is given something that changes.
 The slots that take a plain number —a surface's `margin:` and `reserve:`, an
 image's declared size— say so too when something follows it, instead of reading
@@ -774,6 +776,8 @@ A path carries **a single stroke** (one `move`, the first) and up to 64 already 
 A layout with `view:` **is dragged** without declaring anything: on being pressed it notes where it was and follows the mouse, with its spring. And it is grabbed **from inside**: dragging is not the business of the topmost zone, but of any zone that was underneath at the press, like the wheel. That is how a list is moved by grabbing it by one of its rows.
 
 **`size: w, h`** says how big the layout is, instead of it being however much its children came to. Its background and its zone are that size even if the children do not reach it, and —this is what it is for— it is what **`grow:`** shares out. Across the axis it is also the box that `align:` aligns in, so `align: center` in a card with `size: 173, 66` centres its contents in those 66 and not around the tallest child.
+
+**`place:`** on a child puts **it alone** across the layout —its own `align:`—: `start`, `center`, `end`, or a number from 0 (start) to 1 (end) that may change. In a chat's column, `place: if(m.mine, 1, 0)` sends mine to the right and the rest to the left, each bubble as wide as its text. Across, the layout is as wide as its widest child, or what its `size:` or `view:` says.
 
 **`grow: 1`** on a child asks for the room that is left along the layout's axis, divided among those who ask in proportion to what they asked (`grow: 2` takes twice as much). What is left is the layout's size minus its padding, its gaps and whatever the children that do not grow take. Without `size:` on the layout it is an error: there is no *left over* if nobody said of how much.
 
@@ -1179,6 +1183,18 @@ column list { at: 16, 16;  view: 250, 208;  gap: 6
 }
 box { from: 276, 16 + list.scroll / max(list.content, 1) * 208
       size: 4, 208 * 208 / max(list.content, 208);  corner: 2;  color: ink;  opacity: 35% }
+```
+
+**`stick: end`** is a chat's, a log's: the list starts at its end and **stays there while what is inside grows**, unless it was scrolled away from it to read; scrolled back to the end, it sticks again. It publishes **`list.pinned`** —1 at the end, 0 when it was moved away—, which is what is needed for a «↓ new» button: `on press down { list.scroll: list.content - list.height ~calm; list.pinned = 1 }`.
+
+```
+column chat { at: 16, 16;  view: 268, 360;  stick: end;  gap: 8
+    for m in said {
+        row { padding: 10; fill: if(m.mine, #2f5a50, #232526); corner: 14
+            text m.text { size: 13; width: 200; color: ink; markdown: true }
+        }
+    }
+}
 ```
 
 With `view:`, outwards it takes up what is seen, not what it carries inside.
@@ -1773,25 +1789,25 @@ library: let spring component permissions fact text model service event image fi
 properties.surface: size anchor margin level reserve screens keyboard open kind title app_id rate captures agent
 properties.permissions: run services
 properties.blur: passes values reach
-properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight active show cursor carries carry_icon grow label agent role value checked selected handle
+properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight active show cursor carries carry_icon grow label agent role value checked selected handle place
 properties.ellipse: at radius scale
 properties.box: at from size corner
 properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
 properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight opacity show
-properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown
-properties.image: at size opacity tint cell fit show grow
+properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown place
+properties.image: at size opacity tint cell fit show grow place
 properties.window: at size ask opacity show
-properties.figure: at size scale rotate pivot color opacity blend stroke show grow
-properties.shader: at size corner opacity show values colors grow
+properties.figure: at size scale rotate pivot color opacity blend stroke show grow place
+properties.shader: at size corner opacity show values colors grow place
 properties.particles: at area count life speed direction spread gravity drag size colors opacity shape emit burst show
 properties.input: at width size weight color opacity family placeholder selection secret passive show label agent
-properties.group: pivot rotate scale move opacity size show z grow span blur glow saturation brightness contrast hue mask mode shader
+properties.group: pivot rotate scale move opacity size show z grow span blur glow saturation brightness contrast hue mask mode shader place
 properties.popup: at size open
 properties.children: move
 properties.grid: at columns gap width row show opacity
-properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight corner show opacity cursor view step content wrap size grow
+properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight corner show opacity cursor view step stick content wrap size grow place
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick rgb
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still
