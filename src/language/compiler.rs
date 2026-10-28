@@ -4023,9 +4023,14 @@ impl<'a> Compiler<'a> {
             Some(c) => self.expr(c)?,
             None => Expr::K(1.0),
         };
-        // `show:` multiplies the opacity: what is not there is not seen.
-        let alpha = match p.get_mut("show") {
-            Some(c) => alpha * self.expr(c)?.clamp(0.0, 1.0),
+        // `show:` multiplies the opacity: what is not there is not seen. And its zone goes with it:
+        // a hidden field took the clicks (and the focus) meant for what was under it.
+        let shown = match p.get_mut("show") {
+            Some(c) => Some(self.expr(c)?.clamp(0.0, 1.0)),
+            None => None,
+        };
+        let alpha = match &shown {
+            Some(v) => alpha * v.clone(),
             None => alpha,
         };
         let height = style.px * style.line_height;
@@ -4037,7 +4042,7 @@ impl<'a> Compiler<'a> {
             at: self.e.instrs.len(),
             zblock: self.zblock,
             shape: Shape::Rect { center: (at.0.clone() + width.clone() * 0.5, at.1.clone() + height * 0.5), half_size: (width.clone() * 0.5, (height * 0.5 + 3.0).into()), radius: 0.0.into() },
-            active: None, visible: None, under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None,
+            active: None, visible: shown, under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None,
         });
         self.last_size = Some((width.clone(), height.into()));
         self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret, passive });
