@@ -52,7 +52,7 @@ static BACKGROUND_EFFECTS: std::sync::OnceLock<ExtBackgroundEffectManagerV1> = s
 
 use wayland_protocols_wlr::screencopy::v1::client::{zwlr_screencopy_frame_v1::{self, ZwlrScreencopyFrameV1}, zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1};
 use wayland_client::protocol::{wl_buffer::WlBuffer, wl_shm::{self, WlShm}, wl_shm_pool::WlShmPool};
-use smithay_client_toolkit::reexports::protocols::wp::linux_dmabuf::zv1::client::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1::{self, ZwpLinuxDmabufV1}};
+use smithay_client_toolkit::reexports::protocols::wp::linux_dmabuf::zv1::client::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1::{self, ZwpLinuxDmabufFeedbackV1}, zwp_linux_dmabuf_v1::{self, ZwpLinuxDmabufV1}};
 
 /// Whoever takes frames on the card from us (`linux-dmabuf`): with it a
 /// surface is painted in frames of its own, and the compositor is told
@@ -75,6 +75,23 @@ impl Dispatch2<ZwpLinuxDmabufV1, State> for Layouts {
             if format == crate::dmabuf::ARGB && !all.contains(&m) {
                 all.push(m);
             }
+        }
+    }
+}
+
+/// Version 4 says which card the compositor paints with: ours is chosen to be
+/// the same (see `gpu::compositor_card`).
+struct MainDevice;
+impl Dispatch2<ZwpLinuxDmabufFeedbackV1, State> for MainDevice {
+    fn event(&self, _: &mut State, feedback: &ZwpLinuxDmabufFeedbackV1, ev: zwp_linux_dmabuf_feedback_v1::Event, _: &Connection, _: &QueueHandle<State>) {
+        match ev {
+            zwp_linux_dmabuf_feedback_v1::Event::MainDevice { device } => {
+                if let Ok(dev) = <[u8; 8]>::try_from(device.as_slice()) {
+                    crate::gpu::compositor_card(u64::from_ne_bytes(dev));
+                }
+            }
+            zwp_linux_dmabuf_feedback_v1::Event::Done => feedback.destroy(),
+            _ => {}
         }
     }
 }
@@ -1557,6 +1574,12 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
     }
     if let Ok(global) = globals.bind::<ZwpLinuxDmabufV1, _, _>(&qh, 3..=3, Layouts) {
         let _ = DMABUFS.set(Dmabufs { global, qh: qh.clone(), connection: connection.clone() });
+    }
+    // Bound a second time, at 4, only for which card it paints with: there it
+    // no longer says its layouts one by one, as the other one needs. The
+    // answer comes with the round trips below, before the first sheet's card is chosen.
+    if let Ok(v4) = globals.bind::<ZwpLinuxDmabufV1, _, _>(&qh, 4..=4, Silent) {
+        v4.get_default_feedback(&qh, MainDevice);
     }
     if let (Ok(c), Ok(s)) = (globals.bind::<ZwlrScreencopyManagerV1, _, _>(&qh, 1..=3, Silent), globals.bind::<WlShm, _, _>(&qh, 1..=1, Silent)) {
         let _ = SCREENCOPY.set((c, s));
