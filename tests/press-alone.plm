@@ -1,0 +1,7 @@
+// A scene with nothing but a button: its press rule is the only rule it has.
+scene PressAlone {
+    surface { size: 300, 120; kind: window; title: "press alone" }
+    fact armed = false
+    box delete { from: 20, 40; size: 40, 40; color: #888888; cursor: pointer; label: "Delete" }
+    on press delete { toggle armed }
+}

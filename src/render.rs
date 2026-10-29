@@ -5598,14 +5598,17 @@ struct RuleIndex {
     /// Something changed this round (`look`), or what is awake did (`wake`).
     any_changed: bool,
     woke: bool,
+    /// The awake lists are still to be made for the rules `build` read.
+    stale: bool,
 }
 
 impl RuleIndex {
     fn wake(&mut self, asleep: &[std::ops::Range<usize>], rules: &[crate::scene::Rule]) {
         self.woke = false;
-        if self.asleep == asleep && !(self.awake_always.is_empty() && !self.always.is_empty()) {
+        if !self.stale && self.asleep == asleep {
             return;
         }
+        self.stale = false;
         self.woke = true;
         self.asleep = asleep.to_vec();
         let awake = |k: &&u32| !asleep.iter().any(|r| r.contains(&(**k as usize)));
@@ -5647,6 +5650,7 @@ impl RuleIndex {
         self.asleep.clear();
         self.awake_always.clear();
         self.awake_with_events.clear();
+        self.stale = true;
         self.facts.clear();
         self.props.clear();
     }
@@ -6531,4 +6535,22 @@ fn cursor_place(scene: &Scene, s: &Sheet, p: (f32, f32)) -> (crate::platform::Cu
 /// the monitor's own.
 fn surface_rate(s: &crate::scene::Surface, c: Ctx) -> u32 {
     s.rate_while.iter().find(|(_, when)| when.is_true(c)).map_or(s.max_fps, |(low, _)| *low)
+}
+
+#[cfg(test)]
+mod rule_index_tests {
+    use super::*;
+
+    #[test]
+    fn a_scene_with_only_event_rules_looks_at_them() {
+        let (scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/press-alone.plm")).unwrap();
+        let mut index = RuleIndex::default();
+        index.build(&scene.rules);
+        index.wake(&[], &scene.rules);
+        assert_eq!(index.awake_with_events.len(), 1);
+        // Waking again with nothing asleep changes nothing, and keeps it.
+        index.wake(&[], &scene.rules);
+        assert!(!index.woke);
+        assert_eq!(index.awake_with_events.len(), 1);
+    }
 }
