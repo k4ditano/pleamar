@@ -2781,6 +2781,25 @@ pub struct Gpu {
     pictures: std::collections::HashMap<u32, (wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
 }
 
+/// The card the compositor paints with, by its PCI address (`0000:01:00.0`), if
+/// it has said (see `compositor_card`).
+static COMPOSITOR_CARD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The compositor says which card it paints with (`linux-dmabuf`'s main
+/// device, a `dev_t`): ours has to be that one. Our frames are handed to it as
+/// memory on our card, and on a laptop with two, painted on the frugal one
+/// (an AMD inside the processor) for a compositor running on the NVIDIA, it
+/// could not read them: Marea was a black rectangle (marea-plm issue 4).
+#[cfg(target_os = "linux")]
+pub fn compositor_card(dev: u64) {
+    let dev = dev as libc::dev_t;
+    let path = format!("/sys/dev/char/{}:{}/device", libc::major(dev), libc::minor(dev));
+    if let Some(bus) = std::fs::canonicalize(path).ok().and_then(|p| Some(p.file_name()?.to_str()?.to_owned())) {
+        println!("render · the compositor paints on the card at {bus}");
+        let _ = COMPOSITOR_CARD.set(bus);
+    }
+}
+
 impl Gpu {
     /// It is created with the first surface that arrives: one is needed to know
     /// which adapter and which format are valid.
@@ -2789,11 +2808,19 @@ impl Gpu {
     /// the card is whatever there is.
     pub fn new(instance: &wgpu::Instance, first: Option<&wgpu::Surface<'static>>) -> Gpu {
         // `PLEAMAR_GPU=high` asks for the fast card (a laptop's discrete one) instead of the frugal one.
-        let power_preference = match std::env::var("PLEAMAR_GPU").as_deref() {
-            Ok("high") => wgpu::PowerPreference::HighPerformance,
+        let asked = std::env::var("PLEAMAR_GPU").ok();
+        let power_preference = match asked.as_deref() {
+            Some("high") => wgpu::PowerPreference::HighPerformance,
             _ => wgpu::PowerPreference::LowPower,
         };
-        let primary = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { compatible_surface: first, power_preference, ..Default::default() })).ok();
+        // Without anyone asking, the compositor's own card, if it has said which.
+        let compositors = first.filter(|_| asked.is_none()).zip(COMPOSITOR_CARD.get()).and_then(|(surface, bus)| {
+            pollster::block_on(instance.enumerate_adapters(wgpu::Backends::PRIMARY)).into_iter().find(|a| a.get_info().device_pci_bus_id == *bus && a.is_surface_supported(surface))
+        });
+        let primary = match compositors {
+            Some(a) => Some(a),
+            None => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { compatible_surface: first, power_preference, ..Default::default() })).ok(),
+        };
         // A compositor (with no surface of its own: it hands its frames to the
         // monitors itself) has to read other programs' buffers on the card and
         // paint into its monitors' own; Vulkan does that only with
