@@ -529,6 +529,9 @@ pub fn run(
     let mut props: Vec<Animated> = Vec::new();
     let mut facts: Vec<f32> = Vec::new();
     let mut inside: Vec<bool> = Vec::new();
+    // Whether each zone was alive last round: one that only moved under a
+    // pointer that did not is not entered or left by it (see the zones, below).
+    let mut was_live: Vec<bool> = Vec::new();
     let mut blinks: Vec<(Instant, Option<Instant>)> = Vec::new();
     // What each `follow` and `bind` last came to, and what it reads.
     let mut follows = Follows::default();
@@ -893,6 +896,7 @@ pub fn run(
                     tails.iter_mut().for_each(crate::agent::Follow::lost);
                     facts = fresh.facts.iter().map(|(n, initial)| scene.facts.iter().position(|h| h.0 == *n).map_or(*initial, |k| facts[k])).collect();
                     inside = vec![false; fresh.zones.len()];
+                    was_live = vec![false; fresh.zones.len()];
                     follows = Follows::default();
                     warning = None;
                     with_warning.clear();
@@ -2175,10 +2179,30 @@ pub fn run(
         {
             let c = Ctx { props: &props, facts: &facts, seen: None };
             zone_memo.update(&scene, &facts, &props, &draw.hidden, &absent, check_shortcuts);
+            // A zone that only moved —alive before and now— under a pointer
+            // that did nothing this round is not entered or left by it: the
+            // person did not go anywhere. A row laid out again by a text
+            // that changed width slid an island's edge back and forth under
+            // a parked pointer, and every crossing was an `enter` or a
+            // `leave` with its ease, long after the last real hover (issue
+            // 110); and a panel that grows when hovered and moves its own
+            // edge away from the pointer closed and opened again by itself.
+            // It is worked out as it is the next time the pointer moves, a
+            // button goes or the wheel turns —a press always lands on what
+            // is under it—; a zone that appears or goes away under it is
+            // entered or left at once.
+            let pointer_news = pointer != last_pointer || !buttons.is_empty() || wheel != 0.0;
+            was_live.resize(scene.zones.len(), false);
             for (k, (z, was_inside)) in scene.zones.iter().zip(inside.iter_mut()).enumerate() {
                 // Its box first: the shape is only measured when the mouse is in it.
                 let in_box = |x: f32, y: f32| zone_memo.bounds[k].is_some_and(|b| x >= b[0] - 1.0 && x <= b[2] + 1.0 && y >= b[1] - 1.0 && y <= b[3] + 1.0);
-                let is_inside = zone_memo.live[k] && pointer.is_some_and(|(x, y)| in_box(x, y) && z.contains(c, x, y));
+                let live = zone_memo.live[k];
+                let moved_only = !pointer_news && live && was_live[k];
+                was_live[k] = live;
+                if moved_only {
+                    continue;
+                }
+                let is_inside = live && pointer.is_some_and(|(x, y)| in_box(x, y) && z.contains(c, x, y));
                 if is_inside != *was_inside {
                     *was_inside = is_inside;
                     edges.push((is_inside, k));
@@ -4215,7 +4239,16 @@ pub fn run(
         } else {
             previous.changed_rects(&draw, &mut changed)
         };
-        let all_changed = !known || op.hud || finger_light > 0.0 || ripple.is_some();
+        // A press's light and its ripple are seen only on the glass that catches
+        // them: those boxes change, not the whole of every open sheet (issue
+        // 109). With none, there is nothing to light and nothing to wait for.
+        let lit = if finger_light > 0.0 || ripple.is_some() { draw.lit_by_a_press(ripple.is_some()) } else { Some(Vec::new()) };
+        if lit.as_ref().is_some_and(Vec::is_empty) {
+            finger_light = 0.0;
+            ripple = None;
+        }
+        let all_changed = !known || op.hud || lit.is_none();
+        changed.extend(lit.unwrap_or_default());
         // A window that drew something new changes what its box covers, and nothing else.
         for slot in std::mem::take(&mut nest_changed) {
             changed.extend(draw.windows_drawn.iter().filter(|w| w.0 == slot).map(|(_, d, affine)| {

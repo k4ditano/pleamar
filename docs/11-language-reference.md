@@ -1576,7 +1576,7 @@ A fact can be written by its place, as it is read (§7): `tre.x[tre.nw] = tre.ax
 | `press zone` · `press right zone` · `press middle zone` | it is pressed. A scene that uses `right` for anything is never closed by a right click: the prototype's emergency exit is only for scenes that do not use it |
 | `release zone` | what was pressed there is released, wherever the mouse is by then |
 | `hold zone for 500ms` | it has been held down that long |
-| `enter zone` · `leave zone` | the mouse enters or leaves |
+| `enter zone` · `leave zone` | the mouse enters or leaves. A zone that only moves —a row laid out again, a panel that grows— under a pointer that does nothing is not entered or left by it: that is settled the next time the pointer moves, a button goes or the wheel turns (a press always lands on what is under it). One that appears or goes away under it is entered or left at once |
 | `hover zone for 320ms` · `away zone for 420ms` · `away button, panel for 320ms` | it has been over it that long; it was over it and has been away that long. Several zones count as one —over any of them is over—: a button and the panel it opens close when the mouse has left both, not when it crosses the gap between them |
 | `scroll zone` | the wheel, over any zone underneath it. Read in `wheel` |
 | `drag zone` | it moves with the button down; it keeps going even if it leaves, until release. `local.x`, `drag.dx`. Like the wheel, it works for any zone that was underneath at the press, not only the topmost one: that is how a list is dragged by grabbing it by a row |

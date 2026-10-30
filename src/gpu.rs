@@ -851,6 +851,26 @@ impl Pending {
 }
 
 impl DrawList {
+    /// Where a press's light (and its ripple, with `ripple`) can be seen: the
+    /// boxes of the glass that catches it —`highlight:` above zero, or `ripple:`
+    /// for the ripple—. Nothing else draws them (see `shape.wgsl`). Empty, none
+    /// would show; None, one is painted on a layer of its own, whose box is
+    /// not the scene's: then all of it.
+    pub fn lit_by_a_press(&self, ripple: bool) -> Option<Vec<[f32; 4]>> {
+        let mut out = Vec::new();
+        for (k, e) in self.elements.chunks_exact(PER_ELEMENT).enumerate() {
+            let catches = e[40] > 0.0 && (e[63] > 0.0 || (ripple && e[57] > 0.0));
+            if !catches {
+                continue;
+            }
+            if self.offscreen_groups.iter().any(|(r, _)| r.contains(&(k as u32))) {
+                return None;
+            }
+            out.push([e[4] - 2.0, e[5] - 2.0, e[6] + 2.0, e[7] + 2.0]);
+        }
+        Some(out)
+    }
+
     /// That nothing is copied from this frame: what was in the atlas is no
     /// longer valid, and a letter may have moved without changing its number.
     pub fn forget_kept(&mut self) {
@@ -4792,6 +4812,28 @@ pub const N_UNIFORMS: usize = 8 + 120 + 4 + 4;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_press_lights_only_the_glass_that_catches_it() {
+        // Issue 109: a press made every open sheet paint whole, glass or not.
+        let el = |b: [f32; 4], glass: f32, ripple: f32, highlight: f32| {
+            let mut e = vec![0.0f32; PER_ELEMENT];
+            e[4..8].copy_from_slice(&b);
+            (e[40], e[57], e[63]) = (glass, ripple, highlight);
+            e
+        };
+        let mut d = DrawList::default();
+        d.elements.extend(el([0.0, 0.0, 1920.0, 40.0], 0.0, 0.0, 0.0));
+        assert_eq!(d.lit_by_a_press(true), Some(vec![]), "no glass: nothing to light, nothing to paint");
+        d.elements.extend(el([10.0, 5.0, 110.0, 35.0], 1.0, 0.0, 0.0));
+        assert_eq!(d.lit_by_a_press(true), Some(vec![]), "glass without highlight or ripple catches nothing");
+        d.elements.extend(el([200.0, 5.0, 300.0, 35.0], 1.0, 0.0, 1.0));
+        d.elements.extend(el([400.0, 5.0, 500.0, 35.0], 1.0, 1.0, 0.0));
+        assert_eq!(d.lit_by_a_press(false), Some(vec![[198.0, 3.0, 302.0, 37.0]]), "the light: the glass with highlight");
+        assert_eq!(d.lit_by_a_press(true), Some(vec![[198.0, 3.0, 302.0, 37.0], [398.0, 3.0, 502.0, 37.0]]), "and the ripple: the one that ripples too");
+        d.offscreen_groups.push((2..3, 0));
+        assert_eq!(d.lit_by_a_press(true), None, "on a layer of its own: all of it");
+    }
+
     use super::*;
     use crate::shapes::{Affine, FlatShape};
 
