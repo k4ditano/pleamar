@@ -4553,7 +4553,14 @@ impl<'a> Compiler<'a> {
                 // With `screens: each`, each copy has its own: its properties, its zones
                 // and its rules. `$screen` is its number, and `screen.name` that of its monitor.
                 let mut env = if per_screen {
-                    Some(self.screen_scope(instance))
+                    let mut env = self.screen_scope(instance);
+                    // (What this copy measures, see `screens: each` below.)
+                    if instance > 0 && !name.is_empty() && !lock {
+                        for part in ["width", "height"] {
+                            env.alias.insert(format!("{name}.{part}"), format!("{name}.screen{instance}.{part}"));
+                        }
+                    }
+                    Some(env)
                 } else if lock {
                     let mut env = Scope::default();
                     for part in ["width", "height"] {
@@ -4845,7 +4852,18 @@ impl<'a> Compiler<'a> {
             let base = self.e.surfaces[which].clone();
             for k in 1..limit {
                 self.next_origin += 10000.0;
-                let copy = Surface { instance: k, origin: (0.0, self.next_origin), screens: Screens::Number(k), ..base.clone() };
+                let mut copy = Surface { instance: k, origin: (0.0, self.next_origin), screens: Screens::Number(k), ..base.clone() };
+                // Each copy measures its own monitor: `panel.width` inside it is
+                // its own. Shared, the last copy to be measured said it for all —
+                // a phone's monitor of 442 came and went, and the bar on a 1920
+                // one stayed laid out for 442—. (The lock's copies do share it:
+                // the largest, see the render.)
+                if !base.name.is_empty() && !base.lock_screen {
+                    let (w, h) = self.e.measured(interned(&format!("{}.screen{k}", base.name)));
+                    self.props.insert(format!("{}.screen{k}.width", base.name), w);
+                    self.props.insert(format!("{}.screen{k}.height", base.name), h);
+                    copy.size_props = Some((w, h));
+                }
                 // The main one's copies go together at the start: the first one is still the main one.
                 if base.name.is_empty() {
                     self.e.surfaces.insert(k, copy);

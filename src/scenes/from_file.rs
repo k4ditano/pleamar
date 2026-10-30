@@ -536,6 +536,45 @@ mod tests {
     }
 
     #[test]
+    fn each_copy_of_a_surface_measures_its_own_monitor() {
+        // A phone's monitor of 442 came last and said `bar.width` for every copy: the bar on
+        // the 1920 one was laid out for 442, and stayed so when the phone went.
+        let dir = std::env::temp_dir().join(format!("pleamar-measures-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("m.plm");
+        std::fs::write(&path, "scene Measures {
+    surface bar {
+        size: full, 40
+        anchor: top
+        screens: each max 2
+        on demo { a = bar.width / 2 }
+    }
+    fact a = 0
+}
+").unwrap();
+        let scene = super::read(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        let scene = scene.unwrap_or_else(|e| panic!("{e}"));
+        let sizes: Vec<_> = scene.surfaces.iter().filter(|s| s.name == "bar").map(|s| s.size_props.unwrap().0).collect();
+        assert_eq!(sizes.len(), 2);
+        assert_ne!(sizes[0], sizes[1], "each copy, its own width");
+        let facts: Vec<f32> = scene.facts.iter().map(|(_, v)| *v).collect();
+        let mut props: Vec<crate::scene::Animated> = scene.props.iter().map(|(_, x, s)| crate::scene::Animated::at(*x, *s)).collect();
+        props[sizes[0].0 as usize].x = 1920.0;
+        props[sizes[1].0 as usize].x = 442.0;
+        let mut a = Vec::new();
+        for r in &scene.rules {
+            for e in &r.effects {
+                if let crate::scene::Effect::Fact(_, e) = e {
+                    a.push(e.eval(crate::scene::Ctx { props: &props, facts: &facts, seen: None }));
+                }
+            }
+        }
+        a.sort_by(f32::total_cmp);
+        assert_eq!(a, vec![221.0, 960.0]);
+    }
+
+    #[test]
     fn a_fold_adds_up_across_a_repeat() {
         let set = set_by_rules("scene Folds {
     surface { size: 200, 40 }
