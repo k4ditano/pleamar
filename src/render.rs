@@ -1350,6 +1350,14 @@ pub fn run(
                     if b < 3 {
                         mouse_buttons = if down { mouse_buttons | 1 << b } else { mouse_buttons & !(1 << b) };
                     }
+                    // The mouse's side buttons are also the scene's, as the keys a
+                    // keyboard has for them: `on key XF86Back`, `on key XF86Forward`
+                    // —a file manager's back and forward—. A window under them still
+                    // gets them as buttons, as before.
+                    if down && b >= 3 && matches!(m, ToRender::Button(..)) {
+                        let name = if b == 3 || b == 6 { "XF86Back" } else { "XF86Forward" };
+                        key_presses.push((name.into(), None, Mods::default(), 0));
+                    }
                     if b == 0 {
                         finger_down = down;
                         if let (true, Some(p)) = (down, pointer) {

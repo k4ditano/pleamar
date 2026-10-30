@@ -1860,11 +1860,13 @@ impl PointerHandler for State {
                 }
                 PointerEventKind::Press { button, .. } | PointerEventKind::Release { button, .. } => {
                     let down = matches!(e.kind, PointerEventKind::Press { .. });
-                    // BTN_LEFT, BTN_RIGHT, BTN_MIDDLE
+                    // BTN_LEFT, BTN_RIGHT, BTN_MIDDLE; and the side ones (BTN_SIDE,
+                    // BTN_EXTRA, BTN_FORWARD, BTN_BACK): back and forward.
                     let btn = match button {
                         0x110 => 0,
                         0x111 => 1,
                         0x112 => 2,
+                        0x113..=0x116 => (button - 0x110) as u8,
                         _ => continue,
                     };
                     // As long as a scene makes no use of the right button, it closes: it's the
