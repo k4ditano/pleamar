@@ -149,6 +149,8 @@ pub struct Lens {
     /// A sample of the last capture, and of which box it was: so as not to
     /// repeat the work if nothing has changed.
     sample: Vec<u8>,
+    /// The last capture taken in has been taken in once more, identical: see `receive`.
+    confirmed: bool,
     pub bounds: [i32; 4],
     bounds_uniforms: wgpu::Buffer,
     /// A received capture whose background is still to be unmixed: which
@@ -191,6 +193,7 @@ impl Lens {
             verdict: d.create_buffer(&wgpu::BufferDescriptor { label: Some("verdict"), size: 8, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }),
             frost: Frost::new(d, px, b),
             sample: Vec::new(),
+            confirmed: false,
             pending: None,
             bounds: [0; 4],
             bounds_uniforms: d.create_buffer(&wgpu::BufferDescriptor { label: Some("bounds"), size: 32, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }),
@@ -248,8 +251,21 @@ impl Lens {
         // changes the lens, and so on without end. One byte in thirteen is
         // looked at, which is enough to know whether something has moved.
         let sample: Vec<u8> = data.iter().copied().step_by(13).collect();
-        if self.ready && !self.warming() && bounds == self.bounds && sample.len() == self.sample.len() && sample.iter().zip(&self.sample).all(|(a, b)| a.abs_diff(*b) <= 3) {
+        // But once: the second time the same one comes, it is taken in again as
+        // `same`, and the check lets it through (see `settle`). A capture
+        // identical to the one before it is not of another frame —nothing has
+        // moved—: if the check refused it, what it counted is something of the
+        // compositor's on top of the glass —another bar's piece hanging over it,
+        // a notice—, which no capture will ever take away, and refusing them all
+        // left the glass with its first background for ever, black (#113).
+        let same = bounds == self.bounds && sample.len() == self.sample.len() && sample.iter().zip(&self.sample).all(|(a, b)| a.abs_diff(*b) <= 3);
+        if same && !self.confirmed && self.ready {
+            self.confirmed = true;
+        } else if self.ready && !self.warming() && same {
             return false;
+        }
+        if !same {
+            self.confirmed = false;
         }
         self.sample = sample;
         self.bounds = bounds;
@@ -276,7 +292,7 @@ impl Lens {
             return false;
         }
         let scissor = (x0, y0, x1 - x0, y1 - y0);
-        g.queue.write_buffer(&self.bounds_uniforms, 0, bytemuck::cast_slice(&[bounds[0] as f32 * scale, bounds[1] as f32 * scale, bounds[2] as f32 * scale, bounds[3] as f32 * scale, d.opacity, 0.0, 0.0, 0.0]));
+        g.queue.write_buffer(&self.bounds_uniforms, 0, bytemuck::cast_slice(&[bounds[0] as f32 * scale, bounds[1] as f32 * scale, bounds[2] as f32 * scale, bounds[3] as f32 * scale, d.opacity, if same { 1.0 } else { 0.0 }, 0.0, 0.0]));
         // The passes go in the same submission as the frame being painted now
         // —it has to be painted again—: a separate one cost one more `submit`,
         // a third of a millisecond per capture.
@@ -366,6 +382,7 @@ impl Lens {
                         wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&self.draft.1) },
                         wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(&self.backgrounds[self.current].1) },
                         wgpu::BindGroupEntry { binding: 8, resource: self.verdict.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 4, resource: self.bounds_uniforms.as_entire_binding() },
                     ],
                 });
                 pass(enc, settle, &self.backgrounds[new].1, &settle_group, scissor);

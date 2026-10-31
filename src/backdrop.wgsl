@@ -31,6 +31,8 @@ fn vs(@builtin(vertex_index) v: u32) -> VertexOut {
 struct Bounds {
     rect: vec4<f32>,
     opacity: f32,
+    // 1 when the capture is the same as the one before it: see `settle`.
+    same: f32,
 };
 @group(0) @binding(4) var<uniform> bounds: Bounds;
 

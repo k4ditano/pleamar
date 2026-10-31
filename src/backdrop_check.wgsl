@@ -27,7 +27,11 @@ fn settle(e: VertexOut) -> @location(0) vec4<f32> {
     let px = vec2<i32>(e.pos.xy);
     // More than one pixel in a hundred (and more than a handful, an edge's
     // rounding): the capture is not of this canvas, and what was there stays.
-    if (counted[1] > 16u && counted[1] * 100u > counted[0]) {
+    // Unless it is the same capture as the one before: then nothing moved, it
+    // cannot be of another frame, and what said it is is something of the
+    // compositor's drawn over the glass. The draft is kept, where each of
+    // those pixels already holds what was there.
+    if (counted[1] > 16u && counted[1] * 100u > counted[0] && bounds.same < 0.5) {
         return textureLoad(kept, px, 0);
     }
     return textureLoad(draft, px, 0);
