@@ -1568,7 +1568,8 @@ instead; with Shift held, the terminal selects anyway.
 are texts; `term.alive` (1 while its shell lives), `term.bell` (how many times
 it rang), `term.focus` (1 while it has the keys), `term.cols`, `term.rows` and
 `term.pid` (its shell's process, 0 once it ended: under pleamar-wm, the number
-of its layer, `pleamar-wm term list`) are facts. A logic hears them as any other: `on("text:term.folder", …)`,
+of its layer, `pleamar-wm term list`) and `term.back` (how many lines back
+through its history it is shown: 0 at its end) are facts. A logic hears them as any other: `on("text:term.folder", …)`,
 `on("fact:term.alive", …)`. It is also a zone: `on press term`, `term.hover`.
 
 **Told to an agent.** What its screen shows is in what the scene tells an

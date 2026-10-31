@@ -770,7 +770,7 @@ fn expand(f: &str) -> std::path::PathBuf {
 
 /// What each one says, told to the scene where it declared it: `NAME.title`
 /// and `NAME.folder` (texts), `NAME.alive`, `NAME.bell`, `NAME.focus`, `NAME.cols`, `NAME.rows` and
-/// `NAME.pid`, its shell's process (facts).
+/// `NAME.pid`, its shell's process, and `NAME.back`, how many lines back through its history it is shown (facts).
 pub fn report(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic: &Sender<Event>, hands: &mut Hands) {
     let look_folders = hands.folders_at.elapsed() > Duration::from_millis(700);
     if look_folders {
@@ -817,6 +817,9 @@ pub fn report(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic: 
             fact(format!("{name}.rows"), s.size.num_lines as f32, facts);
             // (A pid fits a fact exactly: they stay under 2^22.)
             fact(format!("{name}.pid"), if alive { s.pid as f32 } else { 0.0 }, facts);
+            // How many lines back through its history it is shown (0: at its end).
+            let back = s.term.lock().grid().display_offset();
+            fact(format!("{name}.back"), back as f32, facts);
             let title = s.shared.title.lock().unwrap().clone();
             if title.is_some() && title != s.told_title {
                 s.told_title = title.clone();
@@ -978,7 +981,8 @@ pub fn wheel(t: &PlacedTerminal, p: (f32, f32), notches: f32) {
         let Some(s) = r.sessions.get(t.name) else { return };
         let mode = s.mode();
         let n = (notches.abs().ceil() as usize).max(1);
-        let down = notches > 0.0;
+        // The render's wheel is positive upwards (as the platform turns it): negative is down.
+        let down = notches < 0.0;
         if mode.intersects(TermMode::MOUSE_MODE) {
             let (col, row) = cell_at(t, p);
             for _ in 0..n {
