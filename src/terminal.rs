@@ -413,10 +413,12 @@ pub fn with<R>(f: impl FnOnce(&mut Registry) -> R) -> R {
     f(&mut r)
 }
 
-/// What each one's screen is now, to know whether the drawing has to be made again.
-pub fn versions() -> Vec<(&'static str, u64)> {
+/// What the screens of those drawn are now, to know whether the drawing has to
+/// be made again. (One not drawn —a tab behind, writing on its own— is not
+/// painted, so it does not count: when it is shown, something else changed.)
+pub fn versions(drawn: &[PlacedTerminal]) -> Vec<(&'static str, u64)> {
     with(|r| {
-        let mut v: Vec<(&'static str, u64)> = r.sessions.iter().map(|(k, s)| (*k, s.shared.version.load(Ordering::Relaxed))).collect();
+        let mut v: Vec<(&'static str, u64)> = r.sessions.iter().filter(|(k, _)| drawn.iter().any(|t| t.name == **k)).map(|(k, s)| (*k, s.shared.version.load(Ordering::Relaxed))).collect();
         v.sort_unstable();
         v.push(("", r.focus.map_or(0, |f| f.as_ptr() as u64) ^ r.window_keys as u64));
         v

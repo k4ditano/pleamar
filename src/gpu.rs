@@ -71,6 +71,9 @@ pub struct DrawList {
     pub fields: Vec<PlacedField>,
     /// The terminals laid out this frame (see `PlacedTerminal`).
     pub terminals: Vec<PlacedTerminal>,
+    /// Where each terminal's cursor is going, where it set off from and when:
+    /// typing, it glides to the next cell instead of jumping.
+    cursor_glides: std::collections::HashMap<&'static str, ([f32; 2], [f32; 2], f32)>,
     /// The texts that can be selected (`selectable: true`), as they ended up
     /// this frame, in the order they were painted.
     pub selectable: Vec<PlacedText>,
@@ -1329,7 +1332,26 @@ impl DrawList {
             let cur_rgb = cursor_rgb.unwrap_or(rgb(ink));
             let mut on_cursor: Option<(usize, i32)> = None;
             if cursor.shape != CursorShape::Hidden && (0..rows_n).contains(&cur_row) {
-                let (cx, cy) = (x0 + cursor.point.column.0 as f32 * cw, y0 + cur_row as f32 * ch);
+                let target = [x0 + cursor.point.column.0 as f32 * cw, y0 + cur_row as f32 * ch];
+                // Typing, it glides to its next cell (a short way along its line, 70 ms easing out);
+                // anything else —a new line, a jump, motion reduced— and it is there at once.
+                let clock = self.clock;
+                let reduced = self.reduced_motion;
+                let g = self.cursor_glides.entry(t.name).or_insert((target, target, clock));
+                if g.0 != target {
+                    let k = ((clock - g.2) / 0.07).clamp(0.0, 1.0);
+                    let e = 1.0 - (1.0 - k).powi(3);
+                    let shown = [g.1[0] + (g.0[0] - g.1[0]) * e, g.1[1] + (g.0[1] - g.1[1]) * e];
+                    let short = (target[1] - g.0[1]).abs() < 0.5 && (target[0] - g.0[0]).abs() <= cw * 12.0;
+                    *g = (target, if short && !reduced { shown } else { target }, clock);
+                }
+                let k = ((clock - g.2) / 0.07).clamp(0.0, 1.0);
+                let e = 1.0 - (1.0 - k).powi(3);
+                let (cx, cy) = (snap(g.1[0] + (g.0[0] - g.1[0]) * e), snap(g.1[1] + (g.0[1] - g.1[1]) * e));
+                if k < 1.0 {
+                    let next = clock + 0.008;
+                    self.wake_at = Some(self.wake_at.map_or(next, |w| w.min(next)));
+                }
                 let thin = (1.0 / s).max((px / 8.0 * s).round() / s);
                 match (focused, cursor.shape) {
                     (true, CursorShape::Block) => {

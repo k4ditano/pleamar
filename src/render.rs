@@ -4070,7 +4070,7 @@ pub fn run(
         // over a desktop that draws nothing of it —no dock under it, nothing
         // carried— made the whole list again at the monitor's pace, to get the
         // same list.
-        let term_versions = crate::terminal::versions();
+        let term_versions = crate::terminal::versions(&draw.terminals);
         let same_scene = !draw.timed
             && !draw.particles_alive
             && draw.wake_at.is_none()
