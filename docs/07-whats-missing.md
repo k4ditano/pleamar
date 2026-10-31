@@ -92,6 +92,8 @@ Kept in sight here, because it is the reason this exists:
 
 ## 4. In what order
 
-1. The language server knowing about names: completing the scene's facts and components, and going to where they are declared (G9).
-2. Copies that are born and die on their own (G12), and inertia when a list is let go.
-3. Plain windows, session lock, IME.
+Done since this list was first written: the language server knows the scene's names, completes them and goes to where they are declared (G9, in Fixed), and plain windows (`kind: window`) and lock screens (`kind: lock`) exist. What is left, in this order:
+
+1. Copies that are born and die on their own (G12), and inertia when a list is let go.
+2. Deferred loading, so a menu that almost never opens costs nothing until it does.
+3. IME (E7), and a whole screen live inside the scene.

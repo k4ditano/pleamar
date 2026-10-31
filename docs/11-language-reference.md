@@ -1,4 +1,4 @@
-# Language reference — version 0.1
+# Language reference — version 0.6
 
 **What this note is.** The complete, exact description of what the language accepts. [The language — the guide](09-language-v0.md) is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
@@ -761,7 +761,7 @@ path {
 }
 ```
 
-A path carries **a single stroke** (one `move`, the first) and up to 64 already flattened points; for several, several `path`. In a layout it has to be told what it takes up with `size:`, because its box is not known until it is evaluated.
+A path carries **a single stroke** (one `move`, the first) and up to 192 already flattened points; for several, several `path`. In a layout it has to be told what it takes up with `size:`, because its box is not known until it is evaluated.
 
 **Lists longer than what is unfolded.** A model unfolds its `max` records on load, and that is the ceiling (1024). For a list of thousands, the scene declares only the **window** —what is seen and a little more— and says how long the whole list is:
 

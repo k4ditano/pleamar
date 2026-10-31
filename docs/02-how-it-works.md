@@ -1,13 +1,13 @@
 # How it works today
 
-What already runs in `~/Proyectos/pleamar`. Rust, `wgpu` 30, `cosmic-text` for the text, `resvg` and `image` for the images; and, on Linux only, `smithay-client-toolkit` 0.21 (layer-shell).
+What runs today, inside. Rust, `wgpu` 30, `cosmic-text` for the text, `resvg` and `image` for the images; and, on Linux only, `smithay-client-toolkit` 0.21 (layer-shell).
 
 ## Three threads
 
 | Thread | Does | Does not do |
 | --- | --- | --- |
 | **Platform** (`platform/wayland.rs`) | One layer-shell surface per monitor (and for the ones plugged in later), its scale, and the mouse | Nothing else |
-| **Logic** (`logic.rs`) | Runs a `Script`: receives named events, reports facts and events, asks for gestures | Does not animate. Knows nothing about coordinates. Blocks on purpose for the trial |
+| **Logic** (`logic_luau.rs`; `logic.rs` for the test benches written in Rust) | Runs the scene's `.luau` in a sandbox: receives named events, reports facts, texts, models and events, asks for gestures. Plus one thread per plugin and one per service | Does not animate. Knows nothing about coordinates. With `--stall` it blocks on purpose, for the trial |
 | **Renderer** (`render.rs`) | Owner of the springs and of the clock. Evaluates, paints and reports | Does not know what it is painting |
 
 The mouse goes **to the renderer**, which is the one that knows what is underneath; the logic gets it already as `Enter("view")` or `Press("orb")`.
@@ -102,6 +102,7 @@ The scene declares the surface it wants: size in **logical** pixels, anchor, mar
 - **Pace.** Only one render surface —the one on the fastest monitor— waits for the screen; the rest present without blocking. If they all waited, a 60 Hz monitor would hold back a 165 Hz one.
 - **Input region.** On every frame in which they change, the boxes of the active zones are handed to the compositor as the input region, right before presenting: the rest of the surface, even though it is its own, lets the click through.
 - The GPU (device, pipeline, buffers) is created with the first render surface that arrives.
+- **Which card.** On a machine with two (a laptop's integrated one and its discrete one), the scene has to paint on the card the compositor paints with, or the compositor cannot read its frames and the scene is a black rectangle. The compositor says which one it is (`linux-dmabuf` v4, its main device), and pleamar takes the adapter at that PCI address. Where the compositor does not say, it asks for the frugal one. `PLEAMAR_GPU=high` asks for the fast one instead (any other value, the frugal one), and either way the compositor's word is no longer followed. For a compositor that has no surface of its own (pleamar-wm), `PLEAMAR_BACKEND=gl` or `vulkan` chooses the driver: OpenGL is taken by itself on cards whose Vulkan cannot read other programs' buffers (AMD's GFX6 to GFX8 before Linux 7.3 and Mesa 26.3).
 
 ## Typing (`render.rs`, `text.rs`)
 
@@ -163,15 +164,14 @@ If no property is moving and no behavior is alive, the renderer does not paint: 
 ./target/release/pleamar --mouse "360,90@500 500,172@1100 click@3200 out@4500"
 ```
 
-It comes up on `HDMI-A-1`. The graph at the bottom is one bar per frame; the red band is the time with the logic blocked. **Do not measure while capturing with `grim`**: it causes dropped frames.
+It comes up where the scene asks; `--screen NAME` puts it on another monitor. The graph at the bottom is one bar per frame; the red band is the time with the logic blocked. **Do not measure while capturing with `grim`**: it causes dropped frames.
 
 ## Known debts
 
-- All of them are in [Known limitations](08-limitations.md). The heaviest ones:
-- Scenes are written in Rust and compiled with the program.
-- No layout.
-- A group with opacity inside another one does not get a layer of its own: it multiplies. And if more than four are blending at once, the extra ones multiply too.
-- With a different scale on each axis, the smoothing of the edge is approximate.
-- The gradient and the light live in the group's space, not in the shape's: if the shape rotates *by itself* (`.rotated`), the gradient does not rotate with it.
-- The first frames after waking up do not wait for vsync: the animation clock should follow the presentation time.
-- One frame in ~400 drops to 33 ms. Not investigated.
+All of them are in [Known limitations](08-limitations.md), each with its plan. The ones closest to this note:
+
+- **A surface does not grow with what it holds** (S1): its size is the scene's, so a shadow or a panel that outgrows it is cut, and the renderer says so while it runs.
+- **Copies are expanded at load time** (G12): a model unfolds its `max` records, and a list of thousands is a window the scene declares; copies that are born and die on their own are still to come.
+- **The first frames after waking do not wait for the screen** (P9): the animation clock runs on CPU time, not on presentation time. And **one frame in ~400 drops to 33 ms** (P10), not investigated.
+- **Presenting a frame costs ~0.5 ms of CPU whatever it draws** (P11).
+- A group with opacity inside another one gets no layer of its own: it multiplies (P4). With a different scale on each axis, the smoothing of the edge is approximate (P5). The gradient and the light live in the group's space, not in the shape's (P6).

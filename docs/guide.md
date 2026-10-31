@@ -4,7 +4,8 @@ This guide writes a real bar, one piece at a time. Everything here compiles:
 `./run-tests.sh` checks it on every change, so if any of this stops being true, the
 tests go red.
 
-The program has to be built:
+If you installed it with the one-line installer (see the README), `pleamar` is
+already in your `PATH`. From the source:
 
 ```sh
 cargo build --release
@@ -243,6 +244,17 @@ declare as arrays: `win[i].screen`, `screen[s].width`.
 
 
 ## 7. What next
+
+**Make it yours.** Everything of yours lives in `~/.config/pleamar/`: put the bar
+in `shells/bar/bar.plm` (its `bar.luau` and whatever it imports next to it), and
+add a line to `~/.config/pleamar/autostart` so it starts with the desktop:
+
+```sh
+pleamar --scene ~/.config/pleamar/shells/bar/bar.plm --no-hud
+```
+
+On Hyprland, `exec-once = pleamar --autostart` runs that file; pleamar-wm runs it
+by itself. It reloads every time you save it, so you can change it while it runs.
 
 - Patterns that already work, ready to copy: [recipes](recipes.md).
 - Everything that exists, with its exact shape:

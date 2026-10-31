@@ -18,6 +18,8 @@ whole scene and compiles: `./run-tests.sh` checks them.
 - [Every window, with its picture](#every-window-with-its-picture)
 - [Only for whoever sits there](#only-for-whoever-sits-there)
 - [Windows in rows](#windows-in-rows)
+- [A chat](#a-chat)
+- [Light or dark, and less motion](#light-or-dark-and-less-motion)
 
 ## A list of thousands
 
@@ -624,3 +626,72 @@ scene Rows {
 Each window reads its own values through `ord.pos[i]`, its place in the
 order. Nothing here is written once per window: `win.max` is the one place the
 number of slots is said.
+
+## A chat
+
+A list that starts at its end and stays there while it grows, each bubble on
+its own side and as wide as what it says. `stick: end` keeps the list at its
+end unless the person scrolled away to read; `list.pinned` says which, and is
+what a «↓ new» button needs. `place:` puts one child alone across the column
+(0 is the start, 1 the end), and `tight: true` makes a text with a `width:`
+take only as much as its longest line.
+
+```plm
+language 0.5
+scene Chat {
+    surface { size: 300, 420; kind: window; title: "chat" }
+    model said max 64 { text: text; mine: bool }
+    let ink = #f5f7f5
+
+    box { from: 0, 0; size: 300, 420; color: #151616 }
+    column chat { at: 16, 16;  view: 268, 388;  stick: end;  gap: 8
+        for m in said {
+            row { padding: 10; corner: 14; fill: if(m.mine, #2f5a50, #232526); place: if(m.mine, 1, 0)
+                text m.text { width: 200; tight: true; size: 13; color: ink; markdown: true; lines: 0 }
+            }
+        }
+    }
+
+    //  Scrolled away to read: a way back down, which sticks to the end again.
+    box down { at: 150, 384; size: 96, 28; corner: 14; color: #2f5a50; opacity: 1 - chat.pinned
+               cursor: pointer; label: "Newest" }
+    text "↓ new" { at: 150, 384; anchor: center; size: 12; color: ink; opacity: 1 - chat.pinned }
+    on press down { chat.scroll: chat.content - chat.height ~calm; chat.pinned = 1 }
+}
+```
+
+The logic only hands over the list (`model.said = { { text = "hi", mine = true }, … }`):
+where each bubble goes, and keeping up with the end, is the scene's.
+
+## Light or dark, and less motion
+
+`color.scheme` and `motion.reduced` are what the desktop says, in every scene,
+from its settings portal: `color.scheme` is 0 when it says nothing, 1 dark and 2
+light; `motion.reduced` is 1 when it asks for less motion. A colour chosen in a
+`let` (language 0.6) is a whole theme in three lines.
+
+```plm
+language 0.6
+scene Themed {
+    surface { size: 300, 130; anchor: top }
+    let light = color.scheme == 2
+    let paper = if(light, #f4f1ea, #151616)
+    let ink = if(light, #2a2723, #f5f7f5)
+    let mint = #9ed6bd
+
+    body {
+        color: paper
+        shadow: 0, 6, 18, 30%
+        box { from: 20, 10; size: 260, 90; corner: 20 }
+    }
+    text "Hello" { at: 150, 55; anchor: center; size: 22; color: ink }
+
+    //  With less motion asked for, every spring settles at once and `blink`, `wave`
+    //  and `spin` go quiet by themselves. What the scene moves with `time` is its own to stop.
+    ellipse { at: 50, 55; radius: 6 + 2 * sin(time * 120) * (1 - motion.reduced); color: mint }
+}
+```
+
+Both are facts like any other: a shell's own switch can set them too
+(`--say … fact color.scheme 2`), and the desktop's next change says its own again.
+
