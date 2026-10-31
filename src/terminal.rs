@@ -63,6 +63,9 @@ pub struct Shared {
     size: Mutex<WindowSize>,
     /// Its colours as the scene says them, to answer a program that asks (OSC 4, 10, 11).
     pub palette: Mutex<[[u8; 3]; 18]>,
+    /// What its program last put on the clipboard (OSC 52), and when: a program that takes the mouse
+    /// (Claude Code, vim) selects by itself and copies, and the terminal has nothing selected.
+    pub copied: Mutex<Option<(Instant, String)>>,
 }
 
 impl Shared {
@@ -112,7 +115,10 @@ impl EventListener for Listener {
             }
             TermEvent::PtyWrite(text) => s.write(text.into_bytes()),
             // What a program puts on the clipboard (OSC 52), and asks to read from it.
-            TermEvent::ClipboardStore(_, text) => crate::platform::clipboard_write(&text),
+            TermEvent::ClipboardStore(_, text) => {
+                crate::platform::clipboard_write(&text);
+                *s.copied.lock().unwrap() = Some((Instant::now(), text));
+            }
             TermEvent::ClipboardLoad(_, format) => {
                 if let Some(t) = crate::platform::clipboard_read() {
                     s.write(format(&t).into_bytes());
@@ -187,6 +193,7 @@ impl Session {
             sender: OnceLock::new(),
             size: Mutex::new(size),
             palette: Mutex::new(DEFAULT_COLORS),
+            copied: Mutex::new(None),
         });
         let listener = Listener { shared: shared.clone(), wake };
         let config = Config { scrolling_history: HISTORY, ..Config::default() };
@@ -673,6 +680,15 @@ pub fn sync(placed: &[PlacedTerminal], runs: &[(&'static str, bool)]) {
 /// (a command and its return, say), `forget` its history, `select_all`; and
 /// `find` a text up its history (again: the next one up), `find_newer` the next
 /// one down, `find_end` to stop looking.
+/// What its program put on the clipboard (OSC 52) at most `within` ago, if anything
+/// (`sys.ask("terminal.copied", name, seconds)`).
+pub fn copied(name: &str, within: Duration) -> Result<Option<String>, String> {
+    with(|r| {
+        let key = r.sessions.keys().find(|k| **k == name).copied().ok_or_else(|| format!("there is no terminal '{name}' running"))?;
+        Ok(r.sessions.get(key).and_then(|s| s.shared.copied.lock().unwrap().clone()).filter(|(at, t)| at.elapsed() <= within && !t.is_empty()).map(|(_, t)| t))
+    })
+}
+
 /// What is selected in that terminal, if anything (`sys.ask("terminal.selection", name)`).
 pub fn selection(name: &str) -> Result<Option<String>, String> {
     with(|r| {

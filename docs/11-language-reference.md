@@ -1583,7 +1583,10 @@ history, `select_all`, `find` a text up its history without minding capitals
 (again: the next one up; it is selected and shown, and an error says it is not
 there), `find_newer` the next one down, `find_end` to stop looking. And
 `sys.ask("terminal.selection", "term")` answers what is selected in it, or
-nil.
+nil; `sys.ask("terminal.copied", "term", 120)`, what the program in it put on
+the clipboard (OSC 52) in the last 120 seconds, or nil: a program that takes
+the mouse (Claude Code, vim) selects by itself and copies, and then the
+terminal has nothing selected.
 
 **Several windows of one scene** (a terminal's, each its own process) are
 told apart from outside with `--answer-as NAME`: `pleamar --say NAME …`

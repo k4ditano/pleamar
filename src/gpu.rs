@@ -1335,8 +1335,10 @@ impl DrawList {
             let mut on_cursor: Option<(usize, i32)> = None;
             if cursor.shape != CursorShape::Hidden && (0..rows_n).contains(&cur_row) {
                 let target = [x0 + cursor.point.column.0 as f32 * cw, y0 + cur_row as f32 * ch];
-                // Typing, it glides to its next cell (a short way along its line, 70 ms easing out);
-                // anything else —a new line, a jump, motion reduced— and it is there at once.
+                // Typing, it is at its next cell at once —a block sliding there would hide, for a moment,
+                // the letter just typed, and typing would feel late— and a faint trail behind it fades
+                // along the way it went (a short way along its line, 70 ms easing out). Anything else
+                // —a new line, a jump, motion reduced— and there is no trail.
                 let clock = self.clock;
                 let reduced = self.reduced_motion;
                 let g = self.cursor_glides.entry(t.name).or_insert((target, target, clock));
@@ -1349,12 +1351,20 @@ impl DrawList {
                 }
                 let k = ((clock - g.2) / 0.07).clamp(0.0, 1.0);
                 let e = 1.0 - (1.0 - k).powi(3);
-                let (cx, cy) = (snap(g.1[0] + (g.0[0] - g.1[0]) * e), snap(g.1[1] + (g.0[1] - g.1[1]) * e));
+                let (cx, cy) = (snap(g.0[0]), snap(g.0[1]));
+                let thin = (1.0 / s).max((px / 8.0 * s).round() / s);
                 if k < 1.0 {
                     let next = clock + 0.008;
                     self.wake_at = Some(self.wake_at.map_or(next, |w| w.min(next)));
+                    // The trail: from where it was shown going, to its cell, fading.
+                    if focused && g.1 != g.0 {
+                        let from = g.1[0] + (g.0[0] - g.1[0]) * e;
+                        let (l, r) = (from.min(cx), from.max(cx));
+                        let h = if cursor.shape == CursorShape::Underline { thin } else { ch };
+                        let y = if cursor.shape == CursorShape::Underline { cy + ch - thin } else { cy };
+                        self.flat_rect([snap(l), y, (r - l).max(0.0) + if cursor.shape == CursorShape::Beam { thin.max(2.0 / s) } else { cw }, h], cur_rgb, a * 0.28 * (1.0 - e), affine, clips);
+                    }
                 }
-                let thin = (1.0 / s).max((px / 8.0 * s).round() / s);
                 match (focused, cursor.shape) {
                     (true, CursorShape::Block) => {
                         self.flat_rect([cx, cy, cw, ch], cur_rgb, a, affine, clips);

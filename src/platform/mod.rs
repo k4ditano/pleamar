@@ -276,6 +276,14 @@ pub fn query(from: &str, name: &str, args: &[SysValue]) -> Result<SysValue, Stri
     if let ("terminal.selection", [SysValue::Text(term)]) = (name, args) {
         return crate::terminal::selection(term).map(|t| t.map_or(SysValue::Null, SysValue::Text));
     }
+    // What the program in it copied (OSC 52), if it was within that many seconds (120 if unsaid).
+    if let ("terminal.copied", [SysValue::Text(term), rest @ ..]) = (name, args) {
+        let secs = match rest.first() {
+            Some(SysValue::Num(n)) => *n,
+            _ => 120.0,
+        };
+        return crate::terminal::copied(term, std::time::Duration::from_secs_f64(secs.max(0.0))).map(|t| t.map_or(SysValue::Null, SysValue::Text));
+    }
     match (name, args) {
         // The environment: what the session told this program at startup.
         ("env", [SysValue::Text(which)]) => {
