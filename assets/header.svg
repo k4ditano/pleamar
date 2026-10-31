@@ -27,5 +27,5 @@
   <path d="M375 52 C 375 52, 356 76, 356 90 A 19 19 0 0 0 394 90 C 394 76, 375 52, 375 52 Z" fill="url(#drop)"/>
   <ellipse cx="368" cy="84" rx="4.5" ry="3" fill="#ffffff" fill-opacity="0.8"/>
   <text x="375" y="170" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="64" font-weight="700" fill="#f5f7f5" letter-spacing="-1">pleamar</text>
-  <text x="375" y="206" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="17" fill="#9ed6bd" fill-opacity="0.9">the desktop, written as scenes that never stop moving</text>
+  <text x="375" y="206" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="19" fill="#9ed6bd" fill-opacity="0.95">If you can imagine your desktop, you can build it.</text>
 </svg>
