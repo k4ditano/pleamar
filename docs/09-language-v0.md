@@ -267,7 +267,7 @@ The first claim that holds wins; when it stops holding, the next one is seen, on
 
 ```
 on press view            { open = false; impulse orb.y -620; emit view_event }
-on press right dot       { emit menu }               // or `middle`
+on press right dot       { emit menu }               // or `middle`, `back`, `forward`
 on release dot           { r: 30 ~lively }           // what was pressed there is released, wherever the mouse is by now
 on hold dot for 500ms    { emit held }               // it has been held down that long
 on enter view            { glow: 1 ~quick }          // the :hover of CSS

@@ -35,7 +35,7 @@ It is a **declarative language that always terminates**. No free loops, no recur
 | Text | `"in quotes"`. A quote inside it is `\"`, and a backslash before a quote or another backslash, `\\`; any other backslash is itself (`"C:\Users"`). With slots, see §11 |
 | Symbols | `{ } ( ) [ ] , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
 
-Words of the language (they cannot be used as a name of one's own without confusing the reader, though the compiler does not forbid it): `language import scene library surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, and inside their statements `in max while for after from until at by reach within rest every inset right middle move curve close via as radial radius to change wrap true false and or not`.
+Words of the language (they cannot be used as a name of one's own without confusing the reader, though the compiler does not forbid it): `language import scene library surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, and inside their statements `in max while for after from until at by reach within rest every inset right middle back forward move curve close via as radial radius to change wrap true false and or not`.
 
 ## 4. Grammar
 
@@ -1573,7 +1573,7 @@ A fact can be written by its place, as it is read (§7): `tre.x[tre.nw] = tre.ax
 
 | Trigger | When |
 | --- | --- |
-| `press zone` · `press right zone` · `press middle zone` | it is pressed. A scene that uses `right` for anything is never closed by a right click: the prototype's emergency exit is only for scenes that do not use it |
+| `press zone` · `press right zone` · `press middle zone` · `press back zone` · `press forward zone` | it is pressed. `back` and `forward` are a mouse's thumb buttons (BTN_SIDE and BTN_EXTRA). A scene that uses `right` for anything is never closed by a right click: the prototype's emergency exit is only for scenes that do not use it |
 | `release zone` | what was pressed there is released, wherever the mouse is by then |
 | `hold zone for 500ms` | it has been held down that long |
 | `enter zone` · `leave zone` | the mouse enters or leaves. A zone that only moves —a row laid out again, a panel that grows— under a pointer that does nothing is not entered or left by it: that is settled the next time the pointer moves, a button goes or the wheel turns (a press always lands on what is under it). One that appears or goes away under it is entered or left at once |
