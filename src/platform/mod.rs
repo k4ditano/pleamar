@@ -67,10 +67,6 @@ struct Hub {
 static HUBS: std::sync::Mutex<Vec<((String, String, String), std::sync::Arc<std::sync::Mutex<Hub>>)>> = std::sync::Mutex::new(Vec::new());
 
 pub fn service(from: &str, name: &str, tag: &str, notify: Box<dyn Fn(SysValue) + Send>) -> bool {
-    // (Read once and done, in a thread that ends: nothing is left behind.)
-    if name == "apps" {
-        return start_service(from, name, notify);
-    }
     let key = (from.to_owned(), name.to_owned(), tag.to_owned());
     let mut hubs = HUBS.lock().unwrap();
     if let Some((_, hub)) = hubs.iter().find(|(k, _)| *k == key) {
@@ -109,8 +105,24 @@ fn start_service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -
     }
     #[cfg(target_os = "linux")]
     if name == "apps" {
-        // Reading hundreds of files is not a matter of an instant: in its own thread.
-        return std::thread::Builder::new().name("apps".into()).spawn(move || notify(desktop::applications())).is_ok();
+        // Reading hundreds of files is not a matter of an instant: in its own
+        // thread, which then looks at the folders every two seconds and reads
+        // them again when something was installed, removed or changed (an app
+        // installed after the shell started was missing until it restarted).
+        return std::thread::Builder::new()
+            .name("apps".into())
+            .spawn(move || {
+                let mut last = None;
+                loop {
+                    let now = desktop::signature();
+                    if last != Some(now) {
+                        last = Some(now);
+                        notify(desktop::applications());
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            })
+            .is_ok();
     }
     #[cfg(target_os = "linux")]
     match name {

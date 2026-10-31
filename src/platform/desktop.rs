@@ -36,12 +36,45 @@ pub fn applications() -> SysValue {
     SysValue::List(installed().into_iter().map(App::value).collect())
 }
 
-/// The same, in alphabetical order, as `launch` checks against.
-fn installed() -> Vec<App> {
+/// Every applications folder, the user's first.
+fn folders() -> Vec<String> {
     let home = std::env::var("HOME").unwrap_or_default();
     let data_dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-    let mut folders = vec![format!("{home}/.local/share/applications")];
+    let data_home = std::env::var("XDG_DATA_HOME").ok().filter(|d| !d.is_empty()).unwrap_or(format!("{home}/.local/share"));
+    let mut folders = vec![format!("{data_home}/applications")];
     folders.extend(data_dirs.split(':').map(|d| format!("{d}/applications")));
+    folders
+}
+
+/// What changes when an app is installed, removed or its file rewritten: each
+/// `.desktop` file's name, size and time, without reading any of them.
+pub fn signature() -> u64 {
+    signature_of(&folders())
+}
+
+fn signature_of(folders: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for folder in folders {
+        folder.hash(&mut h);
+        let Ok(dir) = std::fs::read_dir(folder) else { continue };
+        let mut files: Vec<_> = dir
+            .filter_map(Result::ok)
+            .filter(|f| f.path().extension().is_some_and(|e| e == "desktop"))
+            .map(|f| {
+                let m = std::fs::metadata(f.path()).ok();
+                (f.file_name(), m.as_ref().map(|m| m.len()), m.and_then(|m| m.modified().ok()))
+            })
+            .collect();
+        files.sort();
+        files.hash(&mut h);
+    }
+    h.finish()
+}
+
+/// The same, in alphabetical order, as `launch` checks against.
+fn installed() -> Vec<App> {
+    let folders = folders();
     // `es_ES.UTF-8` → `Name[es_ES]`, then `Name[es]`.
     let lang = ["LC_ALL", "LC_MESSAGES", "LANG"].iter().filter_map(|v| std::env::var(v).ok()).find(|v| !v.is_empty()).unwrap_or_default();
     let lang = lang.split(['.', '@']).next().unwrap_or("").to_owned();
@@ -230,6 +263,24 @@ fn with_accessibility(command: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installing_or_removing_an_app_changes_the_signature() {
+        let dir = std::env::temp_dir().join(format!("pleamar-apps-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let folders = [dir.display().to_string()];
+        let empty = signature_of(&folders);
+        assert_eq!(signature_of(&folders), empty);
+        std::fs::write(dir.join("notes.txt"), "not an app").unwrap();
+        assert_eq!(signature_of(&folders), empty);
+        std::fs::write(dir.join("new.desktop"), "[Desktop Entry]\nName=New\nExec=new\n").unwrap();
+        let one = signature_of(&folders);
+        assert_ne!(one, empty);
+        std::fs::write(dir.join("new.desktop"), "[Desktop Entry]\nName=Newer\nExec=new\n").unwrap();
+        assert_ne!(signature_of(&folders), one);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_ne!(signature_of(&folders), one);
+    }
 
     #[test]
     fn electron_gets_its_flag_only_when_it_is_one() {
