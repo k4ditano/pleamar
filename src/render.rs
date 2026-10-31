@@ -2336,7 +2336,10 @@ pub fn run(
                 // The side buttons —back, forward— still go to the windows below, where a
                 // browser wants them: the loop that forwards them does not look here. A scene
                 // gets them as well, and only if one of its rules asks (`on press back`).
-                (b, true) if b <= 4 => pressed_with = hovered.map(|k| (k, b)),
+                // A mouse sends back as BTN_SIDE (3) or BTN_BACK (6), and forward as
+                // BTN_EXTRA (4) or BTN_FORWARD (5): the same pairs as `key XF86Back`.
+                (b, true) if b <= 2 => pressed_with = hovered.map(|k| (k, b)),
+                (b, true) => pressed_with = hovered.map(|k| (k, if b == 3 || b == 6 { 3 } else { 4 })),
                 _ => {}
             }
         }
