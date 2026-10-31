@@ -3341,6 +3341,7 @@ pub fn run(
                         let _ = to_logic.send(Event::Text(scene.texts[k].0, v.clone()));
                         texts[k] = v;
                     }
+                    Effect::Quit => crate::quit_from_scene(),
                     Effect::FocusTerminal(name) => {
                         parked = None;
                         editing = None;

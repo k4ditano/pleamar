@@ -7641,6 +7641,8 @@ impl<'a> Compiler<'a> {
                         "ripple" => Effect::Ripple(self.zone(&mut c)?),
                         "toggle" => Effect::Toggle(self.fact(&mut c)?),
                         "blur" => Effect::FocusField(None),
+                        // `quit`: the scene ends, as closing its window would (a terminal whose last shell ended).
+                        "quit" => Effect::Quit,
                         "focus" if self.names_window(&c) => Effect::Window(WindowAction::Focus, self.which_window(&mut c)?),
                         // `close workspace 2 on 0`: that workspace gone, its windows to the one beside.
                         "close" if c.word("workspace") => {

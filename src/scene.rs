@@ -1949,6 +1949,8 @@ pub enum Effect {
     FocusField(Option<TextId>),
     /// `focus term`, a terminal: the keys go to its shell.
     FocusTerminal(&'static str),
+    /// `quit`: the program ends.
+    Quit,
     /// A live text becomes that: `name = ""`, `label = draft`.
     Text(TextId, TextValue),
     /// Something done to a window of the compositor inside the scene: which

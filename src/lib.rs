@@ -266,6 +266,7 @@ pub fn run_with(options: Vec<String>) {
     let blocked = Arc::new(AtomicBool::new(false));
     let (to_render, from_render) = channel();
     terminal::set_waker(to_render.clone());
+    let _ = QUIT_TX.set(std::sync::Mutex::new(to_render.clone()));
     // The thumbnails service's frames on the card, summed by the render.
     #[cfg(target_os = "linux")]
     {
@@ -582,6 +583,15 @@ pub fn run_with(options: Vec<String>) {
     let _ = to_render.send(ToRender::Quit);
     let _ = render.join();
     quit();
+}
+
+static QUIT_TX: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<ToRender>>> = std::sync::OnceLock::new();
+
+/// A scene's `quit`: the program ends, through the render as any other way of ending.
+pub(crate) fn quit_from_scene() {
+    if let Some(tx) = QUIT_TX.get().map(|t| t.lock().unwrap().clone()) {
+        std::thread::spawn(move || quit_after_render(&tx));
+    }
 }
 
 /// The process goes away whole —the destruction order does not deserve code in a

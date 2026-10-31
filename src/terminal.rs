@@ -584,7 +584,7 @@ fn expand(f: &str) -> std::path::PathBuf {
 }
 
 /// What each one says, told to the scene where it declared it: `NAME.title`
-/// and `NAME.folder` (texts), `NAME.alive`, `NAME.bell` and `NAME.focus` (facts).
+/// and `NAME.folder` (texts), `NAME.alive`, `NAME.bell`, `NAME.focus`, `NAME.cols` and `NAME.rows` (facts).
 pub fn report(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic: &Sender<Event>, hands: &mut Hands) {
     let look_folders = hands.folders_at.elapsed() > Duration::from_millis(700);
     if look_folders {
@@ -615,6 +615,8 @@ pub fn report(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic: 
                 fact(format!("{name}.bell"), bells as f32, facts);
             }
             fact(format!("{name}.focus"), (focus == Some(*name)) as u8 as f32, facts);
+            fact(format!("{name}.cols"), s.size.num_cols as f32, facts);
+            fact(format!("{name}.rows"), s.size.num_lines as f32, facts);
             let title = s.shared.title.lock().unwrap().clone();
             if title.is_some() && title != s.told_title {
                 s.told_title = title.clone();
