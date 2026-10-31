@@ -2113,6 +2113,7 @@ pub fn run(
         }
         for gained in &focus_changes {
             have_keyboard = *gained;
+            crate::terminal::with(|r| r.window_keys = *gained);
             // Without the keyboard nothing is held: its coming up will not be heard.
             if !*gained {
                 for (_, name) in keys_held.drain(..) {
@@ -2315,13 +2316,14 @@ pub fn run(
         }
         let (mut pressed, mut pressed_with, mut released) = (None, None, None);
         let held_shift = keys_held.iter().any(|(_, n)| n.starts_with("Shift"));
+        let held_ctrl = keys_held.iter().any(|(_, n)| n.starts_with("Control"));
         for (button, down) in &buttons {
             match (*button, *down) {
                 (0, true) => {
                     // On a terminal: it takes the keys, and the press selects in it (or is its program's).
                     if let (Some(k), Some(p)) = (hovered, pointer) {
                         if let Some(t) = draw.terminals.iter().find(|t| t.zone == scene.zones[k].id) {
-                            crate::terminal::press(t, p, 0, held_shift, &mut term_hands);
+                            crate::terminal::press(t, p, 0, held_shift, held_ctrl, &mut term_hands);
                             editing = None;
                             parked = None;
                             selection = None;
@@ -2386,7 +2388,7 @@ pub fn run(
                     // The middle button pastes in a terminal; the right one is its program's if it asked for the mouse.
                     if let (Some(k), Some(p)) = (hovered, pointer) {
                         if let Some(t) = draw.terminals.iter().find(|t| t.zone == scene.zones[k].id) {
-                            crate::terminal::press(t, p, if b == 1 { 1 } else { 2 }, held_shift, &mut term_hands);
+                            crate::terminal::press(t, p, if b == 1 { 1 } else { 2 }, held_shift, held_ctrl, &mut term_hands);
                         }
                     }
                     pressed_with = hovered.map(|k| (k, b))

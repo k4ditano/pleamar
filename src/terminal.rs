@@ -249,6 +249,39 @@ impl Session {
         }
     }
 
+    /// The link at a cell, for Ctrl+click: one a program marked (OSC 8), or an
+    /// address written on its line (`https://…`, `file://…`).
+    pub fn link_at(&self, col: f32, row: f32) -> Option<String> {
+        let (p, _) = self.point(col, row);
+        let t = self.term.lock();
+        if let Some(h) = t.grid()[p].hyperlink() {
+            return Some(h.uri().to_owned());
+        }
+        let line: String = (0..t.columns()).map(|c| t.grid()[Point::new(p.line, Column(c))].c).collect();
+        let at = p.column.0;
+        let chars: Vec<char> = line.chars().collect();
+        for scheme in ["https://", "http://", "file://"] {
+            let mut from = 0;
+            let text: String = chars.iter().collect();
+            while let Some(k) = text[from..].find(scheme) {
+                let start = text[..from + k].chars().count();
+                let mut end = start;
+                while end < chars.len() && !chars[end].is_whitespace() && !matches!(chars[end], '"' | '\'' | '<' | '>' | '`' | '\0') {
+                    end += 1;
+                }
+                // (A sentence's end is not the address's.)
+                while end > start && matches!(chars[end - 1], '.' | ',' | ';' | ':' | ')' | ']') {
+                    end -= 1;
+                }
+                if (start..end).contains(&at) {
+                    return Some(chars[start..end].iter().collect());
+                }
+                from = from + k + scheme.len();
+            }
+        }
+        None
+    }
+
     /// What is selected, as text.
     pub fn selected(&self) -> Option<String> {
         self.term.lock().selection_to_string().filter(|s| !s.is_empty())
@@ -360,6 +393,11 @@ impl Session {
 pub struct Registry {
     pub sessions: HashMap<&'static str, Session>,
     pub focus: Option<&'static str>,
+    /// Whether the window has the keyboard at all: without it, no terminal does
+    /// (its cursor is an outline, and its program is told so).
+    pub window_keys: bool,
+    /// The focus its programs were last told of (`\e[I`, `\e[O`).
+    told_focus: Option<&'static str>,
 }
 
 static REGISTRY: OnceLock<Mutex<Registry>> = OnceLock::new();
@@ -380,7 +418,7 @@ pub fn versions() -> Vec<(&'static str, u64)> {
     with(|r| {
         let mut v: Vec<(&'static str, u64)> = r.sessions.iter().map(|(k, s)| (*k, s.shared.version.load(Ordering::Relaxed))).collect();
         v.sort_unstable();
-        v.push(("", r.focus.map_or(0, |f| f.as_ptr() as u64)));
+        v.push(("", r.focus.map_or(0, |f| f.as_ptr() as u64) ^ r.window_keys as u64));
         v
     })
 }
@@ -576,6 +614,67 @@ pub fn sync(placed: &[PlacedTerminal], runs: &[(&'static str, bool)]) {
     });
 }
 
+/// What the scene's logic asks of one of its terminals (`sys.call("terminal.copy", "term")`):
+/// `copy` what is selected, `paste` the clipboard, `write` a text as if typed
+/// (a command and its return, say), `forget` its history, `select_all`.
+pub fn command(what: &str, name: &str, text: Option<&str>) -> Result<(), String> {
+    with(|r| {
+        let key = r.sessions.keys().find(|k| **k == name).copied().ok_or_else(|| format!("there is no terminal '{name}' running"))?;
+        let s = r.sessions.get_mut(key).unwrap();
+        match what {
+            "copy" => match s.selected() {
+                Some(t) => {
+                    crate::platform::clipboard_write(&t);
+                    Ok(())
+                }
+                None => Err("nothing is selected".into()),
+            },
+            "paste" => {
+                let t = crate::platform::clipboard_read().ok_or("the clipboard has no text")?;
+                s.paste(&t);
+                Ok(())
+            }
+            "write" => {
+                s.scroll_to_bottom();
+                s.write(text.unwrap_or("").as_bytes().to_vec());
+                Ok(())
+            }
+            "forget" => {
+                s.term.lock().grid_mut().clear_history();
+                s.shared.version.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+            "select_all" => {
+                let mut t = s.term.lock();
+                let top = Point::new(Line(-(t.history_size() as i32)), Column(0));
+                let bottom = Point::new(Line(t.screen_lines() as i32 - 1), Column(t.columns().saturating_sub(1)));
+                let mut sel = Selection::new(SelectionType::Simple, top, Side::Left);
+                sel.update(bottom, Side::Right);
+                t.selection = Some(sel);
+                s.shared.version.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+            other => Err(format!("a terminal does not know '{other}': copy, paste, write, forget, select_all")),
+        }
+    })
+}
+
+/// An address opened with what the system opens them with, loose from the scene.
+fn open_link(link: &str) {
+    if !(link.starts_with("http://") || link.starts_with("https://") || link.starts_with("file://") || link.starts_with("mailto:")) {
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    let opened = std::process::Command::new("setsid").args(["-f", "xdg-open", link]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+    #[cfg(target_os = "macos")]
+    let opened = std::process::Command::new("open").arg(link).status();
+    #[cfg(target_os = "windows")]
+    let opened = std::process::Command::new("cmd").args(["/C", "start", "", link]).status();
+    if let Err(e) = opened {
+        eprintln!("terminal · could not open {link}: {e}");
+    }
+}
+
 fn expand(f: &str) -> std::path::PathBuf {
     match f.strip_prefix("~") {
         Some(rest) => std::path::PathBuf::from(format!("{}{rest}", std::env::var("HOME").unwrap_or_default())),
@@ -603,6 +702,18 @@ pub fn report(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic: 
     let mut said: Vec<(String, String)> = Vec::new();
     with(|r| {
         let focus = r.focus;
+        // A program that asked to know when it has the keys (vim, a TUI) is told.
+        let now = if r.window_keys { focus } else { None };
+        if now != r.told_focus {
+            for (name, lost) in [(r.told_focus, true), (now, false)] {
+                if let Some(s) = name.and_then(|n| r.sessions.get(n)) {
+                    if s.mode().contains(TermMode::FOCUS_IN_OUT) {
+                        s.write(if lost { b"\x1b[O".to_vec() } else { b"\x1b[I".to_vec() });
+                    }
+                }
+            }
+            r.told_focus = now;
+        }
         for (name, s) in r.sessions.iter_mut() {
             let alive = s.alive();
             if s.told_alive != Some(alive) {
@@ -701,7 +812,7 @@ fn cell_at(t: &PlacedTerminal, p: (f32, f32)) -> (f32, f32) {
 /// A button goes down on a terminal: it takes the keys; then the left one
 /// selects (two clicks a word, three a line), the middle one pastes, and a
 /// program that asked for the mouse gets it instead (unless Shift is held).
-pub fn press(t: &PlacedTerminal, p: (f32, f32), button: u8, shift: bool, hands: &mut Hands) {
+pub fn press(t: &PlacedTerminal, p: (f32, f32), button: u8, shift: bool, ctrl: bool, hands: &mut Hands) {
     let now = Instant::now();
     with(|r| {
         r.focus = Some(t.name);
@@ -715,6 +826,11 @@ pub fn press(t: &PlacedTerminal, p: (f32, f32), button: u8, shift: bool, hands: 
             return;
         }
         match button {
+            0 if ctrl => {
+                if let Some(link) = s.link_at(col, row) {
+                    open_link(&link);
+                }
+            }
             0 => {
                 let again = now.duration_since(hands.clicks.0) < Duration::from_millis(450) && (p.0 - hands.clicks.1 .0).hypot(p.1 - hands.clicks.1 .1) < 5.0;
                 let n = if again { hands.clicks.2 % 3 + 1 } else { 1 };

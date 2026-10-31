@@ -1271,8 +1271,11 @@ impl LuauScript {
         let (c, mine) = (self.c.clone(), who.clone());
         sys.set("call", lua.create_function(move |_, (name, args): (String, mlua::Variadic<Value>)| {
             // Permission first, before anything the logic passed is converted.
+            // (The scene's own terminals need no permission: they are its own.)
             if name != "say" {
-                check_service_permission(&c, &name, true)?;
+                if !name.starts_with("terminal.") {
+                    check_service_permission(&c, &name, true)?;
+                }
                 let args: Vec<SysValue> = args.iter().map(|v| lua_to_value(v, 0)).collect();
                 return crate::platform::command(&mine, &name, &args).map_err(mlua::Error::runtime);
             }

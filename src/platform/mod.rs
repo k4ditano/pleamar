@@ -162,6 +162,14 @@ pub fn bluetooth_pairing(from: &str, handles: bool) {
 
 /// Ask a service to do something: `workspaces.focus`, 3.
 pub fn command(from: &str, name: &str, args: &[SysValue]) -> Result<(), String> {
+    // The scene's own terminals (`terminal`): copy, paste, write in one, forget its history.
+    if let Some(what) = name.strip_prefix("terminal.") {
+        let text = |k: usize| match args.get(k) {
+            Some(SysValue::Text(t)) => Some(t.as_str()),
+            _ => None,
+        };
+        return crate::terminal::command(what, text(0).unwrap_or(""), text(1));
+    }
     if name.starts_with("files.") {
         return files::command(from, name, args);
     }

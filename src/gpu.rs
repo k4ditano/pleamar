@@ -1215,7 +1215,7 @@ impl DrawList {
         let limit = rect.bounds().unwrap_or([0.0; 4]);
         let kf = self.push_shape(rect, 0.0);
         clips.push((kf, limit));
-        let focused = crate::terminal::with(|r| r.focus == Some(t.name));
+        let focused = crate::terminal::with(|r| r.focus == Some(t.name) && r.window_keys);
         let session = crate::terminal::with(|r| r.sessions.get(t.name).map(|s| (s.term.clone(), s.shared.clone())));
         if let Some((term, shared)) = session {
             *shared.palette.lock().unwrap() = colors;
