@@ -456,6 +456,8 @@ pub fn run(
     let mut gpu: Option<Gpu> = None;
     let mut sheets: Vec<Sheet> = Vec::new();
     let mut draw = DrawList::default();
+    // The terminals' mouse: which one is being selected in, and its clicks (`crate::terminal`).
+    let mut term_hands = crate::terminal::Hands::default();
     let mut previous = crate::gpu::PreviousFrame::default();
     // What the last list was made from (see `same_scene`).
     let mut compose_memo: Option<ComposeMemo> = None;
@@ -1799,7 +1801,15 @@ pub fn run(
                         }
                     }
                 }
+                // (A name that is no text may be a terminal's: `focus("term")`.)
+                ToRender::FocusField(Some(name)) if !scene.texts.iter().any(|t| t.0 == name) => {
+                    parked = None;
+                    editing = None;
+                    crate::terminal::with(|r| r.focus = Some(name));
+                    focus_asked = true;
+                }
                 ToRender::FocusField(name) => {
+                    crate::terminal::with(|r| r.focus = None);
                     parked = None;
                     editing = name.and_then(|n| scene.texts.iter().position(|t| t.0 == n)).map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() });
                     last_key = Instant::now();
@@ -1999,6 +2009,25 @@ pub fn run(
         }
         let mut submitted: Vec<usize> = Vec::new();
         for (name, typed, mods, code) in key_presses {
+            // A terminal with the keys takes them all —Ctrl+C is its program's—,
+            // except the ones the scene has a rule for (a new tab, closing one).
+            {
+                let mut combo = String::new();
+                for (on, prefix) in [(mods.ctrl, "Ctrl+"), (mods.alt, "Alt+"), (mods.logo, "Super+")] {
+                    if on {
+                        combo.push_str(prefix);
+                    }
+                }
+                if mods.shift && (mods.ctrl || mods.alt || mods.logo || typed.is_none()) && !name.starts_with("Shift") {
+                    combo.push_str("Shift+");
+                }
+                combo.push_str(&name);
+                let scenes = scene.rules.iter().any(|r| matches!(&r.when, Trigger::Key(t) if *t == combo) && r.guard.as_ref().is_none_or(|g| g.is_true(Ctx { props: &props, facts: &facts, seen: None })));
+                if editing.is_none() && crate::terminal::key(&name, typed.as_deref(), mods.ctrl, mods.alt, mods.shift, mods.logo, scenes, &draw.terminals) {
+                    last_activity = Instant::now();
+                    continue;
+                }
+            }
             // Ctrl+C with something of a text selected copies it, unless the
             // field being typed into has a selection of its own.
             if mods.ctrl && !mods.alt && !mods.logo && name == "c" && editing.as_ref().is_none_or(|e| e.cursor == e.anchor) {
@@ -2154,6 +2183,10 @@ pub fn run(
             prof_cpu[0] += c - prof_c;
             prof_c = c;
         }
+        // What the terminals say (their titles, folders, whether they live), to the scene.
+        if crate::terminal::with(|r| !r.sessions.is_empty()) {
+            crate::terminal::report(&scene, &mut facts, &mut texts, &to_logic, &mut term_hands);
+        }
         // ── 2. advance time ─────────────────────────────────────
         // Reduced motion from this frame on, if it was just asked for: every
         // spring settles where it was going, and from then on at once.
@@ -2281,9 +2314,23 @@ pub fn run(
             buttons = kept;
         }
         let (mut pressed, mut pressed_with, mut released) = (None, None, None);
+        let held_shift = keys_held.iter().any(|(_, n)| n.starts_with("Shift"));
         for (button, down) in &buttons {
             match (*button, *down) {
                 (0, true) => {
+                    // On a terminal: it takes the keys, and the press selects in it (or is its program's).
+                    if let (Some(k), Some(p)) = (hovered, pointer) {
+                        if let Some(t) = draw.terminals.iter().find(|t| t.zone == scene.zones[k].id) {
+                            crate::terminal::press(t, p, 0, held_shift, &mut term_hands);
+                            editing = None;
+                            parked = None;
+                            selection = None;
+                            pressed = hovered;
+                            drag = Some((k, p, now));
+                            let _ = to_logic.send(Event::Press(scene.zones[k].id));
+                            continue;
+                        }
+                    }
                     // On the letters of a text that can be selected, the press
                     // selects —unless a button, a field or something to carry
                     // out is on top of them: that one keeps its click—.
@@ -2323,6 +2370,7 @@ pub fn run(
                     }
                 }
                 (0, false) => {
+                    crate::terminal::release(&draw.terminals, pointer, &mut term_hands);
                     if let Some(s) = &mut selection {
                         s.dragging = false;
                     }
@@ -2334,7 +2382,15 @@ pub fn run(
                     }
                 }
                 // (The side buttons —back, forward— are the windows' alone.)
-                (b, true) if b <= 2 => pressed_with = hovered.map(|k| (k, b)),
+                (b, true) if b <= 2 => {
+                    // The middle button pastes in a terminal; the right one is its program's if it asked for the mouse.
+                    if let (Some(k), Some(p)) = (hovered, pointer) {
+                        if let Some(t) = draw.terminals.iter().find(|t| t.zone == scene.zones[k].id) {
+                            crate::terminal::press(t, p, if b == 1 { 1 } else { 2 }, held_shift, &mut term_hands);
+                        }
+                    }
+                    pressed_with = hovered.map(|k| (k, b))
+                }
                 _ => {}
             }
         }
@@ -2431,7 +2487,18 @@ pub fn run(
         // underneath, because a whole pill wants the wheel even if there is a button inside.
         if wheel != 0.0 {
             if let Some(k) = hovered {
-                let _ = to_logic.send(Event::Wheel(scene.zones[k].id, wheel));
+                match (draw.terminals.iter().find(|t| t.zone == scene.zones[k].id), pointer) {
+                    (Some(t), Some(p)) => crate::terminal::wheel(t, p, wheel),
+                    _ => {
+                        let _ = to_logic.send(Event::Wheel(scene.zones[k].id, wheel));
+                    }
+                }
+            }
+        }
+        // Selecting in a terminal, the mouse dragging.
+        if term_hands.drag.is_some() {
+            if let Some(p) = pointer {
+                crate::terminal::motion(&draw.terminals, p, &mut term_hands);
             }
         }
 
@@ -3274,7 +3341,16 @@ pub fn run(
                         let _ = to_logic.send(Event::Text(scene.texts[k].0, v.clone()));
                         texts[k] = v;
                     }
+                    Effect::FocusTerminal(name) => {
+                        parked = None;
+                        editing = None;
+                        crate::terminal::with(|r| r.focus = Some(name));
+                        if !have_keyboard && scene.surface().keyboard == Keyboard::OnDemand {
+                            keyboard_lent = Some(now);
+                        }
+                    }
                     Effect::FocusField(t) => {
+                        crate::terminal::with(|r| r.focus = None);
                         parked = None;
                         editing = t.map(|t| t.0 as usize).map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() });
                         last_key = now;
@@ -3943,7 +4019,7 @@ pub fn run(
                 // Not inside a hidden group either (`show:` false —the copy of
                 // another monitor—): it asked for another size too, and the
                 // window was told two sizes over and over (Discord, black).
-                for i in found.iter().filter(|k| !absent.iter().any(|r| r.contains(k)) && !draw.hidden.get(**k).copied().unwrap_or(false)).map(|k| &to_paint[*k]) {
+                for i in found.iter().filter(|k| !absent.iter().any(|r| r.contains(&**k)) && !draw.hidden.get(**k).copied().unwrap_or(false)).map(|k| &to_paint[*k]) {
                     let Instr::Window { slot, ask, alpha, .. } = i else { continue };
                     // Only where it is shown: with a copy of the scene per monitor,
                     // the copies where it is not would ask it for another size.
@@ -3991,6 +4067,7 @@ pub fn run(
         // over a desktop that draws nothing of it —no dock under it, nothing
         // carried— made the whole list again at the monitor's pace, to get the
         // same list.
+        let term_versions = crate::terminal::versions();
         let same_scene = !draw.timed
             && !draw.particles_alive
             && draw.wake_at.is_none()
@@ -4002,6 +4079,7 @@ pub fn run(
                     && m.views == draw.views
                     && m.texts == texts
                     && m.window_tex == draw.window_tex
+                    && m.terms == term_versions
                     && m.skip == draw.skip
                     && m.order == draw.order
                     && m.selected == draw.selected
@@ -4061,6 +4139,7 @@ pub fn run(
                 facts: Vec::new(),
                 texts: Vec::new(),
                 window_tex: Vec::new(),
+                terms: Vec::new(),
                 props: Vec::new(),
                 seen: Default::default(),
                 skip: Vec::new(),
@@ -4074,6 +4153,7 @@ pub fn run(
             m.facts.clone_from(&facts);
             m.texts.clone_from(&texts);
             m.window_tex.clone_from(&draw.window_tex);
+            m.terms = term_versions;
             m.props.clear();
             m.props.extend(props.iter().map(|a| (a.x, a.v)));
             m.seen.clone_from(&compose_seen);
@@ -4081,6 +4161,17 @@ pub fn run(
             m.order.clone_from(&draw.order);
             m.selected = draw.selected;
             m.signal_times.clone_from(&draw.signal_times);
+        }
+        // The terminals as the scene wants them now: started, ended, each at its
+        // size; and what they say, told to the scene.
+        if !draw.terminals.is_empty() || crate::terminal::with(|r| !r.sessions.is_empty()) {
+            let runs: Vec<(&'static str, bool)> = to_paint
+                .iter()
+                .enumerate()
+                .filter(|(k, _)| !absent.iter().any(|r| r.contains(k)))
+                .filter_map(|(_, i)| if let Instr::Terminal(t) = i { Some((t.name, t.run.eval(c) > 0.5)) } else { None })
+                .collect();
+            crate::terminal::sync(&draw.terminals, &runs);
         }
         // An agent's action: when its steps are done and the scene has stopped
         // answering —its rules, its logic—, it is told what happened.
@@ -6225,6 +6316,8 @@ struct ComposeMemo {
     seen: crate::scene::Seen,
     texts: Vec<String>,
     window_tex: Vec<Option<crate::gpu::WindowTex>>,
+    /// How each terminal's screen was (`crate::terminal::versions`).
+    terms: Vec<(&'static str, u64)>,
     /// What else the list is made from: the parts asleep, the order of what
     /// has a `z:`, the text selected, and when each event last happened.
     skip: Vec<std::ops::Range<usize>>,

@@ -2755,6 +2755,7 @@ impl<'a> Compiler<'a> {
                 "particles" => self.particles(n)?,
                 "input" => self.input_field(n)?,
                 "window" => self.window(n)?,
+                "terminal" => self.terminal(n)?,
                 "clip" => {
                     let margin = if c.word("inset") { c.num()? } else { 0.0 };
                     let from = c.i;
@@ -7102,6 +7103,116 @@ impl<'a> Compiler<'a> {
 
     /// `window win.$i { at: x, y; size: w, h }`: that slot's window, drawn in
     /// that box and answering the mouse there. It is also a zone with its name.
+    /// `terminal term { at: x, y; size: w, h; … }`: a shell and its screen (`crate::terminal`).
+    fn terminal(&mut self, n: &Node) -> R<()> {
+        let mut c = Cur::new(&n.head[1..], n.line, n.col);
+        let local = c.id("the terminal's name: `terminal term`")?;
+        c.expect_end()?;
+        let name = self.global(&local);
+        let mut p = self.properties(n, vocab::properties("terminal"))?;
+        let in_slot = std::mem::take(&mut self.in_slot);
+        let missing = |q: &str| CompileError::at(n.line, n.col, format!("this terminal is missing '{q}'"));
+        let (x, y) = match p.get_mut("at") {
+            Some(c) => self.point(c)?,
+            None if in_slot => (0.0.into(), 0.0.into()),
+            None => return Err(missing("at")),
+        };
+        let (w, h) = self.point(p.get_mut("size").ok_or_else(|| missing("size"))?)?;
+        self.last_size = Some((w.clone(), h.clone()));
+        let family = match p.get_mut("family") {
+            Some(c) => Some(interned(&c.string()?)),
+            None => Some("monospace"),
+        };
+        let px = match p.get_mut("font_size") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(13.0),
+        };
+        let line_height = match p.get_mut("line_height") {
+            Some(c) => self.constant(c, "a terminal's `line_height:`")?,
+            None => 1.25,
+        };
+        // Ink, paper and the sixteen ANSI colours, in that order.
+        let mut colors = Vec::new();
+        if let Some(c) = p.get_mut("colors") {
+            loop {
+                colors.push(self.color(c)?);
+                if !c.sym(",") {
+                    break;
+                }
+            }
+            c.expect_end()?;
+            if colors.len() > 18 {
+                return c.error("`colors:` are ink, paper and the sixteen ANSI ones: 18 at most");
+            }
+        }
+        let cursor = match p.get_mut("cursor") {
+            Some(c) => Some(self.color(c)?),
+            None => None,
+        };
+        let selection = match p.get_mut("selection") {
+            Some(c) => Some(self.color(c)?),
+            None => None,
+        };
+        let mut command = Vec::new();
+        if let Some(c) = p.get_mut("command") {
+            loop {
+                command.push(c.string()?);
+                if !c.sym(",") {
+                    break;
+                }
+            }
+            c.expect_end()?;
+        }
+        let folder = match p.get_mut("folder") {
+            Some(c) => Some(match c.peek() {
+                Some(TokenKind::Str(_)) => Content::Literal(c.string()?),
+                _ => {
+                    let t = self.global(&c.id("a text, or a folder between quotes")?);
+                    match self.texts.get(&t) {
+                        Some(k) => Content::Live(*k),
+                        None => return self.unknown(c, "no text", &t, self.texts.keys().collect()),
+                    }
+                }
+            }),
+            None => None,
+        };
+        let run = match p.get_mut("run") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(1.0),
+        };
+        let alpha = match p.get_mut("opacity") {
+            Some(c) => self.expr(c)?,
+            None => Expr::K(1.0),
+        };
+        let shown = match p.get_mut("show") {
+            Some(c) => Some(self.expr(c)?.clamp(0.0, 1.0)),
+            None => None,
+        };
+        let alpha = match &shown {
+            Some(v) => alpha * v.clone(),
+            None => alpha,
+        };
+        let label = match p.get_mut("label") {
+            Some(c) => Some(self.label(c)?),
+            None => None,
+        };
+        let reach = match p.get_mut("agent") {
+            Some(c) => reach(c)?,
+            None => Reach::Any,
+        };
+        // Its zone: pressing it gives it the keys; over it the cursor is the typing one.
+        let zone = self.declare_zone(&local);
+        self.candidates.push(Candidate {
+            name: zone.clone(),
+            at: self.e.instrs.len(),
+            zblock: self.zblock,
+            shape: Shape::Rect { center: (x.clone() + w.clone() * 0.5, y.clone() + h.clone() * 0.5), half_size: (w.clone() * 0.5, h.clone() * 0.5), radius: 0.0.into() },
+            active: None, visible: Some(alpha.clone()), under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None,
+        });
+        self.e.paint(Instr::Terminal(Box::new(TerminalSpec { name: interned(&name), zone: interned(&zone), target: (x, y, w, h), alpha, family, px, line_height, colors, cursor, selection, run, command, folder })));
+        Ok(())
+    }
+
     fn window(&mut self, n: &Node) -> R<()> {
         let mut c = Cur::new(&n.head[1..], n.line, n.col);
         let local = c.id("which window: `win.$i`")?;
@@ -7649,7 +7760,8 @@ impl<'a> Compiler<'a> {
                             let n = self.global(&c.id("the name of the input")?);
                             match self.texts.get(&n) {
                                 Some(t) => Effect::FocusField(Some(*t)),
-                                None => return self.unknown(&c, "no text", &n, self.texts.keys().collect()),
+                                // (Not a text: a terminal's name, `focus term`, declared before or after.)
+                                None => Effect::FocusTerminal(interned(&n)),
                             }
                         }
                         // `emit opened` or, with a payload, `emit opened(i)`.

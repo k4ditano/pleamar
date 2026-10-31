@@ -10,7 +10,7 @@ pub const STATEMENTS: &[&str] = &[
     "body", "ellipse", "box", "arc", "line", "path", "input", "clip", "group", "popup",
     "component", "children", "repeat", "for", "row", "column", "grid", "pages", "space", "between",
     "layer", "on", "every", "blink", "wave", "spin", "follow", "look", "gesture", "posture",
-    "translations", "windows", "window",
+    "translations", "windows", "window", "terminal",
 ];
 
 /// What a library can declare.
@@ -31,6 +31,7 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("text", &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show", "grow", "gradient", "outline", "shadow", "letter_move", "letter_opacity", "letter_scale", "selectable", "selection", "markdown", "place", "tight"]),
     ("image", &["at", "size", "opacity", "tint", "cell", "fit", "show", "grow", "place"]),
     ("window", &["at", "size", "ask", "opacity", "show"]),
+    ("terminal", &["at", "size", "family", "font_size", "line_height", "colors", "cursor", "selection", "command", "folder", "run", "opacity", "show", "label", "agent", "place", "grow"]),
     ("figure", &["at", "size", "scale", "rotate", "pivot", "color", "opacity", "blend", "stroke", "show", "grow", "place"]),
     ("shader", &["at", "size", "corner", "opacity", "show", "values", "colors", "grow", "place"]),
     ("particles", &["at", "area", "count", "life", "speed", "direction", "spread", "gravity", "drag", "size", "colors", "opacity", "shape", "emit", "burst", "show"]),
@@ -99,6 +100,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("grid", "`grid { columns: 2; gap: 12; width: 456; row: 106 }` — children in cells, left to right and down; `span: 2` takes two. Inside each, `cell.w` and `cell.h` are its cell."),
     ("windows", "`windows win max 6` — a compositor inside the scene: programs started with `launch \"kitty\"` open in it. Per slot: `win.$i.open`, `.title`, `.app`, `.width`, `.height`, `.focused`, `.place` (its turn in the layout of its monitor, −1 if closed), `.screen`, `.fullscreen`, `.dialog`, `.minimized`, `.floating`, `.framed` (it lets the compositor draw its title bar), `.held` · `.edges` (it asks to be carried, 1, or stretched, 2, by those edges) (`float win.$i`: over the layout, out of `.place`, `.among` and `on.$s`), `.workspace`, `.among` (how many share its monitor and workspace), `.rank` (its turn among the ones shown, −1 if hidden); and `win.count`, `win.on.$screen`, `win.shown.$screen` (the workspace each monitor shows), `win.focus`, `win.socket`."),
     ("window", "`window win.$i { at: x, y; size: w, h }` — that slot's window, drawn there and answering the mouse and the keyboard. `ask: w, h` is the size it is told to have (by default `size`): let `size` travel on a spring and `ask` be where it goes. It is also a zone: `on press win.$i`, `win.$i.hover`."),
+    ("terminal", "`terminal term { at: 0, 40; size: w, h - 40; family: \"JetBrains Mono\"; font_size: 13 }` — a shell on a terminal of its own, its screen drawn there: the keys go to it once it is pressed (or `focus term`), the mouse selects, Ctrl+Shift+C and Ctrl+Shift+V copy and paste. `command:` what runs (the user's shell if not said), `folder:` where, `run:` while it lives (hidden, it keeps living: a tab behind another), `colors:` ink, paper and the sixteen ANSI ones. What it says, if the scene declares them: `term.title`, `term.folder` (texts), `term.alive`, `term.bell`, `term.focus` (facts). It is also a zone: `on press term`, `term.hover`."),
     ("pages", "`pages settings { header: 20, 45; page menu \"Settings\" { … } page look \"Her look\" { … } }` — one page at a time, sliding in; `settings` is a fact with the pages' names (`settings = look`), and with `header:` comes the ← and the title, and Esc goes back."),
     ("column", "`column { gap: 8 }` — children one under the other. Same properties as `row`."),
     ("space", "`space 12` — a gap of that size inside a layout."),

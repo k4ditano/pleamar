@@ -69,6 +69,8 @@ pub struct DrawList {
     pub measurements: Vec<(PropId, f32)>,
     /// The text fields, as they ended up: to know where a click falls.
     pub fields: Vec<PlacedField>,
+    /// The terminals laid out this frame (see `PlacedTerminal`).
+    pub terminals: Vec<PlacedTerminal>,
     /// The texts that can be selected (`selectable: true`), as they ended up
     /// this frame, in the order they were painted.
     pub selectable: Vec<PlacedText>,
@@ -357,6 +359,23 @@ pub struct PlacedField {
     pub passive: bool,
 }
 
+/// A terminal as the drawing laid it out: where its cells are, how many and
+/// how big, for the render to size its screen, and to know which cell the mouse is on.
+#[derive(Clone, Debug)]
+pub struct PlacedTerminal {
+    pub name: &'static str,
+    pub zone: &'static str,
+    pub origin: (f32, f32),
+    pub cell: (f32, f32),
+    pub cols: u16,
+    pub rows: u16,
+    /// Whether it should be running (`run:`), and where and what it starts.
+    pub run: bool,
+    pub command: Vec<String>,
+    pub folder: Option<String>,
+    pub colors: [[u8; 3]; 18],
+}
+
 /// The dot each letter of a secret field is painted with. It is three bytes
 /// long, whatever the letter it covers: both computations come from that.
 pub const MASK_DOT: &str = "•";
@@ -489,7 +508,7 @@ struct Open {
     starts: Lens,
     depth: (usize, usize, usize),
     /// What the frame had of these before it: the stretch's own are told apart.
-    before: (bool, bool, Option<f32>, usize),
+    before: (bool, bool, Option<f32>, usize, usize),
 }
 
 /// A hash of numbers, by their bits: each one mixed in whole.
@@ -1091,6 +1110,8 @@ impl DrawList {
             && !particles
             && wake.is_none()
             && self.texts_seen.len() == o.before.3
+            // (A terminal's screen is not something it read: it is never copied.)
+            && self.terminals.len() == o.before.4
             && ends.particle_marks == o.starts.particle_marks;
         // The frame's own again, with the stretch's added.
         self.timed |= o.before.0;
@@ -1152,6 +1173,299 @@ impl DrawList {
     /// A piece of the atlas —a glyph, an image— placed on screen. With
     /// `tint`, its alpha is a mask painted in that colour.
     #[allow(clippy::too_many_arguments)]
+    /// A terminal's screen (`crate::terminal`): the backgrounds of its cells
+    /// where they are not the paper, what is selected, its letters —each one
+    /// from the atlas, in its cell, whatever the font's advance says—, the
+    /// underlines and the cursor. Laid out in whole device pixels, so its
+    /// letters are as sharp as any text of the scene.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_terminal(&mut self, idx: usize, t: &crate::scene::TerminalSpec, c: Ctx, texts: &[String], tip: &mut Texts, mult: f32, affine: Affine, clips: &mut Vec<(usize, [f32; 4])>) {
+        use alacritty_terminal::grid::Dimensions;
+        use alacritty_terminal::term::cell::Flags;
+        use alacritty_terminal::vte::ansi::CursorShape;
+        let s = tip.scale().max(0.5);
+        let snap = |v: f32| (v * s).round() / s;
+        let (x0, y0, w, h) = (snap(t.target.0.eval(c)), snap(t.target.1.eval(c)), t.target.2.eval(c), t.target.3.eval(c));
+        let px = t.px.eval(c).clamp(4.0, 96.0);
+        let mut style = crate::scene::Style::new(px, [Expr::K(1.0), Expr::K(1.0), Expr::K(1.0)]);
+        style.family = t.family;
+        style.line_height = t.line_height;
+        // The cell: the font's advance (ten letters measured, for the fraction) and its line, in whole device pixels.
+        let probe = tip.layout(usize::MAX - 7 - (px.to_bits() as usize & 0xffff), LayoutKey::new("MMMMMMMMMM", &style, None));
+        let Some(probe) = probe.filter(|m| m.size.0 > 0.0) else { return };
+        let cw = ((probe.size.0 / 10.0) * s).round().max(1.0) / s;
+        let ch = ((px * t.line_height) * s).round().max(1.0) / s;
+        let cols = ((w / cw).floor() as i32).clamp(2, 1000) as u16;
+        let rows = ((h / ch).floor() as i32).clamp(1, 500) as u16;
+        let mut colors = crate::terminal::DEFAULT_COLORS;
+        for (k, col) in t.colors.iter().enumerate().take(18) {
+            colors[k] = [col[0].eval(c), col[1].eval(c), col[2].eval(c)].map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+        }
+        let folder = t.folder.as_ref().map(|f| content_text(f, c, texts).into_owned());
+        self.terminals.push(crate::gpu::PlacedTerminal { name: t.name, zone: t.zone, origin: (x0, y0), cell: (cw, ch), cols, rows, run: t.run.eval(c) > 0.5, command: t.command.clone(), folder, colors });
+        let a = t.alpha.eval(c).clamp(0.0, 1.0) * mult;
+        if a <= 0.001 {
+            return;
+        }
+        let rgb = |c: [u8; 3]| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0];
+        let cursor_rgb = t.cursor.as_ref().map(|k| [k[0].eval(c), k[1].eval(c), k[2].eval(c)]);
+        let selection_rgb = t.selection.as_ref().map(|k| [k[0].eval(c), k[1].eval(c), k[2].eval(c)]);
+        // Clipped to its box: a line wider than it (while it is resized) is not seen past it.
+        let rect = crate::shapes::FlatShape { kind: 1, cx: x0 + w * 0.5, cy: y0 + h * 0.5, mx: w * 0.5, my: h * 0.5, radius: 0.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke: 0.0, affine };
+        let limit = rect.bounds().unwrap_or([0.0; 4]);
+        let kf = self.push_shape(rect, 0.0);
+        clips.push((kf, limit));
+        let focused = crate::terminal::with(|r| r.focus == Some(t.name));
+        let session = crate::terminal::with(|r| r.sessions.get(t.name).map(|s| (s.term.clone(), s.shared.clone())));
+        if let Some((term, shared)) = session {
+            *shared.palette.lock().unwrap() = colors;
+            let term = term.lock();
+            let content = term.renderable_content();
+            let (ink, paper) = (colors[0], colors[1]);
+            let offset = content.display_offset as i32;
+            let selection = content.selection;
+            let cursor = content.cursor;
+            let set = content.colors;
+            let rows_n = term.screen_lines() as i32;
+            // Each distinct letter is laid out once a frame (and once at all, in the atlas).
+            let mut glyphs: std::collections::HashMap<(char, u8, Vec<char>), Option<std::sync::Arc<crate::text::Layout>>> = std::collections::HashMap::new();
+            let mut letters: Vec<([f32; 2], (char, u8, Vec<char>), [f32; 3], f32)> = Vec::with_capacity(cols as usize * rows as usize);
+            let mut lines: Vec<([f32; 4], [f32; 3])> = Vec::new();
+            let mut drawn_cells: Vec<([f32; 2], crate::terminal::Drawn, [f32; 3])> = Vec::new();
+            let mut seen_text = String::new();
+            let mut last_row = i32::MIN;
+            // A run of cells of the same background, painted as one rectangle.
+            let mut run: Option<(i32, usize, usize, [u8; 3])> = None;
+            let mut runs: Vec<(i32, usize, usize, [u8; 3])> = Vec::new();
+            for cell in content.display_iter {
+                let row = cell.point.line.0 + offset;
+                if row < 0 || row >= rows_n {
+                    continue;
+                }
+                if self.collect_texts && row != last_row {
+                    if last_row != i32::MIN {
+                        seen_text.push('\n');
+                    }
+                    last_row = row;
+                }
+                let col = cell.point.column.0;
+                let flags = cell.flags;
+                if flags.contains(Flags::WIDE_CHAR_SPACER) || flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
+                    continue;
+                }
+                let bold = flags.contains(Flags::BOLD);
+                let mut fg = crate::terminal::resolve(cell.fg, &colors, set, bold);
+                let mut bg = crate::terminal::resolve(cell.bg, &colors, set, false);
+                if flags.contains(Flags::DIM) {
+                    fg = crate::terminal::dim(fg);
+                }
+                if flags.contains(Flags::INVERSE) {
+                    std::mem::swap(&mut fg, &mut bg);
+                }
+                let span = if flags.contains(Flags::WIDE_CHAR) { 2 } else { 1 };
+                // The background, joined with the cells beside it of the same one.
+                let painted = bg != paper;
+                match &mut run {
+                    Some((r, _, end, b)) if *r == row && *end == col && *b == bg && painted => *end = col + span,
+                    _ => {
+                        if let Some(done) = run.take() {
+                            runs.push(done);
+                        }
+                        if painted {
+                            run = Some((row, col, col + span, bg));
+                        }
+                    }
+                }
+                let ch_ = cell.c;
+                if self.collect_texts {
+                    seen_text.push(if ch_ == '\0' { ' ' } else { ch_ });
+                }
+                if flags.contains(Flags::HIDDEN) {
+                    continue;
+                }
+                let (cx, cy) = (x0 + col as f32 * cw, y0 + row as f32 * ch);
+                let dim_a = 1.0;
+                if let Some(d) = crate::terminal::drawn(ch_) {
+                    drawn_cells.push(([cx, cy], d, rgb(fg)));
+                } else if ch_ != ' ' && ch_ != '\t' && ch_ != '\0' {
+                    let looks = (bold as u8) | ((flags.contains(Flags::ITALIC) as u8) << 1);
+                    let extra: Vec<char> = cell.zerowidth().map(|z| z.to_vec()).unwrap_or_default();
+                    letters.push(([cx, cy], (ch_, looks, extra), rgb(fg), dim_a));
+                }
+                let under = flags.intersects(Flags::ALL_UNDERLINES);
+                if under {
+                    let thick = (1.0 / s).max(px / 14.0).round().max(1.0 / s);
+                    lines.push(([cx, cy + ch - thick - (ch - px) * 0.25, cw * span as f32, thick], rgb(fg)));
+                }
+                if flags.contains(Flags::STRIKEOUT) {
+                    let thick = (1.0 / s).max(px / 14.0).round().max(1.0 / s);
+                    lines.push(([cx, cy + ch * 0.52, cw * span as f32, thick], rgb(fg)));
+                }
+            }
+            if let Some(done) = run.take() {
+                runs.push(done);
+            }
+            for (row, from, to, bg) in runs {
+                self.flat_rect([x0 + from as f32 * cw, y0 + row as f32 * ch, (to - from) as f32 * cw, ch], rgb(bg), a, affine, clips);
+            }
+            // What is selected, behind the letters.
+            if let Some(sel) = selection {
+                let tone = selection_rgb.unwrap_or([0.25, 0.42, 0.62]);
+                for row in 0..rows_n {
+                    let line = alacritty_terminal::index::Line(row - offset);
+                    if line < sel.start.line || line > sel.end.line {
+                        continue;
+                    }
+                    let from = if line == sel.start.line && !sel.is_block { sel.start.column.0 } else if sel.is_block { sel.start.column.0 } else { 0 };
+                    let to = if line == sel.end.line && !sel.is_block { sel.end.column.0 + 1 } else if sel.is_block { sel.end.column.0 + 1 } else { cols as usize };
+                    if to > from {
+                        self.flat_rect([x0 + from as f32 * cw, y0 + row as f32 * ch, (to - from) as f32 * cw, ch], tone, a * 0.85, affine, clips);
+                    }
+                }
+            }
+            // The cursor: a block (its letter in the paper's colour on it), a bar or a line, and only an outline
+            // while another thing has the keys. Not while the history is scrolled.
+            let cur_row = cursor.point.line.0 + offset;
+            let cur_rgb = cursor_rgb.unwrap_or(rgb(ink));
+            let mut on_cursor: Option<(usize, i32)> = None;
+            if cursor.shape != CursorShape::Hidden && (0..rows_n).contains(&cur_row) {
+                let (cx, cy) = (x0 + cursor.point.column.0 as f32 * cw, y0 + cur_row as f32 * ch);
+                let thin = (1.0 / s).max((px / 8.0 * s).round() / s);
+                match (focused, cursor.shape) {
+                    (true, CursorShape::Block) => {
+                        self.flat_rect([cx, cy, cw, ch], cur_rgb, a, affine, clips);
+                        on_cursor = Some((cursor.point.column.0, cur_row));
+                    }
+                    (true, CursorShape::Beam) => self.flat_rect([cx, cy, thin.max(2.0 / s), ch], cur_rgb, a, affine, clips),
+                    (true, CursorShape::Underline) => self.flat_rect([cx, cy + ch - thin, cw, thin], cur_rgb, a, affine, clips),
+                    _ => {
+                        // Hollow: four thin sides.
+                        let e = 1.0 / s;
+                        self.flat_rect([cx, cy, cw, e], cur_rgb, a * 0.8, affine, clips);
+                        self.flat_rect([cx, cy + ch - e, cw, e], cur_rgb, a * 0.8, affine, clips);
+                        self.flat_rect([cx, cy, e, ch], cur_rgb, a * 0.8, affine, clips);
+                        self.flat_rect([cx + cw - e, cy, e, ch], cur_rgb, a * 0.8, affine, clips);
+                    }
+                }
+            }
+            drop(term);
+            for (at, key, fg, la) in letters {
+                let layout = glyphs.entry(key.clone()).or_insert_with(|| {
+                    let mut text = key.0.to_string();
+                    text.extend(key.2.iter());
+                    let base = if key.1 & 1 != 0 { LayoutKey::new(&text, &style, None).weighted(700) } else { LayoutKey::new(&text, &style, None) };
+                    let lk = if key.1 & 2 != 0 { LayoutKey::marked(text.clone(), vec![(0, text.len() as u32, crate::markdown::ITALIC)], &if key.1 & 1 != 0 { crate::scene::Style { weight: 700, ..style.clone() } } else { style.clone() }, None) } else { base };
+                    // (Its own place: the last layout seen at a place is shown while a new one comes,
+                    // and two letters must never stand in for each other.)
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    std::hash::Hash::hash(&lk, &mut h);
+                    let place = (std::hash::Hasher::finish(&h) as usize) | (1usize << (usize::BITS - 2));
+                    tip.layout(place, lk)
+                });
+                let Some(m) = layout else { continue };
+                let col = ((at[0] - x0) / cw).round() as usize;
+                let row = ((at[1] - y0) / ch).round() as i32;
+                let tint = if on_cursor == Some((col, row)) { rgb(paper) } else { fg };
+                // A letter wider than its cell (an emoji, a glyph of another font) keeps its place on the left.
+                let (tx, ty) = (snap(at[0]), snap(at[1] + (ch - m.size.1) * 0.5));
+                for g in &m.glyphs {
+                    let d = [tx + g.rect[0], ty + g.rect[1], g.rect[2], g.rect[3]];
+                    self.sprite(d, g.uv, a * la, if g.colored { None } else { Some(tint) }, true, false, affine, clips);
+                }
+            }
+            for (r, col) in lines {
+                self.flat_rect(r, col, a, affine, clips);
+            }
+            // The box-drawing and block characters, by hand: their lines cross each cell whole and
+            // meet the next one's, at the font's weight.
+            let light = ((px / 13.0 * s).round().max(1.0)) / s;
+            for (at, d, col) in drawn_cells {
+                let [x, y] = at;
+                match d {
+                    crate::terminal::Drawn::Block(b, k) => self.flat_rect([x + b[0] * cw, y + b[1] * ch, b[2] * cw, b[3] * ch], col, a * k, affine, clips),
+                    crate::terminal::Drawn::Arms(arms) => {
+                        let (mx, my) = (snap(x + cw * 0.5), snap(y + ch * 0.5));
+                        let width = |w: u8| if w == 2 { light * 2.0 } else { light };
+                        let gap = light * 1.5;
+                        let mut hline = |me: &mut Self, from: f32, to: f32, w: u8| {
+                            let t = width(w);
+                            if w == 3 {
+                                me.flat_rect([from, snap(my - gap - t * 0.5), to - from, t], col, a, affine, clips);
+                                me.flat_rect([from, snap(my + gap - t * 0.5), to - from, t], col, a, affine, clips);
+                            } else {
+                                me.flat_rect([from, snap(my - t * 0.5), to - from, t], col, a, affine, clips);
+                            }
+                        };
+                        let half = |w: u8| if w == 0 { 0.0 } else { width(w) * 0.5 + if w == 3 { gap } else { 0.0 } };
+                        let reach_v = half(arms[2]).max(half(arms[3]));
+                        let reach_h = half(arms[0]).max(half(arms[1]));
+                        if arms[0] > 0 {
+                            hline(self, x, mx + reach_v, arms[0]);
+                        }
+                        if arms[1] > 0 {
+                            hline(self, mx - reach_v, x + cw, arms[1]);
+                        }
+                        let mut vline = |me: &mut Self, from: f32, to: f32, w: u8| {
+                            let t = width(w);
+                            if w == 3 {
+                                me.flat_rect([snap(mx - gap - t * 0.5), from, t, to - from], col, a, affine, clips);
+                                me.flat_rect([snap(mx + gap - t * 0.5), from, t, to - from], col, a, affine, clips);
+                            } else {
+                                me.flat_rect([snap(mx - t * 0.5), from, t, to - from], col, a, affine, clips);
+                            }
+                        };
+                        if arms[2] > 0 {
+                            vline(self, y, my + reach_h, arms[2]);
+                        }
+                        if arms[3] > 0 {
+                            vline(self, my - reach_h, y + ch, arms[3]);
+                        }
+                    }
+                    crate::terminal::Drawn::Round { right, down } => {
+                        // A quarter of a rounded outline whose corner is this cell's middle, cut to the cell.
+                        let (mx, my) = (snap(x + cw * 0.5), snap(y + ch * 0.5));
+                        let r = (cw.min(ch) * 0.5).max(light);
+                        // (The outline is drawn across its box's edge: that edge goes down the middle of the pixels the straight lines take.)
+                        let (lx, ty) = (snap(mx - light * 0.5), snap(my - light * 0.5));
+                        let (ex, ey) = (lx + light * 0.5, ty + light * 0.5);
+                        let (bx, by) = (if right { ex } else { ex - cw * 2.0 }, if down { ey } else { ey - ch * 2.0 });
+                        let shape = crate::shapes::FlatShape { kind: 1, cx: bx + cw, cy: by + ch, mx: cw, my: ch, radius: r, rotation: 0.0, ex: 1.0, ey: 1.0, stroke: light, affine };
+                        let cell = crate::shapes::FlatShape { kind: 1, cx: x + cw * 0.5, cy: y + ch * 0.5, mx: cw * 0.5, my: ch * 0.5, radius: 0.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke: 0.0, affine };
+                        let limit = cell.bounds().unwrap_or([0.0; 4]);
+                        let kc = self.push_shape(cell, 0.0);
+                        clips.push((kc, limit));
+                        let (kf, b) = (self.push_shape(shape, 0.0), shape.bounds().unwrap_or([0.0; 4]));
+                        self.element(0.0, b, clips, |e| {
+                            affine.encode(&mut e[44..52]);
+                            e[1] = kf as f32;
+                            e[2] = 1.0;
+                            e[3] = a;
+                            e[8..11].copy_from_slice(&col);
+                        });
+                        clips.pop();
+                    }
+                }
+            }
+            if self.collect_texts && !seen_text.trim().is_empty() {
+                self.texts_seen.push(SeenText { at: idx, text: seen_text.trim_end().to_owned(), bounds: limit, clipped: false });
+            }
+        }
+        clips.pop();
+    }
+
+    /// A plain rectangle of a colour (a terminal's cell backgrounds, its cursor, an underline).
+    fn flat_rect(&mut self, r: [f32; 4], rgb: [f32; 3], alpha: f32, affine: Affine, clips: &[(usize, [f32; 4])]) {
+        let shape = crate::shapes::FlatShape { kind: 1, cx: r[0] + r[2] * 0.5, cy: r[1] + r[3] * 0.5, mx: r[2] * 0.5, my: r[3] * 0.5, radius: 0.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke: 0.0, affine };
+        let (kf, b) = (self.push_shape(shape, 0.0), shape.bounds().unwrap_or([0.0; 4]));
+        self.element(0.0, b, clips, |e| {
+            affine.encode(&mut e[44..52]);
+            e[1] = kf as f32;
+            e[2] = 1.0;
+            e[3] = alpha;
+            e[8..11].copy_from_slice(&rgb);
+        });
+    }
+
     fn sprite(&mut self, d: [f32; 4], uv: [f32; 4], alpha: f32, tint: Option<[f32; 3]>, text: bool, sharp: bool, affine: Affine, clips: &[(usize, [f32; 4])]) {
         let bounds = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
         self.element(1.0, [bounds[0] - 1.0, bounds[1] - 1.0, bounds[2] + 1.0, bounds[3] + 1.0], clips, |e| {
@@ -1488,6 +1802,7 @@ impl DrawList {
         let (mut copied, mut made) = (0u32, 0u32);
         self.measurements.clear();
         self.fields.clear();
+        self.terminals.clear();
         self.selectable.clear();
         self.texts_seen.clear();
         self.size = size;
@@ -1736,7 +2051,7 @@ impl DrawList {
                         seen.pass_to(&self.reads);
                     }
                     tip.record();
-                    let before = (self.timed, self.particles_alive, self.wake_at, self.texts_seen.len());
+                    let before = (self.timed, self.particles_alive, self.wake_at, self.texts_seen.len(), self.terminals.len());
                     (self.timed, self.particles_alive, self.wake_at) = (false, false, None);
                     open_stretch = Some(Open { which, from: here, to, entry, starts, depth: (transforms.len(), clips.len(), opacity_groups.len()), before });
                     made += 1;
@@ -2313,6 +2628,7 @@ impl DrawList {
                     }
                     clips.pop();
                 }
+                Instr::Terminal(t) => self.draw_terminal(idx, t, c, texts, tip, mult, affine, &mut clips),
                 Instr::TextFx(fx) => text_fx = Some(fx),
                 Instr::Selectable(col) => text_select = Some(col),
                 Instr::Text { content, at, anchor, width, style, alpha, measure } => {

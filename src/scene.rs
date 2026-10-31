@@ -1352,6 +1352,29 @@ pub enum Instr {
     /// height). `ask` is the size it is told to have; while the box travels on
     /// its springs, the window keeps its size and is only stretched.
     Window { slot: usize, target: (Expr, Expr, Expr, Expr), alpha: Expr, ask: (Expr, Expr) },
+    /// A terminal (`terminal NAME`): a shell on a pty of its own, its screen
+    /// drawn over `target` in cells of the font `family` at `px` (see
+    /// `crate::terminal`). `run`: while it holds the shell lives, drawn or not;
+    /// when it stops, the shell is ended. `colors`: ink, paper and the sixteen
+    /// ANSI ones (fewer: the rest are the default ones). `zone` focuses it when pressed.
+    Terminal(Box<TerminalSpec>),
+}
+
+#[derive(Clone, Debug)]
+pub struct TerminalSpec {
+    pub name: &'static str,
+    pub zone: &'static str,
+    pub target: (Expr, Expr, Expr, Expr),
+    pub alpha: Expr,
+    pub family: Option<&'static str>,
+    pub px: Expr,
+    pub line_height: f32,
+    pub colors: Vec<Color>,
+    pub cursor: Option<Color>,
+    pub selection: Option<Color>,
+    pub run: Expr,
+    pub command: Vec<String>,
+    pub folder: Option<Content>,
 }
 
 // ── what the render does on its own ─────────────────────────────
@@ -1924,6 +1947,8 @@ pub enum Effect {
     Gesture(GestureId),
     /// Put the text cursor in a field, or take it away.
     FocusField(Option<TextId>),
+    /// `focus term`, a terminal: the keys go to its shell.
+    FocusTerminal(&'static str),
     /// A live text becomes that: `name = ""`, `label = draft`.
     Text(TextId, TextValue),
     /// Something done to a window of the compositor inside the scene: which

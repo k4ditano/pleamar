@@ -31,6 +31,7 @@ mod platform;
 mod probe;
 mod report;
 mod render;
+pub mod terminal;
 
 pub use platform::{host_keymap, provide_layer_hooks, provide_platform, provide_windows, set_host_keymap, LayerHooks, NestSender, Platform, PlatformWindow};
 pub use gpu::{Frames, NewSheet, Sent, Target, View};
@@ -264,6 +265,7 @@ pub fn run_with(options: Vec<String>) {
     skill::refresh_quietly();
     let blocked = Arc::new(AtomicBool::new(false));
     let (to_render, from_render) = channel();
+    terminal::set_waker(to_render.clone());
     // The thumbnails service's frames on the card, summed by the render.
     #[cfg(target_os = "linux")]
     {
