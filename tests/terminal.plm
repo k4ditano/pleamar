@@ -4,10 +4,11 @@ scene Term {
     text term.title = ""
     text term.folder = ""
     text where = "~"
+    text vars = "PLEAMAR_NAME=probe"
     fact term.alive = 0
     fact zoom = 13
     fact on = true
-    terminal term { at: 14, 12; size: 872, 506; family: "JetBrains Mono"; font_size: zoom; line_height: 1.3; command: "bash", "--norc"; folder: where; run: on; colors: #e8e2d9, #141618, #23272b; cursor: #7fb8a4; selection: #2f5a50; opacity: 100%; show: on; label: "Terminal"; agent: yes }
+    terminal term { at: 14, 12; size: 872, 506; family: "JetBrains Mono"; font_size: zoom; line_height: 1.3; command: "bash", "--norc"; folder: where; env: vars; run: on; colors: #e8e2d9, #141618, #23272b; cursor: #7fb8a4; selection: #2f5a50; opacity: 100%; show: on; label: "Terminal"; agent: yes }
     on press term { focus term }
     on key Ctrl+Shift+T { blur }
     on change term.alive while term.alive == 0 { quit }

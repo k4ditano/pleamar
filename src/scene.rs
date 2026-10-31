@@ -1375,6 +1375,7 @@ pub struct TerminalSpec {
     pub run: Expr,
     pub command: Vec<String>,
     pub folder: Option<Content>,
+    pub env: Option<Content>,
 }
 
 // ── what the render does on its own ─────────────────────────────

@@ -1542,6 +1542,7 @@ scene Term {
 | `family` · `font_size` · `line_height` | the font of its cells (a monospaced one; `monospace` if not said), its size —an expression: `font_size: zoom`— and the height of a line in multiples of it (1.25) |
 | `command: "htop"` or `"bash", "--norc"` | what runs in it: the user's shell if not said |
 | `folder: "~/src"` or `folder: where` | where it starts: a folder between quotes or a text of the scene, read when it starts |
+| `env: vars` | what its shell's environment has besides the program's: a text of the scene with `KEY=VALUE` lines, read when it starts (one tab's own name, `PLEAMAR_NAME=…`) |
 | `run: expr` | while it holds, the shell lives —drawn or not: a tab behind another keeps its shell—; when it stops holding, the shell is ended. Once more true, a new one starts |
 | `colors: ink, paper, c0, …, c15` | the ink, the paper and the sixteen ANSI colours (fewer: the rest are its own). The paper is not painted: a cell of the paper's colour lets the scene's background through, its glass and its mist |
 | `cursor: color` · `selection: color` | the cursor's colour (the ink's if not said) and what is selected |
@@ -1888,7 +1889,7 @@ properties.body: color gradient rim light shadow border glass lens shine refract
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown place tight
 properties.image: at size opacity tint cell fit show grow place
 properties.window: at size ask opacity show
-properties.terminal: at size family font_size line_height colors cursor selection command folder run opacity show label agent place grow
+properties.terminal: at size family font_size line_height colors cursor selection command folder env run opacity show label agent place grow
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow place
 properties.shader: at size corner opacity show values colors grow place
 properties.particles: at area count life speed direction spread gravity drag size colors opacity shape emit burst show

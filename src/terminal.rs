@@ -653,7 +653,8 @@ pub fn sync(placed: &[PlacedTerminal], runs: &[(&'static str, bool)]) {
                 Some(s) => s.resize(size),
                 None if t.run && !runs.iter().any(|(n, run)| n == &t.name && !run) => {
                     let folder = t.folder.as_deref().filter(|f| !f.is_empty()).map(expand);
-                    match Session::spawn(size, &t.command, folder, &[]) {
+                    let env: Vec<(String, String)> = t.env.as_deref().unwrap_or("").lines().filter_map(|l| l.split_once('=')).filter(|(k, _)| !k.trim().is_empty()).map(|(k, v)| (k.trim().to_owned(), v.to_owned())).collect();
+                    match Session::spawn(size, &t.command, folder, &env) {
                         Ok(s) => {
                             *s.shared.palette.lock().unwrap() = t.colors;
                             r.sessions.insert(t.name, s);

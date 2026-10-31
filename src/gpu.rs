@@ -376,6 +376,7 @@ pub struct PlacedTerminal {
     pub run: bool,
     pub command: Vec<String>,
     pub folder: Option<String>,
+    pub env: Option<String>,
     pub colors: [[u8; 3]; 18],
 }
 
@@ -1205,7 +1206,8 @@ impl DrawList {
             colors[k] = [col[0].eval(c), col[1].eval(c), col[2].eval(c)].map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
         }
         let folder = t.folder.as_ref().map(|f| content_text(f, c, texts).into_owned());
-        self.terminals.push(crate::gpu::PlacedTerminal { name: t.name, zone: t.zone, origin: (x0, y0), cell: (cw, ch), cols, rows, run: t.run.eval(c) > 0.5, command: t.command.clone(), folder, colors });
+        let env = t.env.as_ref().map(|f| content_text(f, c, texts).into_owned());
+        self.terminals.push(crate::gpu::PlacedTerminal { name: t.name, zone: t.zone, origin: (x0, y0), cell: (cw, ch), cols, rows, run: t.run.eval(c) > 0.5, command: t.command.clone(), folder, env, colors });
         let a = t.alpha.eval(c).clamp(0.0, 1.0) * mult;
         if a <= 0.001 {
             return;

@@ -7176,6 +7176,18 @@ impl<'a> Compiler<'a> {
             }),
             None => None,
         };
+        // What its shell's environment has besides the program's: a text of
+        // `KEY=VALUE` lines, read when it starts.
+        let env = match p.get_mut("env") {
+            Some(c) => {
+                let t = self.global(&c.id("a text of KEY=VALUE lines")?);
+                match self.texts.get(&t) {
+                    Some(k) => Some(Content::Live(*k)),
+                    None => return self.unknown(c, "no text", &t, self.texts.keys().collect()),
+                }
+            }
+            None => None,
+        };
         let run = match p.get_mut("run") {
             Some(c) => self.expr(c)?,
             None => Expr::K(1.0),
@@ -7209,7 +7221,7 @@ impl<'a> Compiler<'a> {
             shape: Shape::Rect { center: (x.clone() + w.clone() * 0.5, y.clone() + h.clone() * 0.5), half_size: (w.clone() * 0.5, h.clone() * 0.5), radius: 0.0.into() },
             active: None, visible: Some(alpha.clone()), under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None,
         });
-        self.e.paint(Instr::Terminal(Box::new(TerminalSpec { name: interned(&name), zone: interned(&zone), target: (x, y, w, h), alpha, family, px, line_height, colors, cursor, selection, run, command, folder })));
+        self.e.paint(Instr::Terminal(Box::new(TerminalSpec { name: interned(&name), zone: interned(&zone), target: (x, y, w, h), alpha, family, px, line_height, colors, cursor, selection, run, command, folder, env })));
         Ok(())
     }
 
