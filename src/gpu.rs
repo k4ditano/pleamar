@@ -1316,8 +1316,8 @@ impl DrawList {
                     if line < sel.start.line || line > sel.end.line {
                         continue;
                     }
-                    let from = if line == sel.start.line && !sel.is_block { sel.start.column.0 } else if sel.is_block { sel.start.column.0 } else { 0 };
-                    let to = if line == sel.end.line && !sel.is_block { sel.end.column.0 + 1 } else if sel.is_block { sel.end.column.0 + 1 } else { cols as usize };
+                    let from = if line == sel.start.line || sel.is_block { sel.start.column.0 } else { 0 };
+                    let to = if line == sel.end.line || sel.is_block { sel.end.column.0 + 1 } else { cols as usize };
                     if to > from {
                         self.flat_rect([x0 + from as f32 * cw, y0 + row as f32 * ch, (to - from) as f32 * cw, ch], tone, a * 0.85, affine, clips);
                     }
@@ -1387,7 +1387,7 @@ impl DrawList {
                         let (mx, my) = (snap(x + cw * 0.5), snap(y + ch * 0.5));
                         let width = |w: u8| if w == 2 { light * 2.0 } else { light };
                         let gap = light * 1.5;
-                        let mut hline = |me: &mut Self, from: f32, to: f32, w: u8| {
+                        let hline = |me: &mut Self, from: f32, to: f32, w: u8| {
                             let t = width(w);
                             if w == 3 {
                                 me.flat_rect([from, snap(my - gap - t * 0.5), to - from, t], col, a, affine, clips);
@@ -1405,7 +1405,7 @@ impl DrawList {
                         if arms[1] > 0 {
                             hline(self, mx - reach_v, x + cw, arms[1]);
                         }
-                        let mut vline = |me: &mut Self, from: f32, to: f32, w: u8| {
+                        let vline = |me: &mut Self, from: f32, to: f32, w: u8| {
                             let t = width(w);
                             if w == 3 {
                                 me.flat_rect([snap(mx - gap - t * 0.5), from, t, to - from], col, a, affine, clips);

@@ -1510,6 +1510,73 @@ scene Nested {
 }
 ```
 
+### 10.4. A terminal: `terminal`
+
+**A shell of its own, drawn by the scene.** `terminal term { … }` starts the
+user's shell (`$SHELL`, or `command:`) on a terminal of its own —a pty— and
+draws its screen there, in cells of a monospaced font, with the engine's own
+letters: as sharp as any text of the scene, and in its colours. It is the
+emulator Alacritty and Zed use (`alacritty_terminal`): colours of 16, 256 and
+24 bits, bold, italic, underlines, the other screen of vim and less, its
+history, programs that ask for the mouse. The lines and corners of boxes
+(`│ ─ ╭ ╮ ╰ ╯ ┼ ═`) and the blocks (`▀ ▄ █ ░ ▒ ▓`) are drawn by hand, so they
+meet across cells whatever the font and the line height. It works on Linux,
+macOS and Windows.
+
+```plm
+scene Term {
+    surface { size: 900, 560; kind: window; title: "A terminal"; keyboard: on_demand }
+    text term.title = ""
+    text term.folder = ""
+    fact term.alive = 0
+    box { from: 0, 0; size: 900, 560; color: #16181a }
+    terminal term { at: 14, 12; size: 872, 506; family: "JetBrains Mono"; font_size: 13.5 }
+    text "{term.title} · {term.folder}" { at: 14, 536; size: 11; color: #8a8580 }
+    on change term.alive while term.alive == 0 { quit }
+}
+```
+
+| property | what it is |
+|---|---|
+| `at` · `size` | its box. Its columns and lines are as many cells as fit: when the box changes, the program in it is told its new size |
+| `family` · `font_size` · `line_height` | the font of its cells (a monospaced one; `monospace` if not said), its size —an expression: `font_size: zoom`— and the height of a line in multiples of it (1.25) |
+| `command: "htop"` or `"bash", "--norc"` | what runs in it: the user's shell if not said |
+| `folder: "~/src"` or `folder: where` | where it starts: a folder between quotes or a text of the scene, read when it starts |
+| `run: expr` | while it holds, the shell lives —drawn or not: a tab behind another keeps its shell—; when it stops holding, the shell is ended. Once more true, a new one starts |
+| `colors: ink, paper, c0, …, c15` | the ink, the paper and the sixteen ANSI colours (fewer: the rest are its own). The paper is not painted: a cell of the paper's colour lets the scene's background through, its glass and its mist |
+| `cursor: color` · `selection: color` | the cursor's colour (the ink's if not said) and what is selected |
+| `opacity` · `show` · `label` · `agent` | as anywhere |
+
+**Who has the keys.** Pressing a terminal gives it the keys, and `focus term`
+too (in a rule, or `focus("term")` from the logic): all of them go to its
+program, Ctrl+C included, except **the combinations the scene has a rule for**
+—`on key Ctrl+Shift+T { emit new_tab }` is the scene's—. A field pressed, or
+`blur`, takes them away. Its own: **Ctrl+Shift+C** copies what is selected,
+**Ctrl+Shift+V** pastes (between the marks of a bracketed paste if the program
+asked for them), **Shift+PageUp** and **Shift+PageDown** go through the
+history, and any key that writes brings it back to the end.
+
+**The mouse.** Dragging selects (two clicks a word, three a line), the middle
+button pastes, and the wheel goes through the history —or, in a program on
+the other screen (less, man), sends it arrows—. A program that asked for the
+mouse (vim, htop, a TUI) gets the buttons, the wheel and the dragging
+instead; with Shift held, the terminal selects anyway.
+
+**What it says**, where the scene declares it (all optional): `term.title`
+(the title its program sets) and `term.folder` (the folder its shell is in)
+are texts; `term.alive` (1 while its shell lives), `term.bell` (how many times
+it rang), `term.focus` (1 while it has the keys), `term.cols` and `term.rows`
+are facts. A logic hears them as any other: `on("text:term.folder", …)`,
+`on("fact:term.alive", …)`. It is also a zone: `on press term`, `term.hover`.
+
+**Told to an agent.** What its screen shows is in what the scene tells an
+agent (§13), as text. Under pleamar-wm the shell also goes through its layer
+of terminals, so `pleamar-wm agent` reads it and runs commands in it as in any
+other terminal.
+
+**A scene that ends: `quit`.** In a rule, `quit` ends the program, as closing
+its window would: a terminal whose last shell ended.
+
 ## 11. Text with slots
 
 Inside a text in quotes that is the content of a `text` or the argument of a component:
@@ -1792,7 +1859,7 @@ This is the output of `pleamar --grammar`, copied. It is not a second list: thes
 
 ```vocabulary
 language: 0.5
-statements: surface permissions model service spring prop pose fact event text image figure font shader blur lens particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
+statements: surface permissions model service spring prop pose fact event text image figure font shader blur lens particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window terminal
 library: let spring component permissions fact text model service event image figure font shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title app_id rate captures agent
 properties.permissions: run services
@@ -1807,6 +1874,7 @@ properties.body: color gradient rim light shadow border glass lens shine refract
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown place tight
 properties.image: at size opacity tint cell fit show grow place
 properties.window: at size ask opacity show
+properties.terminal: at size family font_size line_height colors cursor selection command folder run opacity show label agent place grow
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow place
 properties.shader: at size corner opacity show values colors grow place
 properties.particles: at area count life speed direction spread gravity drag size colors opacity shape emit burst show
@@ -1819,7 +1887,7 @@ properties.layout: at anchor gap padding align fill glass lens shine refraction 
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick rgb
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still
-effects: toggle emit impulse ripple play focus blur close promote fullscreen minimize restore float tile launch send swap workspace pick dock accept
+effects: toggle emit impulse ripple play focus blur close promote fullscreen minimize restore float tile launch send swap workspace pick dock accept quit
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
 classes: ambient reflex asked state
@@ -1827,7 +1895,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: translations surface permissions model service spring prop pose fact event text image figure font particles shader blur lens measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look ripple gesture posture import scene library include part language
+documented: translations surface permissions model service spring prop pose fact event text image figure font particles shader blur lens measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window terminal pages column space between layer on every blink wave spin follow look ripple gesture posture import scene library include part language
 services: clock clock.seconds audio audio.level battery brightness network bluetooth media window thumbnails workspaces apps tray notifications notification_history polkit
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date

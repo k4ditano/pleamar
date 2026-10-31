@@ -33,7 +33,7 @@
       "name": "entity.other.attribute-name.plm"
     },
     {
-      "match": "\\b(surface|permissions|model|service|spring|prop|pose|fact|event|text|image|figure|font|shader|blur|lens|particles|measure|let|zone|body|ellipse|box|arc|line|path|input|clip|group|popup|component|children|repeat|for|row|column|grid|pages|space|between|layer|on|every|blink|wave|spin|follow|look|gesture|posture|translations|windows|window|scene|library|import|language|part|include)\\b",
+      "match": "\\b(surface|permissions|model|service|spring|prop|pose|fact|event|text|image|figure|font|shader|blur|lens|particles|measure|let|zone|body|ellipse|box|arc|line|path|input|clip|group|popup|component|children|repeat|for|row|column|grid|pages|space|between|layer|on|every|blink|wave|spin|follow|look|gesture|posture|translations|windows|window|terminal|scene|library|import|language|part|include)\\b",
       "name": "keyword.control.plm"
     },
     {
@@ -49,7 +49,7 @@
       "name": "entity.name.tag.plm"
     },
     {
-      "match": "\\b(toggle|emit|impulse|ripple|play|focus|blur|close|promote|fullscreen|minimize|restore|float|tile|launch|send|swap|workspace|pick|dock|accept)\\b",
+      "match": "\\b(toggle|emit|impulse|ripple|play|focus|blur|close|promote|fullscreen|minimize|restore|float|tile|launch|send|swap|workspace|pick|dock|accept|quit)\\b",
       "name": "keyword.operator.plm"
     },
     {
