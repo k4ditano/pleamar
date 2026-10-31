@@ -7768,6 +7768,13 @@ impl<'a> Compiler<'a> {
                         Trigger::PressWith(self.zone(c)?, 1)
                     } else if c.word("middle") {
                         Trigger::PressWith(self.zone(c)?, 2)
+                    } else if c.word("back") {
+                        // The thumb buttons: the pointer already hands BTN_SIDE and BTN_EXTRA
+                        // over as 3 and 4 (see the match in platform/wayland.rs), there was
+                        // just no way to ask for them.
+                        Trigger::PressWith(self.zone(c)?, 3)
+                    } else if c.word("forward") {
+                        Trigger::PressWith(self.zone(c)?, 4)
                     } else {
                         Trigger::Press(self.zone(c)?)
                     }
