@@ -2257,12 +2257,30 @@ smithay_client_toolkit::delegate_dispatch2!(State);
 /// the ones it inherits, then hicolor and a few common ones, in every icon
 /// folder of `XDG_DATA_HOME` and `XDG_DATA_DIRS`, each theme's folders as
 /// its `index.theme` lists them, from vector down to small.
+///
+/// The folders are read once and kept, with only the ones that exist: one
+/// made afterwards (an app installed since, the first with an icon of its
+/// size) would never be looked at. So a name that is not found reads them
+/// again, at most every five seconds, and is looked for there.
 pub fn icon(name: &str) -> Option<std::path::PathBuf> {
-    static DIRS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
-    let dirs = DIRS.get_or_init(icon_dirs);
-    dirs.iter()
-        .flat_map(|d| ["svg", "png"].map(|e| d.join(format!("{name}.{e}"))))
-        .find(|p| p.is_file())
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+    static DIRS: Mutex<Option<(Instant, Arc<Vec<std::path::PathBuf>>)>> = Mutex::new(None);
+    let find = |dirs: &[std::path::PathBuf]| dirs.iter().flat_map(|d| ["svg", "png"].map(|e| d.join(format!("{name}.{e}")))).find(|p| p.is_file());
+    let (read, dirs) = {
+        let mut kept = DIRS.lock().unwrap();
+        let (read, dirs) = kept.get_or_insert_with(|| (Instant::now(), Arc::new(icon_dirs())));
+        (*read, dirs.clone())
+    };
+    if let Some(found) = find(&dirs) {
+        return Some(found);
+    }
+    if read.elapsed() < Duration::from_secs(5) {
+        return None;
+    }
+    let fresh = Arc::new(icon_dirs());
+    *DIRS.lock().unwrap() = Some((Instant::now(), fresh.clone()));
+    find(&fresh)
 }
 
 fn icon_dirs() -> Vec<std::path::PathBuf> {
