@@ -377,6 +377,7 @@ Rebuild pleamar itself and the running one starts again with the same arguments.
 | `--say NAME …` | talk to a running scene from outside, or from a compositor shortcut; of two scenes with one name, it reaches the one on your terminal's display |
 | `--mouse "360,90@500 click@3200"` | a pretend mouse, to rehearse without touching the real one |
 | `--stall MS` | stall the logic on purpose and watch the screen carry on |
+| `PLEAMAR_GPU=high` | on a laptop with two cards, paint on the fast one. By default pleamar paints on the card the compositor says it paints with, or on the frugal one |
 | `--report` | if something stutters: measures every scene for 30 seconds while you use the desktop and writes down what it saw —frame times, where the late frames went, the card, the CPU's clock and temperature, what else took the CPU— in `~/pleamar-report-….md`, with no personal data. Send it to us in an issue |
 
 # Under the hood

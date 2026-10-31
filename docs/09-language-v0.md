@@ -69,7 +69,7 @@ A line break or a `;` ends a statement. `//` comments to the end of the line. Na
 
 **The order is whatever suits the reader.** The file is read in four passes —declarations; `let` and layers; drawing; rules—, so a rule can come before the shape it names, and a `prop` at the end. Only a `let` has to come before whoever uses it.
 
-Numbers with a unit: `40`, `40px`, `34%` (= 0.34), `138deg` (into radians), `320ms` and `14s` (durations). Colors `#151616` or `#fff`. Texts `"in quotes"`.
+Numbers with a unit: `40`, `40px`, `34%` (= 0.34), `138deg` (into radians), `320ms` and `14s` (durations). Colors `#151616` or `#fff`. Texts `"in quotes"`, and a quote inside one is `\"` (language 0.6).
 
 ## Declarations
 
