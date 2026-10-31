@@ -253,13 +253,30 @@ fn denied(c: &Mutex<Shared>, what_for: &str, how: &str) -> mlua::Error {
     })
 }
 
-/// Can this logic launch that command? Undeclared, no; and the error says what to write.
 /// `{ env = { LC_ALL = "C" } }`: variables for that program only, on top of
 /// the scene's own. A program that speaks the user's language is read in English.
-fn environment(how: Option<&mlua::Table>) -> Vec<(String, String)> {
-    how.and_then(|t| t.get::<Option<mlua::Table>>("env").ok().flatten())
+/// Not any: one that decides which code runs (`PATH`, `LD_PRELOAD`, `NODE_OPTIONS`)
+/// would make `run: "node tools/usage.js"` run something else, so it has to be
+/// named in the permissions; and a plugin, approved by someone else, sets only
+/// the harmless ones unless it names more (`crate::permissions::env_refused`).
+fn environment(c: &Mutex<Shared>, how: Option<&mlua::Table>) -> mlua::Result<Vec<(String, String)>> {
+    let vars: Vec<(String, String)> = how
+        .and_then(|t| t.get::<Option<mlua::Table>>("env").ok().flatten())
         .map(|t| t.pairs::<String, String>().filter_map(Result::ok).collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if vars.is_empty() {
+        return Ok(vars);
+    }
+    let (declared, plugin) = {
+        let c = c.lock().unwrap();
+        (c.permissions.env.clone(), c.plugin.is_some())
+    };
+    for (name, _) in &vars {
+        if let Some(why) = crate::permissions::env_refused(&declared, plugin, name) {
+            return Err(denied(c, &format!("set {name} for a program ({why})"), &format!("env: \"{name}\"")));
+        }
+    }
+    Ok(vars)
 }
 
 /// Writes `text` on the child's input and closes it, so it knows nothing more is
@@ -1032,7 +1049,7 @@ impl LuauScript {
             check_command_permission(&c, &command, args.as_deref().unwrap_or(&[]))?;
             let input: Option<String> = how.as_ref().and_then(|t| t.get("stdin").ok());
             let text: Option<String> = how.as_ref().and_then(|t| t.get("input").ok());
-            let vars = environment(how.as_ref());
+            let vars = environment(&c, how.as_ref())?;
             let collect: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("output").ok().flatten()).unwrap_or(true);
             let errors: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("errors").ok().flatten()).unwrap_or(false);
             let id = {
@@ -1117,9 +1134,10 @@ impl LuauScript {
             let text: Option<String> = how.as_ref().and_then(|t| t.get("input").ok());
             let errors: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("errors").ok().flatten()).unwrap_or(false);
             let open: bool = how.as_ref().and_then(|t| t.get::<Option<String>>("stdin").ok().flatten()).is_some_and(|v| v == "open");
+            let vars = environment(&c, how.as_ref())?;
             let mut launch = std::process::Command::new(&command);
             crate::child_env(&mut launch);
-            launch.args(args.unwrap_or_default()).envs(environment(how.as_ref())).stdout(std::process::Stdio::piped());
+            launch.args(args.unwrap_or_default()).envs(vars).stdout(std::process::Stdio::piped());
             launch.stderr(if errors { std::process::Stdio::piped() } else { std::process::Stdio::null() });
             // No input unless it is given one, as with `run`.
             launch.stdin(std::process::Stdio::null());

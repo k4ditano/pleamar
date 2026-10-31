@@ -1,0 +1,13 @@
+// expect: ok
+// The buttons a rule can ask for, the thumb ones included: a file manager goes back
+// and forward with them, and the pointer already hands them over as 3 and 4.
+scene PressSideButtons {
+    surface { size: 200, 120; anchor: top }
+    fact page = 0
+    box hit { from: 0, 0; size: 200, 120; color: #202020 }
+    on press hit         { page = page + 1 }
+    on press right hit   { page = 0 }
+    on press middle hit  { page = 0 }
+    on press back hit    { page = page - 1 }
+    on press forward hit { page = page + 1 }
+}

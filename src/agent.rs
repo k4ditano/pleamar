@@ -413,7 +413,9 @@ impl Act {
                         "left" => button = 0,
                         "right" => button = 1,
                         "middle" => button = 2,
-                        n => count = n.parse::<u8>().ok().filter(|n| (1..=3).contains(n)).ok_or_else(|| format!("`press {name}` takes left, right or middle, and how many times (1 to 3): not `{n}`"))?,
+                        "back" => button = 3,
+                        "forward" => button = 4,
+                        n => count = n.parse::<u8>().ok().filter(|n| (1..=3).contains(n)).ok_or_else(|| format!("`press {name}` takes left, right, middle, back or forward, and how many times (1 to 3): not `{n}`"))?,
                     }
                 }
                 Ok(Act::Press { name, button, count })

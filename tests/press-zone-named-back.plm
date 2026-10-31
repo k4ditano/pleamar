@@ -1,0 +1,16 @@
+// expect: ok
+// A zone may be called `back`, `forward`, `right` or `middle`: the button's word
+// is one only when a zone's name follows it (`on press back hit`).
+scene PressZoneNamedBack {
+    surface { size: 200, 120; anchor: top }
+    fact open = true
+    box back { from: 0, 0; size: 100, 60; color: #202020 }
+    box right { from: 100, 0; size: 100, 60; color: #303030 }
+    box hit { from: 0, 60; size: 200, 60; color: #404040 }
+    on press back { open = false }
+    on press back while open { open = false }
+    on press right { open = true }
+    on enter back { open = true }
+    on press back hit { open = false }
+    on press right back { open = true }
+}

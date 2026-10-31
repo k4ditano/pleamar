@@ -1,4 +1,4 @@
-# Language reference — version 0.1
+# Language reference — version 0.6
 
 **What this note is.** The complete, exact description of what the language accepts. [The language — the guide](09-language-v0.md) is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
@@ -35,7 +35,7 @@ It is a **declarative language that always terminates**. No free loops, no recur
 | Text | `"in quotes"`. A quote inside it is `\"`, and a backslash before a quote or another backslash, `\\`; any other backslash is itself (`"C:\Users"`). With slots, see §11 |
 | Symbols | `{ } ( ) [ ] , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
 
-Words of the language (they cannot be used as a name of one's own without confusing the reader, though the compiler does not forbid it): `language import scene library surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, and inside their statements `in max while for after from until at by reach within rest every inset right middle move curve close via as radial radius to change wrap true false and or not`.
+Words of the language (they cannot be used as a name of one's own without confusing the reader, though the compiler does not forbid it): `language import scene library surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, and inside their statements `in max while for after from until at by reach within rest every inset right middle back forward move curve close via as radial radius to change wrap true false and or not`.
 
 ## 4. Grammar
 
@@ -54,7 +54,7 @@ declaration  = surface | permissions | model | spring | property | fact | event
              | live_text | image_decl | figure_decl | shader_decl | measure | let | zone | translations ;
 translations = "translations" name "{" { text "=" text end } "}" ;            (* name: a language code, `es`, `pt_br` *)
 surface      = "surface" [ name ] "{" { element_prop | statement } "}" ;   (* named: one of several, with its own things inside *)
-permissions  = "permissions" "{" { ( "run" | "services" ) ":" text { "," text } end } "}" ;
+permissions  = "permissions" "{" { ( "run" | "services" | "env" ) ":" text { "," text } end } "}" ;
 model        = "model" name [ "max" number ] "{" { field | list } "}" ;
 service      = "service" service_name [ "as" name ] "{" { field } "}" ;     (* the services, and their fields, are in §17 *)
 field        = name ":" type [ "=" literal ] end ;
@@ -118,7 +118,7 @@ transition   = name ":" expr [ "~" spring_ref ] [ "after" duration ] end ;
 
 rule         = "on" trigger [ "while" expr ] "{" { effect } "}"
              | "every" duration [ ".." duration ] [ "while" expr ] "{" { effect } "}" ;
-trigger      = "press" [ "right" | "middle" ] zone_ref | "release" zone_ref | "scroll" zone_ref
+trigger      = "press" [ "right" | "middle" | "back" | "forward" ] zone_ref | "release" zone_ref | "scroll" zone_ref
              | "drag" zone_ref | "hold" zone_ref "for" duration
              | "enter" zone_ref | "leave" zone_ref
              | ( "hover" | "away" ) zone_ref "for" duration
@@ -200,7 +200,7 @@ library Clock strict {
 
 Asking for permissions without a `.luau` next to it is an error: there is nobody to use them.
 
-**A plugin's permissions are approved by whoever uses it.** Declaring them is not having them: `pleamar --approve scene.plm` shows what each plugin of that scene asks for, and asks. What is approved is stored outside the plugin, with the fingerprint of its logic and of what it asked for: if either of the two changes, it goes back to unapproved. **Unapproved, a plugin runs with no permissions at all**, and its errors say why and how to approve it. An interpreter (`sh`, `python`…) comes out flagged: it is asking for everything. The scene one opens does not go through this: opening it is already deciding.
+**A plugin's permissions are approved by whoever uses it.** Declaring them is not having them: `pleamar --approve scene.plm` shows what each plugin of that scene asks for, and asks. What is approved is stored outside the plugin, with the fingerprint of its logic, of what it asked for and of the files of its folder that its commands name (`node tools/usage.js`): if any of them changes, it goes back to unapproved. **Unapproved, a plugin runs with no permissions at all**, and its errors say why and how to approve it. An interpreter (`sh`, `python`…) comes out flagged: it is asking for everything; and so does a variable in `env:` that decides which code runs (`PATH`, `LD_PRELOAD`, `NODE_OPTIONS`…), which is the same thing. The scene one opens does not go through this: opening it is already deciding.
 
 A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `posture`, `layer`— and **images and figures** (`image logo = file "logo.png", 16, 16`, `figure hat = file "hat.svg"`: the path is relative to the file that writes it, so the piece travels with it). All under its name, like its boundary. What it cannot do is draw outside a component, or hold loose rules: that belongs to the scene.
 
@@ -245,7 +245,7 @@ scene Watching {
 | Statement | What it declares |
 | --- | --- |
 | `surface { … }` · `surface panel { …; …drawing… }` | The windows it asks for. See below |
-| `permissions { run: "date"; services: "audio", "audio.*" }` | What the logic may touch of the system. Undeclared, nothing. **Listening is not commanding**: `"audio"` allows knowing the volume (`sys.watch`, `sys.ask`); changing it needs `"audio.volume"`, or `"audio.*"` |
+| `permissions { run: "date"; services: "audio", "audio.*"; env: "PATH" }` | What the logic may touch of the system. Undeclared, nothing. **Listening is not commanding**: `"audio"` allows knowing the volume (`sys.watch`, `sys.ask`); changing it needs `"audio.volume"`, or `"audio.*"`. **`env:`**, the variables `run` and `spawn` may set (`{ env = … }`) that do not go through on their own: one that decides which code a program runs —`PATH`, `LD_*`, `NODE_OPTIONS`, `PYTHON*`, `PERL5OPT`, `BASH_ENV`, `HOME`…— never does, since with it `run: "node tools/usage.js"` would run something else; and a plugin's logic sets only `LANG`, `LC_*`, `TZ`, `NO_COLOR` and the terminal's, unless it names more |
 | `service clock as now { time: text; hour: number }` | A system service, by its name. Whatever it reports fills `now.time` and `now.hour` **without a line of logic**. See below |
 | `model rows max 14 { label: text; enabled: bool = true; depth: number }` | A list of records that the logic fills. `max`: how many fit (1 to 1024; 16 if unsaid). Creates `rows.count`, `rows.total` and, per record, `rows.K.field` |
 | `prop orb.x = 360 ~lively` | An animated property: a spring. Without `~`, `lively` |
@@ -761,7 +761,7 @@ path {
 }
 ```
 
-A path carries **a single stroke** (one `move`, the first) and up to 64 already flattened points; for several, several `path`. In a layout it has to be told what it takes up with `size:`, because its box is not known until it is evaluated.
+A path carries **a single stroke** (one `move`, the first) and up to 192 already flattened points; for several, several `path`. In a layout it has to be told what it takes up with `size:`, because its box is not known until it is evaluated.
 
 **Lists longer than what is unfolded.** A model unfolds its `max` records on load, and that is the ceiling (1024). For a list of thousands, the scene declares only the **window** —what is seen and a little more— and says how long the whole list is:
 
@@ -1659,7 +1659,7 @@ A fact can be written by its place, as it is read (§7): `tre.x[tre.nw] = tre.ax
 
 | Trigger | When |
 | --- | --- |
-| `press zone` · `press right zone` · `press middle zone` | it is pressed. A scene that uses `right` for anything is never closed by a right click: the prototype's emergency exit is only for scenes that do not use it |
+| `press zone` · `press right zone` · `press middle zone` · `press back zone` · `press forward zone` | it is pressed. `back` and `forward` are a mouse's thumb buttons, the ones `key XF86Back` and `key XF86Forward` also hear: `on press back` is only over that zone. A button's word counts only when a zone's name follows it, so a zone called `back` or `right` is still that zone: `on press back { … }`. A scene that uses `right` for anything is never closed by a right click: the prototype's emergency exit is only for scenes that do not use it |
 | `release zone` | what was pressed there is released, wherever the mouse is by then |
 | `hold zone for 500ms` | it has been held down that long |
 | `enter zone` · `leave zone` | the mouse enters or leaves. A zone that only moves —a row laid out again, a panel that grows— under a pointer that does nothing is not entered or left by it: that is settled the next time the pointer moves, a button goes or the wheel turns (a press always lands on what is under it). One that appears or goes away under it is entered or left at once |
@@ -1681,7 +1681,7 @@ A fact can be written by its place, as it is read (§7): `tre.x[tre.nw] = tre.ax
 
 **What is in the hand: `carry_icon:`.** A drag has no picture of its own, so without help nothing shows that something is being carried. `carry_icon: "{file.$k.icon}"` on the same zone is the path of a PNG, read when the drag starts and drawn under the pointer until it ends (up to 512 px a side, with its transparency; its top left sits a little up and to the left of the pointer). The scene has to have the picture ready by then, so a path that is empty or not there yet is a drag without one, not a failed drag.
 
-**Told to an agent: `label:` and `agent:`.** A running scene can be asked what there is to read and touch: `pleamar --say notes describe` answers with each surface that is on screen and, inside it, every zone and field by its name, what it is (`button`, `slider`, `field`, `list`, `item` or `region`, from what its rules do), what it says, whether it is inactive or covered by another one, and its box in the surface's pixels, together with the words drawn outside every zone —a title, a status line—, in the order they were written; `describe json`, the same as data. What it says is the texts drawn inside it, or a field's text and its `placeholder`. When that is not enough —an icon with no word in it, a slider whose name is drawn beside it—, **`label:`** says it: a text, with holes if it needs them (`label: "Delete {n.title}"`), a live text, or `pick(k, "Brightness", "Volume")` in a copy. The first time it is asked, a zone that can be pressed and says nothing is named in the log, so that nobody has to guess what it is. The same names are used to **act, as a hand would**: `press save` (and `right`, `middle`, a count), `hold`, `drag knob 0 -40`, `wheel list -3`, `type query some words`, `key escape`. The hand enters the zone, presses and leaves, so its springs move and its rules fire as with a mouse; a row scrolled out of its list is brought into sight first; and the answer is what happened —the events, the facts and texts that changed, the surfaces that opened—. What a person could not do is refused, saying why: inactive, covered, not on screen. And **`wait status == "Saved"`** answers as soon as that holds (`wait dirty == true 2s`; facts, texts and properties by name, `has`, `and`, `or`, `not`), and **`watch`** writes a line for each thing that happens for ten seconds (`watch 30`), and `watch 0 lay. free.` follows only the facts and texts whose names start so, one line per change (`fact lay.0 3`), for a program, for as long as it reads. **`agent: no`** keeps a zone or a field for a person's hand: it is described, but an agent cannot use it, and a field's text is not given; a field with `secret: true` never gives it either. **`agent: hidden`** leaves it out altogether, and on a `surface` everything it holds. When what it is cannot be told from its rules, a zone says it: **`role:`** `button` `toggle` `slider` `tab` `link` `item` `list` `region`; **`value:`** what it is worth, a text (`value: "{volume * 100} %"`) or a sum (`value: volume`; a fact with names says its name); **`checked:`** whether a toggle is on; **`selected:`** whether a row or a tab is the chosen one (`selected: sel == r.index`). A `kind: lock` surface and one with `captures: hidden` are never told. What else comes, and why: [note 12](12-agents.md).
+**Told to an agent: `label:` and `agent:`.** A running scene can be asked what there is to read and touch: `pleamar --say notes describe` answers with each surface that is on screen and, inside it, every zone and field by its name, what it is (`button`, `slider`, `field`, `list`, `item` or `region`, from what its rules do), what it says, whether it is inactive or covered by another one, and its box in the surface's pixels, together with the words drawn outside every zone —a title, a status line—, in the order they were written; `describe json`, the same as data. What it says is the texts drawn inside it, or a field's text and its `placeholder`. When that is not enough —an icon with no word in it, a slider whose name is drawn beside it—, **`label:`** says it: a text, with holes if it needs them (`label: "Delete {n.title}"`), a live text, or `pick(k, "Brightness", "Volume")` in a copy. The first time it is asked, a zone that can be pressed and says nothing is named in the log, so that nobody has to guess what it is. The same names are used to **act, as a hand would**: `press save` (and `right`, `middle`, `back`, `forward`, a count), `hold`, `drag knob 0 -40`, `wheel list -3`, `type query some words`, `key escape`. The hand enters the zone, presses and leaves, so its springs move and its rules fire as with a mouse; a row scrolled out of its list is brought into sight first; and the answer is what happened —the events, the facts and texts that changed, the surfaces that opened—. What a person could not do is refused, saying why: inactive, covered, not on screen. And **`wait status == "Saved"`** answers as soon as that holds (`wait dirty == true 2s`; facts, texts and properties by name, `has`, `and`, `or`, `not`), and **`watch`** writes a line for each thing that happens for ten seconds (`watch 30`), and `watch 0 lay. free.` follows only the facts and texts whose names start so, one line per change (`fact lay.0 3`), for a program, for as long as it reads. **`agent: no`** keeps a zone or a field for a person's hand: it is described, but an agent cannot use it, and a field's text is not given; a field with `secret: true` never gives it either. **`agent: hidden`** leaves it out altogether, and on a `surface` everything it holds. When what it is cannot be told from its rules, a zone says it: **`role:`** `button` `toggle` `slider` `tab` `link` `item` `list` `region`; **`value:`** what it is worth, a text (`value: "{volume * 100} %"`) or a sum (`value: volume`; a fact with names says its name); **`checked:`** whether a toggle is on; **`selected:`** whether a row or a tab is the chosen one (`selected: sel == r.index`). A `kind: lock` surface and one with `captures: hidden` are never told. What else comes, and why: [note 12](12-agents.md).
 
 ```plm
 scene Told {
@@ -1881,7 +1881,7 @@ language: 0.6
 statements: surface permissions model service spring prop pose fact event text image figure font shader blur lens particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window terminal
 library: let spring component permissions fact text model service event image figure font shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title app_id rate captures agent
-properties.permissions: run services
+properties.permissions: run services env
 properties.blur: passes values reach
 properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight active show cursor carries carry_icon grow label agent role value checked selected handle place
 properties.ellipse: at radius scale

@@ -483,7 +483,7 @@ pub fn run(
     let mut acting: Option<Acting> = None;
     let mut real_pointer: Option<(f32, f32)> = None;
     // A press of an agent's seat that was not let through, by button: its release is not either.
-    let mut agent_held_back = [false; 3];
+    let mut agent_held_back = [false; 5];
     // Who waits for a condition (`wait`), and who watches what happens (`watch`).
     let mut waits: Vec<(crate::agent::Cond, Instant, Instant, std::sync::mpsc::Sender<String>)> = Vec::new();
     let mut watchers: Vec<Watcher> = Vec::new();
@@ -2296,7 +2296,7 @@ pub fn run(
             buttons_agent.resize(buttons.len(), false);
             let mut kept = Vec::new();
             for (&(b, down), &agent) in buttons.iter().zip(&buttons_agent) {
-                let slot = (b as usize).min(2);
+                let slot = (b as usize).min(4);
                 if agent
                     && down
                     && let Some(z) = hovered.and_then(|k| scene.zones.get(k)).filter(|z| z.reach == crate::scene::Reach::Person)
@@ -2383,7 +2383,11 @@ pub fn run(
                         }
                     }
                 }
-                // (The side buttons —back, forward— are the windows' alone.)
+                // The side buttons —back, forward— still go to the windows below, where a
+                // browser wants them: the loop that forwards them does not look here. A scene
+                // gets them as well, and only if one of its rules asks (`on press back`).
+                // A mouse sends back as BTN_SIDE (3) or BTN_BACK (6), and forward as
+                // BTN_EXTRA (4) or BTN_FORWARD (5): the same pairs as `key XF86Back`.
                 (b, true) if b <= 2 => {
                     // The middle button pastes in a terminal; the right one is its program's if it asked for the mouse.
                     if let (Some(k), Some(p)) = (hovered, pointer) {
@@ -2393,6 +2397,7 @@ pub fn run(
                     }
                     pressed_with = hovered.map(|k| (k, b))
                 }
+                (b, true) => pressed_with = hovered.map(|k| (k, if b == 3 || b == 6 { 3 } else { 4 })),
                 _ => {}
             }
         }
@@ -6581,7 +6586,7 @@ impl Acting {
                 steps.push_back(Step::Leave);
                 let how = match (button, count) {
                     (0, 1) => String::new(),
-                    (b, n) => format!(" ({}{})", ["left", "right", "middle"][*b as usize], if *n > 1 { format!(", {n} times") } else { String::new() }),
+                    (b, n) => format!(" ({}{})", ["left", "right", "middle", "back", "forward"][*b as usize], if *n > 1 { format!(", {n} times") } else { String::new() }),
                 };
                 format!("pressed {name}{how}")
             }

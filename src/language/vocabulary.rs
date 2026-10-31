@@ -19,7 +19,7 @@ pub const LIBRARY_STATEMENTS: &[&str] = &["let", "spring", "component", "permiss
 /// Which properties each element accepts. `shape` are the ones common to all shapes.
 pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title", "app_id", "rate", "captures", "agent"]),
-    ("permissions", &["run", "services"]),
+    ("permissions", &["run", "services", "env"]),
     ("blur", &["passes", "values", "reach"]),
     ("shape", &["rotate", "stroke", "color", "opacity", "blend", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "frost", "smoke", "milk", "tint", "vivid", "mirror", "highlight", "active", "show", "cursor", "carries", "carry_icon", "grow", "label", "agent", "role", "value", "checked", "selected", "handle", "place"]),
     ("ellipse", &["at", "radius", "scale"]),
@@ -63,7 +63,7 @@ pub const FACT_TYPES: &[&str] = &["number", "bool"];
 pub const HELP: &[(&str, &str)] = &[
     ("translations", "`translations es { \"Control center\" = \"Centro de control\" }` — the scene's texts in another language. With them comes the fact `locale` (`en | es`), which starts as the system's language and switches every text at once."),
     ("surface", "`surface { size: full, 44; anchor: top }` — a window this scene asks the system for. Several, with a name, share everything."),
-    ("permissions", "`permissions { run: \"date\"; services: \"audio\", \"audio.*\" }` — what the logic may touch. Undeclared, nothing. Listening is not commanding."),
+    ("permissions", "`permissions { run: \"date\"; services: \"audio\", \"audio.*\"; env: \"PATH\" }` — what the logic may touch. Undeclared, nothing. Listening is not commanding. `env:` names the variables `run` and `spawn` may set that are not let through on their own."),
     ("model", "`model rows max 14 { label: text }` — a list of records the logic fills. Creates `rows.count`, `rows.total` and `rows.K.field`."),
     ("service", "`service clock as now { time: text }` — a system service by name. What it reports lands in facts and texts with no logic at all."),
     ("spring", "`spring bouncy = 170, 12` — a spring of your own: stiffness, damping. Built in: lively, calm, quick, slow, gentle, pose."),

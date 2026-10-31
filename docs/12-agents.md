@@ -66,7 +66,7 @@ Implemented (step 2, 6 Oct 2026).
 
 | Command | What it does |
 | --- | --- |
-| `press NAME [left\|right\|middle] [N]` | The hand goes to the zone, presses and lets go, N times (1 to 3; 60 ms apart, so two are a double click) |
+| `press NAME [left\|right\|middle\|back\|forward] [N]` | The hand goes to the zone, presses and lets go, N times (1 to 3; 60 ms apart, so two are a double click) |
 | `hold NAME` | Pressed for as long as its `on hold` asks, and a little more |
 | `drag NAME DX DY` | Pressed at it, moved by DX, DY over half a second in twelve steps, let go |
 | `wheel NAME N` | N notches over it; positive, upwards |
