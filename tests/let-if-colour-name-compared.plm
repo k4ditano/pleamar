@@ -1,0 +1,12 @@
+// expect: note «there is already a `fact skin`»
+language 0.6
+// A name that is a fact and a colour too (a library's `let`): `if(t == 0, skin == lens, …)` compares the fact, and
+// the `let` is numbers. Only a colour that is the whole of a choice makes a `pick` or an `if` a colour.
+scene Skins {
+    surface { size: 300, 80 }
+    fact skin: lens | liquid | classic = lens
+    fact t = 0
+    let skin = #ffffff
+    let chosen = if(t == 0, skin == lens, if(t == 1, skin == liquid, skin == classic))
+    box { at: 10, 10; size: 30, 30; color: skin; opacity: chosen }
+}

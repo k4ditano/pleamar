@@ -1,0 +1,21 @@
+// expect: ok
+language 0.6
+// A block may open on the line after its header, as in many languages (blank lines and comments between too).
+scene Braces
+{
+    surface
+    {
+        size: 300, 80
+    }
+    fact on = true
+    group
+    // what it holds:
+
+    {
+        box { at: 10, 10; size: 40, 40; color: #9ed6bd; show: on }
+    }
+    on key Escape
+    {
+        on = false
+    }
+}

@@ -469,7 +469,7 @@ pub fn highlighting(which: &str) -> i32 {
             println!("syn match plmNumber \"\\<\\d\\+\\(\\.\\d\\+\\)\\?\\(px\\|%\\|deg\\|ms\\|s\\)\\?\\>\"");
             println!("syn match plmColour \"#[0-9a-fA-F]\\{{3,8}}\\>\"");
             println!("syn match plmSpring \"\\~\\w\\+\"");
-            println!("syn region plmString start=/\"/ skip=/\\\\\"/ end=/\"/ contains=plmHole");
+            println!("syn region plmString start=/\"/ skip=/\\\\[\\\\\"]/ end=/\"/ contains=plmHole");
             println!("syn region plmHole start=/{{/ end=/}}/ contained");
             println!("syn match plmComment \"//.*$\"");
             println!("hi def link plmStatement Statement");
@@ -494,7 +494,7 @@ pub fn highlighting(which: &str) -> i32 {
             let rules = json!([
                 { "name": "comment.line.double-slash.plm", "match": "//.*$" },
                 { "name": "string.quoted.double.plm", "begin": "\"", "end": "\"",
-                  "patterns": [{ "name": "variable.other.plm", "match": "\\{[^}]*\\}" }] },
+                  "patterns": [{ "name": "constant.character.escape.plm", "match": "\\\\[\"\\\\]" }, { "name": "variable.other.plm", "match": "\\{[^}]*\\}" }] },
                 { "name": "constant.other.colour.plm", "match": "#[0-9a-fA-F]{3,8}\\b" },
                 { "name": "constant.numeric.plm", "match": "\\b\\d+(\\.\\d+)?(px|%|deg|ms|s)?\\b" },
                 { "name": "entity.other.attribute-name.plm", "match": "\\b\\w+(?=\\s*:)" },

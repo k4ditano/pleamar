@@ -1,0 +1,7 @@
+// expect: error «this string is not closed»
+language 0.6
+// An escaped quote does not close the string: this one never is.
+scene Open {
+    surface { size: 300, 80 }
+    text "she said \" { at: 10, 20; size: 13; color: #ffffff }
+}

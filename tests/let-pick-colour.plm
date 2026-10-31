@@ -1,0 +1,18 @@
+// expect: ok
+language 0.6
+// `let` with `pick(i, #a, #b)` or `if(cond, #a, #b)` is a colour, as `mix` and `rgb` were; with numbers, a number.
+scene Tones {
+    surface { size: 300, 80 }
+    fact k = 1
+    fact on = true
+    let tone = pick(k, #d9a066, #7fb8a4, #c27b8f)
+    let tone2 = pick(min(k + 1, 2), mix(#000000, #ffffff, 0.5), tone, rgb(0.2, 0.4, 0.6))
+    let ask = if(on and k > 0, #e0a050, tone)
+    let nested = if(on, pick(k, #111111, #222222), #333333)
+    let size = pick(k, 10, 20, 30)
+    let half = if(on, 0.5, 1)
+    box { at: 10, 10; size: size, size; color: tone; opacity: half }
+    box { at: 60, 10; size: 30, 30; color: tone2 }
+    box { at: 100, 10; size: 30, 30; color: ask }
+    box { at: 140, 10; size: 30, 30; color: nested }
+}

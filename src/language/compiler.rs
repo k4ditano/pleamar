@@ -2643,17 +2643,48 @@ impl<'a> Compiler<'a> {
                     // that says what this is about. Before, only one level was looked at, and
                     // `mix(mix(#a, #b, x), #c, y)` —four categories, which is what
                     // a notification tray asks for— was read as arithmetic.
+                    // `pick(i, #a, #b)` and `if(cond, #a, #b)` too: there it is their first choice
+                    // that says it, past the place or the condition (which can be any sum).
                     let is_color = {
                         let mut k = c.i;
-                        while matches!(c.tokens.get(k).map(|x| &x.kind), Some(TokenKind::Id(m)) if m == "mix")
-                            && matches!(c.tokens.get(k + 1).map(|x| &x.kind), Some(TokenKind::Sym("(")))
-                        {
-                            k += 2;
+                        // Inside a `pick` or an `if`, a colour's name is the choice only if it is the
+                        // whole of it: `if(t == 0, skin == lens, …)` chooses numbers, `skin` or not.
+                        let mut in_choice = false;
+                        loop {
+                            let call = |name: &str| matches!(c.tokens.get(k).map(|x| &x.kind), Some(TokenKind::Id(m)) if m == name)
+                                && matches!(c.tokens.get(k + 1).map(|x| &x.kind), Some(TokenKind::Sym("(")));
+                            if call("mix") {
+                                k += 2;
+                            } else if call("pick") || call("if") {
+                                // Past its first argument: to the comma at its own depth.
+                                let mut depth = 0i32;
+                                let mut j = k + 2;
+                                while let Some(t) = c.tokens.get(j) {
+                                    match &t.kind {
+                                        TokenKind::Sym("(") | TokenKind::Sym("[") => depth += 1,
+                                        TokenKind::Sym(")") | TokenKind::Sym("]") if depth == 0 => break,
+                                        TokenKind::Sym(")") | TokenKind::Sym("]") => depth -= 1,
+                                        TokenKind::Sym(",") if depth == 0 => break,
+                                        _ => {}
+                                    }
+                                    j += 1;
+                                }
+                                if !matches!(c.tokens.get(j).map(|x| &x.kind), Some(TokenKind::Sym(","))) {
+                                    break;
+                                }
+                                k = j + 1;
+                                in_choice = true;
+                            } else {
+                                break;
+                            }
                         }
                         match c.tokens.get(k).map(|x| &x.kind) {
                             Some(TokenKind::Color(_)) => true,
                             Some(TokenKind::Id(n)) if n == "rgb" && matches!(c.tokens.get(k + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => true,
-                            Some(TokenKind::Id(n)) => self.colors.contains_key(n) || self.scopes.iter().any(|e| e.colors.contains_key(n)),
+                            Some(TokenKind::Id(n)) => {
+                                (self.colors.contains_key(n) || self.scopes.iter().any(|e| e.colors.contains_key(n)))
+                                    && (!in_choice || matches!(c.tokens.get(k + 1).map(|x| &x.kind), Some(TokenKind::Sym(",")) | Some(TokenKind::Sym(")"))))
+                            }
                             _ => false,
                         }
                     };
