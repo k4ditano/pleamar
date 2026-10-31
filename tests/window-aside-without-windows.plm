@@ -1,0 +1,6 @@
+// expect: error «there are no windows here: declare them first, `windows win max 6`»
+scene X {
+    surface { size: 10, 10 }
+    event camp
+    on camp(v) { send win(v) aside }
+}

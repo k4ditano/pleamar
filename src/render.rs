@@ -54,6 +54,11 @@ struct NestPiece {
     uploaded: bool,
 }
 
+/// The pool of the windows put aside (`send win(k) aside`): on no monitor's
+/// stack, never shown, never counted. An identity no stack reaches (they
+/// count up from 5), and one a fact holds exactly.
+const ASIDE: u32 = 999_999;
+
 /// The workspaces of the scene's windows: which one each window is on, which
 /// one each monitor shows, and the window that last had the keyboard on each
 /// (monitor, workspace), to give it back when that workspace is shown again.
@@ -63,7 +68,7 @@ struct NestPiece {
 /// window dries up, and the ones after it move up. Past the last one with
 /// windows there is always one more, empty, to go to.
 struct Desks {
-    /// Each slot's pool (0: none yet).
+    /// Each slot's pool (0: none yet; `ASIDE`: put aside, on none).
     pool: Vec<u32>,
     /// The slots that hold a window.
     alive: Vec<bool>,
@@ -148,7 +153,7 @@ impl Desks {
         if !self.programs {
             return self.here(screen, screens);
         }
-        let mut v: Vec<usize> = (0..self.pool.len()).filter(|k| self.alive(*k) && !self.dialog[*k]).collect();
+        let mut v: Vec<usize> = (0..self.pool.len()).filter(|k| self.alive(*k) && !self.dialog[*k] && self.pool[*k] != ASIDE).collect();
         v.sort_by_key(|k| self.born[*k]);
         v
     }
@@ -200,6 +205,21 @@ impl Desks {
 
     fn pool_of(&self, slot: usize) -> u32 {
         self.pool.get(slot).copied().unwrap_or(0)
+    }
+
+    /// Whether that slot's window is put aside (`send win(k) aside`).
+    fn aside(&self, slot: usize) -> bool {
+        self.pool_of(slot) == ASIDE
+    }
+
+    /// A window put aside comes back to the workspace its monitor shows (it
+    /// is given the keyboard, or brought forward): true if it was aside.
+    fn bring(&mut self, slot: usize, screens: &[usize]) -> bool {
+        if !self.aside(slot) {
+            return false;
+        }
+        self.pool[slot] = self.shown[screens.get(slot).copied().unwrap_or(0).min(3)];
+        true
     }
 
     fn alive(&self, slot: usize) -> bool {
@@ -293,6 +313,7 @@ fn nest_places(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic:
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.rank"), visible.iter().position(|s| *s == k).map_or(-1.0, |p| p as f32));
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.workspace"), desks.index(screen_of(k), desks.pool_of(k)) as f32);
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.pool"), desks.pool_of(k) as f32);
+        nest_fact(scene, facts, to_logic, &format!("{name}.{k}.aside"), desks.aside(k) as u8 as f32);
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.pending"), pending(k) as u8 as f32);
     }
     for p in 0..n.max {
@@ -1738,7 +1759,7 @@ pub fn run(
                             // Carried there alone, it joins the pool shown there; its
                             // whole pool carried there (`send workspace`), it stays in it.
                             desks.grow(n.max);
-                            if slot < n.max && desks.index(screen, desks.pool[slot]) == 0 {
+                            if slot < n.max && desks.index(screen, desks.pool[slot]) == 0 && !desks.aside(slot) {
                                 desks.pool[slot] = desks.shown[screen.min(3)];
                             }
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.screen"), screen as f32);
@@ -1754,7 +1775,7 @@ pub fn run(
                                 let to = screen.min(3);
                                 nest_screens[slot] = screen;
                                 let id = desks.pool[slot];
-                                if id != 0 && desks.index(to, id) == 0 {
+                                if id != 0 && id != ASIDE && desks.index(to, id) == 0 {
                                     desks.stack[to].push(id);
                                 }
                                 // Back where it was shown, and nothing shown there since:
@@ -1783,7 +1804,10 @@ pub fn run(
                         }
                         NestEvent::Reveal(slot) => {
                             desks.grow(n.max);
-                            if slot < n.max && desks.alive(slot) {
+                            // Put aside, it comes here: to the workspace its monitor shows.
+                            if slot < n.max && desks.alive(slot) && desks.bring(slot, &nest_screens) {
+                                nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                            } else if slot < n.max && desks.alive(slot) {
                                 let screen = nest_screens.get(slot).copied().unwrap_or(0).min(3);
                                 let id = desks.pool[slot];
                                 if id != 0 && desks.shown[screen] != id {
@@ -3107,7 +3131,9 @@ pub fn run(
                             if let (WindowAction::Focus, Some(n)) = (action, scene.nest.clone().filter(|n| n.programs && slot < n.max)) {
                                 desks.grow(n.max);
                                 let screen = nest_screens.get(slot).copied().unwrap_or(0).min(3);
-                                if desks.alive(slot) && desks.pool[slot] != 0 && desks.pool[slot] != desks.shown[screen] {
+                                if desks.alive(slot) && desks.bring(slot, &nest_screens) {
+                                    nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                                } else if desks.alive(slot) && desks.pool[slot] != 0 && desks.pool[slot] != desks.shown[screen] {
                                     desks.shown[screen] = desks.pool[slot];
                                     nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                                 }
@@ -3155,6 +3181,32 @@ pub fn run(
                                                 send(ToNest::Blur);
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // A window put aside: on no workspace. With the keyboard, the keyboard
+                    // stays where it is seen —the one that last had it there, or the first—.
+                    Effect::WindowAside(which) => {
+                        let slot = which.eval(Ctx { props: &props, facts: &facts, seen: None }).round();
+                        if let (Some(n), true) = (scene.nest.clone(), slot >= 0.0) {
+                            let slot = slot as usize;
+                            desks.grow(n.max);
+                            if slot < n.max && desks.alive(slot) && !desks.aside(slot) {
+                                desks.pool[slot] = ASIDE;
+                                nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                                let screen = nest_screens.get(slot).copied().unwrap_or(0).min(3);
+                                let focused = facts.iter().zip(&scene.facts).find(|(_, h)| h.0 == format!("{}.focus", n.name)).map_or(-1.0, |(v, _)| *v);
+                                if focused == slot as f32 {
+                                    if let Some(send) = &nest {
+                                        let shown = desks.shown[screen];
+                                        let here = desks.last.get(&shown).copied().filter(|k| *k != slot && nest_order.contains(k) && desks.pool_of(*k) == shown && nest_screens.get(*k) == Some(&screen));
+                                        let first = || nest_order.iter().copied().find(|k| *k != slot && desks.pool_of(*k) == shown && nest_screens.get(*k) == Some(&screen));
+                                        send(match here.or_else(first) {
+                                            Some(k) => ToNest::Focus(k),
+                                            None => ToNest::Blur,
+                                        });
                                     }
                                 }
                             }
@@ -3231,7 +3283,7 @@ pub fn run(
                                     }
                                     // And it is seen: on another workspace, that one is shown.
                                     let at_screen = nest_screens.get(slot).copied().unwrap_or(0).min(3);
-                                    if desks.programs && desks.pool[slot] != 0 && desks.pool[slot] != desks.shown[at_screen] {
+                                    if desks.programs && desks.pool[slot] != 0 && desks.pool[slot] != ASIDE && desks.pool[slot] != desks.shown[at_screen] {
                                         desks.shown[at_screen] = desks.pool[slot];
                                         nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                                     }
@@ -6565,6 +6617,35 @@ mod dock_tests {
         assert_eq!(kept.at(0, 2, &screens), 9);
         let third = kept.at(0, 9, &screens);
         assert_eq!((kept.index(0, third), kept.stack[0].len()), (3, 3));
+    }
+
+    #[test]
+    fn a_window_put_aside_is_on_no_workspace_and_comes_back_to_the_one_shown() {
+        // Two windows on the first monitor's only workspace; the second put aside.
+        let mut desks = Desks::default();
+        desks.grow(2);
+        desks.alive[0] = true;
+        desks.alive[1] = true;
+        desks.pool[0] = 1;
+        desks.pool[1] = ASIDE;
+        let screens = [0, 0];
+        desks.compact(&screens);
+        // Not on the stack, not counted, not shown, and not in a dock of programs.
+        assert_eq!(desks.stack[0], [1]);
+        assert_eq!(desks.used(0, &screens), 1);
+        assert_eq!(desks.index(0, desks.pool_of(1)), 0);
+        assert!(!desks.shown_here(1, &screens));
+        desks.programs = true;
+        assert_eq!(desks.docked(0, &screens), [0]);
+        // One past the last with windows is still the second: the aside one does not count.
+        let second = desks.at(0, 9, &screens);
+        assert_eq!(desks.index(0, second), 2);
+        // Given the keyboard, it comes to the workspace shown; one not aside stays.
+        desks.shown[0] = second;
+        assert!(desks.bring(1, &screens));
+        assert_eq!(desks.pool_of(1), second);
+        assert!(!desks.bring(0, &screens));
+        assert_eq!(desks.pool_of(0), 1);
     }
 }
 

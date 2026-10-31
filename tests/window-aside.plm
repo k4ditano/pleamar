@@ -1,0 +1,15 @@
+// expect: ok
+// A window put aside: on no workspace —not shown, not counted— and alive;
+// sent to a workspace, it is on that one again.
+scene Aside {
+    surface { size: 400, 300 }
+    windows win max 4
+    event camp
+    event back
+    on camp(v) { send win(v) aside }
+    on back(v) { send win(v) to workspace win.shown.0 }
+    on key Alt+a while win.focus >= 0 { send win(win.focus) aside }
+    repeat i in 0..4 {
+        let away = win.$i.aside and win.$i.workspace == 0
+    }
+}

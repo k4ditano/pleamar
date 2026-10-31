@@ -1978,6 +1978,10 @@ pub enum Effect {
     Workspace(Expr, Option<Expr>),
     /// A window to another workspace: `send win(win.focus) to workspace 2`.
     WindowToWorkspace(Expr, Expr, Option<Expr>),
+    /// A window put aside: `send win(k) aside`. On no workspace —on no
+    /// monitor's stack, not counted, not shown— and alive: its program keeps
+    /// running and drawing. Sent to a workspace, it is on that one again.
+    WindowAside(Expr),
     /// `send workspace n [on s] to t`: a whole workspace to another monitor.
     WorkspaceTo(Expr, Option<Expr>, Expr),
     /// `close workspace n [on s]`: that workspace gone, its windows to the one
@@ -2030,6 +2034,7 @@ impl Effect {
             Effect::Accept(a) => Effect::Accept(a.with_payload(v)),
             Effect::Workspace(w, on) => Effect::Workspace(w.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
             Effect::WindowToWorkspace(w, to, on) => Effect::WindowToWorkspace(w.with_payload(v), to.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
+            Effect::WindowAside(w) => Effect::WindowAside(w.with_payload(v)),
             Effect::Dock(k, on, a) => Effect::Dock(k.with_payload(v), on.as_ref().map(|e| e.with_payload(v)), *a),
             Effect::WorkspaceTo(n, on, to) => Effect::WorkspaceTo(n.with_payload(v), on.as_ref().map(|e| e.with_payload(v)), to.with_payload(v)),
             Effect::WorkspaceClose(n, on) => Effect::WorkspaceClose(n.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),

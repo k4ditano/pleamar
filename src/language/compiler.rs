@@ -7075,6 +7075,7 @@ impl<'a> Compiler<'a> {
             // And the pool itself, by an identity that does not change when
             // the ones before it dry up and it moves up the stack.
             fact(self, format!("{name}.{k}.pool"), 0.0, false);
+            fact(self, format!("{name}.{k}.aside"), 0.0, false);
             fact(self, format!("{name}.{k}.among"), 0.0, false);
             fact(self, format!("{name}.{k}.rank"), -1.0, false);
             // Its item in its monitor's dock, and its turn among the ones put
@@ -7731,6 +7732,15 @@ impl<'a> Compiler<'a> {
                                 continue;
                             }
                             let which = self.which_window(&mut c)?;
+                            // `send win(k) aside`: on no workspace (`win.$i.aside`).
+                            if c.word("aside") {
+                                if self.e.nest.is_none() {
+                                    return c.error("`send win(…) aside` puts one of the scene's windows on no workspace: declare them first, `windows win max 16`");
+                                }
+                                effects.push(Effect::WindowAside(which));
+                                c.expect_end()?;
+                                continue;
+                            }
                             c.expect_word("to")?;
                             if c.word("workspace") {
                                 // `… to workspace 2 on 1`: that workspace of another monitor.
