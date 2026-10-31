@@ -15,6 +15,10 @@
       "name": "string.quoted.double.plm",
       "patterns": [
         {
+          "match": "\\\\[\"\\\\]",
+          "name": "constant.character.escape.plm"
+        },
+        {
           "match": "\\{[^}]*\\}",
           "name": "variable.other.plm"
         }

@@ -43,9 +43,29 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
             } else if ch == '/' && c.get(i + 1) == Some(&'/') {
                 break;
             } else if ch == '"' {
-                let end = c[i + 1..].iter().position(|x| *x == '"').ok_or_else(|| CompileError::at(n + 1, col, "this string is not closed: the quote is missing"))?;
-                push(TokenKind::Str(c[i + 1..i + 1 + end].iter().collect()));
-                i += end + 2;
+                // `\"` is a quote in it and `\\` a backslash; any other backslash is itself
+                // (`"C:\Users"` stays as it is written).
+                let mut text = String::new();
+                let mut j = i + 1;
+                let closed = loop {
+                    match c.get(j) {
+                        None => break false,
+                        Some('"') => break true,
+                        Some('\\') if matches!(c.get(j + 1), Some('"') | Some('\\')) => {
+                            text.push(c[j + 1]);
+                            j += 2;
+                        }
+                        Some(x) => {
+                            text.push(*x);
+                            j += 1;
+                        }
+                    }
+                };
+                if !closed {
+                    return Err(CompileError::at(n + 1, col, "this string is not closed: the quote is missing (a quote inside it is written \\\")"));
+                }
+                push(TokenKind::Str(text));
+                i = j + 1;
             } else if ch == '#' {
                 let hex: String = c[i + 1..].iter().take_while(|x| x.is_ascii_hexdigit()).collect();
                 // #151616, or the three-digit shortcut: #fff is #ffffff.
@@ -99,5 +119,43 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
             tokens.push(Token { kind: TokenKind::Line, line: n + 1, col: c.len() + 1 });
         }
     }
-    Ok(tokens)
+    // A block may open on the line after its header, as in many languages: the
+    // ends of line between a header and its `{` (blank ones and comments too) are
+    // not there. (Nothing begins with a `{` of its own.)
+    let mut kept: Vec<Token> = Vec::with_capacity(tokens.len());
+    for t in tokens {
+        if t.kind == TokenKind::Sym("{") {
+            while matches!(kept.last(), Some(Token { kind: TokenKind::Line, .. })) {
+                kept.pop();
+            }
+        }
+        kept.push(t);
+    }
+    Ok(kept)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strings(source: &str) -> Vec<String> {
+        tokenize(source).unwrap().into_iter().filter_map(|t| if let TokenKind::Str(s) = t.kind { Some(s) } else { None }).collect()
+    }
+
+    #[test]
+    fn a_quote_and_a_backslash_can_be_written_in_a_string() {
+        assert_eq!(strings(r#"text "say \"hi\"""#), vec![r#"say "hi""#]);
+        assert_eq!(strings(r#"text "ends in \\" { }"#), vec![r"ends in \"]);
+        // Any other backslash is itself.
+        assert_eq!(strings(r#"text "C:\Users\n""#), vec![r"C:\Users\n"]);
+        assert!(tokenize(r#"text "open \""#).is_err());
+    }
+
+    #[test]
+    fn a_block_may_open_on_the_next_line() {
+        let same = tokenize("group {\n box { }\n}").unwrap();
+        let apart = tokenize("group\n// a comment\n\n{\n box { }\n}").unwrap();
+        let kinds = |t: &[Token]| t.iter().map(|t| t.kind.clone()).collect::<Vec<_>>();
+        assert_eq!(kinds(&same), kinds(&apart));
+    }
 }

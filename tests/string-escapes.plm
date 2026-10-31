@@ -1,0 +1,8 @@
+// expect: ok
+language 0.6
+// A quote inside a string is written \" and a backslash \; any other backslash is itself.
+scene Escapes {
+    surface { size: 300, 80 }
+    text "She said \"hello\" and left" { at: 10, 20; size: 13; color: #ffffff }
+    text "C:\Users\abel and a backslash at the end \\" { at: 10, 50; size: 13; color: #ffffff }
+}

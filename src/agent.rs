@@ -1009,6 +1009,8 @@ fn tokenize(src: &str) -> Result<Vec<String>, String> {
             loop {
                 match chars.next() {
                     Some('"') => break,
+                    // `\"` and `\\`, as in a scene's texts.
+                    Some('\\') if matches!(chars.peek(), Some('"') | Some('\\')) => s.push(chars.next().unwrap()),
                     Some(c) => s.push(c),
                     None => return Err("a quoted text is not closed".into()),
                 }

@@ -3,20 +3,20 @@
 **What this note is.** The complete, exact description of what the language accepts. [The language — the guide](09-language-v0.md) is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
 ```sh
-pleamar --version                  # pleamar 0.5.0 · language 0.5
+pleamar --version                  # pleamar 0.6.0 · language 0.6
 pleamar --check scene.plm      # reads it, with whatever it imports; says whether it is fine, exits
 ./run-tests.sh                        # tests/*.plm, examples/*.plm and the examples in this note
 ```
 
 ## 1. Version
 
-The language has a number of its own, apart from the program's: **0.4**. The first changes when something already written stops being valid; the second, when something is added. A file can say which one it needs, on its first line:
+The language has a number of its own, apart from the program's: **0.6**. The first changes when something already written stops being valid; the second, when something is added. A file can say which one it needs, on its first line:
 
 ```
 language 0.1
 ```
 
-If it asks for a different first number, or a second one higher than the program understands, it is an error on load —`this file asks for language 0.7, and this pleamar understands 0.5`— and not a half-built scene. A file that asks for 0.1 is still read by 0.5: what 0.2 added —a group's own `shader:`, workspaces, `pick`, `import … as`, `drag.over`— and what 0.3 added —what a zone tells an agent: `label:`, `agent:`, `role:`, `value:`, `checked:`, `selected:`—, what 0.4 added —a sheet of pictures' `cell:` and `pixels` for pixel art—, and what 0.5 added —a list that sticks to its end (`stick: end`), a child placed on its own across its layout (`place:`), a text as wide as what it says (`tight: true`), a `lines:` that changes, `motion.reduced` and `color.scheme`, a `launch` with holes, a `text` chosen with `if`, and `hover`/`away` over several zones— it simply does not use. Without that line, it is read with whatever is there. While the first is 0, nothing is promised: this is a language still being made.
+If it asks for a different first number, or a second one higher than the program understands, it is an error on load —`this file asks for language 0.7, and this pleamar understands 0.6`— and not a half-built scene. A file that asks for 0.1 is still read by 0.6: what 0.2 added —a group's own `shader:`, workspaces, `pick`, `import … as`, `drag.over`— and what 0.3 added —what a zone tells an agent: `label:`, `agent:`, `role:`, `value:`, `checked:`, `selected:`—, what 0.4 added —a sheet of pictures' `cell:` and `pixels` for pixel art—, and what 0.5 added —a list that sticks to its end (`stick: end`), a child placed on its own across its layout (`place:`), a text as wide as what it says (`tight: true`), a `lines:` that changes, `motion.reduced` and `color.scheme`, a `launch` with holes, a `text` chosen with `if`, and `hover`/`away` over several zones—, and what 0.6 added —a quote inside a text (`\"`), a block opened on the line after its header, and a `let` that is a colour chosen with `pick` or `if`— it simply does not use. Without that line, it is read with whatever is there. While the first is 0, nothing is promised: this is a language still being made.
 
 ## 2. What it guarantees
 
@@ -27,12 +27,12 @@ It is a **declarative language that always terminates**. No free loops, no recur
 | | |
 | --- | --- |
 | Comment | `//` to the end of the line |
-| End of statement | a newline or `;`. Inside parentheses, a newline ends nothing |
+| End of statement | a newline or `;`. Inside parentheses, a newline ends nothing; nor does one before a `{`: a block may open on the line after its header (`group` and, below it, `{`) |
 | Name | letters, digits, `_` and `.`; starts with a letter or `_`. Dots are part of the name: `orb.x`, `note.0.title`. Inside a `repeat`, `$i` is replaced by the number of the turn: `hit.$i` |
 | Number | `40`, `0.5`, `-3`. With a unit: `40px` (= 40), `34%` (= 0.34), `138deg` (to radians) |
 | Duration | `320ms`, `14s`. Where a duration is expected, a number without a unit is not valid |
 | Color | `#151616` or `#fff` |
-| Text | `"in quotes"`. With slots, see §11 |
+| Text | `"in quotes"`. A quote inside it is `\"`, and a backslash before a quote or another backslash, `\\`; any other backslash is itself (`"C:\Users"`). With slots, see §11 |
 | Symbols | `{ } ( ) [ ] , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
 
 Words of the language (they cannot be used as a name of one's own without confusing the reader, though the compiler does not forbid it): `language import scene library surface permissions model service spring prop pose fact event text image measure let zone body ellipse box arc line path input clip group popup component repeat for row column space layer on every blink wave spin follow look gesture posture`, and inside their statements `in max while for after from until at by reach within rest every inset right middle move curve close via as radial radius to change wrap true false and or not`.
@@ -257,7 +257,7 @@ scene Watching {
 | `figure hat = file "hat.svg"` | An svg **as geometry**: its layers become paths, each one named by the `id` of its group in the file. The path is relative to the file that writes it, so a library takes its pieces with it |
 | `shader aurora = file "aurora.wgsl"` | One of the scene's **own shaders**: a function in WGSL that paints a box, point by point. It is read and checked when the scene is read, and touching the file reloads it, like an svg. How it is written, in §8.1 |
 | `measure label` | Creates `label.width` and `label.height`, filled by the text that carries `measure: label` |
-| `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | A name for an expression, or for a color. A small one is substituted where it is named; **a big one is computed once a frame** and what is named is that, so a chain of them —each naming the one before— costs a sum and not a product. A colour is the same, channel by channel |
+| `let panel.x = orb.x + 62` · `let mint = #9ed6bd` | A name for an expression, or for a color. A small one is substituted where it is named; **a big one is computed once a frame** and what is named is that, so a chain of them —each naming the one before— costs a sum and not a product. A colour is the same, channel by channel. It is a colour when what it says is one: `#hex`, a colour's name, `rgb(…)`, `mix(…)` of colours, and `pick(i, #a, #b, …)` or `if(cond, #a, #b)` whose first choice is a colour, whole (`if(t == 0, skin == lens, …)` compares, and is numbers) |
 | `spring bouncy = 170, 12` | A spring of one's own: stiffness, damping. From the house: `lively`, `calm`, `quick`, `slow`, `gentle`, `pose`. Inline: `~spring(170, 12)`, or **`~620ms`**: the spring that gets there in that long without overshooting |
 | `zone box whole { at: …; size: …; active: expr }` | A zone that is not painted |
 
@@ -1876,7 +1876,7 @@ scene Reference3 {
 This is the output of `pleamar --grammar`, copied. It is not a second list: these are the same tables (`src/language/vocabulary.rs`) the compiler consults to accept or reject a word. `./run-tests.sh` compares this block with what the program prints —if somebody adds a word and does not write it down here, it fails— and it also checks that **every word appears in some test**.
 
 ```vocabulary
-language: 0.5
+language: 0.6
 statements: surface permissions model service spring prop pose fact event text image figure font shader blur lens particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window terminal
 library: let spring component permissions fact text model service event image figure font shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title app_id rate captures agent

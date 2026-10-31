@@ -14,7 +14,7 @@ syn match plmProperty "\<\w\+\ze\s*:"
 syn match plmNumber "\<\d\+\(\.\d\+\)\?\(px\|%\|deg\|ms\|s\)\?\>"
 syn match plmColour "#[0-9a-fA-F]\{3,8}\>"
 syn match plmSpring "\~\w\+"
-syn region plmString start=/"/ skip=/\\"/ end=/"/ contains=plmHole
+syn region plmString start=/"/ skip=/\\[\\"]/ end=/"/ contains=plmHole
 syn region plmHole start=/{/ end=/}/ contained
 syn match plmComment "//.*$"
 hi def link plmStatement Statement
