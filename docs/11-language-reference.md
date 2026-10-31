@@ -54,7 +54,7 @@ declaration  = surface | permissions | model | spring | property | fact | event
              | live_text | image_decl | figure_decl | shader_decl | measure | let | zone | translations ;
 translations = "translations" name "{" { text "=" text end } "}" ;            (* name: a language code, `es`, `pt_br` *)
 surface      = "surface" [ name ] "{" { element_prop | statement } "}" ;   (* named: one of several, with its own things inside *)
-permissions  = "permissions" "{" { ( "run" | "services" ) ":" text { "," text } end } "}" ;
+permissions  = "permissions" "{" { ( "run" | "services" | "env" ) ":" text { "," text } end } "}" ;
 model        = "model" name [ "max" number ] "{" { field | list } "}" ;
 service      = "service" service_name [ "as" name ] "{" { field } "}" ;     (* the services, and their fields, are in §17 *)
 field        = name ":" type [ "=" literal ] end ;
@@ -200,7 +200,7 @@ library Clock strict {
 
 Asking for permissions without a `.luau` next to it is an error: there is nobody to use them.
 
-**A plugin's permissions are approved by whoever uses it.** Declaring them is not having them: `pleamar --approve scene.plm` shows what each plugin of that scene asks for, and asks. What is approved is stored outside the plugin, with the fingerprint of its logic and of what it asked for: if either of the two changes, it goes back to unapproved. **Unapproved, a plugin runs with no permissions at all**, and its errors say why and how to approve it. An interpreter (`sh`, `python`…) comes out flagged: it is asking for everything. The scene one opens does not go through this: opening it is already deciding.
+**A plugin's permissions are approved by whoever uses it.** Declaring them is not having them: `pleamar --approve scene.plm` shows what each plugin of that scene asks for, and asks. What is approved is stored outside the plugin, with the fingerprint of its logic, of what it asked for and of the files of its folder that its commands name (`node tools/usage.js`): if any of them changes, it goes back to unapproved. **Unapproved, a plugin runs with no permissions at all**, and its errors say why and how to approve it. An interpreter (`sh`, `python`…) comes out flagged: it is asking for everything; and so does a variable in `env:` that decides which code runs (`PATH`, `LD_PRELOAD`, `NODE_OPTIONS`…), which is the same thing. The scene one opens does not go through this: opening it is already deciding.
 
 A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `posture`, `layer`— and **images and figures** (`image logo = file "logo.png", 16, 16`, `figure hat = file "hat.svg"`: the path is relative to the file that writes it, so the piece travels with it). All under its name, like its boundary. What it cannot do is draw outside a component, or hold loose rules: that belongs to the scene.
 
@@ -245,7 +245,7 @@ scene Watching {
 | Statement | What it declares |
 | --- | --- |
 | `surface { … }` · `surface panel { …; …drawing… }` | The windows it asks for. See below |
-| `permissions { run: "date"; services: "audio", "audio.*" }` | What the logic may touch of the system. Undeclared, nothing. **Listening is not commanding**: `"audio"` allows knowing the volume (`sys.watch`, `sys.ask`); changing it needs `"audio.volume"`, or `"audio.*"` |
+| `permissions { run: "date"; services: "audio", "audio.*"; env: "PATH" }` | What the logic may touch of the system. Undeclared, nothing. **Listening is not commanding**: `"audio"` allows knowing the volume (`sys.watch`, `sys.ask`); changing it needs `"audio.volume"`, or `"audio.*"`. **`env:`**, the variables `run` and `spawn` may set (`{ env = … }`) that do not go through on their own: one that decides which code a program runs —`PATH`, `LD_*`, `NODE_OPTIONS`, `PYTHON*`, `PERL5OPT`, `BASH_ENV`, `HOME`…— never does, since with it `run: "node tools/usage.js"` would run something else; and a plugin's logic sets only `LANG`, `LC_*`, `TZ`, `NO_COLOR` and the terminal's, unless it names more |
 | `service clock as now { time: text; hour: number }` | A system service, by its name. Whatever it reports fills `now.time` and `now.hour` **without a line of logic**. See below |
 | `model rows max 14 { label: text; enabled: bool = true; depth: number }` | A list of records that the logic fills. `max`: how many fit (1 to 1024; 16 if unsaid). Creates `rows.count`, `rows.total` and, per record, `rows.K.field` |
 | `prop orb.x = 360 ~lively` | An animated property: a spring. Without `~`, `lively` |
@@ -1795,7 +1795,7 @@ language: 0.6
 statements: surface permissions model service spring prop pose fact event text image figure font shader blur lens particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
 library: let spring component permissions fact text model service event image figure font shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title app_id rate captures agent
-properties.permissions: run services
+properties.permissions: run services env
 properties.blur: passes values reach
 properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight active show cursor carries carry_icon grow label agent role value checked selected handle place
 properties.ellipse: at radius scale
