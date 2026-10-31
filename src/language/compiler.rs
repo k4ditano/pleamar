@@ -105,6 +105,13 @@ impl<'a> Cur<'a> {
         self.i += hit as usize;
         hit
     }
+    /// A button's word before a zone (`on press back hit`): only when a name
+    /// follows it, so that a zone called `back`, `right`… (`on press back { … }`)
+    /// is still that zone.
+    fn button(&mut self, p: &str) -> bool {
+        let named_after = matches!(self.tokens.get(self.i + 1).map(|t| &t.kind), Some(TokenKind::Id(x)) if x != "while");
+        named_after && self.word(p)
+    }
     fn expect_sym(&mut self, s: &str) -> R<()> {
         if self.sym(s) { Ok(()) } else { self.error(format!("expected '{s}' here")) }
     }
@@ -7767,17 +7774,17 @@ impl<'a> Compiler<'a> {
             match if vocab::TRIGGERS.contains(&what.as_str()) { what.as_str() } else { "" } {
                 // `on press orb`, or with another button: `on press right orb`.
                 "press" => {
-                    if c.word("right") {
+                    if c.button("right") {
                         self.e.surface_mut().right_click_quits = false;
                         Trigger::PressWith(self.zone(c)?, 1)
-                    } else if c.word("middle") {
+                    } else if c.button("middle") {
                         Trigger::PressWith(self.zone(c)?, 2)
-                    } else if c.word("back") {
+                    } else if c.button("back") {
                         // The thumb buttons: the pointer already hands BTN_SIDE and BTN_EXTRA
                         // over as 3 and 4 (see the match in platform/wayland.rs), there was
                         // just no way to ask for them.
                         Trigger::PressWith(self.zone(c)?, 3)
-                    } else if c.word("forward") {
+                    } else if c.button("forward") {
                         Trigger::PressWith(self.zone(c)?, 4)
                     } else {
                         Trigger::Press(self.zone(c)?)
