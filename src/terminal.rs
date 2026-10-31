@@ -1087,6 +1087,22 @@ mod tests {
     }
 
     #[test]
+    fn box_lines_and_blocks_are_drawn_by_hand() {
+        assert_eq!(drawn('─'), Some(Drawn::Arms([1, 1, 0, 0])));
+        assert_eq!(drawn('│'), Some(Drawn::Arms([0, 0, 1, 1])));
+        assert_eq!(drawn('┼'), Some(Drawn::Arms([1, 1, 1, 1])));
+        assert_eq!(drawn('┏'), Some(Drawn::Arms([0, 2, 0, 2])));
+        assert_eq!(drawn('╬'), Some(Drawn::Arms([3, 3, 3, 3])));
+        assert_eq!(drawn('╭'), Some(Drawn::Round { right: true, down: true }));
+        assert_eq!(drawn('╯'), Some(Drawn::Round { right: false, down: false }));
+        assert_eq!(drawn('█'), Some(Drawn::Block([0.0, 0.0, 1.0, 1.0], 1.0)));
+        assert_eq!(drawn('▄'), Some(Drawn::Block([0.0, 0.5, 1.0, 0.5], 1.0)));
+        assert_eq!(drawn('▒'), Some(Drawn::Block([0.0, 0.0, 1.0, 1.0], 0.5)));
+        assert_eq!(drawn('a'), None);
+        assert_eq!(drawn('╱'), None);
+    }
+
+    #[test]
     fn the_256_colours_are_xterms() {
         let p = DEFAULT_COLORS;
         assert_eq!(indexed(16, &p), [0, 0, 0]);
