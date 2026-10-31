@@ -2234,6 +2234,9 @@ pub struct Permissions {
     pub commands: Vec<String>,
     /// The services that `sys.watch` and `sys.call` can use: `audio`, `apps`…
     pub services: Vec<String>,
+    /// The variables `run` and `spawn` may set for a program (`{ env = … }`)
+    /// beyond the ones that are always let through: `env: "PATH", "MY_TOKEN"`.
+    pub env: Vec<String>,
 }
 
 impl Scene {

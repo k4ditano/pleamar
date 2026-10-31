@@ -2182,9 +2182,9 @@ impl<'a> Compiler<'a> {
                 "service" => self.service(n, &mut c)?,
                 "windows" => self.windows(n, &mut c)?,
                 "permissions" => {
-                    // permissions { run: "date", "notify-send";  services: "audio", "apps" }
+                    // permissions { run: "date", "notify-send";  services: "audio", "apps";  env: "PATH" }
                     let mut p = self.properties(n, vocab::properties("permissions"))?;
-                    for (key, target) in [("run", 0), ("services", 1)] {
+                    for (key, target) in [("run", 0), ("services", 1), ("env", 2)] {
                         let Some(c) = p.get_mut(key) else { continue };
                         let mut list = vec![c.string()?];
                         while c.sym(",") {
@@ -2195,7 +2195,11 @@ impl<'a> Compiler<'a> {
                             0 => &mut self.e.permissions,
                             k => self.permissions_of.entry(k).or_default(),
                         };
-                        if target == 0 { owner.commands = list } else { owner.services = list }
+                        match target {
+                            0 => owner.commands = list,
+                            1 => owner.services = list,
+                            _ => owner.env = list,
+                        }
                     }
                 }
                 "spring" => {

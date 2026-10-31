@@ -38,7 +38,7 @@ run("date", { "+%H:%M" }, function(out, code) … end)   -- a system command; an
 run("wl-copy", { "--type", "image/png" }, nil, { stdin = path, output = false })   -- how: a file on its input; and not waiting for what it writes
 run("sudo", { "-S", "-p", "", "-v" }, function(_, code) … end, { input = pw .. "\n" })   -- a text on its input, which never touches a file, its arguments or its environment
 local id = spawn("wf-recorder", { "-f", file }, function(line) … end, function(_, code) … end)   -- one that does not end: a call per line, and one when it HAS ended
-spawn("pacman", args, on_line, on_exit, { input = "…", errors = true, env = { LC_ALL = "C" } })   -- how, too: a text on its input, its error output among the lines, and variables of its own (`env` and `errors` also for `run`: its error output after the rest)
+spawn("pacman", args, on_line, on_exit, { input = "…", errors = true, env = { LC_ALL = "C" } })   -- how, too: a text on its input, its error output among the lines, and variables of its own (`env` and `errors` also for `run`: its error output after the rest; a variable that decides which code runs —`PATH`, `LD_PRELOAD`, `NODE_OPTIONS`…— only if `permissions { env: "…" }` names it, and a plugin's only `LANG`, `LC_*`, `TZ` and colours unless it names more)
 local id = spawn("node", { "worker.mjs" }, on_line, on_exit, { stdin = "open" })   -- its input left open:
 write(id, '{"type":"prompt"}\n')                       -- a line to it while it runs (true if it got there); write(id) closes it
 kill(id, "int")                                       -- asks it to stop (or "term"); kill(id) alone kills it and forgets it
@@ -219,7 +219,7 @@ On exit, the program stops everything the logic left running; on reloading the l
 A library with a `.luau` next to it is a plugin (see [Language reference — version 0.1](11-language-reference.md), §5). Its logic is a script like any other, with four differences:
 
 - **It only sees its own.** `text.now` is the scene's `Clock.now`; `fact.secret`, if `secret` belongs to the scene, does not exist: `plugin 'Nosy' has no fact called 'secret'. A plugin only sees what its library declares`. The same with `model`, `emit` and what it listens to: `on("tapped", …)` is `Clock.tapped`, and `on("key", …)` hears nothing.
-- **Its permissions are approved by whoever uses it.** `pleamar --approve scene.plm` shows what each plugin asks for and asks about it; unapproved, it runs with none (`plugin 'Clock' wants to run 'date', but nobody has approved its permissions`), and if its code or what it asks for changes, it goes back to unapproved.
+- **Its permissions are approved by whoever uses it.** `pleamar --approve scene.plm` shows what each plugin asks for and asks about it; unapproved, it runs with none (`plugin 'Clock' wants to run 'date', but nobody has approved its permissions`), and if its code, what it asks for or a file of its folder that its commands name (`node tools/usage.js`) changes, it goes back to unapproved.
 - **Its permissions are the ones in its own `.plm`**, not those of the scene using it: `plugin 'Nosy' has no permission to run 'sh'. If it should be able to, declare it in its own .plm (the scene's do not count)`.
 - **It does not ask for gestures or move the typing caret**: that belongs to the scene. If it wants something to happen, it emits an event of its own, and the scene decides (`on Clock.tapped { play nod }`).
 

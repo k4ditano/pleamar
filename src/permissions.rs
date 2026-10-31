@@ -25,16 +25,83 @@ fn approvals_file() -> PathBuf {
     file
 }
 
+/// Variables that decide which code a program runs, not how it behaves: where a
+/// bare name is looked up, what the loader adds to it, what an interpreter loads
+/// before its script, and the folders it reads its settings from. With one of them
+/// `run: "node tools/usage.js"` runs whatever else: `run` and `spawn` refuse them
+/// unless the permissions name them (`env: "PATH"`).
+const LOADS_CODE: [&str; 33] = [
+    "PATH", "ENV", "BASH_ENV", "BASHOPTS", "SHELLOPTS", "PS4", "PROMPT_COMMAND", "IFS", "ZDOTDIR",
+    "NODE_OPTIONS", "NODE_PATH", "PERL5OPT", "PERL5LIB", "PERLLIB", "PERL5DB", "RUBYOPT", "RUBYLIB",
+    "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "CLASSPATH", "GCONV_PATH",
+    "GTK_MODULES", "GTK_PATH", "GIO_EXTRA_MODULES", "GIO_MODULE_DIR", "QT_PLUGIN_PATH",
+    "LESSOPEN", "LESSCLOSE", "PAGER", "EDITOR", "VISUAL", "BROWSER",
+];
+/// The same, by how they begin: the loader's (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`),
+/// Python's, Lua's, git's, npm's; and the home and settings folders, where a program
+/// finds what to load (`~/.npmrc`, Python's `usercustomize`, git's hooks).
+const LOADS_CODE_PREFIX: [&str; 9] = ["LD_", "DYLD_", "PYTHON", "LUA_", "GIT_", "NPM_CONFIG_", "HOME", "XDG_CONFIG_", "XDG_DATA_"];
+
+/// Variables any program can be given: its language, time zone, colours and size.
+const HARMLESS: [&str; 9] = ["LANG", "LANGUAGE", "TZ", "NO_COLOR", "FORCE_COLOR", "TERM", "COLORTERM", "COLUMNS", "LINES"];
+
+/// Whether this variable decides which code runs (see `LOADS_CODE`). By its
+/// name in capitals: Windows does not tell `Path` from `PATH`.
+pub fn loads_code(name: &str) -> bool {
+    let n = name.to_ascii_uppercase();
+    LOADS_CODE.contains(&n.as_str()) || LOADS_CODE_PREFIX.iter().any(|p| n.starts_with(p))
+}
+
+/// Why `run` or `spawn` may not set this variable, or nothing if it may. A
+/// variable the permissions name always may. One that decides which code runs
+/// never may otherwise. And a plugin's logic, which someone else approved
+/// reading «node tools/usage.js», may set only the harmless ones.
+pub fn env_refused(declared: &[String], plugin: bool, name: &str) -> Option<&'static str> {
+    if declared.iter().any(|d| d == name) {
+        return None;
+    }
+    if loads_code(name) {
+        return Some("it decides which code the program runs");
+    }
+    let n = name.to_ascii_uppercase();
+    if plugin && !(HARMLESS.contains(&n.as_str()) || n.starts_with("LC_")) {
+        return Some("a plugin sets only its language, time zone and colours (LANG, LC_*, TZ, NO_COLOR…) unless it asks for more");
+    }
+    None
+}
+
 /// FNV-1a, 64-bit: small, and the same everywhere and in every version.
 fn fnv(bytes: impl Iterator<Item = u8>) -> u64 {
     bytes.fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
 }
 
-/// What an approval depends on: the plugin's code and what it asks for.
+/// What an approval depends on: the plugin's code, what it asks for, and the
+/// files inside its folder that its commands name (`node tools/usage.js`):
+/// approving that command is approving what `usage.js` says.
 pub fn fingerprint(p: &Plugin) -> String {
     let code = std::fs::read(&p.logic).unwrap_or_default();
-    let asks = format!("|run:{}|services:{}", p.permissions.commands.join(","), p.permissions.services.join(","));
-    format!("{:016x}", fnv(code.into_iter().chain(asks.bytes())))
+    let mut asks = format!("|run:{}|services:{}", p.permissions.commands.join(","), p.permissions.services.join(","));
+    // Only when it asks for any: what was approved before `env:` existed still holds.
+    if !p.permissions.env.is_empty() {
+        asks.push_str(&format!("|env:{}", p.permissions.env.join(",")));
+    }
+    format!("{:016x}", fnv(code.into_iter().chain(asks.bytes()).chain(named_files(p))))
+}
+
+/// The files inside the plugin's folder that its commands name, each with its
+/// name before it. Never one outside it: `/usr/bin/node` is the system's, not
+/// the plugin's, and reading it on every load would cost what it weighs.
+fn named_files(p: &Plugin) -> Vec<u8> {
+    let Some(dir) = p.logic.parent().and_then(|d| d.canonicalize().ok()) else { return Vec::new() };
+    let mut out = Vec::new();
+    for word in p.permissions.commands.iter().flat_map(|c| c.split_whitespace()) {
+        let Ok(path) = dir.join(word).canonicalize() else { continue };
+        if path.starts_with(&dir) && path.is_file() && let Ok(bytes) = std::fs::read(&path) {
+            out.extend(format!("|file:{word}:").bytes());
+            out.extend(bytes);
+        }
+    }
+    out
 }
 
 fn approved() -> BTreeMap<String, String> {
@@ -74,8 +141,14 @@ pub fn describe(p: &Permissions) -> String {
     // `say:*` tells any scene any of `--say`'s commands, `quit` among them.
     let says_to_all = |x: &str| x == "say:*";
     let mut s = format!("commands: {} · services: {}", list(&p.commands, &is_interpreter), list(&p.services, &says_to_all));
+    if !p.env.is_empty() {
+        s.push_str(&format!(" · variables: {}", list(&p.env, &|x| loads_code(x))));
+    }
     if p.commands.iter().any(|o| is_interpreter(o)) {
         s.push_str(" · ⚠ an interpreter runs whatever it is told: that is asking for everything");
+    }
+    if p.env.iter().any(|x| loads_code(x)) {
+        s.push_str(" · ⚠ a variable that decides which code runs (PATH, LD_PRELOAD, NODE_OPTIONS…) lets its commands run something else: that is asking for everything");
     }
     if p.services.iter().any(|x| says_to_all(x)) {
         s.push_str(" · ⚠ say:* tells any running scene anything --say can, quit included");
@@ -113,7 +186,7 @@ pub fn ask(scene: &str, yes_to_all: bool) -> i32 {
         };
         if yes {
             match approve(p) {
-                Ok(()) => println!("  approved. If its logic or what it asks for changes, it will have to be approved again."),
+                Ok(()) => println!("  approved. If its logic, what it asks for or a script its commands name changes, it will have to be approved again."),
                 Err(m) => {
                     eprintln!("  could not save it: {m}");
                     return 1;
@@ -129,15 +202,36 @@ pub fn ask(scene: &str, yes_to_all: bool) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Permissions, describe};
+    use super::{Permissions, describe, env_refused};
 
     #[test]
     fn telling_every_scene_is_flagged_and_telling_one_is_not() {
-        let p = |services: &[&str]| Permissions { commands: Vec::new(), services: services.iter().map(|s| s.to_string()).collect() };
+        let p = |services: &[&str]| Permissions { commands: Vec::new(), services: services.iter().map(|s| s.to_string()).collect(), env: Vec::new() };
         let one = describe(&p(&["say:bar"]));
         assert!(!one.contains('⚠'), "{one}");
         let all = describe(&p(&["audio", "say:*"]));
         assert!(all.contains("say:* ⚠"), "{all}");
         assert!(all.contains("⚠ say:* tells any running scene"), "{all}");
+    }
+
+    #[test]
+    fn variables_that_load_code_are_refused_unless_declared() {
+        let none: Vec<String> = Vec::new();
+        // Whoever approved «node tools/usage.js» did not approve another program, a loader or a script.
+        for name in ["PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "NODE_OPTIONS", "PYTHONPATH", "PYTHONSTARTUP", "PERL5OPT", "RUBYOPT", "BASH_ENV", "LUA_INIT", "DYLD_INSERT_LIBRARIES", "HOME", "Path"] {
+            assert!(env_refused(&none, true, name).is_some(), "{name}, plugin");
+            assert!(env_refused(&none, false, name).is_some(), "{name}, scene");
+        }
+        // Named in its permissions, it goes through: and `--approve` shows it with a ⚠.
+        assert!(env_refused(&["PATH".into()], true, "PATH").is_none());
+        assert!(describe(&Permissions { env: vec!["PATH".into()], ..Default::default() }).contains("PATH ⚠"));
+        // A plugin sets only the harmless ones; a scene, also its own.
+        for name in ["LANG", "LC_ALL", "TZ", "NO_COLOR"] {
+            assert!(env_refused(&none, true, name).is_none(), "{name}");
+        }
+        assert!(env_refused(&none, true, "MY_TOKEN").is_some());
+        assert!(env_refused(&["MY_TOKEN".into()], true, "MY_TOKEN").is_none());
+        assert!(env_refused(&none, false, "WAYLAND_DISPLAY").is_none());
+        assert!(env_refused(&none, false, "CHECKUPDATES_DB").is_none());
     }
 }

@@ -1,0 +1,9 @@
+// expect: ok
+// `env:` names the variables `run` and `spawn` may set that do not go through on
+// their own: one that decides which code runs (PATH, LD_PRELOAD, NODE_OPTIONS…)
+// would make `run: "node tools/usage.js"` run something else.
+scene PermissionsEnv {
+    surface { size: 200, 60 }
+    permissions { run: "node tools/usage.js"; env: "NODE_OPTIONS", "MY_TOKEN" }
+    box { from: 0, 0; size: 200, 60; color: #202020 }
+}
