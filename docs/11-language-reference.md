@@ -1565,8 +1565,9 @@ instead; with Shift held, the terminal selects anyway.
 **What it says**, where the scene declares it (all optional): `term.title`
 (the title its program sets) and `term.folder` (the folder its shell is in)
 are texts; `term.alive` (1 while its shell lives), `term.bell` (how many times
-it rang), `term.focus` (1 while it has the keys), `term.cols` and `term.rows`
-are facts. A logic hears them as any other: `on("text:term.folder", …)`,
+it rang), `term.focus` (1 while it has the keys), `term.cols`, `term.rows` and
+`term.pid` (its shell's process, 0 once it ended: under pleamar-wm, the number
+of its layer, `pleamar-wm term list`) are facts. A logic hears them as any other: `on("text:term.folder", …)`,
 `on("fact:term.alive", …)`. It is also a zone: `on press term`, `term.hover`.
 
 **Told to an agent.** What its screen shows is in what the scene tells an
@@ -1579,7 +1580,13 @@ permission needed (they are the scene's own): `copy` what is selected,
 `paste` the clipboard, `write` a text as if typed (`"ls\r"`), `forget` its
 history, `select_all`, `find` a text up its history without minding capitals
 (again: the next one up; it is selected and shown, and an error says it is not
-there), `find_newer` the next one down, `find_end` to stop looking.
+there), `find_newer` the next one down, `find_end` to stop looking. And
+`sys.ask("terminal.selection", "term")` answers what is selected in it, or
+nil.
+
+**Several windows of one scene** (a terminal's, each its own process) are
+told apart from outside with `--answer-as NAME`: `pleamar --say NAME …`
+reaches that one.
 
 **A scene that ends: `quit`.** In a rule, `quit` ends the program, as closing
 its window would: a terminal whose last shell ended.

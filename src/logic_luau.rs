@@ -1297,7 +1297,9 @@ impl LuauScript {
         // The same, but it answers: `sys.ask("tray.menu", key)` returns the menu.
         let (c, mine) = (self.c.clone(), who.clone());
         sys.set("ask", lua.create_function(move |lua, (name, args): (String, mlua::Variadic<Value>)| {
-            check_service_permission(&c, &name, false)?;
+            if !name.starts_with("terminal.") {
+                check_service_permission(&c, &name, false)?;
+            }
             let args: Vec<SysValue> = args.iter().map(|v| lua_to_value(v, 0)).collect();
             // However long asking the system takes does NOT count against the
             // handler's patience: patience is there to cut off a loop

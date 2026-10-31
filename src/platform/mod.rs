@@ -272,6 +272,10 @@ pub fn query(from: &str, name: &str, args: &[SysValue]) -> Result<SysValue, Stri
     if name.starts_with("files.") {
         return files::query(from, name, args);
     }
+    // What is selected in one of the scene's own terminals (`terminal`), or nothing.
+    if let ("terminal.selection", [SysValue::Text(term)]) = (name, args) {
+        return crate::terminal::selection(term).map(|t| t.map_or(SysValue::Null, SysValue::Text));
+    }
     match (name, args) {
         // The environment: what the session told this program at startup.
         ("env", [SysValue::Text(which)]) => {

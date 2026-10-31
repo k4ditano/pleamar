@@ -82,6 +82,7 @@ const HELP: &str = "pleamar [options]
   --seconds N         exits by itself after N seconds
   --margin PX         top margin, instead of the scene\u{2019}s
   --no-hud            without the frame graph
+  --answer-as NAME    `--say NAME …` reaches it, instead of its scene's name
   --record NAMES      prints what those properties, facts or texts are worth on every
                       frame, as «ms<tab>value…», to check an animation against its
                       contract: «--record lid,body.y --seconds 20 > log.tsv»
@@ -103,10 +104,13 @@ struct Args {
     no_vsync: bool,
     /// Which properties, facts or texts to record on every frame.
     record: Vec<String>,
+    /// The name `--say` reaches it by, instead of its scene's (a program that
+    /// opens several windows of the same scene tells each apart).
+    answer_as: Option<String>,
 }
 
 fn args(given: Vec<String>) -> Args {
-    let mut a = Args { scene: String::new(), screen: None, stall: 600, naive: false, demo: false, mouse: None, seconds: None, margin: None, hud: true, reduced: false, no_vsync: false, record: Vec::new() };
+    let mut a = Args { scene: String::new(), screen: None, stall: 600, naive: false, demo: false, mouse: None, seconds: None, margin: None, hud: true, reduced: false, no_vsync: false, record: Vec::new(), answer_as: None };
     let mut it = given.into_iter();
     while let Some(op) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| { eprintln!("{HELP}"); std::process::exit(2) });
@@ -197,6 +201,7 @@ fn args(given: Vec<String>) -> Args {
             "--naive" => a.naive = true,
             "--demo" => a.demo = true,
             "--no-hud" => a.hud = false,
+            "--answer-as" => a.answer_as = Some(value()).filter(|n| !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || "-_.".contains(c))),
             "--reduced-motion" => a.reduced = true,
             "--no-vsync" => a.no_vsync = true,
             "--record" => a.record = value().split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect(),
@@ -376,7 +381,7 @@ pub fn run_with(options: Vec<String>) {
     // What is said from outside —`pleamar --say "emit toggle"`, which is what
     // a global compositor shortcut runs— comes in as if the logic had said it.
     {
-        let name = std::path::Path::new(&a.scene).file_stem().map_or(a.scene.clone(), |n| n.to_string_lossy().into_owned());
+        let name = a.answer_as.clone().unwrap_or_else(|| std::path::Path::new(&a.scene).file_stem().map_or(a.scene.clone(), |n| n.to_string_lossy().into_owned()));
         let tx = Mutex::new((to_render.clone(), to_logic_for_commands));
         let me = name.clone();
         platform::listen_for_commands(&name, std::sync::Arc::new(move |line: String, out: &mut dyn FnMut(&str) -> bool| {

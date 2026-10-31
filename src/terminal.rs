@@ -672,6 +672,14 @@ pub fn sync(placed: &[PlacedTerminal], runs: &[(&'static str, bool)]) {
 /// (a command and its return, say), `forget` its history, `select_all`; and
 /// `find` a text up its history (again: the next one up), `find_newer` the next
 /// one down, `find_end` to stop looking.
+/// What is selected in that terminal, if anything (`sys.ask("terminal.selection", name)`).
+pub fn selection(name: &str) -> Result<Option<String>, String> {
+    with(|r| {
+        let key = r.sessions.keys().find(|k| **k == name).copied().ok_or_else(|| format!("there is no terminal '{name}' running"))?;
+        Ok(r.sessions.get(key).and_then(Session::selected))
+    })
+}
+
 pub fn command(what: &str, name: &str, text: Option<&str>) -> Result<(), String> {
     with(|r| {
         let key = r.sessions.keys().find(|k| **k == name).copied().ok_or_else(|| format!("there is no terminal '{name}' running"))?;
@@ -744,7 +752,8 @@ fn expand(f: &str) -> std::path::PathBuf {
 }
 
 /// What each one says, told to the scene where it declared it: `NAME.title`
-/// and `NAME.folder` (texts), `NAME.alive`, `NAME.bell`, `NAME.focus`, `NAME.cols` and `NAME.rows` (facts).
+/// and `NAME.folder` (texts), `NAME.alive`, `NAME.bell`, `NAME.focus`, `NAME.cols`, `NAME.rows` and
+/// `NAME.pid`, its shell's process (facts).
 pub fn report(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic: &Sender<Event>, hands: &mut Hands) {
     let look_folders = hands.folders_at.elapsed() > Duration::from_millis(700);
     if look_folders {
@@ -789,6 +798,8 @@ pub fn report(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic: 
             fact(format!("{name}.focus"), (focus == Some(*name)) as u8 as f32, facts);
             fact(format!("{name}.cols"), s.size.num_cols as f32, facts);
             fact(format!("{name}.rows"), s.size.num_lines as f32, facts);
+            // (A pid fits a fact exactly: they stay under 2^22.)
+            fact(format!("{name}.pid"), if alive { s.pid as f32 } else { 0.0 }, facts);
             let title = s.shared.title.lock().unwrap().clone();
             if title.is_some() && title != s.told_title {
                 s.told_title = title.clone();
