@@ -1574,6 +1574,13 @@ agent (§13), as text. Under pleamar-wm the shell also goes through its layer
 of terminals, so `pleamar-wm agent` reads it and runs commands in it as in any
 other terminal.
 
+**Its logic acts on it** with `sys.call("terminal.WHAT", "term", …)`, no
+permission needed (they are the scene's own): `copy` what is selected,
+`paste` the clipboard, `write` a text as if typed (`"ls\r"`), `forget` its
+history, `select_all`, `find` a text up its history without minding capitals
+(again: the next one up; it is selected and shown, and an error says it is not
+there), `find_newer` the next one down, `find_end` to stop looking.
+
 **A scene that ends: `quit`.** In a rule, `quit` ends the program, as closing
 its window would: a terminal whose last shell ended.
 

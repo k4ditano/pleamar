@@ -171,6 +171,8 @@ pub struct Session {
     pub pid: u32,
     /// The mouse dragging a selection on it: since when it was pressed, and how many clicks.
     pub selecting: bool,
+    /// What is being looked for in its history, and where it was found last.
+    finding: Option<(String, Option<alacritty_terminal::term::search::Match>)>,
 }
 
 impl Session {
@@ -214,7 +216,7 @@ impl Session {
         let sender = event_loop.channel();
         let _ = shared.sender.set(sender.clone());
         event_loop.spawn();
-        Ok(Session { term, shared, sender, size, told_title: None, told_alive: None, told_bells: 0, told_folder: String::new(), pid, selecting: false })
+        Ok(Session { term, shared, sender, size, told_title: None, told_alive: None, told_bells: 0, told_folder: String::new(), pid, selecting: false, finding: None })
     }
 
     pub fn write(&self, bytes: Vec<u8>) {
@@ -280,6 +282,55 @@ impl Session {
             }
         }
         None
+    }
+
+    /// Looks for a text in its screen and its history, without minding capitals:
+    /// `older` the next one up from the last found (the first, up from the end),
+    /// otherwise the next one down. The one found is selected and shown.
+    pub fn find(&mut self, what: &str, older: bool) -> Result<(), String> {
+        use alacritty_terminal::index::Direction;
+        use alacritty_terminal::term::search::RegexSearch;
+        if what.is_empty() {
+            return Err("nothing to look for".into());
+        }
+        let escaped: String = what.chars().flat_map(|c| if "\\.+*?()|[]{}^$#&-~".contains(c) { vec!['\\', c] } else { vec![c] }).collect();
+        let mut regex = RegexSearch::new(&format!("(?i){escaped}")).map_err(|e| e.to_string())?;
+        let last = match &self.finding {
+            Some((w, m)) if w == what => m.clone(),
+            _ => None,
+        };
+        let mut t = self.term.lock();
+        let bottom = Point::new(Line(t.screen_lines() as i32 - 1), Column(t.columns().saturating_sub(1)));
+        let (origin, direction, side) = match (&last, older) {
+            (Some(m), true) => (m.start().sub(&*t, alacritty_terminal::index::Boundary::None, 1), Direction::Left, Side::Left),
+            (Some(m), false) => (m.end().add(&*t, alacritty_terminal::index::Boundary::None, 1), Direction::Right, Side::Right),
+            (None, _) => (bottom, Direction::Left, Side::Right),
+        };
+        let found = t.search_next(&mut regex, origin, direction, side, None);
+        match found {
+            Some(m) => {
+                let mut sel = Selection::new(SelectionType::Simple, *m.start(), Side::Left);
+                sel.update(*m.end(), Side::Right);
+                t.selection = Some(sel);
+                t.scroll_to_point(*m.start());
+                drop(t);
+                self.finding = Some((what.to_owned(), Some(m)));
+                self.shared.version.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+            None => {
+                drop(t);
+                self.finding = Some((what.to_owned(), last));
+                Err("not found".into())
+            }
+        }
+    }
+
+    /// Looking for is over: what it found is let go, and the screen is back at its end.
+    pub fn find_end(&mut self) {
+        self.finding = None;
+        self.unselect();
+        self.scroll_to_bottom();
     }
 
     /// What is selected, as text.
@@ -618,7 +669,9 @@ pub fn sync(placed: &[PlacedTerminal], runs: &[(&'static str, bool)]) {
 
 /// What the scene's logic asks of one of its terminals (`sys.call("terminal.copy", "term")`):
 /// `copy` what is selected, `paste` the clipboard, `write` a text as if typed
-/// (a command and its return, say), `forget` its history, `select_all`.
+/// (a command and its return, say), `forget` its history, `select_all`; and
+/// `find` a text up its history (again: the next one up), `find_newer` the next
+/// one down, `find_end` to stop looking.
 pub fn command(what: &str, name: &str, text: Option<&str>) -> Result<(), String> {
     with(|r| {
         let key = r.sessions.keys().find(|k| **k == name).copied().ok_or_else(|| format!("there is no terminal '{name}' running"))?;
@@ -641,6 +694,12 @@ pub fn command(what: &str, name: &str, text: Option<&str>) -> Result<(), String>
                 s.write(text.unwrap_or("").as_bytes().to_vec());
                 Ok(())
             }
+            "find" => s.find(text.unwrap_or(""), true),
+            "find_newer" => s.find(text.unwrap_or(""), false),
+            "find_end" => {
+                s.find_end();
+                Ok(())
+            }
             "forget" => {
                 s.term.lock().grid_mut().clear_history();
                 s.shared.version.fetch_add(1, Ordering::Relaxed);
@@ -656,7 +715,7 @@ pub fn command(what: &str, name: &str, text: Option<&str>) -> Result<(), String>
                 s.shared.version.fetch_add(1, Ordering::Relaxed);
                 Ok(())
             }
-            other => Err(format!("a terminal does not know '{other}': copy, paste, write, forget, select_all")),
+            other => Err(format!("a terminal does not know '{other}': copy, paste, write, forget, select_all, find, find_newer, find_end")),
         }
     })
 }
