@@ -1368,6 +1368,18 @@ mod wayland;
 #[cfg(target_os = "linux")]
 pub use wayland::run_event_loop;
 
+/// The session's display, for a graphics instance that has to know it before any
+/// surface (OpenGL, through EGL). None where there is no such thing.
+#[cfg(target_os = "linux")]
+pub fn session_display() -> Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>> {
+    std::env::var_os("WAYLAND_DISPLAY")?;
+    wayland::session_display().map(|d| Box::new(d) as Box<dyn wgpu::wgt::WgpuHasDisplayHandle>)
+}
+#[cfg(not(target_os = "linux"))]
+pub fn session_display() -> Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>> {
+    None
+}
+
 /// No platform yet: the core compiles —it's the guard that it stays
 /// portable— but there's nowhere to paint.
 #[cfg(not(target_os = "linux"))]

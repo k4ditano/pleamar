@@ -261,6 +261,39 @@ pub fn run() {
 }
 
 /// The same, with the options given instead of the command line's.
+/// What the scene's surfaces are drawn with: Vulkan (Metal, DirectX 12) where there
+/// is a driver for it; where there is none —a card without a Vulkan driver, a
+/// system without its loader— OpenGL, through EGL, rather than nothing at all
+/// (issue 119). `PLEAMAR_BACKEND=gl` asks for OpenGL, `PLEAMAR_BACKEND=vulkan` never.
+fn graphics_instance(flags: wgpu::InstanceFlags) -> wgpu::Instance {
+    let made = |backends: wgpu::Backends| {
+        let mut d = wgpu::InstanceDescriptor { backends, flags, ..wgpu::InstanceDescriptor::new_without_display_handle() };
+        // OpenGL paints on Wayland surfaces only through a display made from the session's connection.
+        if backends == wgpu::Backends::GL {
+            if let Some(display) = platform::session_display() {
+                d = d.with_display_handle(display);
+            }
+        }
+        wgpu::Instance::new(d)
+    };
+    let backend = std::env::var("PLEAMAR_BACKEND").unwrap_or_default();
+    if backend == "gl" {
+        println!("render · OpenGL, as PLEAMAR_BACKEND asks");
+        return made(wgpu::Backends::GL);
+    }
+    let primary = made(wgpu::Backends::PRIMARY);
+    if backend == "vulkan" || !pollster::block_on(primary.enumerate_adapters(wgpu::Backends::PRIMARY)).is_empty() {
+        return primary;
+    }
+    let gl = made(wgpu::Backends::GL);
+    if pollster::block_on(gl.enumerate_adapters(wgpu::Backends::GL)).is_empty() {
+        println!("render · no graphics driver answers, neither Vulkan nor OpenGL: install your card's Vulkan driver and the Vulkan loader (vulkan-icd-loader)");
+        return primary;
+    }
+    println!("render · no Vulkan driver answers: OpenGL, through EGL (your card's Vulkan driver and the Vulkan loader, vulkan-icd-loader, would be faster)");
+    gl
+}
+
 pub fn run_with(options: Vec<String>) {
     let start_time = std::time::Instant::now();
     let a = args(options);
@@ -329,7 +362,7 @@ pub fn run_with(options: Vec<String>) {
     if std::env::var_os("PLEAMAR_VALIDATE").is_some() {
         flags = wgpu::InstanceFlags::VALIDATION | wgpu::InstanceFlags::DEBUG;
     }
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, flags, ..wgpu::InstanceDescriptor::new_without_display_handle() });
+    let instance = graphics_instance(flags);
     let wanted = scene.surfaces.clone();
 
     println!(

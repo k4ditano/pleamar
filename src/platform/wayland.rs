@@ -992,7 +992,7 @@ impl State {
                     ))),
                     raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(NonNull::new(wl.id().as_ptr() as *mut _).unwrap())),
                 })
-                .expect("the graphics surface could not be created")
+                .expect("the graphics surface could not be created: no Vulkan or OpenGL driver took it (install your card's Vulkan driver and the Vulkan loader, vulkan-icd-loader)")
         }
     }
 
@@ -1669,8 +1669,33 @@ impl PopupHandler for State {
 
 /// Puts up the surfaces the scene asks for and attends to Wayland until
 /// someone closes. It keeps the thread that calls it.
+/// The session's connection, made once: the one the surfaces are put up on, and
+/// the display OpenGL has to know before it can paint on them (EGL makes its
+/// display from it; one made from another connection does not take its surfaces).
+pub fn session_connection() -> Option<Connection> {
+    static C: std::sync::OnceLock<Option<Connection>> = std::sync::OnceLock::new();
+    C.get_or_init(|| Connection::connect_to_env().ok()).clone()
+}
+
+/// That connection's display, as a graphics instance takes it.
+pub struct SessionDisplay(Connection);
+impl std::fmt::Debug for SessionDisplay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SessionDisplay")
+    }
+}
+impl raw_window_handle::HasDisplayHandle for SessionDisplay {
+    fn display_handle(&self) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        let ptr = NonNull::new(self.0.backend().display_ptr() as *mut _).ok_or(raw_window_handle::HandleError::Unavailable)?;
+        Ok(unsafe { raw_window_handle::DisplayHandle::borrow_raw(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(ptr))) })
+    }
+}
+pub fn session_display() -> Option<SessionDisplay> {
+    session_connection().map(SessionDisplay)
+}
+
 pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::Instance, to_render: Sender<ToRender>) {
-    let connection = Connection::connect_to_env().expect("there is no Wayland session");
+    let connection = session_connection().expect("there is no Wayland session");
     // Which display, beside its socket: `--say` prefers a scene on the caller's.
     if let Some(d) = super::display_here() {
         super::shown_on(d);

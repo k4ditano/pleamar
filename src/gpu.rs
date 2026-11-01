@@ -3254,7 +3254,7 @@ impl Gpu {
         let (adapter, (device, queue)) = match on_gl {
             Some(x) => x,
             None => {
-                let adapter = primary.expect("there is no graphics adapter");
+                let adapter = primary.expect("no graphics driver can paint here, neither Vulkan nor OpenGL: install your card's Vulkan driver and the Vulkan loader (vulkan-icd-loader); `vulkaninfo --summary` says what there is");
                 let dq = device_of(&adapter).expect("there is no device");
                 (adapter, dq)
             }
