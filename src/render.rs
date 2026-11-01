@@ -2154,7 +2154,10 @@ pub fn run(
                 // none: a field on another surface (the bar's, behind a sheet with no
                 // field) sent the keyboard back to "on demand" there (see `elsewhere`),
                 // it was lost, the field went with it, the sheet asked again… forever.
-                if editing.is_none() && scene.nest.is_none() {
+                // Nor when a terminal on show has the keys: they are its own. (A hidden field —a terminal's
+                // find box— took them instead, and what was typed went nowhere until the terminal was clicked.)
+                let terminal_keys = crate::terminal::with(|r| r.focus.is_some_and(|f| draw.terminals.iter().any(|t| t.name == f)));
+                if editing.is_none() && scene.nest.is_none() && !terminal_keys {
                     let exclusive: Vec<[f32; 4]> = sheets
                         .iter()
                         .filter(|l| (l.open || l.view.popup.is_some()) && l.keyboard_mode == Some(Keyboard::Always))
