@@ -5131,6 +5131,11 @@ impl Sheet {
         self.window.update_input_region(rects);
     }
 
+    /// Of those, where what is below gets the press first (`yields:`).
+    pub fn update_yielding_region(&self, rects: &[[i32; 4]]) {
+        self.window.update_yielding_region(rects);
+    }
+
     pub fn cursor(&self, c: Cursor) {
         self.window.cursor(c);
     }

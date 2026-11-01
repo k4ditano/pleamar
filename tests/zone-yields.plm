@@ -1,0 +1,9 @@
+// expect: ok
+// A zone over the whole desktop for its right button that lets the widgets
+// below it (a clock on the bottom level) take their own presses (pleamar-wm #40).
+scene Desk {
+    surface { size: full, full; level: background }
+    fact menu = false
+    zone box desk { from: 0, 0; size: screen.width, screen.height; yields: true }
+    on press right desk { menu = true }
+}

@@ -217,6 +217,8 @@ struct Candidate {
     told: Option<Box<Told>>,
     /// `handle:`: the window it carries, and by which edges.
     handle: Option<Box<crate::scene::Handle>>,
+    /// `yields:`: it only counts a press that nothing below it takes (see `Zone::yields`).
+    yields: Option<Expr>,
 }
 
 /// What holds inside a component or an iteration of `repeat`: its
@@ -1910,6 +1912,10 @@ impl<'a> Compiler<'a> {
         // `show:` is "there or not there": it switches off entirely, and its zone with it. Pressing
         // what cannot be seen is worse than not being able to press it.
         let visible = one(self, "show")?;
+        // `yields: true`: a zone under which a program's widget on the desktop (a
+        // layer-shell surface on the bottom level) gets the press first, where
+        // there is one; it still gets the presses on the bare desktop.
+        let yields = one(self, "yields")?;
         let opacity = match (&visible, opacity) {
             (Some(v), Some(o)) => Some(o * v.clone().clamp(0.0, 1.0)),
             (Some(v), None) => Some(v.clone().clamp(0.0, 1.0)),
@@ -2107,7 +2113,7 @@ impl<'a> Compiler<'a> {
         // which it is painted. Whether it is or not is decided at the end: see `materialize_zones`.
         if let Some(name) = &name {
             let name = &self.declare_zone(name);
-            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), forced: carries.is_some() || handle.is_some(), cursor, cursor_when, carries, carry_icon, label, reach, within: None, told, handle });
+            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), forced: carries.is_some() || handle.is_some(), cursor, cursor_when, carries, carry_icon, label, reach, within: None, told, handle, yields });
         }
         Ok(ParsedShape { shape, color, opacity, blend, size: extent, glass_spec })
     }
@@ -4103,7 +4109,7 @@ impl<'a> Compiler<'a> {
             at: self.e.instrs.len(),
             zblock: self.zblock,
             shape: Shape::Rect { center: (at.0.clone() + width.clone() * 0.5, at.1.clone() + height * 0.5), half_size: (width.clone() * 0.5, (height * 0.5 + 3.0).into()), radius: 0.0.into() },
-            active: None, visible: shown, under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None,
+            active: None, visible: shown, under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None, yields: None,
         });
         self.last_size = Some((width.clone(), height.into()));
         self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret, passive });
@@ -6431,7 +6437,7 @@ impl<'a> Compiler<'a> {
                 under.push(t.clone());
             }
             let bounds = Shape::Rect { center: (size.0.clone() * 0.5, size.1.clone() * 0.5), half_size: (size.0.clone() * 0.5, size.1.clone() * 0.5), radius: zone_corner };
-            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, forced: scroller.is_some(), cursor: stack_cursor, cursor_when: stack_cursor_when, carries: None, carry_icon: None, label: None, reach: Reach::Any, within: None, told: None, handle: None });
+            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, forced: scroller.is_some(), cursor: stack_cursor, cursor_when: stack_cursor_when, carries: None, carry_icon: None, label: None, reach: Reach::Any, within: None, told: None, handle: None, yields: None });
             // A hidden stack does not catch the mouse: neither its children nor IT, which with
             // `view:` has a zone of its own —the one for the wheel and dragging— the
             // size of its window. Hidden and in front, that zone
@@ -7262,7 +7268,7 @@ impl<'a> Compiler<'a> {
             at: self.e.instrs.len(),
             zblock: self.zblock,
             shape: Shape::Rect { center: (x.clone() + w.clone() * 0.5, y.clone() + h.clone() * 0.5), half_size: (w.clone() * 0.5, h.clone() * 0.5), radius: 0.0.into() },
-            active: None, visible: Some(alpha.clone()), under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None,
+            active: None, visible: Some(alpha.clone()), under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None, yields: None,
         });
         self.e.paint(Instr::Terminal(Box::new(TerminalSpec { name: interned(&name), zone: interned(&zone), target: (x, y, w, h), alpha, family, px, line_height, colors, cursor, selection, run, command, folder, env })));
         Ok(())
@@ -7329,6 +7335,7 @@ impl<'a> Compiler<'a> {
             within: None,
             told: None,
             handle: None,
+            yields: None,
         });
         self.e.paint(Instr::Window { slot, target: (x, y, w, h), alpha, ask });
         Ok(())
@@ -7588,6 +7595,7 @@ impl<'a> Compiler<'a> {
                 self.e.zones[z.0 as usize].within = k.within.and_then(|w| self.zones.get(&w).copied());
                 self.e.zones[z.0 as usize].told = k.told;
                 self.e.zones[z.0 as usize].handle = k.handle;
+                self.e.zones[z.0 as usize].yields = k.yields;
                 self.zones.insert(k.name, z);
             }
         }

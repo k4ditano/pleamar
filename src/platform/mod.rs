@@ -1082,6 +1082,10 @@ pub fn release_memory() {
 pub trait PlatformWindow: Send {
     /// Where the mouse gets in: only through these boxes, in logical pixels.
     fn update_input_region(&self, boxes: &[[i32; 4]]);
+    /// Of those boxes, the ones whose zones yield (`yields:`): a window manager
+    /// that puts programs' widgets under its scene gives those the press first
+    /// there. Nothing to do anywhere else.
+    fn update_yielding_region(&self, _boxes: &[[i32; 4]]) {}
     /// Which cursor shows while the mouse is over it.
     fn cursor(&self, c: crate::scene::Cursor);
     /// Grab or release the keyboard with the scene running: a launcher wants it

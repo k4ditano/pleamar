@@ -546,6 +546,7 @@ pub fn run(
     // If `--record` was asked for, the header is written once.
     let mut trace_header_done = false;
     let mut region: Vec<[i32; 4]> = vec![[i32::MIN; 4]];
+    let mut region_yielding: Vec<[i32; 4]> = Vec::new();
 
     // ── state ────────────────────────────────────────────────────
     let mut scene = Scene::default();
@@ -4508,8 +4509,18 @@ pub fn run(
             .filter(|b| !closed.iter().any(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]))
             .map(|b| [(b[0] - 3.0).floor() as i32, (b[1] - 3.0).floor() as i32, (b[2] + 3.0).ceil() as i32, (b[3] + 3.0).ceil() as i32])
             .collect();
+        // Of those, the ones that yield (`yields:`): a window manager gives what is below them the press first.
+        let yielding: Vec<[i32; 4]> = zone_memo
+            .bounds
+            .iter()
+            .zip(&scene.zones)
+            .filter(|(_, z)| z.yields.as_ref().is_some_and(|e| e.is_true(c)))
+            .filter_map(|(b, _)| *b)
+            .filter(|b| !closed.iter().any(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]))
+            .map(|b| [(b[0] - 3.0).floor() as i32, (b[1] - 3.0).floor() as i32, (b[2] + 3.0).ceil() as i32, (b[3] + 3.0).ceil() as i32])
+            .collect();
         // (A surface that has just presented its first frame gets its region now.)
-        let region_changes = boxes != region || std::mem::take(&mut regions_again);
+        let region_changes = boxes != region || yielding != region_yielding || std::mem::take(&mut regions_again);
         // `PLEAMAR_REGIONS=card`: and the zones whose name has that in it, with
         // where they are and whether a closed surface is hiding them.
         if region_changes {
@@ -4546,6 +4557,14 @@ pub fn run(
                 // region is committed with the next frame presented, and a
                 // surface that draws nothing —a full-screen catcher— may never
                 // present another, leaving its new region pending for ever.
+                if l.presented && (!region_yielding.is_empty() || !yielding.is_empty()) {
+                    let its_yielding: Vec<[i32; 4]> = yielding
+                        .iter()
+                        .filter(|b| (b[0] as f32) < v[2] && (b[2] as f32) > v[0] && (b[1] as f32) < v[3] && (b[3] as f32) > v[1])
+                        .map(|b| [b[0] - dx, b[1] - dy, b[2] - dx, b[3] - dy])
+                        .collect();
+                    l.update_yielding_region(&its_yielding);
+                }
                 if l.input_region != its_own && l.presented {
                     if std::env::var_os("PLEAMAR_REGIONS").is_some() {
                         eprintln!("regions · surface {} ({}): {:?}", l.view.surface, scene.surfaces.get(l.view.surface).map_or("", |s| s.name.as_str()), its_own);
@@ -4556,6 +4575,7 @@ pub fn run(
                 }
             }
             region = boxes;
+            region_yielding = yielding;
         }
         // And behind the glass, what the compositor blurs: the strips that
         // fall on each surface's piece, in its coordinates. Only when they change.

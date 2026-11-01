@@ -1547,6 +1547,12 @@ pub struct Zone {
     /// its own frame and asks to be carried from it gets this zone pressed
     /// for it, until the button is let go.
     pub handle: Option<Box<Handle>>,
+    /// `yields: true`: it only counts a press that nothing below the scene takes.
+    /// A window manager that puts programs' widgets under its own scene (a
+    /// clock on the desktop, on layer-shell's bottom level) gives them the press
+    /// first where this zone is; elsewhere, and on the bare desktop, it is the
+    /// zone's. Anywhere else it is a zone like any other.
+    pub yields: Option<Expr>,
 }
 
 /// Which window a zone is the handle of, and by which edges (none: it
@@ -2344,7 +2350,7 @@ impl Scene {
         self.zone_under(id, shape, active, vec![])
     }
     pub fn zone_under(&mut self, id: &'static str, shape: Shape, active: impl Into<Expr>, under: Vec<Transform>) -> ZoneId {
-        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, cursor_when: None, under, at: self.instrs.len(), zblock: None, carries: None, carry_icon: None, label: None, reach: Reach::Any, scrolls: None, within: None, told: None, handle: None });
+        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, cursor_when: None, under, at: self.instrs.len(), zblock: None, carries: None, carry_icon: None, label: None, reach: Reach::Any, scrolls: None, within: None, told: None, handle: None, yields: None });
         ZoneId(self.zones.len() as u16 - 1)
     }
     /// Claims go from more to less priority; the last one should be
