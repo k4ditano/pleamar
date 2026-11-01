@@ -952,11 +952,18 @@ pub fn run(
                     // the surface already knows: it is kept, or a reload left the scene
                     // 0 × 0 and everything drawn from its corner —a wallpaper— went
                     // unpainted.
+                    // A window measures what its compositor gave it (tiled, maximised,
+                    // resized by hand), not what its scene asks for: a hot reload keeps that,
+                    // or everything in it —a terminal's grid— was laid out at the scene's
+                    // size until the compositor said its size again, which may be never.
                     let hud = if op.hud { HUD_HEIGHT } else { 0.0 };
-                    size = (
-                        if fresh.surface().width == 0 { size.0 } else { fresh.surface().width as f32 },
-                        if fresh.surface().height == 0 { size.1 } else { fresh.surface().height as f32 + hud },
-                    );
+                    let window_kept = hot && scene.surfaces.first().is_some_and(|s| s.window.is_some()) && fresh.surface().window.is_some();
+                    if !window_kept {
+                        size = (
+                            if fresh.surface().width == 0 { size.0 } else { fresh.surface().width as f32 },
+                            if fresh.surface().height == 0 { size.1 } else { fresh.surface().height as f32 + hud },
+                        );
+                    }
                     texts = fresh.texts.iter().map(|(n, initial)| scene.texts.iter().position(|t| t.0 == *n).map_or_else(|| initial.clone(), |k| texts[k].clone())).collect();
                     shown_locale = None;
                     atlas_stale = true;
