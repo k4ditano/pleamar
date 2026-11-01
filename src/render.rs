@@ -5526,18 +5526,26 @@ fn owe(l: &mut Sheet, rects: impl Iterator<Item = [f32; 4]>) {
 /// `PLEAMAR_TIMING=1`: the boxes of glass that bend (and those a shader reads) on a surface, when they change,
 /// and what share of the surface they cover next to the one box that is captured for all of them.
 fn glass_regions_said(sheet: impl std::fmt::Debug, bent: &[[i32; 4]], read: &[[i32; 4]], surface: (f32, f32)) {
-    static PREVIOUS: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    // What was said last, per sheet: one for all of them, every sheet's line was new after another's, and a shell of
+    // many surfaces said one each frame (a thousand lines a second), glass or none.
+    static PREVIOUS: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> = std::sync::Mutex::new(None);
     let all: Vec<[i32; 4]> = bent.iter().chain(read).copied().collect();
+    let id = format!("{sheet:?}");
+    let mut previous = PREVIOUS.lock().unwrap();
+    let previous = previous.get_or_insert_with(Default::default);
+    // A sheet that has never had glass says nothing.
+    if all.is_empty() && !previous.contains_key(&id) {
+        return;
+    }
     let area = |b: &[i32; 4]| (b[2] - b[0]).max(0) as f32 * (b[3] - b[1]).max(0) as f32;
     let total: f32 = all.iter().map(area).sum();
     let hull = all.iter().copied().reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]).map_or(0.0, |h| area(&h));
     let whole = (surface.0 * surface.1).max(1.0);
     let boxes: Vec<String> = all.iter().map(|b| format!("[{}, {}, {}, {}]", b[0], b[1], b[2], b[3])).collect();
-    let said = format!("{sheet:?} · {} boxes · {:.1}% of the surface, their hull {:.1}% · {}", all.len(), total / whole * 100.0, hull / whole * 100.0, boxes.join(" "));
-    let mut previous = PREVIOUS.lock().unwrap();
-    if *previous != said {
-        eprintln!("lens boxes · {said}");
-        *previous = said;
+    let said = format!("{} boxes · {:.1}% of the surface, their hull {:.1}% · {}", all.len(), total / whole * 100.0, hull / whole * 100.0, boxes.join(" "));
+    if previous.get(&id) != Some(&said) {
+        eprintln!("lens boxes · {id} · {said}");
+        previous.insert(id, said);
     }
 }
 
