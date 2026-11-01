@@ -771,16 +771,22 @@ impl PlatformWindow for WaylandWindow {
     fn capture_backdrop(&self, bounds: [i32; 4], rects: &[[i32; 4]], on_change: bool) -> bool {
         let (Some(d), Some((manager, _))) = (&self.backdrop, SCREENCOPY.get()) else { return false };
         if d.in_flight.load(Ordering::Relaxed) {
+            crate::lens::log_not_asked(d.id, "one is still on the way");
             return false;
         }
-        let Some((output, (x, y))) = d.output_and_position() else { return false };
+        let Some((output, (x, y))) = d.output_and_position() else {
+            crate::lens::log_not_asked(d.id, "its monitor or its place on it is not known");
+            return false;
+        };
         // A monitor that went away (sleep, unplugged) leaves its handle behind, and asking
         // the compositor to photograph it is a fatal protocol error ("invalid output").
         if !output.is_alive() || !OUTPUTS.lock().unwrap().values().any(|o| o == &output) {
+            crate::lens::log_not_asked(d.id, "its monitor is gone");
             return false;
         }
         // Not while monitors are coming and going: the one it is on may already be gone over there.
         if OUTPUTS_CHANGED.lock().unwrap().is_some_and(|t| t.elapsed() < OUTPUTS_SETTLE) {
+            crate::lens::log_not_asked(d.id, "monitors are coming and going");
             return false;
         }
         if d.in_flight.swap(true, Ordering::Relaxed) {

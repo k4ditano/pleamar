@@ -148,6 +148,8 @@ A round of a big scene costs what changed in it, not how big it is. Each result 
 
 `PLEAMAR_CHECK_SHORTCUTS=1` does each of these anyway and says any difference (`check  · …`): to try a scene with them; it is slow. `PLEAMAR_DEBUG_STRETCHES=1` says how a scene's drawing was cut into stretches. `PLEAMAR_TIMING=1` says, every 300 rounds, how many stretches were copied and how many made.
 
+`PLEAMAR_LENS_LOG=1` says what a glass with a lens is given and what it does with it: every capture of what is behind it, how it came back (failed, nothing new, taken in, refused, and how many of its pixels did not fit the frame it was judged against), what a still glass does about it, why a capture could not be asked for, and every two seconds how many of each. Set to a folder instead of `1`, the first thirty captures are kept there as pictures, each beside the frame it was judged against (`capture-007.png`, `canvas-007.png`). It is for when a glass shows something other than what is behind it on someone's machine.
+
 ## At rest
 
 If no property is moving and no behavior is alive, the renderer does not paint: it waits for a message, for a delay to come due, or for the next blink. Zero frames.

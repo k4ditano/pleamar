@@ -145,12 +145,18 @@ pub struct Lens {
     /// (`Pipelines::checked`).
     draft: (wgpu::Texture, wgpu::TextureView),
     verdict: wgpu::Buffer,
+    /// `PLEAMAR_LENS_LOG`: where the verdicts of the capture being unmixed are copied, to be read back and said
+    /// (one pair of counts per part), and the canvas it was judged against, kept as a picture; which capture.
+    judging: Option<Judging>,
     frost: Frost,
     /// A sample of the last capture, and of which box it was: so as not to
     /// repeat the work if nothing has changed.
     sample: Vec<u8>,
     /// The last capture taken in has been taken in once more, identical: see `receive`.
     confirmed: bool,
+    /// The last capture that came was not the same as the one before it (or was: then the check lets it through).
+    pub last_new: bool,
+    last_same: bool,
     pub bounds: [i32; 4],
     bounds_uniforms: wgpu::Buffer,
     /// A received capture whose background is still to be unmixed: which
@@ -190,10 +196,13 @@ impl Lens {
             backgrounds: [background(), background()],
             current: 0,
             draft: texture(d, "draft", px, wgpu::TextureFormat::Rgba8Unorm, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING),
-            verdict: d.create_buffer(&wgpu::BufferDescriptor { label: Some("verdict"), size: 8, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }),
+            verdict: d.create_buffer(&wgpu::BufferDescriptor { label: Some("verdict"), size: 8, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false }),
+            judging: None,
             frost: Frost::new(d, px, b),
             sample: Vec::new(),
             confirmed: false,
+            last_new: false,
+            last_same: false,
             pending: None,
             bounds: [0; 4],
             bounds_uniforms: d.create_buffer(&wgpu::BufferDescriptor { label: Some("bounds"), size: 32, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }),
@@ -236,10 +245,17 @@ impl Lens {
         if self.fixed.is_some() {
             return false;
         }
-        let Some(presented) = self.presented else { return false };
+        let Some(presented) = self.presented else {
+            said(|c| c.unpresented += 1);
+            return false;
+        };
         // A capture without data is one that failed.
-        let Some(data) = d.data else { return false };
+        let Some(data) = d.data else {
+            said(|c| c.failed += 1);
+            return false;
+        };
         let data: &[u8] = (*data).as_ref();
+        self.read_judging(g);
         // Counted even if it brings nothing new: a still background must not
         // keep the warm-up going for ever. During the warm-up none is skipped
         // for looking like the last one: the first ones are the ones not to
@@ -274,14 +290,35 @@ impl Lens {
         // a notice—, which no capture will ever take away, and refusing them all
         // left the glass with its first background for ever, black (#113).
         let same = bounds == self.bounds && sample.len() == self.sample.len() && sample.iter().zip(&self.sample).all(|(a, b)| a.abs_diff(*b) <= 3);
+        let no = said(|c| {
+            c.arrived += 1;
+            c.n += 1;
+            c.n
+        });
+        if let Some(no) = no {
+            let how = if same && !self.confirmed && self.ready {
+                "the same as the one before: taken in once more"
+            } else if self.ready && !self.warming() && same {
+                "the same as the one before: nothing to do"
+            } else if same {
+                "the same as the one before, warming up"
+            } else {
+                "new"
+            };
+            detail(no, || format!("lens · capture #{no} · {}×{} px{} · opacity {:.2} · {how}", d.width, d.height, if d.rects.is_empty() { String::new() } else { format!(" · {} parts", d.rects.len()) }, d.opacity));
+            keep_picture(no, "capture", d.width, d.height, d.stride, data, true);
+        }
         if same && !self.confirmed && self.ready {
             self.confirmed = true;
         } else if self.ready && !self.warming() && same {
+            said(|c| c.unchanged += 1);
             return false;
         }
         if !same {
             self.confirmed = false;
         }
+        self.last_new = !same;
+        self.last_same = same;
         self.sample = sample;
         self.bounds = bounds;
         let dev = &g.device;
@@ -411,13 +448,31 @@ impl Lens {
             }
             dev.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout, entries: &entries })
         };
+        // (`PLEAMAR_LENS_LOG`: the counts of each part, and the canvas, copied to be read back later.)
+        let judging = said(|c| c.n).map(|no| {
+            let counts = dev.create_buffer(&wgpu::BufferDescriptor { label: Some("verdicts"), size: 8 * scissors.len().max(1) as u64, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+            let canvas = (no <= KEPT_PICTURES && LOG.get().and_then(|l| l.as_ref()).is_some_and(|l| l.dir.is_some())).then(|| {
+                let row = (lw * 4).div_ceil(256) * 256;
+                let b = dev.create_buffer(&wgpu::BufferDescriptor { label: Some("canvas kept"), size: (row * lh) as u64, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+                enc.copy_texture_to_buffer(
+                    self.canvases[presented].0.as_image_copy(),
+                    wgpu::TexelCopyBufferInfo { buffer: &b, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(lh) } },
+                    wgpu::Extent3d { width: lw, height: lh, depth_or_array_layers: 1 },
+                );
+                (b, row)
+            });
+            Judging { no, same: self.last_same, parts: scissors.len(), counts, canvas, px: (lw, lh), bgra: matches!(self.canvases[presented].0.format(), wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb) }
+        });
         // Every part is unmixed before any is frosted: the frosting of one reads a little way into the next.
-        for &scissor in &scissors {
+        for (k, &scissor) in scissors.iter().enumerate() {
             match &t.checked {
                 // Into the draft, counting; then into the new background, or what was there.
                 Some((check, settle)) => {
                     enc.clear_buffer(&self.verdict, 0, None);
                     pass(enc, check, &self.draft.1, &unmixing(&check.get_bind_group_layout(0), Some(&self.verdict)), scissor);
+                    if let Some(j) = &judging {
+                        enc.copy_buffer_to_buffer(&self.verdict, 0, &j.counts, 8 * k as u64, 8);
+                    }
                     let settle_group = dev.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
                         layout: &settle.get_bind_group_layout(0),
@@ -437,6 +492,204 @@ impl Lens {
             self.frost.run(g, enc, &self.backgrounds[new].1, scissor, scale);
         }
         self.current = new;
+        if t.checked.is_some() {
+            self.judging = judging;
+        }
+    }
+
+    /// `PLEAMAR_LENS_LOG`: what the card counted for the last capture unmixed (it has long been submitted when the
+    /// next one arrives): how many of its pixels cannot be our frame plus a background, and so whether it was taken
+    /// in or refused; and the canvas it was judged against, as a picture.
+    fn read_judging(&mut self, g: &crate::gpu::Gpu) {
+        let Some(j) = self.judging.take() else { return };
+        j.counts.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        if let Some((b, _)) = &j.canvas {
+            b.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        }
+        if g.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(std::time::Duration::from_millis(200)) }).is_err() {
+            return;
+        }
+        let counts: Vec<u32> = match j.counts.slice(..).get_mapped_range() {
+            Ok(view) => bytemuck::cast_slice::<u8, u32>(&view).to_vec(),
+            Err(_) => Vec::new(),
+        };
+        j.counts.unmap();
+        let mut parts = Vec::new();
+        let mut refused = false;
+        for (k, c) in counts.chunks(2).take(j.parts).enumerate() {
+            let (seen, wrong) = (c[0], c[1]);
+            // The same rule as `settle` (backdrop_check.wgsl), but for a capture taken in once more.
+            let no = wrong > 16 && wrong as u64 * 100 > seen as u64;
+            refused |= no;
+            parts.push(format!("{}{} of {seen} px do not fit our frame ({:.1}%)", if j.parts > 1 { format!("part {}: ", k + 1) } else { String::new() }, wrong, wrong as f64 * 100.0 / seen.max(1) as f64));
+        }
+        // The same capture a second time is let through whatever it counted (`settle`, #113).
+        let refused_now = refused && !j.same;
+        said(|c| if refused_now { c.refused += 1 } else { c.kept += 1 });
+        let no = j.no;
+        let line = format!("lens · capture #{no} judged · {} · {}", parts.join(" · "), if refused_now { "refused" } else if refused { "taken in all the same: it is the one before again, so what does not fit is something drawn over the glass" } else { "taken in" });
+        let refused = refused_now;
+        if refused { detail_always(no, line) } else { detail(no, || line) }
+        if let Some((b, row)) = &j.canvas {
+            if let Ok(view) = b.slice(..).get_mapped_range() {
+                keep_picture(no, "canvas", j.px.0, j.px.1, *row, &view, j.bgra);
+            }
+            b.unmap();
+        }
+    }
+}
+
+/// What `PLEAMAR_LENS_LOG` reads back of a capture being unmixed: see `Lens::read_judging`.
+struct Judging {
+    no: u32,
+    same: bool,
+    parts: usize,
+    counts: wgpu::Buffer,
+    canvas: Option<(wgpu::Buffer, u32)>,
+    px: (u32, u32),
+    bgra: bool,
+}
+
+/// `PLEAMAR_LENS_LOG=1`: what the glass is given and what it does with it, said on the console —every capture
+/// asked for and how it came back; each one in detail for the first ones, and every one refused after them; and
+/// every two seconds, how many of each—. Set to a folder instead of `1`, the first captures are kept there too as
+/// pictures, each with the canvas it was judged against (`capture-007.png`, `canvas-007.png`): what the compositor
+/// gave and what we had painted. To see from someone's machine why a glass shows what it shows.
+struct LensLog {
+    dir: Option<std::path::PathBuf>,
+    counts: std::sync::Mutex<Counts>,
+}
+
+#[derive(Default)]
+struct Counts {
+    since: Option<std::time::Instant>,
+    n: u32,
+    asked: u32,
+    watching: u32,
+    arrived: u32,
+    failed: u32,
+    unpresented: u32,
+    unchanged: u32,
+    kept: u32,
+    refused: u32,
+    said_at: Option<std::time::Instant>,
+}
+
+static LOG: std::sync::OnceLock<Option<LensLog>> = std::sync::OnceLock::new();
+/// How many captures are said one by one, and kept as pictures, before only the refused ones are.
+const DETAILED: u32 = 30;
+const KEPT_PICTURES: u32 = 30;
+
+fn lens_log() -> Option<&'static LensLog> {
+    LOG.get_or_init(|| {
+        let v = std::env::var("PLEAMAR_LENS_LOG").ok().filter(|v| !v.is_empty() && v != "0")?;
+        let dir = (v != "1").then(|| std::path::PathBuf::from(&v));
+        if let Some(d) = &dir {
+            if let Err(e) = std::fs::create_dir_all(d) {
+                eprintln!("lens · cannot keep pictures in {}: {e}", d.display());
+                return Some(LensLog { dir: None, counts: Default::default() });
+            }
+            eprintln!("lens · the first {KEPT_PICTURES} captures, and what was painted then, go to {}", d.display());
+        }
+        Some(LensLog { dir, counts: Default::default() })
+    })
+    .as_ref()
+}
+
+/// With the log on, counts something (and says the counts every two seconds); `None` with it off.
+fn said<T>(f: impl FnOnce(&mut Counts) -> T) -> Option<T> {
+    let log = lens_log()?;
+    let mut c = log.counts.lock().unwrap();
+    let now = std::time::Instant::now();
+    c.since.get_or_insert(now);
+    let out = f(&mut c);
+    if c.said_at.is_none_or(|t| now - t >= std::time::Duration::from_secs(2)) && c.since.is_some_and(|s| now - s >= std::time::Duration::from_millis(500)) {
+        let secs = c.since.map_or(0.0, |s| (now - s).as_secs_f32()).max(0.1);
+        eprintln!(
+            "lens · in {secs:.1} s · asked {} ({} watching for a change) · arrived {} · failed {} · before anything was presented {} · nothing new {} · taken in {} · refused {}",
+            c.asked, c.watching, c.arrived, c.failed, c.unpresented, c.unchanged, c.kept, c.refused
+        );
+        let n = c.n;
+        *c = Counts { n, said_at: Some(now), since: Some(now), ..Default::default() };
+    }
+    Some(out)
+}
+
+/// What a still sheet does about what is behind it (`Pace::still`), said when it changes.
+pub fn log_still(sheet: impl std::fmt::Debug, what: &str) {
+    if lens_log().is_none() {
+        return;
+    }
+    static LAST: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    let now = format!("{sheet:?} {what}");
+    let mut last = LAST.lock().unwrap();
+    if *last != now {
+        eprintln!("lens · still · {now}");
+        *last = now;
+    }
+}
+
+/// A capture that could not be asked for, and why (said when the reason changes).
+pub fn log_not_asked(sheet: impl std::fmt::Debug, why: &str) {
+    if lens_log().is_none() {
+        return;
+    }
+    static LAST: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    let now = format!("{sheet:?}: {why}");
+    let mut last = LAST.lock().unwrap();
+    if *last != now {
+        eprintln!("lens · not asked · {now}");
+        *last = now;
+    }
+}
+
+/// A capture asked for (`Sheet::request_backdrop`): counted, with the log on.
+pub fn log_asked(watching: bool) {
+    said(|c| {
+        c.asked += 1;
+        if watching {
+            c.watching += 1;
+        }
+    });
+}
+
+fn detail(no: u32, line: impl FnOnce() -> String) {
+    if no <= DETAILED {
+        eprintln!("{}", line());
+    }
+}
+
+/// Said even past the first ones (a refused capture), at most once a second.
+fn detail_always(no: u32, line: String) {
+    static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let mut last = LAST.lock().unwrap();
+    if no <= DETAILED || last.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
+        *last = Some(std::time::Instant::now());
+        eprintln!("{line}");
+    }
+}
+
+/// One of the first captures (or the canvas it was judged against), as a picture in the log's folder.
+fn keep_picture(no: u32, what: &str, w: u32, h: u32, stride: u32, data: &[u8], bgra: bool) {
+    let Some(dir) = lens_log().and_then(|l| l.dir.as_ref()) else { return };
+    if no > KEPT_PICTURES || w == 0 || h == 0 {
+        return;
+    }
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        let Some(row) = data.get((y * stride) as usize..(y * stride + w * 4) as usize) else { return };
+        for p in row.chunks_exact(4) {
+            // Opaque, to be looked at: what is behind has no transparency of its own.
+            if bgra {
+                rgba.extend_from_slice(&[p[2], p[1], p[0], 255]);
+            } else {
+                rgba.extend_from_slice(&[p[0], p[1], p[2], 255]);
+            }
+        }
+    }
+    let path = dir.join(format!("{what}-{no:03}.png"));
+    if let Err(e) = image::save_buffer(&path, &rgba, w, h, image::ExtendedColorType::Rgba8) {
+        eprintln!("lens · {}: {e}", path.display());
     }
 }
 
@@ -615,6 +868,45 @@ pub struct Pace {
     pub held: bool,
     pub warming: bool,
     pub since: std::time::Duration,
+}
+
+/// How long a watch (a capture that arrives when something changes behind) is waited for before a plain
+/// capture is asked instead. Some compositors never answer one —Hyprland 0.56, with a window moving right
+/// under the glass (#118)—, and the glass kept what was behind it before, until something made it paint.
+pub const WATCH_PATIENCE: std::time::Duration = std::time::Duration::from_millis(600);
+
+/// The compositor did not say a change behind the glass that a plain capture then found: from then on the
+/// glass does not wait to be told, it takes a plain capture each interval (which the compositor answers the
+/// next time it paints the monitor: with nothing moving there, none).
+static WATCH_DEAF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// How often a glass that is not told of changes looks behind it while it is still.
+pub const DEAF_EVERY: std::time::Duration = std::time::Duration::from_millis(250);
+
+pub fn watch_deaf() -> bool {
+    WATCH_DEAF.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A watch was answered with something new: this compositor says when what is behind changes, and an
+/// unanswered watch is only a still background (no plain capture stands in for it any more).
+static WATCH_HEARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn watch_heard() -> bool {
+    WATCH_HEARD.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn watch_came(new: bool) {
+    if new {
+        WATCH_HEARD.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// A plain capture that stood in for an unanswered watch came back: if it brought something new, the
+/// compositor does not tell changes (see `WATCH_DEAF`).
+pub fn watch_replaced_came(new: bool) {
+    if new && !WATCH_DEAF.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        eprintln!("render · the compositor does not say when what is behind the glass changes: the glass captures it every interval instead");
+    }
 }
 
 /// What a sheet that has not painted this round does about what is behind.

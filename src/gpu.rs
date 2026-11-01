@@ -3034,6 +3034,9 @@ pub struct Sheet {
     /// Glass showed up outside what the last capture took (a panel dropping): what is behind it
     /// was never seen, so it is captured at the default pace, not the scene's slower `lens every`.
     pub glass_grew: bool,
+    /// The capture on the way stands in for a watch the compositor never answered (`lens::WATCH_PATIENCE`):
+    /// if it brings something new, the compositor does not say when what is behind changes.
+    pub watch_replaced: bool,
     /// What changed in its piece of the plane since it was last painted that
     /// the round painting it will not say: rounds it skipped —waiting for a
     /// capture, or for the compositor to let go of a buffer— and what is
@@ -3146,6 +3149,10 @@ pub struct Gpu {
     /// that lends its own textures (a monitor driven directly).
     render_modifiers: Vec<u64>,
     sampler: wgpu::Sampler,
+    /// What a glass reads its background with: mirrored past the edges. A bend near the edge of the screen reads a
+    /// little beyond it, where nothing was captured; clamped, the last row was stretched there, and a wallpaper's
+    /// lines along the top of a bar became dark streaks (#118). Mirrored, the glass reflects what is at its edge.
+    backdrop_sampler: wgpu::Sampler,
     /// How many floats fit now in each store, and how many at most on this card.
     capacity: (usize, usize, usize, usize),
     limit: usize,
@@ -3311,6 +3318,13 @@ impl Gpu {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let backdrop_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::MirrorRepeat,
+            address_mode_v: wgpu::AddressMode::MirrorRepeat,
+            ..Default::default()
+        });
         // The layout is written out, not taken from the shader: that way a
         // scene that brings its own shaders gets a new pipeline with the same
         // layout, and every bind group already made keeps being valid for it.
@@ -3349,7 +3363,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { _gl_instance: gl_instance, lens, blur, blur_sampler, blur_values: crate::blur::DEFAULT_VALUES, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, lens_image: Default::default(), built_for_image: false, lens_epoch: 0, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group, no_picture_view, pictures: Default::default() };
+        let mut g = Gpu { _gl_instance: gl_instance, lens, blur, blur_sampler, blur_values: crate::blur::DEFAULT_VALUES, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, lens_image: Default::default(), built_for_image: false, lens_epoch: 0, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, backdrop_sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group, no_picture_view, pictures: Default::default() };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -3523,7 +3537,7 @@ impl Gpu {
 
     /// What the shapes shader of a sheet with a lens reads.
     pub fn backdrop_group(&self, sharp: &wgpu::TextureView, blurred: &wgpu::TextureView) -> wgpu::BindGroup {
-        Self::build_backdrop_group(&self.device, &self.pipeline, sharp, blurred, &self.sampler)
+        Self::build_backdrop_group(&self.device, &self.pipeline, sharp, blurred, &self.backdrop_sampler)
     }
 
     /// A capture of what is behind a sheet arrives. `true` if it has to be painted again.
@@ -3686,7 +3700,7 @@ impl Gpu {
         let (layer_views, layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
         let mut l = Sheet {
             id: n.id, frame_no: 0, painted_as: Vec::new(), damage_log: Default::default(), known_as: (0, (0, 0)), kept: None, idle_kept_frames: 0, name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, unseen: false, missed: 0, cleared: false, view: n.view,
-            target: n.target, spare: None, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, own: None, idle_own_frames: 0, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, glass_rects: Vec::new(), glass_src: Vec::new(), asked_box: [0; 4], capture_asked: std::time::Instant::now(), rate_last: None, capture_taken: long_ago(), capture_owed: false, capture_forced: false, glass_grew: false, owed_damage: Vec::new(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], presented: false, keyboard_mode: None,
+            target: n.target, spare: None, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, own: None, idle_own_frames: 0, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, glass_rects: Vec::new(), glass_src: Vec::new(), asked_box: [0; 4], capture_asked: std::time::Instant::now(), rate_last: None, capture_taken: long_ago(), capture_owed: false, capture_forced: false, glass_grew: false, watch_replaced: false, owed_damage: Vec::new(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], presented: false, keyboard_mode: None,
         };
         // Frames of our own where the platform makes them, so the compositor
         // is told which piece of each changed: a swapchain's are handed over
@@ -5139,6 +5153,7 @@ impl Sheet {
             frames.settle();
         }
         if self.window.capture_backdrop(bounds, &self.glass_rects, on_change) {
+            crate::lens::log_asked(on_change);
             self.asked_box = bounds;
             self.capture_forced = false;
             self.capture = if on_change { BackdropCapture::Watching } else { BackdropCapture::AfterPresent };
@@ -5153,6 +5168,7 @@ impl Sheet {
         self.window.cancel_backdrop();
         self.capture = BackdropCapture::Idle;
         self.capture_forced = false;
+        self.watch_replaced = false;
     }
 
     pub fn update_blur_region(&self, rects: &[[i32; 4]]) {
