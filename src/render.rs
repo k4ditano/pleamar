@@ -608,6 +608,8 @@ pub fn run(
     // The zone a drag out was tried from, until the button is let go.
     let mut carry_tried: Option<usize> = None;
     let mut repeat: Option<(String, Option<String>, Mods, Instant)> = None;
+    // The key held down, by its code (0: not known), to stop its repeat when it is let go.
+    let mut repeat_code: u32 = 0;
     // For a logic that plays: which keys are held —by their code, since the
     // name a key has can change with Shift between going down and coming up—,
     // which buttons of the mouse, and how long since the last frame it heard of.
@@ -1425,10 +1427,13 @@ pub fn run(
                     last_activity = Instant::now();
                     // If it is held down, it repeats, however this user has it set up.
                     repeat = key_repeat.map(|(delay, _)| (name.clone(), typed.clone(), mods, Instant::now() + Duration::from_millis(delay as u64)));
+                    repeat_code = code;
                     key_presses.push((name, typed, mods, code));
                 }
                 ToRender::KeyReleased(name, code) => {
-                    if repeat.as_ref().is_some_and(|r| r.0 == name) {
+                    // By the key, not by what it says: Shift let go before the D,
+                    // and the D was let go as a «d», and repeated on for ever.
+                    if repeat.as_ref().is_some_and(|r| if code != 0 && repeat_code != 0 { code == repeat_code } else { r.0 == name }) {
                         repeat = None;
                     }
                     // A key handed to a window is released in it too: after the
