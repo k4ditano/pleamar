@@ -196,7 +196,7 @@ impl Session {
             copied: Mutex::new(None),
         });
         let listener = Listener { shared: shared.clone(), wake };
-        let config = Config { scrolling_history: HISTORY, ..Config::default() };
+        let config = Config { scrolling_history: HISTORY, kitty_keyboard: true, ..Config::default() };
         let dims = Size { columns: size.num_cols as usize, lines: size.num_lines as usize };
         let term = Arc::new(FairMutex::new(Term::new(config, &dims, listener.clone())));
         let mut vars: HashMap<String, String> = HashMap::new();
@@ -557,6 +557,14 @@ pub fn key_bytes(name: &str, typed: Option<&str>, ctrl: bool, alt: bool, shift: 
         }
         Some(b)
     };
+    // A program that asked for the kitty keyboard protocol (Claude Code, Neovim, Helix…):
+    // the keys that look the same in the old way (Ctrl+Enter is a plain Enter there)
+    // come as `CSI code ; modifiers u`, and the rest as before.
+    if mode.intersects(TermMode::DISAMBIGUATE_ESC_CODES | TermMode::REPORT_ALL_KEYS_AS_ESC) {
+        if let Some(b) = kitty_bytes(name, typed, ctrl, alt, shift, m, mode) {
+            return Some(b);
+        }
+    }
     match name {
         "Return" | "KP_Enter" => alt_prefix(vec![b'\r']),
         "BackSpace" => alt_prefix(vec![if ctrl { 0x08 } else { 0x7f }]),
@@ -614,6 +622,44 @@ pub fn key_bytes(name: &str, typed: Option<&str>, ctrl: bool, alt: bool, shift: 
             alt_prefix(t.into_bytes())
         }
     }
+}
+
+/// A key in the kitty keyboard protocol, for the keys it changes; `None` leaves it
+/// to the old way (arrows, Home, F-keys: already unambiguous).
+fn kitty_bytes(name: &str, typed: Option<&str>, ctrl: bool, alt: bool, shift: bool, m: u8, mode: TermMode) -> Option<Vec<u8>> {
+    let all = mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC);
+    let csi = |code: String| {
+        let tail = if m > 1 { format!(";{m}") } else { String::new() };
+        Some(format!("\x1b[{code}{tail}u").into_bytes())
+    };
+    let special = match name {
+        "Return" | "KP_Enter" => Some(13),
+        "Tab" | "ISO_Left_Tab" => Some(9),
+        "BackSpace" => Some(127),
+        "Escape" => Some(27),
+        _ => None,
+    };
+    if let Some(code) = special {
+        // Escape always (that is what disambiguates); the others only when a
+        // modifier makes them different, or when every key is asked for.
+        return if code == 27 || m > 1 || all { csi(code.to_string()) } else { None };
+    }
+    // A letter or a sign. Without Ctrl or Alt it is text, as always —unless every
+    // key is asked for as a code.
+    if !(ctrl || alt || all) {
+        return None;
+    }
+    let one = |s: &str| {
+        let mut c = s.chars();
+        c.next().filter(|_| c.next().is_none())
+    };
+    let shown = one(name).or_else(|| typed.and_then(one).filter(|c| !c.is_control()))?;
+    let base = shown.to_lowercase().next().unwrap_or(shown);
+    let mut code = (base as u32).to_string();
+    if shift && base != shown && mode.contains(TermMode::REPORT_ALTERNATE_KEYS) {
+        code.push_str(&format!(":{}", shown as u32));
+    }
+    csi(code)
 }
 
 // ── What the render does with them, each round ──────────────────────
@@ -1113,6 +1159,14 @@ mod tests {
         assert_eq!(key_bytes("Page_Up", None, false, false, true, none), Some(b"\x1b[5;2~".to_vec()));
         assert_eq!(key_bytes("b", Some("b"), false, true, false, none), Some(b"\x1bb".to_vec()));
         assert_eq!(key_bytes("ntilde", Some("ñ"), false, false, false, none), Some("ñ".as_bytes().to_vec()));
+        let kitty = TermMode::DISAMBIGUATE_ESC_CODES | TermMode::REPORT_ALTERNATE_KEYS;
+        assert_eq!(key_bytes("Return", None, true, false, false, kitty), Some(b"\x1b[13;5u".to_vec()));
+        assert_eq!(key_bytes("Return", None, false, false, true, kitty), Some(b"\x1b[13;2u".to_vec()));
+        assert_eq!(key_bytes("Return", None, false, false, false, kitty), Some(b"\r".to_vec()));
+        assert_eq!(key_bytes("Escape", None, false, false, false, kitty), Some(b"\x1b[27u".to_vec()));
+        assert_eq!(key_bytes("c", Some("\u{3}"), true, false, false, kitty), Some(b"\x1b[99;5u".to_vec()));
+        assert_eq!(key_bytes("D", Some("D"), false, false, true, kitty), Some(b"D".to_vec()));
+        assert_eq!(key_bytes("Up", None, false, false, false, kitty), Some(b"\x1b[A".to_vec()));
         assert_eq!(key_bytes("F5", None, false, false, false, none), Some(b"\x1b[15~".to_vec()));
         assert_eq!(key_bytes("BackSpace", None, false, false, false, none), Some(vec![0x7f]));
         assert_eq!(key_bytes("Shift_L", None, false, false, true, none), None);
