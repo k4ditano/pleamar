@@ -22,7 +22,7 @@ pub(crate) const PER_FILE: usize = 1_000_000;
 /// The version of the language this program understands. The first number changes
 /// when something written stops being valid; the second, when something is added. A file
 /// can say which one it needs (`language 0.1`) and find out on load, not halfway through.
-pub const VERSION: (u32, u32) = (0, 8);
+pub const VERSION: (u32, u32) = (0, 9);
 
 #[derive(Debug)]
 pub struct CompileError {
@@ -285,8 +285,10 @@ fn check_version(mut entries: Vec<tree::Entry>) -> Result<Vec<tree::Entry>, Comp
     let (Some(TokenKind::Num(v)), 2, None) = (n.head.get(1).map(|f| &f.kind), n.head.len(), &n.body) else {
         return Err(CompileError::at(n.line, n.col, format!("the version is asked for like this: `language {}.{}`", VERSION.0, VERSION.1)));
     };
-    // `0.1` arrives as a number: the integer part and the first decimal.
-    let asked = (v.trunc() as u32, ((v.fract() * 10.0).round()) as u32);
+    // `0.1` arrives as a number: the integer part, and the decimals as they are
+    // written (`0.12` is twelve, not 1.2 rounded to one).
+    let minor = format!("{v}").split('.').nth(1).and_then(|d| d.parse().ok()).unwrap_or(0);
+    let asked = (v.trunc() as u32, minor);
     if asked.0 != VERSION.0 || asked.1 > VERSION.1 {
         return Err(CompileError::at(n.line, n.head[1].col, format!("this file asks for language {}.{}, and this pleamar understands {}.{}", asked.0, asked.1, VERSION.0, VERSION.1)));
     }
