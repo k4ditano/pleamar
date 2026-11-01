@@ -3,7 +3,7 @@
 **What this note is.** The complete, exact description of what the language accepts. [The language — the guide](09-language-v0.md) is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
 ```sh
-pleamar --version                  # pleamar 0.7.6 · language 0.9
+pleamar --version                  # pleamar 0.7.7 · language 0.9
 pleamar --check scene.plm      # reads it, with whatever it imports; says whether it is fine, exits
 ./run-tests.sh                        # tests/*.plm, examples/*.plm and the examples in this note
 ```
@@ -1559,6 +1559,10 @@ program, Ctrl+C included, except **the combinations the scene has a rule for**
 **Ctrl+Shift+V** pastes (between the marks of a bracketed paste if the program
 asked for them), **Shift+PageUp** and **Shift+PageDown** go through the
 history, and any key that writes brings it back to the end.
+A program that asks for the **kitty keyboard protocol** (Claude Code, Neovim,
+Helix, fish…) gets it: the keys that are the same in the old way —**Ctrl+Enter**
+and **Shift+Enter** are a plain Enter there, Escape is the start of every
+sequence— come as `CSI code ; modifiers u`, so it can tell them apart.
 
 **The mouse.** Dragging selects (two clicks a word, three a line), the middle
 button pastes, and the wheel goes through the history —or, in a program on
@@ -1708,7 +1712,7 @@ scene Told {
 | `impulse prop -620` · `impulse pop left * 5` | a shove: it adds to the velocity of the spring. The amount is evaluated on firing, so it can depend on what is going on: a countdown's bounce shrinks with the number left |
 | `ripple zone` | a ring of light from the centre of that zone through the glass, without a press or a pointer move; nothing if the zone is hidden, inactive or off screen, or with reduced motion. A new ripple replaces the previous one. Naming a shape here makes it a zone, like any rule that names it: it stops the clicks under it |
 | `play gesture` | it asks for it; it will be granted or not, depending on its class |
-| `focus field` · `blur` | gives the writing cursor to an `input`, or takes it away. Focusing a field also has the compositor lend the keyboard to the surface (a launcher opened with a shortcut never gets it with `on_demand` otherwise), to the copy the field is on. An `input` with `passive: true` is only that: it takes no key, so the arrows, Tab and Enter still reach the rules |
+| `focus field` · `blur` | gives the writing cursor to an `input`, or takes it away. Focusing a field also has the compositor lend the keyboard to the surface (a launcher opened with a shortcut never gets it with `on_demand` otherwise), to the copy the field is on. An `input` with `passive: true` is only that: it takes no key, so the arrows, Tab and Enter still reach the rules. In a field, **Ctrl+V**, **Ctrl+Shift+V** (as in a terminal) and **Shift+Insert** paste plain text; **Ctrl+C** or **Ctrl+Insert** copy what is selected, **Ctrl+X** or **Shift+Delete** cut it, **Ctrl+A** selects it all |
 | `text = "words"` · `text = other` | a live text made that at once: words as written (no slots), or what another live text says then. `label = ""` empties it; `label = draft`, after an `input draft`, keeps what was written |
 
 A state change can give the same glass feedback as a click, entirely in the
