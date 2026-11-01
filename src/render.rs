@@ -5800,6 +5800,20 @@ impl Editing {
             }
             KeyOutcome::Moved
         };
+        // With Shift down the letter comes capital (Ctrl+Shift+V, as in a terminal),
+        // and Shift+Insert, Ctrl+Insert and Shift+Delete are the old way to paste,
+        // copy and cut: all of them do the same here.
+        let lower;
+        let (name, m) = match name {
+            n if m.ctrl && n.len() == 1 => {
+                lower = n.to_ascii_lowercase();
+                (lower.as_str(), m)
+            }
+            "Insert" if m.shift && !m.ctrl => ("v", Mods { ctrl: true, shift: false, ..m }),
+            "Insert" if m.ctrl && !m.shift => ("c", m),
+            "Delete" if m.shift && !m.ctrl => ("x", Mods { ctrl: true, shift: false, ..m }),
+            n => (n, m),
+        };
         match name {
             "a" if m.ctrl => {
                 self.anchor = 0;
