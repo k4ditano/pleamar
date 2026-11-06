@@ -1850,7 +1850,7 @@ pub fn run(
                 ToRender::FocusField(name) => {
                     crate::terminal::with(|r| r.focus = None);
                     parked = None;
-                    editing = name.and_then(|n| scene.texts.iter().position(|t| t.0 == n)).map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() });
+                    editing = name.and_then(|n| scene.texts.iter().position(|t| t.0 == n)).map(|k| Editing::at(k, texts[k].len(), texts[k].len()));
                     last_key = Instant::now();
                     // Lent or not once this round's focus changes are in (below).
                     focus_asked = editing.is_some();
@@ -2004,7 +2004,12 @@ pub fn run(
                         }
                         Step::Type(k, text) => {
                             // As typing over what was there: all of it chosen, then the letters.
-                            editing = Some(Editing { field: k, cursor: texts[k].len(), anchor: 0 });
+                            // In the field already being written in, its history stays: the
+                            // agent's words are one step that Ctrl+Z takes back.
+                            match editing.as_mut().filter(|e| e.field == k) {
+                                Some(e) => e.moved_to(texts[k].len(), 0),
+                                None => editing = Some(Editing::at(k, texts[k].len(), 0)),
+                            }
                             last_key = now;
                             key_presses.push(if text.is_empty() { ("BackSpace".into(), None, Mods::default(), 0) } else { ("type".into(), Some(text), Mods::default(), 0) });
                             a.steps.pop_front();
@@ -2192,7 +2197,7 @@ pub fn run(
                             .find(on_exclusive)
                             .map(|f| f.text)
                             .or_else(|| if exclusive.is_empty() { scene.instrs.iter().find_map(|i| if let Instr::Field { text, .. } = i { Some(text.0 as usize) } else { None }) } else { None })
-                            .map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() })
+                            .map(|k| Editing::at(k, texts[k].len(), texts[k].len()))
                     });
                 }
             } else {
@@ -2417,7 +2422,12 @@ pub fn run(
                                 2 if !placed.secret => word_around(&texts[placed.text], b),
                                 _ => (0, texts[placed.text].len()),
                             };
-                            editing = Some(Editing { field: placed.text, cursor, anchor });
+                            // Clicking again in the field being written in only moves its cursor:
+                            // what it can undo stays, as it would after the arrows.
+                            match editing.as_mut().filter(|e| e.field == placed.text) {
+                                Some(e) => e.moved_to(cursor, anchor),
+                                None => editing = Some(Editing::at(placed.text, cursor, anchor)),
+                            }
                             last_key = now;
                         }
                         drag = Some((k, p, now));
@@ -3441,7 +3451,7 @@ pub fn run(
                     Effect::FocusField(t) => {
                         crate::terminal::with(|r| r.focus = None);
                         parked = None;
-                        editing = t.map(|t| t.0 as usize).map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() });
+                        editing = t.map(|t| t.0 as usize).map(|k| Editing::at(k, texts[k].len(), texts[k].len()));
                         last_key = now;
                         // Focusing a field is wanting to type right away. With the keyboard "on
                         // demand", the compositor only gives it with a click, and a search box
@@ -5925,6 +5935,43 @@ struct Editing {
     field: usize,
     cursor: usize,
     anchor: usize,
+    history: History,
+}
+
+/// What a field can undo and redo. Letters typed in a row are one step per word,
+/// deletes in a row one step, and anything else (a paste, a cut, a word deleted
+/// with Ctrl, writing over a selection) a step of its own; moving the cursor
+/// closes the step that was open. A secret field keeps none of it, so no copy of
+/// what it hides is left behind.
+#[derive(Default)]
+struct History {
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+    /// What the field held after the last edit made here. If it holds anything
+    /// else when a key arrives, someone else (the logic, a rule) wrote it, and
+    /// what is remembered would undo their words: it is forgotten.
+    left: Option<String>,
+    /// The step still open, which the next edit of its kind joins.
+    open: Option<Run>,
+    /// The kind of the edit the key being handled made, if it can join one.
+    this: Option<Run>,
+}
+
+/// As many steps back as a field remembers.
+const UNDO_STEPS: usize = 128;
+
+struct Snapshot {
+    text: String,
+    cursor: usize,
+    anchor: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Run {
+    /// Letters typed, and whether the last one was a space: a letter after a
+    /// space starts the next word, and with it the next step.
+    Typing { spaced: bool },
+    Erasing,
 }
 
 enum KeyOutcome {
@@ -5935,6 +5982,74 @@ enum KeyOutcome {
 }
 
 impl Editing {
+    fn at(field: usize, cursor: usize, anchor: usize) -> Self {
+        Editing { field, cursor, anchor, history: History::default() }
+    }
+
+    /// The cursor put somewhere by hand (a click): the step that was open closes.
+    fn moved_to(&mut self, cursor: usize, anchor: usize) {
+        self.cursor = cursor;
+        self.anchor = anchor;
+        self.history.open = None;
+    }
+
+    /// One step back (`redo` false) or forward again.
+    fn step(&mut self, t: &mut String, redo: bool) -> KeyOutcome {
+        let h = &mut self.history;
+        let Some(to) = (if redo { h.redo.pop() } else { h.undo.pop() }) else { return KeyOutcome::Moved };
+        let here = Snapshot { text: std::mem::replace(t, to.text), cursor: self.cursor, anchor: self.anchor };
+        if redo { h.undo.push(here) } else { h.redo.push(here) }
+        self.cursor = to.cursor.min(t.len());
+        self.anchor = to.anchor.min(t.len());
+        h.open = None;
+        h.left = Some(t.clone());
+        KeyOutcome::Changed
+    }
+
+    /// A key, with what it changed remembered so it can be undone.
+    /// `secret`: a field whose letters are hidden is one word, for Ctrl and its
+    /// arrows and deletes, so that where they stop says nothing of what it holds;
+    /// and it remembers nothing to undo.
+    fn handle_key(&mut self, t: &mut String, name: &str, typed: Option<&str>, m: Mods, secret: bool) -> KeyOutcome {
+        if secret || self.history.left.as_deref().is_some_and(|l| l != t.as_str()) {
+            self.history = History::default();
+        }
+        if m.ctrl && !m.alt && !m.logo {
+            match name {
+                "z" | "Z" if !m.shift => return if secret { KeyOutcome::Moved } else { self.step(t, false) },
+                "z" | "Z" | "y" | "Y" => return if secret { KeyOutcome::Moved } else { self.step(t, true) },
+                _ => {}
+            }
+        }
+        let before = (!secret).then(|| Snapshot { text: t.clone(), cursor: self.cursor, anchor: self.anchor });
+        self.history.this = None;
+        let outcome = self.apply(t, name, typed, m, secret);
+        let h = &mut self.history;
+        let this = h.this.take();
+        match (&outcome, before) {
+            (KeyOutcome::Changed, Some(before)) if before.text != *t => {
+                let joins = match (h.open, this) {
+                    (Some(Run::Erasing), Some(Run::Erasing)) => true,
+                    // A letter after a space is the next word.
+                    (Some(Run::Typing { spaced }), Some(Run::Typing { spaced: now })) => !spaced || now,
+                    _ => false,
+                };
+                if !joins {
+                    if h.undo.len() == UNDO_STEPS {
+                        h.undo.remove(0);
+                    }
+                    h.undo.push(before);
+                }
+                h.redo.clear();
+                h.open = this;
+                h.left = Some(t.clone());
+            }
+            (KeyOutcome::Moved, _) => h.open = None,
+            _ => {}
+        }
+        outcome
+    }
+
     fn selection(&self) -> (usize, usize) {
         (self.cursor.min(self.anchor), self.cursor.max(self.anchor))
     }
@@ -5947,9 +6062,8 @@ impl Editing {
         b > a
     }
 
-    /// `secret`: a field whose letters are hidden is one word, for Ctrl and its
-    /// arrows and deletes, so that where they stop says nothing of what it holds.
-    fn handle_key(&mut self, t: &mut String, name: &str, typed: Option<&str>, m: Mods, secret: bool) -> KeyOutcome {
+    /// What a key does to the field, without the history (see `handle_key`).
+    fn apply(&mut self, t: &mut String, name: &str, typed: Option<&str>, m: Mods, secret: bool) -> KeyOutcome {
         let word_left = |t: &str, b: usize| if secret { 0 } else { word_left(t, b) };
         let word_right = |t: &str, b: usize| if secret { t.len() } else { word_right(t, b) };
         self.cursor = self.cursor.min(t.len());
@@ -6026,6 +6140,7 @@ impl Editing {
                     t.replace_range(a..b, "");
                     self.cursor = a;
                     self.anchor = a;
+                    self.history.this = Some(Run::Erasing);
                 }
                 KeyOutcome::Changed
             }
@@ -6045,7 +6160,10 @@ impl Editing {
             "Return" | "KP_Enter" => KeyOutcome::Submitted,
             _ => match typed {
                 Some(letters) if !letters.is_empty() && !m.ctrl && !m.alt && !m.logo => {
-                    self.delete_selection(t);
+                    // Over a selection it is a step of its own; else it joins the word being typed.
+                    if !self.delete_selection(t) {
+                        self.history.this = Some(Run::Typing { spaced: letters.chars().all(char::is_whitespace) });
+                    }
                     t.insert_str(self.cursor, letters);
                     self.cursor += letters.len();
                     self.anchor = self.cursor;
@@ -6934,7 +7052,7 @@ mod selection_tests {
         assert_eq!(word_right(t, 0), 3);
         assert_eq!(word_right(t, 3), 5);
         assert_eq!(word_right(t, 5), t.len());
-        let mut e = Editing { field: 0, cursor: 9, anchor: 9 };
+        let mut e = Editing::at(0, 9, 9);
         let mut s = String::from(t);
         e.handle_key(&mut s, "BackSpace", None, Mods { ctrl: true, ..Mods::default() }, false);
         assert_eq!(s, "cat 1.");
@@ -6943,10 +7061,80 @@ mod selection_tests {
         e.handle_key(&mut s, "Delete", None, Mods { ctrl: true, ..Mods::default() }, false);
         assert_eq!(s, " 1.");
         // A secret field is one word: Ctrl+Backspace takes all of it before the cursor.
-        let mut e = Editing { field: 0, cursor: 9, anchor: 9 };
+        let mut e = Editing::at(0, 9, 9);
         let mut s = String::from("my.pass 1");
         e.handle_key(&mut s, "BackSpace", None, Mods { ctrl: true, ..Mods::default() }, true);
         assert_eq!(s, "");
+    }
+
+    #[test]
+    fn a_field_undoes_a_word_at_a_time_and_redoes() {
+        let ctrl = Mods { ctrl: true, ..Mods::default() };
+        let ctrl_shift = Mods { ctrl: true, shift: true, ..Mods::default() };
+        let mut e = Editing::at(0, 0, 0);
+        let mut s = String::new();
+        let mut type_ = |e: &mut Editing, s: &mut String, w: &str| {
+            for c in w.chars() {
+                let c = c.to_string();
+                e.handle_key(s, &c, Some(&c), Mods::default(), false);
+            }
+        };
+        type_(&mut e, &mut s, "hola que tal");
+        // Typed in a row: a word per step.
+        e.handle_key(&mut s, "z", None, ctrl, false);
+        assert_eq!(s, "hola que ");
+        e.handle_key(&mut s, "z", None, ctrl, false);
+        assert_eq!(s, "hola ");
+        assert_eq!((e.cursor, e.anchor), (5, 5));
+        // Forward again, with Ctrl+Shift+Z or Ctrl+Y.
+        e.handle_key(&mut s, "Z", None, ctrl_shift, false);
+        assert_eq!(s, "hola que ");
+        e.handle_key(&mut s, "y", None, ctrl, false);
+        assert_eq!(s, "hola que tal");
+        // Deletes in a row are one step, and moving closes it.
+        for _ in 0..3 {
+            e.handle_key(&mut s, "BackSpace", None, Mods::default(), false);
+        }
+        e.handle_key(&mut s, "Left", None, Mods::default(), false);
+        e.handle_key(&mut s, "BackSpace", None, Mods::default(), false);
+        assert_eq!(s, "hola qu ");
+        e.handle_key(&mut s, "z", None, ctrl, false);
+        assert_eq!(s, "hola que ");
+        e.handle_key(&mut s, "z", None, ctrl, false);
+        assert_eq!(s, "hola que tal");
+        // A new edit forgets what could be redone.
+        e.handle_key(&mut s, "End", None, Mods::default(), false);
+        type_(&mut e, &mut s, "!");
+        e.handle_key(&mut s, "y", None, ctrl, false);
+        assert_eq!(s, "hola que tal!");
+        // Writing over a selection is a step of its own.
+        e.handle_key(&mut s, "a", None, ctrl, false);
+        type_(&mut e, &mut s, "x");
+        assert_eq!(s, "x");
+        e.handle_key(&mut s, "z", None, ctrl, false);
+        assert_eq!(s, "hola que tal!");
+        assert_eq!((e.anchor, e.cursor), (0, 13), "the selection comes back with it");
+    }
+
+    #[test]
+    fn what_someone_else_wrote_is_not_undone_and_a_secret_keeps_nothing() {
+        let ctrl = Mods { ctrl: true, ..Mods::default() };
+        let mut e = Editing::at(0, 0, 0);
+        let mut s = String::new();
+        e.handle_key(&mut s, "a", Some("a"), Mods::default(), false);
+        // The logic writes the field: Ctrl+Z does not bring back the «a».
+        s = String::from("from the logic");
+        e.cursor = s.len();
+        e.anchor = s.len();
+        assert!(matches!(e.handle_key(&mut s, "z", None, ctrl, false), KeyOutcome::Moved));
+        assert_eq!(s, "from the logic");
+        // A secret field remembers nothing.
+        let mut e = Editing::at(0, 0, 0);
+        let mut s = String::new();
+        e.handle_key(&mut s, "p", Some("p"), Mods::default(), true);
+        assert!(e.history.undo.is_empty());
+        e.handle_key(&mut s, "z", None, ctrl, true);
+        assert_eq!(s, "p");
     }
 
     #[test]
