@@ -1,0 +1,18 @@
+// expect: ok
+language 0.9
+import "pleamar:ui" as ui
+// pleamar:ui imported with a name: its pieces with zones in a `repeat` (Select, Tabs) compile (B11).
+scene Settings {
+    surface { size: 300, 300 }
+    fact choice = 0
+    fact tab = 0
+    event pick
+    event pick_tab
+    on pick(v) { choice = v }
+    on pick_tab(v) { tab = v }
+    column { at: 10, 10; gap: 10
+        ui.Tabs(tab, "General", "Agents", pick_tab)
+        ui.Select(choice, "Today", "This week", pick, c: "This month", count: 3, w: 200)
+        ui.Select(choice, "A", "B", pick, count: 2, w: 200)
+    }
+}

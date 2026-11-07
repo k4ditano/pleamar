@@ -4262,14 +4262,34 @@ impl<'a> Compiler<'a> {
             style.color = self.color(c)?;
         }
         // What it says while empty: translated like any other text.
+        // What it says while empty: words as a text's are —with holes, `"Message {agent}…"`—,
+        // a live text, or a component's text parameter (C8).
         let placeholder = match p.get_mut("placeholder") {
-            Some(c) => {
-                let s = c.string()?;
-                match (self.e.locale, self.versions_of(&s)) {
-                    (Some(locale), Some(v)) => Content::Translated { locale, versions: v.into_iter().map(Content::Literal).collect() },
-                    _ => Content::Literal(s),
+            Some(c) => match c.peek() {
+                Some(TokenKind::Str(s)) => {
+                    let s = s.clone();
+                    let token = c.tokens[c.i].clone();
+                    c.i += 1;
+                    c.expect_end()?;
+                    self.content_of(&s, &token)?
                 }
-            }
+                Some(TokenKind::Id(name)) => {
+                    let name = name.clone();
+                    c.i += 1;
+                    c.expect_end()?;
+                    if let Some(k) = self.scopes.iter().rev().find_map(|e| e.contents.get(&name)) {
+                        k.clone()
+                    } else if let Some(s) = self.scopes.iter().rev().find_map(|e| e.strings.get(&name)) {
+                        Content::Literal(s.clone())
+                    } else {
+                        match self.texts.get(&self.global(&name)) {
+                            Some(t) => Content::Live(*t),
+                            None => return self.unknown(c, "no text", &name, self.texts.keys().collect()),
+                        }
+                    }
+                }
+                _ => return c.error("a placeholder is words in quotes (holes too: \"Message {agent}…\") or a text"),
+            },
             None => Content::Literal(String::new()),
         };
         // `secret: true`: a password. It is typed the same and painted as dots.

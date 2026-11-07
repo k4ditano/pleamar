@@ -1,0 +1,12 @@
+// expect: ok
+language 0.9
+// A placeholder that changes with the agent: holes, and a live text (C8).
+scene Composer {
+    surface { size: 520, 120 }
+    text agent = "Chief"
+    text hint = "Search…"
+    text draft = ""
+    text query = ""
+    input draft { at: 16, 16; width: 488; size: 14; color: #f5f7f5; placeholder: "Message {agent}…" }
+    input query { at: 16, 60; width: 488; size: 14; color: #f5f7f5; placeholder: hint }
+}
