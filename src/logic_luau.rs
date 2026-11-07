@@ -1354,7 +1354,19 @@ impl LuauScript {
             })))
         })?)?;
         let (c, mine) = (self.c.clone(), who.clone());
+        let tx = self.tx.clone();
         sys.set("call", lua.create_function(move |_, (name, args): (String, mlua::Variadic<Value>)| {
+            // `sys.call("image.data", "me", bytes)`: a picture of the scene's own, from
+            // memory (`image me = data "me", 88, 88`). Its bytes as they are, or base64.
+            if name == "image.data" {
+                let (Some(Value::String(key)), Some(Value::String(bytes))) = (args.first(), args.get(1)) else {
+                    return Err(mlua::Error::runtime("`image.data` takes the image's name and its bytes: sys.call(\"image.data\", \"me\", png)"));
+                };
+                let key = key.to_string_lossy().to_string();
+                let version = crate::text::put_data_image(&key, crate::text::picture_bytes(&bytes.as_bytes()));
+                let _ = tx.send(ToRender::Text(intern(&format!("·data.{key}")), format!("data:{key}?{version}")));
+                return Ok(());
+            }
             // Permission first, before anything the logic passed is converted.
             // (The scene's own terminals need no permission: they are its own.)
             if name != "say" {

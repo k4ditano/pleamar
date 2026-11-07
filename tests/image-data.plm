@@ -1,0 +1,8 @@
+// expect: ok
+language 0.9
+// An avatar the logic hands over as bytes: sys.call("image.data", "me", png).
+scene Avatar {
+    surface { size: 120, 120 }
+    image me = data "me", 88, 88
+    image me { at: 16, 16; size: 88, 88 }
+}

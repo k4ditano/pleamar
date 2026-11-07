@@ -585,6 +585,18 @@ impl Typesetter {
         if name.starts_with("thumbnails:") || name.starts_with("capture:") {
             return self.load_frame(name, size, self.live_px(size), into);
         }
+        // `image me = data "me"`: the bytes the logic handed over, from memory.
+        if let Some(key) = name.strip_prefix("data:") {
+            let data = data_image(key)?;
+            let (px, _) = self.image_px(None, size, LIVE_BUDGET);
+            let rgba = rasterize_bytes(&data, looks_like_svg(&data), px, false)?;
+            let slot = match into {
+                Some(s) if s.page == 0 && (s.width, s.height) == px => s,
+                _ => self.reserve(px.0, px.1)?,
+            };
+            self.upload(slot, rgba);
+            return Some(slot);
+        }
         let path = if std::path::Path::new(name).is_absolute() { Some(std::path::PathBuf::from(name)) } else { crate::platform::icon(name) }?;
         let (px, big) = self.image_px(Some(&path), size, LIVE_BUDGET);
         let px = if big { self.picture_px(&path, px) } else { px };
@@ -1318,9 +1330,70 @@ fn fit_within((w, h): (u32, u32), edge: u32) -> (u32, u32) {
     (((w as f32 * k).round() as u32).clamp(1, edge), ((h as f32 * k).round() as u32).clamp(1, edge))
 }
 
+/// The pictures the logic hands over as bytes (`sys.call("image.data", name, bytes)`
+/// for an `image x = data "name"`), by name: painted from memory, never written to disk.
+static DATA_IMAGES: std::sync::Mutex<Option<HashMap<String, Arc<Vec<u8>>>>> = std::sync::Mutex::new(None);
+
+/// Keeps the bytes of the picture `name`, and says what version it is now: the
+/// live text of the image becomes `data:name?version`, so a new one is painted
+/// where the old one was (see `Typesetter::image`).
+pub fn put_data_image(name: &str, bytes: Vec<u8>) -> u64 {
+    static VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    DATA_IMAGES.lock().unwrap().get_or_insert_with(HashMap::new).insert(name.to_owned(), Arc::new(bytes));
+    VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
+
+fn data_image(name: &str) -> Option<Arc<Vec<u8>>> {
+    DATA_IMAGES.lock().unwrap().as_ref()?.get(name).cloned()
+}
+
+fn looks_like_svg(data: &[u8]) -> bool {
+    let start = String::from_utf8_lossy(&data[..data.len().min(256)]).trim_start().to_ascii_lowercase();
+    start.starts_with("<svg") || start.starts_with("<?xml")
+}
+
+/// What the logic hands over: the picture's own bytes, or the same in base64
+/// (a `data:image/png;base64,` before it is let go).
+pub fn picture_bytes(given: &[u8]) -> Vec<u8> {
+    let raw = given.starts_with(b"\x89PNG") || given.starts_with(&[0xff, 0xd8]) || given.starts_with(b"GIF8") || given.starts_with(b"RIFF") || looks_like_svg(given);
+    if raw {
+        return given.to_vec();
+    }
+    let text = String::from_utf8_lossy(given);
+    let body = text.split_once(";base64,").map_or(text.as_ref(), |(_, b)| b);
+    base64(body).unwrap_or_else(|| given.to_vec())
+}
+
+/// Plain base64 (with or without its `=`, spaces and line breaks ignored).
+fn base64(text: &str) -> Option<Vec<u8>> {
+    let value = |c: u8| match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' | b'-' => Some(62),
+        b'/' | b'_' => Some(63),
+        _ => None,
+    };
+    let mut out = Vec::with_capacity(text.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in text.bytes().filter(|c| !c.is_ascii_whitespace() && *c != b'=') {
+        acc = (acc << 6) | value(c)? as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
 fn rasterize_image(path: &std::path::Path, px: (u32, u32), sharp: bool) -> Option<Vec<u8>> {
     let data = std::fs::read(path).ok()?;
     let is_svg = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+    rasterize_bytes(&data, is_svg, px, sharp)
+}
+
+fn rasterize_bytes(data: &[u8], is_svg: bool, px: (u32, u32), sharp: bool) -> Option<Vec<u8>> {
     if is_svg {
         let tree = resvg::usvg::Tree::from_data(&data, &resvg::usvg::Options::default()).ok()?;
         let mut canvas = resvg::tiny_skia::Pixmap::new(px.0, px.1)?;
@@ -1330,7 +1403,7 @@ fn rasterize_image(path: &std::path::Path, px: (u32, u32), sharp: bool) -> Optio
         resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(k, k).post_translate(dx, dy), &mut canvas.as_mut());
         return Some(canvas.take()); // tiny-skia already premultiplies
     }
-    Some(fit(image::load_from_memory(&data).ok()?.to_rgba8(), px, sharp))
+    Some(fit(image::load_from_memory(data).ok()?.to_rgba8(), px, sharp))
 }
 
 #[cfg(test)]
@@ -1420,6 +1493,26 @@ mod tests {
         assert!(t.lay_out(&key).glyphs.is_empty());
         t.shelves = Shelves::new();
         assert_eq!(t.lay_out(&key).glyphs.len(), expected, "atlas exhaustion must not cache letters as nonexistent");
+    }
+
+    #[test]
+    fn a_picture_from_memory() {
+        // A 2 × 2 PNG, as bytes and as base64: the same picture, and no file.
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        assert_eq!(picture_bytes(&png), png);
+        let b64: String = {
+            const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            png.chunks(3).flat_map(|c| {
+                let n = c.iter().enumerate().fold(0u32, |a, (i, b)| a | (*b as u32) << (16 - 8 * i));
+                (0..4).map(move |k| if k <= c.len() { A[(n >> (18 - 6 * k) & 63) as usize] as char } else { '=' })
+            }).collect()
+        };
+        assert_eq!(picture_bytes(format!("data:image/png;base64,{b64}").as_bytes()), png);
+        let v = put_data_image("test-dot", png.clone());
+        assert!(v > 0);
+        let rgba = rasterize_bytes(&data_image("test-dot").unwrap(), false, (2, 2), false).unwrap();
+        assert_eq!(&rgba[..4], &[255, 0, 0, 255]);
     }
 
     #[test]

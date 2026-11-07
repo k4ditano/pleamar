@@ -2396,6 +2396,21 @@ impl<'a> Compiler<'a> {
                         let written = std::path::PathBuf::from(c.string()?);
                         let dir = self.dirs.get(n.line / super::PER_FILE);
                         ImageSource::Pixels(match dir { Some(k) if written.is_relative() => k.join(written), _ => written })
+                    } else if c.word("data") {
+                        // `data "me"`: the bytes the logic hands over (`sys.call("image.data",
+                        // "me", bytes)`), painted from memory. Underneath, a live text that
+                        // the logic sets to `data:me?version`.
+                        let key = c.string()?;
+                        let full = format!("·data.{key}");
+                        let t = match self.texts.get(&full) {
+                            Some(t) => *t,
+                            None => {
+                                let t = self.e.live_text(interned(&full), "");
+                                self.texts.insert(full, t);
+                                t
+                            }
+                        };
+                        ImageSource::Live(t)
                     } else if c.word("from") {
                         // Whichever a live text says: that is how the logic chooses an image.
                         let t = self.global(&c.id("the name of a text")?);
@@ -2404,7 +2419,7 @@ impl<'a> Compiler<'a> {
                             None => return self.unknown(&c, "no text", &t, self.texts.keys().collect()),
                         }
                     } else {
-                        return c.error("an image is `icon \"name\"`, `file \"path\"`, `pixels \"path\"` or `from some_text`");
+                        return c.error("an image is `icon \"name\"`, `file \"path\"`, `pixels \"path\"`, `data \"name\"` or `from some_text`");
                     };
                     c.expect_sym(",")?;
                     let w = c.num()?;

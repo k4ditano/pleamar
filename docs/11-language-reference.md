@@ -718,6 +718,21 @@ monitor, whatever its shape, from the file's own pixels:
 screen.width, screen.height; fit: cover }`. The shape `fit:` keeps is the
 image's cell: with a declared size, that one (and a sheet's `cell:`).
 
+**From memory: `data "me"`** instead of `file`. The logic hands the picture
+over as bytes —`sys.call("image.data", "me", png)`, its own bytes (PNG, JPEG,
+GIF, WebP or SVG) or the same in base64, with or without a `data:…;base64,`
+before it— and it is painted from the next frame, without a file anywhere. Until
+then it is an empty one; handing another over puts it where the first one was.
+Avatars and attachments that arrive by a socket go this way.
+
+```plm
+scene Avatar {
+    surface { size: 120, 120 }
+    image me = data "me", 88, 88
+    image me { at: 16, 16; size: 88, 88 }
+}
+```
+
 **Pixel art: `pixels "hero.png"`** instead of `file`. A picture made bigger
 is smoothed, which is what a photograph wants and what a 16 × 16 knight does
 not: with `pixels` each of its pixels stays a sharp square. Declare it at a
