@@ -17,7 +17,15 @@ struct U {
     times: array<vec4<f32>, 30>,
     backdrop: vec4<f32>, // x: there is an unmixed background to read (the lens) · yz: where it was pressed · w: how much light it lets through
     ripple: vec4<f32>,   // where it was last pressed (x, y), seconds since, and whether it still runs
+    behind: vec4<f32>,   // where what is behind the glass is held, in real pixels: x, y, width, height (see `behind_at`)
 };
+
+// Where a point of the surface (real pixels) is in what is behind the glass: a
+// capture covers the whole surface, but what the scene painted under its glass
+// is only kept round the glass (`lens::Own`).
+fn behind_at(p: vec2<f32>) -> vec2<f32> {
+    return (p - u.behind.xy) / u.behind.zw;
+}
 
 struct Shape {
     a: vec4<f32>,      // kind, blend, stroke (0 = filled), -
@@ -457,8 +465,7 @@ fn fs_veil_cut(e: VertexOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_veil_add(e: VertexOut) -> @location(0) vec4<f32> {
     let c = shade(e);
-    let size = u.header.xy * u.header.w;
-    return textureSampleLevel(backdrop_blurred, backdrop_sampler, e.pos.xy / size, 0.0) * veil_cov;
+    return textureSampleLevel(backdrop_blurred, backdrop_sampler, behind_at(e.pos.xy), 0.0) * veil_cov;
 }
 
 fn shade(e: VertexOut) -> vec4<f32> {
@@ -707,13 +714,13 @@ fn shade(e: VertexOut) -> vec4<f32> {
         }
         // What is behind comes in premultiplied alpha —what is unknown, under
         // a text, has alpha 0 and weighs nothing—: it is divided by it.
-        let br = textureSampleLevel(backdrop_blurred, backdrop_sampler, qr / size, 0.0);
-        let bg = textureSampleLevel(backdrop_blurred, backdrop_sampler, q / size, 0.0);
-        let bb = textureSampleLevel(backdrop_blurred, backdrop_sampler, qb / size, 0.0);
+        let br = textureSampleLevel(backdrop_blurred, backdrop_sampler, behind_at(qr), 0.0);
+        let bg = textureSampleLevel(backdrop_blurred, backdrop_sampler, behind_at(q), 0.0);
+        let bb = textureSampleLevel(backdrop_blurred, backdrop_sampler, behind_at(qb), 0.0);
         let frosted = vec3<f32>(br.r / max(br.a, 0.001), bg.g / max(bg.a, 0.001), bb.b / max(bb.a, 0.001));
-        let nr = textureSampleLevel(backdrop_sharp, backdrop_sampler, qr / size, 0.0);
-        let ng = textureSampleLevel(backdrop_sharp, backdrop_sampler, q / size, 0.0);
-        let nb = textureSampleLevel(backdrop_sharp, backdrop_sampler, qb / size, 0.0);
+        let nr = textureSampleLevel(backdrop_sharp, backdrop_sampler, behind_at(qr), 0.0);
+        let ng = textureSampleLevel(backdrop_sharp, backdrop_sampler, behind_at(q), 0.0);
+        let nb = textureSampleLevel(backdrop_sharp, backdrop_sampler, behind_at(qb), 0.0);
         let sharp = vec3<f32>(nr.r / max(nr.a, 0.001), ng.g / max(ng.a, 0.001), nb.b / max(nb.a, 0.001));
         let known = min(nr.a, min(ng.a, nb.a));
         // In the bevel what is bent looks fairly sharp; further in, frosted.
@@ -734,7 +741,7 @@ fn shade(e: VertexOut) -> vec4<f32> {
             let spots = array<vec2<f32>, 5>(vec2<f32>(0.0), vec2<f32>(reach, reach * 0.5), vec2<f32>(-reach, reach * 0.5), vec2<f32>(reach * 0.5, -reach), vec2<f32>(-reach * 0.5, -reach));
             var busy = 0.0;
             for (var k = 0; k < 5; k++) {
-                let at = (q + spots[k]) / size;
+                let at = behind_at(q + spots[k]);
                 let ms = textureSampleLevel(backdrop_sharp, backdrop_sampler, at, 0.0);
                 let mf = textureSampleLevel(backdrop_blurred, backdrop_sampler, at, 0.0);
                 busy += abs(dot(ms.rgb / max(ms.a, 0.001) - mf.rgb / max(mf.a, 0.001), vec3<f32>(0.299, 0.587, 0.114)));
@@ -784,7 +791,7 @@ fn shade(e: VertexOut) -> vec4<f32> {
             let around = array<vec2<f32>, 4>(vec2<f32>(step_px, 0.0), vec2<f32>(-step_px, 0.0), vec2<f32>(0.0, step_px), vec2<f32>(0.0, -step_px));
             var variation = 0.0;
             for (var k = 0; k < 4; k++) {
-                let m = textureSampleLevel(backdrop_blurred, backdrop_sampler, (q + around[k]) / size, 0.0);
+                let m = textureSampleLevel(backdrop_blurred, backdrop_sampler, behind_at(q + around[k]), 0.0);
                 let l = dot(m.rgb / max(m.a, 0.001), vec3<f32>(0.299, 0.587, 0.114));
                 variation += abs(l - raw_gray);
             }
@@ -815,7 +822,7 @@ fn shade(e: VertexOut) -> vec4<f32> {
                 var env = vec3<f32>(0.0);
                 for (var k = 0; k < 4; k++) {
                     let o = vec2<f32>(select(-es, es, (k & 1) == 1), select(-es, es, k >= 2));
-                    let m = textureSampleLevel(backdrop_sharp, backdrop_sampler, (eo + o) / size, 0.0);
+                    let m = textureSampleLevel(backdrop_sharp, backdrop_sampler, behind_at(eo + o), 0.0);
                     env += m.rgb / max(m.a, 0.001) * step(0.5, m.a);
                 }
                 glass_color = mix(glass_color, glass_tone(env * 0.25, el.dest.z, el.dest.w, frost), fw);
@@ -836,7 +843,7 @@ fn shade(e: VertexOut) -> vec4<f32> {
         // ghost of the text behind: it is subtracted beforehand, since we know
         // it. What is seen: ours + (1 − α)·behind = glass · coverage.
         let seen = coverage(d) * alpha;
-        let db = textureSampleLevel(backdrop_sharp, backdrop_sampler, e.pos.xy / size, 0.0);
+        let db = textureSampleLevel(backdrop_sharp, backdrop_sampler, behind_at(e.pos.xy), 0.0);
         let underneath = db.rgb / max(db.a, 0.001) * step(0.5, db.a);
         let lens_alpha = seen * LENS_ALPHA;
         let rgb = clamp(seen * (glass_color - (1.0 - LENS_ALPHA) * underneath), vec3<f32>(0.0), vec3<f32>(lens_alpha));

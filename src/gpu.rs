@@ -4938,12 +4938,20 @@ impl Gpu {
         // unmixed background. It needs the canvas, so only with a lens; and
         // only while some glass is over something, so a glass with nothing of
         // ours under it costs what it did.
+        // What it keeps of that is only the box round the glass, as far as
+        // its frosting reads: not the whole surface (a 1080p one was some
+        // 20 MB more for a glass a few hundred pixels wide).
         let glass = !d.glass_marks.is_empty();
-        let over_own = glass && !whole_screen && d.glass_over_own(v);
-        if glass && (whole_screen || over_own) {
+        let own_box = if glass { glass_reach_box(d, l.view.bounds(), l.scale, l.px) } else { None };
+        let over_own = glass && own_box.is_some() && !whole_screen && d.glass_over_own(v);
+        if let Some(b) = own_box.filter(|_| whole_screen || over_own) {
             l.idle_own_frames = 0;
-            if l.own.as_ref().is_none_or(|o| o.px != l.px || o.blur_generation() != self.blur.generation) {
-                l.own = Some(crate::lens::Own::new(self, l.px));
+            let need = (b[2] - b[0], b[3] - b[1]);
+            if l.own.as_ref().is_none_or(|o| !o.fits(need, l.px) || o.blur_generation() != self.blur.generation) {
+                l.own = Some(crate::lens::Own::new(self, crate::lens::own_size(need, l.px)));
+            }
+            if let Some(own) = &l.own {
+                own.place(self, (b[0].min(l.px.0.saturating_sub(own.px.0)), b[1].min(l.px.1.saturating_sub(own.px.1))));
             }
         } else if glass && l.own.is_some() && l.idle_own_frames < IDLE_OWN_FRAMES {
             // Kept a while: something passing under a glass now and then
@@ -4952,9 +4960,15 @@ impl Gpu {
         } else {
             l.own = None;
         }
-        let with_own = whole_screen || over_own;
+        let with_own = own_box.is_some() && (whole_screen || over_own);
         let mut u = uniforms.to_vec();
         u[3] = l.scale;
+        // Where what is behind the glass is held: round the glass, what the
+        // scene painted under it; a capture, the whole surface.
+        u[136..140].copy_from_slice(&match l.own.as_ref().filter(|_| with_own) {
+            Some(own) => [own.at.get().0 as f32, own.at.get().1 as f32, own.px.0 as f32, own.px.1 as f32],
+            None => [0.0, 0.0, l.px.0.max(1) as f32, l.px.1.max(1) as f32],
+        });
         // A glass bends what is behind it when that is known: captured, or all
         // the scene's own on a monitor of pleamar-wm's. Otherwise what the scene
         // painted under it is veiled (frosted in place), and the rest is the compositor's.
@@ -5261,7 +5275,7 @@ impl Gpu {
             let (view_origin, sc) = (l.view.bounds(), l.scale);
             let own_region = |at: &mut dyn Iterator<Item = u32>| -> Option<(u32, u32, u32, u32)> {
                 let own = own?;
-                let (pw, ph) = own.px;
+                let (pw, ph) = (own.at.get().0 + own.px.0, own.at.get().1 + own.px.1);
                 let m = crate::lens::margin();
                 let b = at.filter(|k| (*k as usize) < d.element_count()).map(|k| {
                     let e = &d.elements[k as usize * PER_ELEMENT + 4..k as usize * PER_ELEMENT + 8];
@@ -5498,6 +5512,18 @@ const MOST_CUTS: usize = 4;
 /// of the frame. A glass painted again whole, with all it reads, reads only
 /// this frame's. (Growing a piece only by the glasses drawn over the first one
 /// around it was tried, and still flickered.)
+/// The box (real pixels: x0, y0, x1, y1) that holds every glass of the
+/// drawing with the margin its frosting reads, on a surface of `px`.
+fn glass_reach_box(d: &DrawList, view: [f32; 4], scale: f32, px: (u32, u32)) -> Option<[u32; 4]> {
+    let m = crate::lens::margin();
+    let b = d.glass_marks.iter().map(|k| *k as usize).filter(|k| *k < d.element_count()).map(|k| {
+        let e = &d.elements[k * PER_ELEMENT + 4..k * PER_ELEMENT + 8];
+        [e[0] - view[0] - m, e[1] - view[1] - m, e[2] - view[0] + m, e[3] - view[1] + m]
+    }).reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])?;
+    let r = [((b[0] * scale).floor().max(0.0) as u32).min(px.0), ((b[1] * scale).floor().max(0.0) as u32).min(px.1), ((b[2] * scale).ceil().max(0.0) as u32).min(px.0), ((b[3] * scale).ceil().max(0.0) as u32).min(px.1)];
+    (r[2] > r[0] && r[3] > r[1]).then_some(r)
+}
+
 fn grown_for_glass(cuts: Vec<[u32; 4]>, d: &DrawList, view: [f32; 4], scale: f32, px: (u32, u32)) -> Option<Vec<[u32; 4]>> {
     let m = crate::lens::margin();
     let (pw, ph) = (px.0 as f32, px.1 as f32);
@@ -5688,7 +5714,7 @@ impl Sheet {
 }
 
 /// Header, frame history and, at the end, the lens: whether there is a background to show.
-pub const N_UNIFORMS: usize = 8 + 120 + 4 + 4;
+pub const N_UNIFORMS: usize = 8 + 120 + 4 + 4 + 4;
 
 #[cfg(test)]
 mod tests {

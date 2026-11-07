@@ -885,11 +885,24 @@ impl Frost {
 /// scene's own under it: then what is behind that glass is what the scene
 /// painted before it, over whatever the capture says is behind the surface.
 pub struct Own {
+    /// How big what it keeps is: the box round the glass, not the surface.
     pub px: (u32, u32),
+    /// Where that box is on the surface this frame, in real pixels (`place`).
+    pub at: std::cell::Cell<(u32, u32)>,
+    at_buffer: wgpu::Buffer,
     sharp: (wgpu::Texture, wgpu::TextureView),
     frost: Frost,
     /// What the shapes shader reads.
     pub group: wgpu::BindGroup,
+}
+
+/// What a glass that reads what the scene painted under it keeps of it, for
+/// a box of `need` real pixels on a surface of `px`: rounded up, so a glass
+/// that moves or grows a little does not make it again each frame.
+pub fn own_size(need: (u32, u32), px: (u32, u32)) -> (u32, u32) {
+    const STEP: u32 = 128;
+    let up = |n: u32, most: u32| (n.max(1).div_ceil(STEP) * STEP).min(most.max(1));
+    (up(need.0, px.0), up(need.1, px.1))
 }
 
 impl Own {
@@ -904,15 +917,41 @@ impl Own {
         let sharp = texture(d, "painted below the glass", px, wgpu::TextureFormat::Rgba8Unorm, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING);
         let frost = Frost::new(d, px, g.blur());
         let group = g.backdrop_group(&sharp.1, frost.result());
-        Own { px, sharp, frost, group }
+        let at_buffer = d.create_buffer(&wgpu::BufferDescriptor { label: Some("painted below the glass: where"), size: 16, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        Own { px, at: std::cell::Cell::new((0, 0)), at_buffer, sharp, frost, group }
     }
 
-    /// What has been painted so far in `painted`, in `scissor` (real pixels),
-    /// becomes what is behind the glass; with `behind` —the unmixed background
-    /// of a surface—, over that.
+    /// Whether it holds a box of `need` on a surface of `px` without being
+    /// wasteful: too small, or more than four times what is needed, it is made again.
+    pub fn fits(&self, need: (u32, u32), px: (u32, u32)) -> bool {
+        let want = own_size(need, px);
+        self.px.0 >= want.0 && self.px.1 >= want.1 && (self.px.0 as u64 * self.px.1 as u64) <= 4 * (want.0 as u64 * want.1 as u64)
+    }
+
+    /// This frame, its box starts at `at` on the surface (real pixels).
+    pub fn place(&self, g: &crate::gpu::Gpu, at: (u32, u32)) {
+        self.at.set(at);
+        g.queue.write_buffer(&self.at_buffer, 0, bytemuck::cast_slice(&[at.0 as f32, at.1 as f32, 0.0, 0.0]));
+    }
+
+    /// What has been painted so far in `painted`, in `scissor` (real pixels
+    /// of the surface, inside its box), becomes what is behind the glass;
+    /// with `behind` —the unmixed background of a surface—, over that.
     pub fn take(&self, g: &crate::gpu::Gpu, t: &Pipelines, enc: &mut wgpu::CommandEncoder, painted: &wgpu::TextureView, behind: Option<&wgpu::TextureView>, scissor: (u32, u32, u32, u32), scale: f32) {
+        let (ax, ay) = self.at.get();
+        let x0 = scissor.0.saturating_sub(ax).min(self.px.0);
+        let y0 = scissor.1.saturating_sub(ay).min(self.px.1);
+        let x1 = (scissor.0 + scissor.2).saturating_sub(ax).min(self.px.0);
+        let y1 = (scissor.1 + scissor.3).saturating_sub(ay).min(self.px.1);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let scissor = (x0, y0, x1 - x0, y1 - y0);
         let pipeline = if behind.is_some() { &t.own_over } else { &t.own };
-        let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(painted) }];
+        let mut entries = vec![
+            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(painted) },
+            wgpu::BindGroupEntry { binding: 9, resource: self.at_buffer.as_entire_binding() },
+        ];
         if let Some(behind) = behind {
             entries.push(wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(behind) });
         }

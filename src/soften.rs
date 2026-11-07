@@ -87,15 +87,23 @@ pub struct Soften {
 }
 
 /// A sheet's scratch pictures: at each size, from the whole down to 1/32, two
-/// —one is read while the other is written—. Made as they are first needed.
+/// —one is read while the other is written—. Made as they are first needed,
+/// and let go after `IDLE_FRAMES` frames without a blur (a 1080p sheet's are
+/// some 13 MB of the card's, and a blur is often a moment: a panel coming in).
 #[derive(Default)]
 pub struct Levels {
     px: (u32, u32),
     by_size: RefCell<Vec<Option<[(wgpu::Texture, wgpu::TextureView); 2]>>>,
+    /// Frames painted since one of them was last used.
+    idle: Cell<u32>,
 }
+
+/// About two seconds at 60 Hz.
+const IDLE_FRAMES: u32 = 120;
 
 impl Levels {
     fn level(&self, d: &wgpu::Device, k: u32) -> [wgpu::TextureView; 2] {
+        self.idle.set(0);
         let mut v = self.by_size.borrow_mut();
         if v.len() <= k as usize {
             v.resize_with(k as usize + 1, || None);
@@ -163,7 +171,12 @@ impl Soften {
     /// The scratch pictures a sheet of that size needs, kept if it already has them.
     pub fn fit(levels: &mut Levels, px: (u32, u32)) {
         if levels.px != px {
-            *levels = Levels { px, by_size: RefCell::new(Vec::new()) };
+            *levels = Levels { px, ..Default::default() };
+        }
+        let idle = levels.idle.get().saturating_add(1);
+        levels.idle.set(idle);
+        if idle > IDLE_FRAMES && !levels.by_size.borrow().is_empty() {
+            levels.by_size.borrow_mut().clear();
         }
     }
 

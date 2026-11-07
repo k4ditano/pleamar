@@ -76,10 +76,13 @@ fn unmix(e: VertexOut) -> @location(0) vec4<f32> {
 
 // ── own ───────────────────────────────────────────────────────────
 // A scene that is the whole screen (pleamar-wm's) has nothing behind it but
-// what it painted itself before the glass: that, copied as it is.
+// what it painted itself before the glass: that, copied as it is. It is kept
+// only round the glass: a pixel of it is the surface's at `own_at` from it.
+@group(0) @binding(9) var<uniform> own_at: vec4<f32>;
+
 @fragment
 fn own(e: VertexOut) -> @location(0) vec4<f32> {
-    return textureLoad(capture, vec2<i32>(e.pos.xy), 0);
+    return textureLoad(capture, vec2<i32>(e.pos.xy + own_at.xy), 0);
 }
 
 // A scene on a surface has both: what it painted itself before the glass, and
@@ -87,9 +90,8 @@ fn own(e: VertexOut) -> @location(0) vec4<f32> {
 // What is known of the result is what either of them knows.
 @fragment
 fn own_over(e: VertexOut) -> @location(0) vec4<f32> {
-    let px = vec2<i32>(e.pos.xy);
+    let px = vec2<i32>(e.pos.xy + own_at.xy);
     let ours = textureLoad(capture, px, 0);
     let behind = textureLoad(canvas, px, 0);
     return ours + (1.0 - ours.a) * vec4<f32>(behind.rgb * behind.a, behind.a);
 }
-

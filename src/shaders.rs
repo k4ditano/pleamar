@@ -49,8 +49,7 @@ fn inside(s: Shader, at: vec2<f32>) -> vec4<f32> { return vec4<f32>(0.0); }
 /// the alpha how much of it is known (0 under something we painted solid)—.
 const REAL_HELPERS: &str = "fn shader_behind(s: Shader, at: vec2<f32>, frosted: bool) -> vec4<f32> {
     if (u.backdrop.x < 0.5) { return vec4<f32>(0.0); }
-    let size = u.header.xy * u.header.w;
-    let q = (s.origin + at - u.hud.xw) * u.header.w / size;
+    let q = behind_at((s.origin + at - u.hud.xw) * u.header.w);
     var v = textureSampleLevel(backdrop_sharp, backdrop_sampler, q, 0.0);
     if (frosted) { v = textureSampleLevel(backdrop_blurred, backdrop_sampler, q, 0.0); }
     return vec4<f32>(v.rgb / max(v.a, 0.001), v.a);
