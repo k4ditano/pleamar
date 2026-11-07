@@ -72,6 +72,7 @@ thread_local! {
 
 /// The same, and with `lines` above 0, each picture alone on its line is room of
 /// that many empty lines for it to be painted in (`images:` on the text).
+#[cfg(test)]
 pub fn plain_with_pictures(source: &str, lines: u32) -> (String, Vec<(u32, u32, u8)>, Vec<(u32, u32, String)>, Vec<Picture>) {
     let r = read(source, Options { picture_lines: lines, ..Default::default() });
     (r.text, r.marks, r.links, r.pictures)

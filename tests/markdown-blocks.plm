@@ -1,0 +1,9 @@
+// expect: ok
+language 0.9
+// A model's answer: code as a block (with its head, «Copy» and numbers), short blank lines, indented lists.
+scene Answer {
+    surface { size: 560, 300 }
+    text answer = ""
+    text answer { at: 16, 16; width: 528; size: 13; color: #f5f7f5; markdown: true
+        code_block: #1b1e22; paragraph: 9.5; list_indent: 2; link: #74b9ff; code: #d6adf2; quote: #9aa0a6 }
+}
