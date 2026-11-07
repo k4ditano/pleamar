@@ -2163,7 +2163,7 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
     };
     // Out of another popup (`parent:`): that one's surface is its parent, and its place is inside it.
     let above = super::POPUP_PARENTS.lock().unwrap().iter().find(|(c, _)| *c == k).map(|(_, p)| *p);
-    let nested = above.and_then(|p| e.open.lock().unwrap().iter().find(|a| a.k == p).map(|a| (a.popup.xdg_surface().clone(), a.parent.clone())));
+    let nested = above.and_then(|p| e.open.lock().unwrap().iter().find(|a| a.k == p).map(|a| (a.popup.xdg_surface().clone(), a.parent.clone(), a.backdrop.clone())));
     if above.is_some() && nested.is_none() {
         return;
     }
@@ -2205,8 +2205,13 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
                 })
                 .ok()?
         };
-        // (Glass in a popup out of a popup sees nothing behind it yet: its place on the monitor is its parent's plus its own.)
-        let backdrop = parent.backdrop.clone().filter(|_| nested.is_none()).map(|m| {
+        // Its place on the monitor is its parent's plus its own: out of a popup, that
+        // popup's (which is its own parent's plus its own, and so on up to the layer).
+        let behind = match &nested {
+            Some(n) => n.2.clone(),
+            None => parent.backdrop.clone(),
+        };
+        let backdrop = behind.map(|m| {
             let d = BackdropTarget::new(id, None, BackdropKind::Popup { parent: m, offset: Mutex::new((0, 0)) });
             *d.size.lock().unwrap() = (w as u32, h as u32);
             d
