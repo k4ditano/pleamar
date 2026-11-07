@@ -448,6 +448,39 @@ pub fn rescreen(which: usize, screen: &str) {
     let _ = (which, screen);
 }
 
+/// The field being written in, as an input method needs to know it: where
+/// its cursor is on the surface (x, y, width, height, in the surface's
+/// pixels) and what it holds around it, to compose against.
+#[derive(Clone, PartialEq, Debug)]
+pub struct ImeField {
+    pub caret: [i32; 4],
+    /// Its text and, in bytes, its cursor and where the selection starts.
+    /// `None` for a secret field: an input method is not told what it hides.
+    pub around: Option<(String, usize, usize)>,
+    pub secret: bool,
+}
+
+/// What an input method did to the field, all of it at once, in this order:
+/// the letters around the cursor it takes back (bytes before, bytes after),
+/// what it writes for good, and what it is still composing, which is shown at
+/// the cursor without being written (with its own cursor or selection inside
+/// it, in bytes). No composing: `None`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ImeInput {
+    pub delete: (usize, usize),
+    pub commit: Option<String>,
+    pub preedit: Option<(String, Option<(usize, usize)>)>,
+}
+
+/// The field an input method writes in now, or none. Said by the render when
+/// it changes; where the system has no input methods, nothing happens.
+pub fn ime_field(field: Option<ImeField>) {
+    #[cfg(target_os = "linux")]
+    wayland::ime_field(field);
+    #[cfg(not(target_os = "linux"))]
+    let _ = field;
+}
+
 pub fn reanchor(which: usize, anchor: crate::scene::SurfaceAnchor) {
     if let Some(h) = LAYER_HOOKS.get() {
         return (h.reanchor)(which, anchor);

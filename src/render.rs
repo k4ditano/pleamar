@@ -596,6 +596,8 @@ pub fn run(
     let mut loan_grace: Option<Instant> = None;
     // The field being typed into, and the key that has been left held down.
     let mut editing: Option<Editing> = None;
+    // What the input method was last told of the field being written in.
+    let mut ime_told: Option<crate::platform::ImeField> = None;
     // The field that was being typed in when the keyboard went: it comes back
     // with it. Moving between two of the scene's surfaces (the finder and its
     // catcher, a copy on each monitor) the compositor says «gone» and «here»
@@ -743,6 +745,7 @@ pub fn run(
         let mut fingers_up = false;
         let mut keys: Vec<String> = Vec::new();
         let mut key_presses: Vec<(String, Option<String>, Mods, u32)> = Vec::new();
+        let mut ime_inputs: Vec<crate::platform::ImeInput> = Vec::new();
         let mut key_releases: Vec<(String, u32)> = Vec::new();
         let mut focus_changes: Vec<bool> = Vec::new();
         let mut focus_asked = false;
@@ -1425,6 +1428,10 @@ pub fn run(
                 #[cfg(not(target_os = "linux"))]
                 ToRender::Thumbnails => {}
                 ToRender::KeyRepeat(r) => key_repeat = r,
+                ToRender::Ime(input) => {
+                    last_activity = Instant::now();
+                    ime_inputs.push(input);
+                }
                 ToRender::Key(name, typed, mods, code) => {
                     last_activity = Instant::now();
                     // If it is held down, it repeats, however this user has it set up.
@@ -2049,6 +2056,16 @@ pub fn run(
                 // A repeat is made up here: a window repeats on its own, it is not handed one.
                 key_presses.push((name.clone(), typed.clone(), *mods, 0));
                 *when = Instant::now() + Duration::from_millis(key_repeat.map_or(33, |r| r.1) as u64);
+            }
+        }
+        // What an input method wrote or composes, in the field drawn now that is being written in.
+        for input in ime_inputs.drain(..) {
+            let Some(ed) = editing.as_mut().filter(|e| draw.fields.iter().any(|f| f.text == e.field && !f.passive)) else { continue };
+            let k = ed.field;
+            let secret = draw.fields.iter().any(|f| f.text == k && f.secret);
+            last_key = Instant::now();
+            if ed.ime(&mut texts[k], input, secret) {
+                let _ = to_logic.send(Event::Text(scene.texts[k].0, texts[k].clone()));
             }
         }
         let mut submitted: Vec<usize> = Vec::new();
@@ -3983,7 +4000,13 @@ pub fn run(
         let view = editing.as_ref().map(|e| {
             let t = (now - last_key).as_secs_f32();
             appointments.push(now + Duration::from_secs_f32(0.53 - t % 0.53 + 0.001));
-            crate::gpu::FieldView { text: e.field, cursor: e.cursor, anchor: e.anchor, visible: (t % 1.06) < 0.53 }
+            crate::gpu::FieldView {
+                text: e.field,
+                cursor: e.cursor,
+                anchor: e.anchor,
+                visible: (t % 1.06) < 0.53,
+                preedit: e.preedit.as_ref().map(|(p, at)| (std::sync::Arc::from(p.as_str()), at.map_or(p.len(), |c| c.0))),
+            }
         });
         if let Some((_, _, _, when)) = &repeat {
             appointments.push(*when);
@@ -4190,13 +4213,29 @@ pub fn run(
             });
         if !same_scene {
             compose_seen.reset(facts.len(), props.len());
-            draw.compose(to_paint, Ctx { seen: Some(&compose_seen), ..c }, &texts, &mut letters, view, size, op.hud);
+            draw.compose(to_paint, Ctx { seen: Some(&compose_seen), ..c }, &texts, &mut letters, view.clone(), size, op.hud);
             stretches_copied += draw.copied.0 as u64;
             stretches_made += draw.copied.1 as u64;
+            // The input method is told which field is being written in and where its
+            // cursor is on its surface, so that its window opens beside it.
+            let ime = editing.as_ref().and_then(|e| {
+                let f = draw.fields.iter().find(|f| f.text == e.field && !f.passive)?;
+                let c = f.caret?;
+                let origin = sheets.iter().filter(|s| s.open).map(|s| s.view.bounds()).find(|b| c[0] >= b[0] && c[0] <= b[2] && c[1] >= b[1] && c[1] <= b[3]).map_or((0.0, 0.0), |b| (b[0], b[1]));
+                Some(crate::platform::ImeField {
+                    caret: [(c[0] - origin.0).round() as i32, (c[1] - origin.1).round() as i32, c[2].round().max(1.0) as i32, c[3].round().max(1.0) as i32],
+                    around: (!f.secret).then(|| (texts[e.field].clone(), e.cursor.min(texts[e.field].len()), e.anchor.min(texts[e.field].len()))),
+                    secret: f.secret,
+                })
+            });
+            if ime != ime_told {
+                crate::platform::ime_field(ime.clone());
+                ime_told = ime;
+            }
             // With stretches copied: put together whole again, and compared.
             if check_shortcuts && draw.copied.0 > 0 {
                 compose_seen.reset(facts.len(), props.len());
-                if let Some(diff) = draw.check_copy(|d| d.compose(to_paint, Ctx { seen: Some(&compose_seen), ..c }, &texts, &mut letters, view, size, op.hud)) {
+                if let Some(diff) = draw.check_copy(|d| d.compose(to_paint, Ctx { seen: Some(&compose_seen), ..c }, &texts, &mut letters, view.clone(), size, op.hud)) {
                     eprintln!("check  · stretches copied from the frame before are not what putting it together gives: {diff}");
                 }
             }
@@ -4233,7 +4272,7 @@ pub fn run(
             // Written over the last one: a round composed is not a round of allocations.
             let m = compose_memo.get_or_insert_with(|| ComposeMemo {
                 size,
-                view,
+                view: view.clone(),
                 views: Vec::new(),
                 facts: Vec::new(),
                 texts: Vec::new(),
@@ -5936,6 +5975,9 @@ struct Editing {
     cursor: usize,
     anchor: usize,
     history: History,
+    /// What an input method is composing at the cursor (not yet written), and
+    /// its own cursor or selection inside it.
+    preedit: Option<(String, Option<(usize, usize)>)>,
 }
 
 /// What a field can undo and redo. Letters typed in a row are one step per word,
@@ -5983,7 +6025,7 @@ enum KeyOutcome {
 
 impl Editing {
     fn at(field: usize, cursor: usize, anchor: usize) -> Self {
-        Editing { field, cursor, anchor, history: History::default() }
+        Editing { field, cursor, anchor, history: History::default(), preedit: None }
     }
 
     /// The cursor put somewhere by hand (a click): the step that was open closes.
@@ -5991,6 +6033,55 @@ impl Editing {
         self.cursor = cursor;
         self.anchor = anchor;
         self.history.open = None;
+    }
+
+    /// What an input method did, in the protocol's order: what it takes back
+    /// around the cursor, what it writes, and what it is still composing.
+    /// Its writing goes through the keys' own path, so Ctrl+Z takes it back.
+    /// Whether the field's text changed.
+    fn ime(&mut self, t: &mut String, i: crate::platform::ImeInput, secret: bool) -> bool {
+        self.preedit = None;
+        let before = t.clone();
+        self.cursor = self.cursor.min(t.len());
+        self.anchor = self.anchor.min(t.len());
+        // Taking letters back and writing others (a word corrected) is one thing
+        // it did: one step, which goes back to where the cursor was.
+        let one_step = (i.delete != (0, 0) && !secret).then(|| {
+            let h = &mut self.history;
+            h.open = None;
+            // Room for the two it may push, so neither shifts the other out.
+            while h.undo.len() > UNDO_STEPS - 2 {
+                h.undo.remove(0);
+            }
+            (h.undo.len(), self.cursor, self.anchor)
+        });
+        if i.delete != (0, 0) {
+            let mut a = self.cursor.saturating_sub(i.delete.0);
+            while !t.is_char_boundary(a) {
+                a -= 1;
+            }
+            let mut b = (self.cursor + i.delete.1).min(t.len());
+            while !t.is_char_boundary(b) {
+                b += 1;
+            }
+            self.anchor = a;
+            self.cursor = b;
+            self.handle_key(t, "BackSpace", None, Mods::default(), secret);
+        }
+        if let Some(c) = i.commit {
+            self.handle_key(t, "type", Some(&c), Mods::default(), secret);
+        }
+        if let Some((n, cursor, anchor)) = one_step {
+            let h = &mut self.history;
+            h.undo.truncate(n + 1);
+            if let Some(s) = h.undo.get_mut(n) {
+                s.cursor = cursor;
+                s.anchor = anchor;
+            }
+            h.open = None;
+        }
+        self.preedit = i.preedit;
+        *t != before
     }
 
     /// One step back (`redo` false) or forward again.
@@ -7135,6 +7226,33 @@ mod selection_tests {
         assert!(e.history.undo.is_empty());
         e.handle_key(&mut s, "z", None, ctrl, true);
         assert_eq!(s, "p");
+    }
+
+    #[test]
+    fn an_input_method_composes_writes_and_corrects() {
+        use crate::platform::ImeInput;
+        let ctrl = Mods { ctrl: true, ..Mods::default() };
+        let mut e = Editing::at(0, 3, 3);
+        let mut s = String::from("abc");
+        // Composing writes nothing yet: it is only shown.
+        assert!(!e.ime(&mut s, ImeInput { preedit: Some(("かな".into(), Some((3, 3)))), ..Default::default() }, false));
+        assert_eq!(s, "abc");
+        assert_eq!(e.preedit.as_ref().map(|p| p.0.as_str()), Some("かな"));
+        // Written for good, at the cursor; what was composed goes.
+        assert!(e.ime(&mut s, ImeInput { commit: Some("仮名".into()), ..Default::default() }, false));
+        assert_eq!((s.as_str(), e.cursor, e.preedit.is_none()), ("abc仮名", 9, true));
+        // A letter taken back (3 bytes before the cursor) and another written: one step.
+        assert!(e.ime(&mut s, ImeInput { delete: (3, 0), commit: Some("!".into()), ..Default::default() }, false));
+        assert_eq!(s, "abc仮!");
+        e.handle_key(&mut s, "z", None, ctrl, false);
+        assert_eq!((s.as_str(), e.cursor, e.anchor), ("abc仮名", 9, 9));
+        e.handle_key(&mut s, "z", None, ctrl, false);
+        assert_eq!(s, "abc");
+        // Taking back more than there is, or inside a letter, stays on whole letters.
+        let mut e = Editing::at(0, 3, 3);
+        let mut s = String::from("é!");
+        e.ime(&mut s, ImeInput { delete: (2, 0), ..Default::default() }, false);
+        assert_eq!(s, "");
     }
 
     #[test]

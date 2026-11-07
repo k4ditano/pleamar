@@ -2454,6 +2454,8 @@ pub enum ToRender {
     /// A surface has changed size: a window someone is stretching.
     SheetSize(u32, (f32, f32)),
     Command(Command),
+    /// An input method wrote, or is composing, in the field being written in.
+    Ime(crate::platform::ImeInput),
     /// The boundary: the logic tells what happens, and nothing more.
     Fact(&'static str, f32),
     Text(&'static str, String),

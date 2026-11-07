@@ -23,7 +23,7 @@ Instantiated types, with the number of times they appear across the two configur
 | `Component` · `Loader` | 67 · 64 | 🟡 `component` yes; deferred loading no · §2 |
 | `GradientStop` | 66 | ✅ up to eight stops, each one where it says, and radial as well as linear |
 | `Image` | 63 | ✅ `image`, from a file, from an icon or from a piece of data |
-| `TextInput` | 34 | ✅ `input` (single line; no IME) |
+| `TextInput` | 34 | ✅ `input` (single line; an input method on Wayland, and undo) |
 | `ListView` · `Flickable` | 31 · 22 | 🟡 `view:` in a layout, with `content:` and `for … from` for lists of thousands in a handful of copies, and dragged by grabbing any row. No inertia when let go |
 | `Flow` | 28 | ✅ `wrap: n` in a `row` or `column`: a grid, and what is not seen leaves no gap |
 | `QtObject` | 38 | 🟡 standalone properties, no grouping |
@@ -67,7 +67,7 @@ Exclusive keyboard, clicking outside a popup, real dragging, the wheel, and noti
 
 ### ⚪ The rest
 
-A whole screen live in the scene (`ScreencopyView`; windows are done, as thumbnails, and a still of a monitor, as `capture.freeze`); IME (E7).
+A whole screen live in the scene (`ScreencopyView`; windows are done, as thumbnails, and a still of a monitor, as `capture.freeze`); an input method on Windows and macOS (E7; Wayland has one).
 
 ## 3. What pleamar has and Quickshell does not
 
@@ -96,4 +96,4 @@ Done since this list was first written: the language server knows the scene's na
 
 1. Copies that are born and die on their own (G12), and inertia when a list is let go.
 2. Deferred loading, so a menu that almost never opens costs nothing until it does.
-3. IME (E7), and a whole screen live inside the scene.
+3. A whole screen live inside the scene, and an input method on Windows and macOS (E7).

@@ -306,13 +306,16 @@ impl PreviousFrame {
 }
 
 /// The field being typed into, as seen by whoever paints.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct FieldView {
     pub text: usize,
     pub cursor: usize,
     pub anchor: usize,
     /// The cursor blinks.
     pub visible: bool,
+    /// What an input method is composing, shown at the cursor, underlined, and
+    /// not yet written; and its own cursor inside it, in bytes.
+    pub preedit: Option<(std::sync::Arc<str>, usize)>,
 }
 
 /// A text that can be selected, where it was painted: what it said, how it
@@ -370,6 +373,9 @@ pub struct PlacedField {
     pub secret: bool,
     /// Takes no keys: see `passive` in the language.
     pub passive: bool,
+    /// The field being written in: where its cursor is drawn (x, y, width,
+    /// height, on the surface), for an input method to open beside it.
+    pub caret: Option<[f32; 4]>,
 }
 
 /// A terminal as the drawing laid it out: where its cells are, how many and
@@ -2067,7 +2073,7 @@ impl DrawList {
                 hud,
                 scale: tip.scale(),
                 reduced_motion: self.reduced_motion,
-                field,
+                field: field.clone(),
                 selected: self.selected,
                 skip: self.skip.clone(),
                 order: self.order.clone(),
@@ -2881,8 +2887,26 @@ impl DrawList {
                 }
                 Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret, passive } => {
                     let k = text.0 as usize;
-                    let real = texts.get(k).map_or("", String::as_str);
+                    let mine = field.as_ref().filter(|v| v.text == k);
+                    // What an input method is composing goes in at the cursor, as if
+                    // written, only for the eye: the field does not hold it yet.
+                    let composing = mine.and_then(|v| v.preedit.as_ref().map(|p| (v.cursor.min(texts.get(k).map_or(0, String::len)), p))).filter(|_| !*secret);
+                    let with_preedit;
+                    let real = match composing {
+                        Some((at, (p, _))) => {
+                            let t = texts.get(k).map_or("", String::as_str);
+                            with_preedit = format!("{}{}{}", &t[..at], p, &t[at..]);
+                            with_preedit.as_str()
+                        }
+                        None => texts.get(k).map_or("", String::as_str),
+                    };
                     let empty = real.is_empty();
+                    // A byte of the field, as a byte of what is shown: after the cursor,
+                    // what is being composed pushes it along.
+                    let shown = |b: usize| match composing {
+                        Some((at, (p, _))) if b > at => b + p.len(),
+                        _ => b,
+                    };
                     // When secret, what gets painted are dots: one per letter.
                     let dots = if *secret { MASK_DOT.repeat(real.chars().count()) } else { String::new() };
                     let value = if *secret { dots.as_str() } else { real };
@@ -2896,15 +2920,23 @@ impl DrawList {
                     let m = tip.layout(idx, key);
                     let (x0, y0, w) = (at.0.eval(c), at.1.eval(c), width.eval(c));
                     let h = style.px * style.line_height;
-                    let mine = field.filter(|v| v.text == k);
                     // The cursor counts bytes of the real text; in dots, they are letters times three.
                     let x_at_byte = |b: usize| {
                         let b = if *secret { real[..b.min(real.len())].chars().count() * MASK_DOT.len() } else { b };
                         if empty { 0.0 } else { m.as_ref().map_or(0.0, |m| m.x_at_byte(b)) }
                     };
+                    // Where the cursor is drawn: while composing, inside what is composed.
+                    let caret_byte = |v: &FieldView| match composing {
+                        Some((at, (p, c))) => at + (*c).min(p.len()),
+                        None => shown(v.cursor),
+                    };
                     // If the cursor goes out on the right, the text scrolls.
-                    let scroll = mine.map_or(0.0, |v| (x_at_byte(v.cursor) - w + 6.0).max(0.0));
-                    self.fields.push(PlacedField { text: k, zone, layout: if empty { None } else { m.clone() }, x0, scroll, secret: *secret, passive: *passive });
+                    let scroll = mine.map_or(0.0, |v| (x_at_byte(caret_byte(v)) - w + 6.0).max(0.0));
+                    let caret = mine.map(|v| {
+                        let b = affine.bounds([x0 - scroll + x_at_byte(caret_byte(v)), y0, x0 - scroll + x_at_byte(caret_byte(v)) + 1.0, y0 + h]);
+                        [b[0], b[1], (b[2] - b[0]).max(1.0), b[3] - b[1]]
+                    });
+                    self.fields.push(PlacedField { text: k, zone, layout: if empty { None } else { m.clone() }, x0, scroll, secret: *secret, passive: *passive, caret });
                     let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
                     if a <= 0.001 {
                         continue;
@@ -2915,7 +2947,7 @@ impl DrawList {
                     let kf = self.push_shape(rect, 0.0);
                     clips.push((kf, limit));
                     let rgb = color(&style.color);
-                    if let Some(v) = mine {
+                    if let Some(v) = mine.filter(|_| composing.is_none()) {
                         let (s0, s1) = (x_at_byte(v.cursor.min(v.anchor)), x_at_byte(v.cursor.max(v.anchor)));
                         if s1 > s0 {
                             rect = crate::shapes::FlatShape { cx: x0 - scroll + (s0 + s1) * 0.5, mx: (s1 - s0) * 0.5, my: h * 0.5, ..rect };
@@ -2938,8 +2970,21 @@ impl DrawList {
                             self.sprite(d, g.uv, if empty { a * 0.4 } else { a }, if g.colored { None } else { Some(rgb) }, true, false, affine, &clips);
                         }
                     }
+                    // What is being composed, underlined.
+                    if let Some((at, (p, _))) = composing {
+                        let (u0, u1) = (x_at_byte(at), x_at_byte(at + p.len()));
+                        rect = crate::shapes::FlatShape { cx: x0 - scroll + (u0 + u1) * 0.5, cy: y0 + h - 1.0, mx: (u1 - u0) * 0.5, my: 0.5, ..rect };
+                        let (kf, b) = (self.push_shape(rect, 0.0), rect.bounds().unwrap_or([0.0; 4]));
+                        self.element(0.0, [b[0], b[1] - 1.0, b[2], b[3] + 1.0], &clips, |e| {
+                            affine.encode(&mut e[44..52]);
+                            e[1] = kf as f32;
+                            e[2] = 1.0;
+                            e[3] = a;
+                            e[8..11].copy_from_slice(&rgb);
+                        });
+                    }
                     if let Some(v) = mine.filter(|v| v.visible) {
-                        rect = crate::shapes::FlatShape { cx: x0 - scroll + x_at_byte(v.cursor) + 0.5, mx: 0.8, my: h * 0.5 - 1.0, ..rect };
+                        rect = crate::shapes::FlatShape { cx: x0 - scroll + x_at_byte(caret_byte(v)) + 0.5, cy: y0 + h * 0.5, mx: 0.8, my: h * 0.5 - 1.0, ..rect };
                         let (kf, b) = (self.push_shape(rect, 0.0), rect.bounds().unwrap_or([0.0; 4]));
                         self.element(0.0, [b[0] - 1.0, b[1], b[2] + 1.0, b[3]], &clips, |e| {
                             affine.encode(&mut e[44..52]);

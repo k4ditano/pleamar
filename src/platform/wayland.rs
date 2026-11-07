@@ -43,6 +43,7 @@ use smithay_client_toolkit::reexports::protocols::wp::fractional_scale::v1::clie
     wp_fractional_scale_v1::{self, WpFractionalScaleV1},
 };
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
+use wayland_protocols::wp::text_input::zv3::client::{zwp_text_input_manager_v3::ZwpTextInputManagerV3, zwp_text_input_v3::{self, ZwpTextInputV3}};
 use wayland_protocols::ext::background_effect::v1::client::{ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1, ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1};
 
 /// Whoever blurs what's behind a surface, if the compositor knows how to do
@@ -1185,6 +1186,127 @@ struct State {
 }
 
 /// The Wayland objects that tell us nothing.
+/// Writing through an input method (zwp_text_input_v3): Japanese, Chinese,
+/// a compose key of fcitx or ibus. The compositor says when the input enters a
+/// surface (the one with the keyboard); the render says which field is being
+/// written in and where its cursor is; and while both hold, the input is on,
+/// and what the method composes and writes goes to the render.
+struct Ime {
+    connection: Connection,
+    manager: ZwpTextInputManagerV3,
+    input: Mutex<Option<ZwpTextInputV3>>,
+    state: Mutex<ImeState>,
+}
+
+#[derive(Default)]
+struct ImeState {
+    /// The input is on one of these surfaces: it has the keyboard.
+    entered: bool,
+    enabled: bool,
+    /// The field the render says, and what was last told of it.
+    want: Option<super::ImeField>,
+    sent: Option<super::ImeField>,
+    /// What has come since the last `done`, which says to apply it.
+    pending: super::ImeInput,
+}
+
+static IME: std::sync::OnceLock<Ime> = std::sync::OnceLock::new();
+
+/// Said by the render: the field being written in, or none.
+pub fn ime_field(field: Option<super::ImeField>) {
+    let Some(ime) = IME.get() else { return };
+    let mut st = ime.state.lock().unwrap();
+    st.want = field;
+    ime_apply(ime, &mut st);
+}
+
+/// On, off, or told again where the field is: whatever the input lacks of
+/// what the render wants, while it is on a surface of ours.
+fn ime_apply(ime: &Ime, st: &mut ImeState) {
+    if std::env::var_os("PLEAMAR_DEBUG_IME").is_some() {
+        eprintln!("ime    · input {} · entered {} · enabled {} · wanted {:?}", ime.input.lock().unwrap().is_some(), st.entered, st.enabled, st.want);
+    }
+    let Some(input) = ime.input.lock().unwrap().clone() else { return };
+    if !st.entered {
+        return;
+    }
+    match st.want.clone() {
+        None if st.enabled => {
+            input.disable();
+            input.commit();
+            st.enabled = false;
+            st.sent = None;
+        }
+        None => return,
+        Some(w) => {
+            if st.sent.as_ref() == Some(&w) {
+                return;
+            }
+            // Turning it on forgets what it had been told: everything goes again.
+            if !st.enabled {
+                input.enable();
+                st.enabled = true;
+            }
+            if let Some((text, cursor, anchor)) = &w.around {
+                // The protocol's limit is 4000 bytes; a field longer than that is not told.
+                if text.len() < 4000 {
+                    input.set_surrounding_text(text.clone(), *cursor as i32, *anchor as i32);
+                }
+            }
+            use zwp_text_input_v3::{ContentHint, ContentPurpose};
+            let (hint, purpose) = if w.secret { (ContentHint::SensitiveData | ContentHint::HiddenText, ContentPurpose::Password) } else { (ContentHint::None, ContentPurpose::Normal) };
+            input.set_content_type(hint, purpose);
+            input.set_cursor_rectangle(w.caret[0], w.caret[1], w.caret[2], w.caret[3]);
+            input.commit();
+            st.sent = Some(w);
+        }
+    }
+    let _ = ime.connection.flush();
+}
+
+struct ImeFor;
+impl Dispatch2<ZwpTextInputV3, State> for ImeFor {
+    fn event(&self, state: &mut State, _: &ZwpTextInputV3, event: zwp_text_input_v3::Event, _: &Connection, _: &QueueHandle<State>) {
+        let Some(ime) = IME.get() else { return };
+        if std::env::var_os("PLEAMAR_DEBUG_IME").is_some() {
+            eprintln!("ime    · {event:?}");
+        }
+        let mut st = ime.state.lock().unwrap();
+        match event {
+            zwp_text_input_v3::Event::Enter { .. } => {
+                st.entered = true;
+                st.enabled = false;
+                st.sent = None;
+                ime_apply(ime, &mut st);
+            }
+            // Gone to another program: off, and what was being composed is no longer shown.
+            zwp_text_input_v3::Event::Leave { .. } => {
+                st.entered = false;
+                st.enabled = false;
+                st.sent = None;
+                st.pending = Default::default();
+                let _ = state.to_render.send(ToRender::Ime(super::ImeInput::default()));
+            }
+            zwp_text_input_v3::Event::PreeditString { text, cursor_begin, cursor_end } => {
+                // -1 for both: no cursor of its own inside it.
+                let at = (cursor_begin >= 0 && cursor_end >= 0).then(|| (cursor_begin as usize, cursor_end as usize));
+                st.pending.preedit = text.filter(|t| !t.is_empty()).map(|t| (t, at));
+            }
+            zwp_text_input_v3::Event::CommitString { text } => st.pending.commit = text.filter(|t| !t.is_empty()),
+            zwp_text_input_v3::Event::DeleteSurroundingText { before_length, after_length } => st.pending.delete = (before_length as usize, after_length as usize),
+            zwp_text_input_v3::Event::Done { .. } => {
+                let input = std::mem::take(&mut st.pending);
+                // What it writes changes the field: what it was told of it no longer holds.
+                if input.commit.is_some() || input.delete != (0, 0) {
+                    st.sent = None;
+                }
+                let _ = state.to_render.send(ToRender::Ime(input));
+            }
+            _ => {}
+        }
+    }
+}
+
 struct Silent;
 impl<I: Proxy> Dispatch2<I, State> for Silent {
     fn event(&self, _: &mut State, _: &I, _: I::Event, _: &Connection, _: &QueueHandle<State>) {}
@@ -2078,6 +2200,9 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
     if let Ok(m) = DataDeviceManagerState::bind(&globals, &qh) {
         let _ = DRAGS.set(Drags { connection: connection.clone(), qh: qh.clone(), manager: m.data_device_manager().clone(), device: Mutex::default(), press: Mutex::default(), under_way: Mutex::default(), compositor: CompositorState::bind(&globals, &qh).expect("no wl_compositor"), shm: globals.bind::<WlShm, _, _>(&qh, 1..=1, Silent).ok(), icon: Mutex::default() });
     }
+    if let Ok(manager) = globals.bind::<ZwpTextInputManagerV3, _, _>(&qh, 1..=1, Silent) {
+        let _ = IME.set(Ime { connection: connection.clone(), manager, input: Mutex::default(), state: Mutex::default() });
+    }
     if let Ok(m) = globals.bind::<ExtBackgroundEffectManagerV1, _, _>(&qh, 1..=1, Silent) {
         let _ = BACKGROUND_EFFECTS.set(m);
     }
@@ -2706,6 +2831,10 @@ impl SeatHandler for State {
         }
         if c == Capability::Keyboard && self.keyboard.is_none() && self.wanted.iter().any(|s| s.keyboard != Keyboard::Never) {
             self.keyboard = self.seats.get_keyboard(qh, &seat, None).ok();
+            // Your input method writes where your keyboard does.
+            if let Some(ime) = IME.get() {
+                ime.input.lock().unwrap().get_or_insert_with(|| ime.manager.get_text_input(&seat, qh, ImeFor));
+            }
         }
     }
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, _: Capability) {}
