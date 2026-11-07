@@ -34,7 +34,7 @@ use smithay_client_toolkit::{
 };
 use smithay_client_toolkit::reexports::protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{Shape, WpCursorShapeDeviceV1};
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 use smithay_client_toolkit::dispatch2::Dispatch2;
@@ -43,6 +43,7 @@ use smithay_client_toolkit::reexports::protocols::wp::fractional_scale::v1::clie
     wp_fractional_scale_v1::{self, WpFractionalScaleV1},
 };
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
+use wayland_protocols::wp::presentation_time::client::{wp_presentation::{self, WpPresentation}, wp_presentation_feedback::{self, WpPresentationFeedback}};
 use wayland_protocols::wp::text_input::zv3::client::{zwp_text_input_manager_v3::ZwpTextInputManagerV3, zwp_text_input_v3::{self, ZwpTextInputV3}};
 use wayland_protocols::ext::background_effect::v1::client::{ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1, ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1};
 
@@ -939,6 +940,10 @@ impl PlatformWindow for WaylandWindow {
     /// the input region: the notice arrives when the compositor wants another one.
     fn request_frame(&self) {
         self.wl.frame(&self.qh, FrameFor(self.id));
+        // And when it is seen: the springs are worked out for that moment.
+        if let Some(p) = PRESENTATION.get() {
+            p.feedback(&self.wl, &self.qh, ShownFor(self.id));
+        }
     }
 
     fn own_frames(&self) -> Option<Box<dyn gpu::Frames>> {
@@ -1303,6 +1308,43 @@ impl Dispatch2<ZwpTextInputV3, State> for ImeFor {
                 let _ = state.to_render.send(ToRender::Ime(input));
             }
             _ => {}
+        }
+    }
+}
+
+/// `wp_presentation`: when the compositor shows each frame. Only with the
+/// monotonic clock, which is the one `Instant` keeps.
+static PRESENTATION: std::sync::OnceLock<WpPresentation> = std::sync::OnceLock::new();
+static MONOTONIC: AtomicBool = AtomicBool::new(false);
+
+struct PresentationClock;
+impl Dispatch2<WpPresentation, State> for PresentationClock {
+    fn event(&self, _: &mut State, _: &WpPresentation, ev: wp_presentation::Event, _: &Connection, _: &QueueHandle<State>) {
+        if let wp_presentation::Event::ClockId { clk_id } = ev {
+            MONOTONIC.store(clk_id == libc::CLOCK_MONOTONIC as u32, Ordering::Relaxed);
+        }
+    }
+}
+
+/// That sheet's frame was seen at this moment, and the screen refreshes
+/// every so often (0: it does not say).
+struct ShownFor(u32);
+impl Dispatch2<WpPresentationFeedback, State> for ShownFor {
+    fn event(&self, e: &mut State, _: &WpPresentationFeedback, ev: wp_presentation_feedback::Event, _: &Connection, _: &QueueHandle<State>) {
+        if let wp_presentation_feedback::Event::Presented { tv_sec_hi, tv_sec_lo, tv_nsec, refresh, .. } = ev {
+            if !MONOTONIC.load(Ordering::Relaxed) {
+                return;
+            }
+            let ns = (((tv_sec_hi as u64) << 32) | tv_sec_lo as u64).saturating_mul(1_000_000_000).saturating_add(tv_nsec as u64);
+            // From the clock's nanoseconds to an `Instant`: how long ago, by the same clock now.
+            let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            let (here, now) = (std::time::Instant::now(), unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut t) });
+            if now != 0 {
+                return;
+            }
+            let now_ns = (t.tv_sec as u64).saturating_mul(1_000_000_000).saturating_add(t.tv_nsec as u64);
+            let Some(at) = here.checked_sub(std::time::Duration::from_nanos(now_ns.saturating_sub(ns))) else { return };
+            let _ = e.to_render.send(ToRender::Shown(self.0, at, std::time::Duration::from_nanos(refresh as u64)));
         }
     }
 }
@@ -2202,6 +2244,9 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
     }
     if let Ok(manager) = globals.bind::<ZwpTextInputManagerV3, _, _>(&qh, 1..=1, Silent) {
         let _ = IME.set(Ime { connection: connection.clone(), manager, input: Mutex::default(), state: Mutex::default() });
+    }
+    if let Ok(p) = globals.bind::<WpPresentation, _, _>(&qh, 1..=2, PresentationClock) {
+        let _ = PRESENTATION.set(p);
     }
     if let Ok(m) = globals.bind::<ExtBackgroundEffectManagerV1, _, _>(&qh, 1..=1, Silent) {
         let _ = BACKGROUND_EFFECTS.set(m);

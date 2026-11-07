@@ -174,6 +174,6 @@ All of them are in [Known limitations](08-limitations.md), each with its plan. T
 
 - **A surface does not grow with what it holds** (S1): its size is the scene's, so a shadow or a panel that outgrows it is cut, and the renderer says so while it runs.
 - **Copies are expanded at load time** (G12): a model unfolds its `max` records, and a list of thousands is a window the scene declares; copies that are born and die on their own are still to come.
-- **The first frames after waking do not wait for the screen** (P9): the animation clock runs on CPU time, not on presentation time. And **one frame in ~400 drops to 33 ms** (P10), not investigated.
+- **On Windows and macOS the springs move by when each frame is made** (P9): on Wayland they move by when it will be seen, from `wp_presentation`. And **one frame in ~400 drops to 33 ms** (P10), not investigated.
 - **Presenting a frame costs ~0.5 ms of CPU whatever it draws** (P11).
 - A group with opacity inside another one gets no layer of its own: it multiplies (P4). With a different scale on each axis, the smoothing of the edge is approximate (P5). The gradient and the light live in the group's space, not in the shape's (P6).

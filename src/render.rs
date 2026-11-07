@@ -631,6 +631,13 @@ pub fn run(
     let mut next_appointment: Option<Instant> = None;
     let mut period_ms = 16.7f32;
     let mut last_presented = Instant::now();
+    // When the compositor last showed a frame of the sheet that sets the
+    // pace, and how often its screen refreshes: what the springs are worked
+    // out for is when each frame will be seen (`seen_at`).
+    let mut shown_pace: Option<(Instant, Duration)> = None;
+    let mut woke = false;
+    // A sheet's screen refreshes at another rate than it was told: who sets the pace is chosen again.
+    let mut rates_changed = false;
     // Which edge each surface is attached to right now, so as not to ask for it twice.
     let mut levels_set: Vec<crate::scene::Level> = Vec::new();
     let mut reserves_set: Vec<i32> = Vec::new();
@@ -794,6 +801,8 @@ pub fn run(
                 match rx.recv_timeout(wait) {
                     // A sheet that skipped a round for it paints now: it wakes the render.
                     Ok(ToRender::Frame(id)) if owed.contains(&id) => incoming.push(ToRender::Frame(id)),
+                    // Only news: it does not wake the render.
+                    Ok(ToRender::Shown(id, at, refresh)) => rates_changed |= note_shown(&mut sheets, &mut shown_pace, id, at, refresh),
                     Ok(ToRender::Frame(id)) => {
                         frame_ready |= frame_requested == Some(id);
                         if !seen_again.contains(&id) {
@@ -818,6 +827,7 @@ pub fn run(
             }
             resting = false;
             last = Instant::now() - Duration::from_secs_f32(period_ms / 1000.0);
+            woke = true;
         }
         // A logic that plays hears every frame before it is made: how long since
         // the last one it was told of, and where the mouse is. It is given a
@@ -1158,6 +1168,7 @@ pub fn run(
                         handle_backdrop(g, &mut sheets, d);
                     }
                 }
+                ToRender::Shown(id, at, refresh) => rates_changed |= note_shown(&mut sheets, &mut shown_pace, id, at, refresh),
                 ToRender::Frame(id) => {
                     if frame_requested == Some(id) {
                         frame_ready = true;
@@ -2265,9 +2276,23 @@ pub fn run(
         }
         reduced_motion = asked;
         let now = Instant::now();
-        let dt = (now - last).as_secs_f32();
-        last = now;
-        let t_total = (now - start).as_secs_f32();
+        // Time moves to when this frame will be seen, not to when it is made:
+        // the refresh after it is handed over (at the clock's deadline when the
+        // render keeps the step, or now). Made a little earlier or later, a
+        // frame still moves the springs by whole refreshes, and nothing jerks.
+        let ready = if gpu.as_ref().is_some_and(|g| g.uses_mailbox()) && !op.no_vsync && !op.naive { next_frame.max(now) } else { now };
+        let seen = seen_at(ready, shown_pace).unwrap_or(now).max(last);
+        // The first frame after a rest: one refresh in, wherever it lands.
+        if std::mem::take(&mut woke) {
+            let step = shown_pace.map(|s| s.1).filter(|r| !r.is_zero()).unwrap_or(Duration::from_secs_f32(period_ms / 1000.0));
+            last = seen.checked_sub(step).unwrap_or(last);
+        }
+        let dt = (seen - last).as_secs_f32();
+        if debug_seen() {
+            eprintln!("seen   · made {:.3} · for {:.3} · dt {:.2} ms", ms_since_epoch(now), ms_since_epoch(seen), dt * 1000.0);
+        }
+        last = seen;
+        let t_total = (seen - start).as_secs_f32();
         let mut effects: Vec<Effect> = Vec::new();
         let mut ripple_target = None;
         let mut keyboard_changed = false;
@@ -4846,7 +4871,7 @@ pub fn run(
                 open_changed = true;
             }
         }
-        if open_changed {
+        if open_changed || std::mem::take(&mut rates_changed) {
             assign_pace(g, &mut sheets, size, op.no_vsync);
             sheets.sort_by_key(|l| l.drives_pace);
         }
@@ -6966,6 +6991,62 @@ fn ripple_origin(scene: &Scene, target: ZoneId, c: Ctx, hidden: &[bool]) -> Opti
     (p.0.is_finite() && p.1.is_finite()).then_some(p)
 }
 
+/// That a sheet's frame was seen then: kept if it is the sheet that sets the
+/// pace. And the rate its screen really refreshes at: a window is told of the
+/// monitor it was born on, and pleamar-wm may show it on another (a 60 Hz
+/// one, while it went at the 165 of the first). True if that rate changed.
+fn note_shown(sheets: &mut [crate::gpu::Sheet], shown: &mut Option<(Instant, Duration)>, id: u32, at: Instant, refresh: Duration) -> bool {
+    let mut changed = false;
+    if let Some(l) = sheets.iter_mut().find(|l| l.id == id)
+        && refresh >= Duration::from_millis(2)
+        && refresh <= Duration::from_millis(100)
+    {
+        let mhz = (1_000_000_000_000u128 / refresh.as_nanos()) as i32;
+        if (mhz - l.mhz).abs() * 100 > l.mhz.max(1) {
+            println!("render · surface {id} is shown at {:.0} Hz, not {:.0}", mhz as f32 / 1000.0, l.mhz as f32 / 1000.0);
+            l.mhz = mhz;
+            changed = true;
+        }
+    }
+    if sheets.iter().any(|l| l.id == id && l.drives_pace) {
+        if debug_seen() {
+            eprintln!("seen   · shown {:.3} · refresh {:.3} ms", ms_since_epoch(at), refresh.as_secs_f64() * 1000.0);
+        }
+        *shown = Some((at, refresh));
+    }
+    changed
+}
+
+/// `PLEAMAR_DEBUG_SEEN=1`: when each frame is made, the moment it is worked
+/// out for, and when the compositor says it showed it.
+fn debug_seen() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("PLEAMAR_DEBUG_SEEN").is_some())
+}
+
+fn ms_since_epoch(t: Instant) -> f64 {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let e = *EPOCH.get_or_init(|| Instant::now() - Duration::from_secs(1));
+    t.checked_duration_since(e).unwrap_or_default().as_secs_f64() * 1000.0
+}
+
+/// When a frame handed over at `ready` will be seen: the screen's first
+/// refresh after it, counted in whole refreshes from the last one the
+/// compositor said it showed a frame at. Nothing without that, or if it is
+/// too long ago to count from (the screen's clock and this one drift).
+fn seen_at(ready: Instant, shown: Option<(Instant, Duration)>) -> Option<Instant> {
+    let (at, refresh) = shown?;
+    if refresh < Duration::from_millis(2) || refresh > Duration::from_millis(100) {
+        return None;
+    }
+    let since = ready.checked_duration_since(at).unwrap_or_default();
+    if since > Duration::from_secs(2) {
+        return None;
+    }
+    let n = since.as_nanos() / refresh.as_nanos() + 1;
+    Some(at + refresh * n as u32)
+}
+
 #[cfg(test)]
 mod ripple_tests {
     use super::*;
@@ -7466,5 +7547,63 @@ mod rule_index_tests {
         index.wake(&[], &scene.rules);
         assert!(!index.woke);
         assert_eq!(index.awake_with_events.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod motion_tests {
+    use super::seen_at;
+    use crate::scene::{Animated, Spring};
+    use std::time::{Duration, Instant};
+
+    const REFRESH: Duration = Duration::from_nanos(16_666_667);
+
+    #[test]
+    fn a_frame_is_seen_at_the_refresh_after_it_is_handed_over() {
+        let t0 = Instant::now();
+        let shown = Some((t0, REFRESH));
+        assert_eq!(seen_at(t0 + Duration::from_millis(5), shown), Some(t0 + REFRESH));
+        assert_eq!(seen_at(t0 + REFRESH + Duration::from_millis(1), shown), Some(t0 + REFRESH * 2));
+        // Handed over before the last one seen (a notice that came late): the next.
+        assert_eq!(seen_at(t0, shown), Some(t0 + REFRESH));
+        // Nothing to count from: no notice, a screen that does not say, or long ago.
+        assert_eq!(seen_at(t0, None), None);
+        assert_eq!(seen_at(t0, Some((t0, Duration::ZERO))), None);
+        assert_eq!(seen_at(t0 + Duration::from_secs(3), shown), None);
+    }
+
+    /// Frames made at uneven moments (a scene that takes 1 ms one time and 12
+    /// the next) and seen at each refresh: a spring moved by the time between
+    /// their refreshes is where it should be on each one; moved by the time
+    /// between when they were made, it is not.
+    #[test]
+    fn springs_move_by_the_time_frames_are_seen_not_made() {
+        let t0 = Instant::now();
+        let start = |_: ()| {
+            let mut a = Animated::at(0.0, Spring::LIVELY);
+            a.target = 100.0;
+            a
+        };
+        let (mut truth, mut by_seen, mut by_made) = (start(()), start(()), start(()));
+        let (mut last_seen, mut last_made) = (t0, t0);
+        let (mut worst_seen, mut worst_made) = (0f32, 0f32);
+        let mut seed = 7u32;
+        for k in 1..=40u32 {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            let jitter = Duration::from_micros(500 + (seed >> 8) as u64 % 11_500);
+            let previous = t0 + REFRESH * (k - 1);
+            let made = previous + jitter;
+            truth.step(REFRESH.as_secs_f32());
+            let seen = seen_at(made, Some((previous, REFRESH))).unwrap();
+            assert_eq!(seen, t0 + REFRESH * k);
+            by_seen.step((seen - last_seen).as_secs_f32());
+            by_made.step((made - last_made).as_secs_f32());
+            last_seen = seen;
+            last_made = made;
+            worst_seen = worst_seen.max((by_seen.x - truth.x).abs());
+            worst_made = worst_made.max((by_made.x - truth.x).abs());
+        }
+        assert!(worst_seen < 0.01, "by when seen, off by {worst_seen}");
+        assert!(worst_made > 1.0, "by when made, off by only {worst_made}");
     }
 }

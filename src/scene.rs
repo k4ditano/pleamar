@@ -2446,6 +2446,9 @@ pub enum ToRender {
     SheetGone(u32),
     /// The compositor has already shown that sheet's last frame and wants another.
     Frame(u32),
+    /// That sheet's last frame was seen at this moment, on a screen that
+    /// refreshes every so often (zero: it did not say).
+    Shown(u32, std::time::Instant, std::time::Duration),
     /// What was seen on screen behind a glass, with it on top.
     Backdrop(Box<crate::platform::Backdrop>),
     /// The workshop has finished something: a layout, some images.
