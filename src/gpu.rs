@@ -3286,7 +3286,8 @@ impl DrawList {
                         let w = m.size.0;
                         for b in &md_code {
                             let (Some(head), Some(last)) = (m.lines.get(m.line_of(b.head as usize)), m.lines.get(m.line_of(b.end.saturating_sub(1) as usize))) else { continue };
-                            let (top, bottom, head_bottom) = (head.top - 4.0, last.bottom + 4.0, head.bottom + 2.0);
+                            // From its head's top (not above it: the line before is the text's), a little past its last line.
+                            let (top, bottom, head_bottom) = (head.top, last.bottom + 4.0, head.bottom + 1.0);
                             let pad = 8.0;
                             let plate = |cy: f32, my: f32, stroke: f32| crate::shapes::FlatShape { kind: 1, cx: x0 + w * 0.5, cy, mx: w * 0.5 + pad, my, radius: 8.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke, affine };
                             for (shape, rgb, alpha) in [

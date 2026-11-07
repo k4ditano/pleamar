@@ -3855,7 +3855,10 @@ impl<'a> Compiler<'a> {
         };
         let text = |k: usize| self.texts.get(&self.global_quiet(&format!("{base}.{k}{rest}"))).copied();
         if let Expr::K(k) = i {
-            return Ok((k >= 0.0).then(|| text(k.round() as usize)).flatten().map(|t| Piece::Live(t, case)));
+            let found = (k >= 0.0).then(|| text(k.round() as usize)).flatten().map(|t| Piece::Live(t, case));
+            // Past the end of a list that is there, an empty text, as a number past it is
+            // -1: `TableRow` reads six cells of a row that has three (`list cells max 3`).
+            return Ok(found.or_else(|| text(0).map(|_| Piece::Literal(String::new()))));
         }
         let all: Vec<TextId> = (0..4096).map_while(text).collect();
         Ok((!all.is_empty()).then(|| Piece::Pick(i, all, case)))

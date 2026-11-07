@@ -1,0 +1,11 @@
+// expect: ok
+language 0.9
+import "pleamar:ui"
+// A row with three cells read by a TableRow of six: the ones past the end are empty, not an error.
+scene Short {
+    surface { size: 520, 120 }
+    model rows max 4 { list cells max 3 { text: text; chip: number } }
+    Table(480, 2, columns: 3, a: "Task", b: "Owner", c: "Status") {
+        for r in rows { TableRow(r, 480, columns: 3) }
+    }
+}
