@@ -122,7 +122,7 @@ library Ui {
             measure cell.$i
             let chip = r.cells[i].chip
             let hue = pick(max(chip - 1, 0), #74b9ff, #31cf76, #f5b041, #ff6b6b, #b48cff)
-            box { show: i < columns and chip > 0; at: 12 + i * col + cell.$i.width / 2, row / 2; size: cell.$i.width + 16, 22; corner: 11; color: hue; opacity: 18% }
+            box { show: i < columns and chip > 0; at: 12 + i * col + 8 + cell.$i.width / 2, row / 2; size: cell.$i.width + 16, 22; corner: 11; color: hue; opacity: 18% }
             text r.cells[i].text { show: i < columns; measure: cell.$i; at: 12 + i * col + if(chip > 0, 8, 0), row / 2; anchor: left center; size: 13; width: col - 24; lines: 1; tight: true; color: if(chip > 0, hue, tone) }
         }
     }
