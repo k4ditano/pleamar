@@ -846,7 +846,11 @@ pub fn run(
         // however long it takes to think it (the logic hears its messages in
         // order, so its answer to the frame comes after the rest).
         let filming = crate::platform::film::on();
-        let plays = filming || crate::scene::FRAME_LISTENERS.load(std::sync::atomic::Ordering::Relaxed) > 0;
+        let listened = crate::scene::FRAME_LISTENERS.load(std::sync::atomic::Ordering::Relaxed) > 0;
+        let plays = filming || listened;
+        // Awake only because it is being filmed: the scene itself may be at rest, and
+        // the report says so (C6) —the film still makes every frame—.
+        let film_only = filming && !listened;
         if plays && !crate::scene::FRAME_OWED.swap(true, std::sync::atomic::Ordering::AcqRel) {
             let now = crate::clock::now();
             let _ = to_logic.send(Event::Frame((now - frame_told).as_secs_f32().min(0.1), pointer, mouse_buttons));
@@ -3772,10 +3776,10 @@ pub fn run(
             .as_ref()
             .map(|r| scene.gestures[r.gesture].keyframes.iter().flat_map(|f| f.values.iter().map(|(p, _)| *p)).collect())
             .unwrap_or_default();
-        let mut alive = plays;
+        let mut alive = plays && !film_only;
         // (`PLEAMAR_TIMING`) what keeps it alive, each by its name.
         let mut alive_by: Vec<String> = Vec::new();
-        if timing && plays {
+        if timing && plays && !film_only {
             alive_by.push("the logic hears every frame".to_owned());
         }
         let mut n_blink = 0;
@@ -5826,7 +5830,7 @@ pub fn run(
         if op.no_vsync && cycle.dts.len() >= 600 {
             cycle.close();
         }
-        if !op.no_vsync && !alive && !something_happened && finger_light == 0.0 && ripple.is_none() && !blocked && !region_changes && !measure_changed && !keyboard_changed && props.iter().all(Animated::at_rest) {
+        if !op.no_vsync && !(alive || film_only) && !something_happened && finger_light == 0.0 && ripple.is_none() && !blocked && !region_changes && !measure_changed && !keyboard_changed && props.iter().all(Animated::at_rest) {
             for a in &mut props {
                 a.settle();
             }
