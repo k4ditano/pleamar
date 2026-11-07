@@ -44,6 +44,7 @@ use smithay_client_toolkit::reexports::protocols::wp::fractional_scale::v1::clie
 };
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
 use wayland_protocols::wp::presentation_time::client::{wp_presentation::{self, WpPresentation}, wp_presentation_feedback::{self, WpPresentationFeedback}};
+use wayland_protocols::xdg::foreign::zv2::client::{zxdg_exporter_v2::ZxdgExporterV2, zxdg_exported_v2::{self, ZxdgExportedV2}};
 use wayland_protocols::wp::text_input::zv3::client::{zwp_text_input_manager_v3::ZwpTextInputManagerV3, zwp_text_input_v3::{self, ZwpTextInputV3}};
 use wayland_protocols::ext::background_effect::v1::client::{ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1, ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1};
 
@@ -1383,6 +1384,23 @@ impl Dispatch2<WpPresentationFeedback, State> for ShownFor {
     }
 }
 
+/// What names the scene's windows to other programs (`xdg_foreign`), if the compositor has it.
+static EXPORTER: std::sync::OnceLock<ZxdgExporterV2> = std::sync::OnceLock::new();
+/// The exports made, kept while the windows live.
+static EXPORTS: Mutex<Vec<ZxdgExportedV2>> = Mutex::new(Vec::new());
+
+/// The handle the compositor gives a window of the scene's, by its surface's number.
+struct ExportFor(u32);
+impl Dispatch2<ZxdgExportedV2, State> for ExportFor {
+    fn event(&self, _: &mut State, _: &ZxdgExportedV2, ev: zxdg_exported_v2::Event, _: &Connection, _: &QueueHandle<State>) {
+        if let zxdg_exported_v2::Event::Handle { handle } = ev {
+            let mut all = super::EXPORTED_WINDOWS.lock().unwrap();
+            all.retain(|(id, _)| *id != self.0);
+            all.push((self.0, handle));
+        }
+    }
+}
+
 struct Silent;
 impl<I: Proxy> Dispatch2<I, State> for Silent {
     fn event(&self, _: &mut State, _: &I, _: I::Event, _: &Connection, _: &QueueHandle<State>) {}
@@ -1482,6 +1500,10 @@ impl State {
                 window.set_min_size(Some((p.width, height)));
                 let id = next_surface_id();
                 window.commit();
+                // A name for it that other programs can be given: a system dialog then belongs to it.
+                if let Some(x) = EXPORTER.get() {
+                    EXPORTS.lock().unwrap().push(x.export_toplevel(window.wl_surface(), qh, ExportFor(id)));
+                }
                 let role = Role::Window(window);
                 let viewport = self.viewporter.as_ref().map(|v| v.get_viewport(role.wl(), qh, Silent));
                 let fractional_scale = self.fractional_scales.as_ref().map(|m| m.get_fractional_scale(role.wl(), qh, ScaleFor(id)));
@@ -2279,6 +2301,9 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
     let compositor = CompositorState::bind(&globals, &qh).expect("no wl_compositor");
     if let Ok(m) = DataDeviceManagerState::bind(&globals, &qh) {
         let _ = DRAGS.set(Drags { connection: connection.clone(), qh: qh.clone(), manager: m.data_device_manager().clone(), device: Mutex::default(), press: Mutex::default(), under_way: Mutex::default(), compositor: CompositorState::bind(&globals, &qh).expect("no wl_compositor"), shm: globals.bind::<WlShm, _, _>(&qh, 1..=1, Silent).ok(), icon: Mutex::default() });
+    }
+    if let Ok(x) = globals.bind::<ZxdgExporterV2, _, _>(&qh, 1..=1, Silent) {
+        let _ = EXPORTER.set(x);
     }
     if let Ok(manager) = globals.bind::<ZwpTextInputManagerV3, _, _>(&qh, 1..=1, Silent) {
         let _ = IME.set(Ime { connection: connection.clone(), manager, input: Mutex::default(), state: Mutex::default() });

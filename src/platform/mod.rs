@@ -332,6 +332,17 @@ pub fn query(from: &str, name: &str, args: &[SysValue]) -> Result<SysValue, Stri
 ///
 /// On Wayland, an `xdg_popup`. On Windows it will be a frameless window with
 /// `WS_EX_NOACTIVATE`; on macOS, an `NSPanel`.
+/// The handles the compositor gave the scene's windows to be named by another
+/// program (`xdg_foreign`: "wayland:…"), by surface: a system window asked for
+/// —the file chooser— is then tied to the scene's, on top of it.
+pub static EXPORTED_WINDOWS: std::sync::Mutex<Vec<(u32, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// The scene's window a system dialog belongs to, as the portals want it
+/// (`wayland:handle`); empty if it has none (a panel, or a compositor without `xdg_foreign`).
+pub fn parent_window() -> String {
+    EXPORTED_WINDOWS.lock().unwrap().last().map_or(String::new(), |(_, h)| format!("wayland:{h}"))
+}
+
 /// The popups that take the keyboard when they open (`keyboard: true`), by number.
 pub static KEYBOARD_POPUPS: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
 

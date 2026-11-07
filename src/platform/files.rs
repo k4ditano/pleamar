@@ -154,7 +154,9 @@ fn pick(how: &str, arg: Option<&str>) -> Result<SysValue, String> {
         "folder" => ("OpenFile", "Choose a folder"),
         _ => ("OpenFile", "Open"),
     };
-    let _: OwnedObjectPath = chooser.call(method, &("", title, options)).map_err(bus)?;
+    // Tied to the scene's window, if the compositor gave it a handle (`xdg_foreign`).
+    let parent = super::parent_window();
+    let _: OwnedObjectPath = chooser.call(method, &(parent.as_str(), title, options)).map_err(bus)?;
     for message in answers {
         let message = message.map_err(bus)?;
         let (code, results): (u32, HashMap<String, OwnedValue>) = message.body().deserialize().map_err(|e| format!("files.pick: {e}"))?;
