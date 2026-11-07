@@ -3181,8 +3181,11 @@ impl DrawList {
                     // colours the text gives it, then each mark; where they meet, the last.
                     let mut paints: Vec<(u32, u32, [f32; 3])> = Vec::new();
                     if style.markdown_colors[..4].iter().any(Option::is_some) {
-                        use crate::markdown::{CODE, HEADING, LINK, QUOTE};
+                        use crate::markdown::{CODE, HEADING, LINK, QUOTE, TABLE};
                         for &(a, b, l) in &md_marks {
+                            // A table is monospace to line up, not code: its cells keep the text's
+                            // colour (and their links', and its lines' the quote's).
+                            let l = if l & TABLE != 0 { l & !CODE } else { l };
                             let pick = [(CODE, 1), (LINK, 0), (HEADING, 3), (QUOTE, 2)].into_iter().find_map(|(bit, k)| (l & bit != 0).then_some(style.markdown_colors[k].as_ref()).flatten());
                             if let Some(col) = pick {
                                 paints.push((a, b, color(col)));
