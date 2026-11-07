@@ -6,7 +6,9 @@ scene Composer {
     text draft = "Ask @Chief about @launch-brief.md"
     input draft {
         at: 16, 16; width: 488; lines: 4; send: enter
-        size: 14; color: #f5f7f5; mentions: #74b9ff; placeholder: "Message…"
+        size: 14; color: #f5f7f5; mentions: #74b9ff, #31cf76; placeholder: "Message…"
     }
     on submit draft { emit send }
+    // While an `@name` is being written: what to suggest.
+    text draft.mention { show: draft.mention != ""; at: 16, 120; size: 12; color: #9aa0a6 }
 }

@@ -4275,8 +4275,21 @@ impl<'a> Compiler<'a> {
             None => Expr::K(0.0),
         };
         // `mentions: #74b9ff`: each `@name` a chip of that colour, erased whole.
+        // `mentions: #74b9ff, #31cf76`: a name's chip in the first colour, a file's
+        // (`@brief.md`, with its extension) in the second. And while an `@name` is
+        // being written, `draft.mention` says it, without its `@`: what to suggest.
         let mentions = match p.get_mut("mentions") {
-            Some(c) => Some(self.color(c)?),
+            Some(c) => {
+                let names = self.color(c)?;
+                let files = if c.sym(",") { Some(self.color(c)?) } else { None };
+                c.expect_end()?;
+                let full = format!("{name}.mention");
+                if !self.texts.contains_key(&full) {
+                    let t = self.e.live_text(interned(&full), "");
+                    self.texts.insert(full, t);
+                }
+                Some((names, files))
+            }
             None => None,
         };
         if secret && mentions.is_some() {

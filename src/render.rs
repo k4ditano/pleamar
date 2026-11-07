@@ -2295,6 +2295,23 @@ pub fn run(
             prof_cpu[0] += c - prof_c;
             prof_c = c;
         }
+        // The `@name` being written in a field with `mentions:`, with its `@` (just `@`
+        // when only that is typed), in `field.mention`; empty when the cursor is not at
+        // the end of one: what the scene suggests, and the logic completes by writing the field.
+        if let Some(ed) = editing.as_ref().filter(|e| draw.fields.iter().any(|f| f.text == e.field && f.mentions)) {
+            let field = scene.texts[ed.field].0;
+            let t = &texts[ed.field];
+            let at = ed.cursor.min(t.len());
+            let lone = t[..at].ends_with('@') && t[..at - 1].chars().next_back().is_none_or(|b| b.is_whitespace() || b == '(');
+            let writing = if lone { "@".to_owned() } else { crate::markdown::mentions(t).into_iter().find(|&(a, b)| b == at && a < b).map_or(String::new(), |(a, b)| t[a..b].to_owned()) };
+            let wanted = format!("{field}.mention");
+            if let Some(k) = scene.texts.iter().position(|x| x.0 == wanted) {
+                if texts[k] != writing {
+                    texts[k] = writing.clone();
+                    let _ = to_logic.send(Event::Text(scene.texts[k].0, writing));
+                }
+            }
+        }
         // What the terminals say (their titles, folders, whether they live), to the scene.
         if crate::terminal::with(|r| !r.sessions.is_empty()) {
             crate::terminal::report(&scene, &mut facts, &mut texts, &to_logic, &mut term_hands);

@@ -3069,9 +3069,14 @@ impl DrawList {
                     }
                     // `mentions:`: each `@name` on a pill of its colour, and in it.
                     let mut paints: Vec<(u32, u32, [f32; 3])> = Vec::new();
-                    if let (Some(col), false) = (mentions, empty) {
-                        let col = color(col);
+                    if let (Some((names, files)), false) = (mentions, empty) {
+                        let (names, files) = (color(names), files.as_ref().map(color));
                         for (ma, mb) in crate::markdown::mentions(value) {
+                            // A file's (an extension after a dot) in its own colour, if there is one.
+                            let col = match files {
+                                Some(f) if value[ma + 1..mb].rsplit_once('.').is_some_and(|(stem, ext)| !stem.is_empty() && !ext.is_empty() && ext.len() <= 5) => f,
+                                _ => names,
+                            };
                             paints.push((ma as u32, mb as u32, col));
                             let boxes: Vec<[f32; 4]> = match (&m, multi) {
                                 (Some(lm), true) => lm.spans(ma, mb),
