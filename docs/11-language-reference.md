@@ -1193,6 +1193,25 @@ row { padding: 10; fill: #2f5a50; corner: 14; place: end
 text r.text { at: 2, 2; width: 520; size: 13.5; color: ink; markdown: true; selectable: true }
 ```
 
+In colour, with `markdown: true`: **`link:`** colours a link's words and an `@name` (`@launch-brief.md`, `@Research`; one in the middle of a word, like an e-mail, is not one), **`code:`** what is between backticks and fenced, **`quote:`** a `> quote` and **`heading:`** a `# title`. Each is a colour like `color:` (`if(…)`, `mix(…)` and names work); the ones not given keep the text's colour.
+
+**A stretch of its own.** `mark from..to, colour` inside a text paints those bytes in that colour, and `bold`, `italic` or `code` after it (or instead of the colour) change how they look: `mark 4..20, #74b9ff`, `mark 12..19, #31cf76, bold`, `mark r.hl_from..r.hl_to, amber`. The ends are expressions worked out every frame, so the logic can mark what it finds; they count bytes of the text as it is shown —with `markdown:`, without its marks— and fall back to the start of a letter if they land inside one. Up to 16 marks a text. They go over the markdown's colours, and where two meet, the one written later wins. A change of colour does not lay the text out again; a change of look does.
+
+```plm
+scene Marks {
+    surface { size: 420, 120 }
+    text "Fix @launch-brief.md and @metrics.csv" {
+        at: 12, 12; width: 396; size: 14; color: #f5f7f5
+        mark 4..20, #74b9ff
+        mark 25..37, #31cf76, bold
+    }
+    text "**Chief**: read @plan.md and `run.sh`" {
+        at: 12, 60; width: 396; size: 14; color: #f5f7f5; markdown: true
+        link: #74b9ff; code: #d6adf2
+    }
+}
+```
+
 ## 9. Layouts
 
 `row` and `column` place their children one after another: the place of each one is an expression, so if one grows or disappears, the rest move. With `~spring` in the header, they travel to their place instead of jumping. Every child has to know how much it takes up: a shape with `size` or `radius`, a text (it measures itself), an image, a `group` or a component with `size:`, another layout, or `space n`. `show: expr` on a child decides whether it is there: it takes up room and is seen, or neither of the two.
@@ -1911,7 +1930,7 @@ properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
 properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight opacity show
-properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown place tight
+properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown link code quote heading place tight
 properties.image: at size opacity tint cell fit show grow place
 properties.window: at size ask opacity show
 properties.terminal: at size family font_size line_height colors cursor selection command folder env run opacity show label agent place grow

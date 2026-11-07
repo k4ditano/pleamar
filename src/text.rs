@@ -45,6 +45,8 @@ pub struct PlacedGlyph {
     pub uv: [f32; 4],
     /// An emoji brings its own color; a letter is a mask that gets tinted.
     pub colored: bool,
+    /// The byte of the text it starts at: what a mark of colour asks after.
+    pub at: u32,
 }
 
 pub struct Layout {
@@ -108,6 +110,11 @@ impl Layout {
         }
         out
     }
+}
+
+/// A letter's colour: that of the last stretch (byte range) it falls in, or the text's.
+pub fn colour_of(g: &PlacedGlyph, paints: &[(u32, u32, [f32; 3])], text: [f32; 3]) -> [f32; 3] {
+    paints.iter().rev().find(|p| g.at >= p.0 && g.at < p.1).map_or(text, |p| p.2)
 }
 
 /// Everything that decides how a text turns out. Two texts with the same key are
@@ -345,7 +352,7 @@ impl Typesetter {
                 let Some((slot, left, top, colored)) = self.glyph(f.cache_key, &mut full) else { continue };
                 let x = (f.x + left) as f32;
                 let y = ((run.line_y * s).round() as i32 + f.y - top) as f32;
-                glyphs.push(PlacedGlyph { rect: [x / s, y / s, slot.width as f32 / s, slot.height as f32 / s], uv: slot.uv(), colored });
+                glyphs.push(PlacedGlyph { rect: [x / s, y / s, slot.width as f32 / s, slot.height as f32 / s], uv: slot.uv(), colored, at: (from + g.start) as u32 });
             }
         }
         self.exhausted |= full;
@@ -1379,6 +1386,23 @@ mod tests {
         assert!(t.lay_out(&key).glyphs.is_empty());
         t.shelves = Shelves::new();
         assert_eq!(t.lay_out(&key).glyphs.len(), expected, "atlas exhaustion must not cache letters as nonexistent");
+    }
+
+    #[test]
+    fn two_colours_one_line() {
+        let mut t = Typesetter::new();
+        let text = "Fix @launch-brief.md and @metrics.csv";
+        let m = t.lay_out(&LayoutKey::new(text, &Style::new(14.0, crate::scene::color(1.0, 1.0, 1.0)), None));
+        let (blue, green, ink) = ([0.45, 0.73, 1.0], [0.19, 0.81, 0.46], [0.96, 0.97, 0.96]);
+        let (a, b) = (text.find("@launch").unwrap() as u32, text.find("@metrics").unwrap() as u32);
+        let paints = [(a, a + 16, blue), (b, b + 12, green)];
+        let at = |byte: u32| m.glyphs.iter().find(|g| g.at == byte).map(|g| colour_of(g, &paints, ink));
+        assert_eq!(at(a + 1), Some(blue), "l of launch");
+        assert_eq!(at(b + 1), Some(green), "m of metrics");
+        assert_eq!(at(0), Some(ink), "F of Fix");
+        let mut seen: Vec<[f32; 3]> = m.glyphs.iter().map(|g| colour_of(g, &paints, ink)).collect();
+        seen.dedup();
+        assert_eq!(seen, vec![ink, blue, ink, green], "in that order along the line");
     }
 
     #[test]

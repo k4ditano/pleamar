@@ -3928,6 +3928,49 @@ impl<'a> Compiler<'a> {
         if let Some(c) = p.get_mut("color") {
             style.color = self.color(c)?;
         }
+        // With `markdown:`, the colour of what it marks.
+        for (k, name) in ["link", "code", "quote", "heading"].into_iter().enumerate() {
+            if let Some(c) = p.get_mut(name) {
+                style.markdown_colors[k] = Some(self.color(c)?);
+            }
+        }
+        // `mark from..to, colour, bold`: a stretch of it on its own.
+        for e in n.body.as_deref().unwrap_or(&[]) {
+            let Entry::Node(m) = e else { continue };
+            if !matches!(m.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "mark") {
+                continue;
+            }
+            if m.body.is_some() {
+                return Err(CompileError::at(m.line, m.col, "a `mark` takes no block: `mark 4..20, #74b9ff, bold`"));
+            }
+            if style.marks.len() == crate::scene::MOST_MARKS {
+                return Err(CompileError::at(m.line, m.col, format!("a text takes at most {} marks", crate::scene::MOST_MARKS)));
+            }
+            let mut c = Cur::new(&m.head[1..], m.line, m.col);
+            let from = self.expr(&mut c)?;
+            c.expect_sym("..")?;
+            let to = self.expr(&mut c)?;
+            let (mut color, mut look) = (None, 0u8);
+            while c.sym(",") {
+                match c.peek() {
+                    Some(TokenKind::Id(w)) if matches!(w.as_str(), "bold" | "italic" | "code") => {
+                        look |= match w.as_str() {
+                            "bold" => crate::markdown::BOLD,
+                            "italic" => crate::markdown::ITALIC,
+                            _ => crate::markdown::CODE,
+                        };
+                        c.i += 1;
+                    }
+                    _ if color.is_none() => color = Some(self.color(&mut c)?),
+                    _ => return c.error("after a mark's colour, only bold, italic or code"),
+                }
+            }
+            c.expect_end()?;
+            if color.is_none() && look == 0 {
+                return Err(CompileError::at(m.line, m.col, "a `mark` says a colour, a look (bold, italic, code) or both: `mark 4..20, #74b9ff`"));
+            }
+            style.marks.push(crate::scene::TextMark { from, to, color, look });
+        }
         if let Some(c) = p.get_mut("align") {
             style.align = match c.one_of(vocab::TEXT_ALIGNS, "the alignment of a text")?.as_str() {
                 "left" => TextAlign::Left,

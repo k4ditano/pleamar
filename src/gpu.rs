@@ -3029,13 +3029,50 @@ impl DrawList {
                     let select = text_select.take();
                     let text = content_text(content, c, texts);
                     // With `markdown:`, its marks go; everything from here on reads it without them.
-                    let (text, key) = if style.markdown {
+                    let (text, md_marks) = if style.markdown {
                         let (plain, marks) = crate::markdown::plain(&text);
-                        (std::borrow::Cow::Owned(plain.clone()), LayoutKey::marked(plain, marks, style, width.as_ref().map(|w| w.eval(c))))
+                        (std::borrow::Cow::Owned(plain), marks)
                     } else {
-                        let key = LayoutKey::new(&text, style, width.as_ref().map(|w| w.eval(c)));
-                        (text, key)
+                        (text, Vec::new())
                     };
+                    // `mark from..to, …`: its bytes as they are now, on whole letters.
+                    let marks: Vec<(u32, u32, Option<[f32; 3]>, u8)> = style
+                        .marks
+                        .iter()
+                        .filter_map(|m| {
+                            let edge = |e: &crate::scene::Expr| {
+                                let mut k = (e.eval(c).max(0.0) as usize).min(text.len());
+                                while !text.is_char_boundary(k) {
+                                    k -= 1;
+                                }
+                                k as u32
+                            };
+                            let (a, b) = (edge(&m.from), edge(&m.to));
+                            (a < b).then(|| (a, b, m.color.as_ref().map(color), m.look))
+                        })
+                        .collect();
+                    // The marks that change how it is laid out: the markdown's and the scene's.
+                    let looks: Vec<(u32, u32, u8)> = marks.iter().filter(|m| m.3 != 0).map(|m| (m.0, m.1, m.3)).collect();
+                    let laid: Vec<(u32, u32, u8)> = md_marks.iter().filter(|m| m.2 & crate::markdown::LOOKS != 0).map(|m| (m.0, m.1, m.2 & crate::markdown::LOOKS)).collect();
+                    let laid = crate::markdown::merged(text.len(), &laid, &looks);
+                    let key = if laid.is_empty() {
+                        LayoutKey::new(&text, style, width.as_ref().map(|w| w.eval(c)))
+                    } else {
+                        LayoutKey::marked(text.to_string(), laid, style, width.as_ref().map(|w| w.eval(c)))
+                    };
+                    // And what is in a colour of its own: what the markdown marks, in the
+                    // colours the text gives it, then each mark; where they meet, the last.
+                    let mut paints: Vec<(u32, u32, [f32; 3])> = Vec::new();
+                    if style.markdown_colors.iter().any(Option::is_some) {
+                        use crate::markdown::{CODE, HEADING, LINK, QUOTE};
+                        for &(a, b, l) in &md_marks {
+                            let pick = [(CODE, 1), (LINK, 0), (HEADING, 3), (QUOTE, 2)].into_iter().find_map(|(bit, k)| (l & bit != 0).then_some(style.markdown_colors[k].as_ref()).flatten());
+                            if let Some(col) = pick {
+                                paints.push((a, b, color(col)));
+                            }
+                        }
+                    }
+                    paints.extend(marks.iter().filter_map(|m| m.2.map(|col| (m.0, m.1, col))));
                     // A size that changes, at the value it has now (whole quarter
                     // pixels: a size that glides does not shape a new layout each frame).
                     let key = match &style.size {
@@ -3101,10 +3138,12 @@ impl DrawList {
                         }
                         self.selectable.push(PlacedText { at: idx, text: text.to_owned(), layout: m.clone(), origin: (x0, y0), affine, limit });
                     }
+                    // A letter's colour: the last stretch it falls in, or the text's.
+                    let tint = |g: &crate::text::PlacedGlyph| crate::text::colour_of(g, &paints, rgb);
                     let Some(fx) = fx else {
                         for g in &m.glyphs {
                             let d = [x0 + g.rect[0], y0 + g.rect[1], g.rect[2], g.rect[3]];
-                            self.sprite(d, g.uv, a, if g.colored { None } else { Some(rgb) }, true, false, affine, &clips);
+                            self.sprite(d, g.uv, a, if g.colored { None } else { Some(tint(g)) }, true, false, affine, &clips);
                         }
                         continue;
                     };
@@ -3142,7 +3181,7 @@ impl DrawList {
                         let (cxg, cyg) = (x0 + g.rect[0] + g.rect[2] * 0.5 + dx, y0 + g.rect[1] + g.rect[3] * 0.5 + dy);
                         let d = [cxg - w * 0.5, cyg - h * 0.5, w, h];
                         if a * opacity > 0.001 {
-                            self.sprite_with_effects(d, g.uv, a * opacity, rgb, g.colored, &looks, pad, affine, &clips);
+                            self.sprite_with_effects(d, g.uv, a * opacity, tint(g), g.colored, &looks, pad, affine, &clips);
                         }
                     }
                     LETTER.with(|l| l.set((0.0, 0.0)));

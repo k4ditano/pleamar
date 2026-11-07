@@ -1,0 +1,6 @@
+// expect: error «a `mark` says a colour, a look»
+language 0.9
+scene Marks {
+    surface { size: 420, 120 }
+    text "Fix this" { at: 12, 12; mark 0..3 }
+}

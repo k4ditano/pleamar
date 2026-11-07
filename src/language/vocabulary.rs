@@ -28,7 +28,7 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("line", &["from", "to", "width"]),
     ("path", &["at", "size"]),
     ("body", &["color", "gradient", "rim", "light", "shadow", "border", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "frost", "smoke", "milk", "tint", "vivid", "mirror", "highlight", "opacity", "show"]),
-    ("text", &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show", "grow", "gradient", "outline", "shadow", "letter_move", "letter_opacity", "letter_scale", "selectable", "selection", "markdown", "place", "tight"]),
+    ("text", &["at", "anchor", "width", "size", "weight", "color", "opacity", "lines", "align", "line_height", "family", "measure", "show", "grow", "gradient", "outline", "shadow", "letter_move", "letter_opacity", "letter_scale", "selectable", "selection", "markdown", "link", "code", "quote", "heading", "place", "tight"]),
     ("image", &["at", "size", "opacity", "tint", "cell", "fit", "show", "grow", "place"]),
     ("window", &["at", "size", "ask", "opacity", "show"]),
     ("terminal", &["at", "size", "family", "font_size", "line_height", "colors", "cursor", "selection", "command", "folder", "env", "run", "opacity", "show", "label", "agent", "place", "grow"]),

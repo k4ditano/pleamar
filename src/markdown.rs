@@ -8,6 +8,13 @@
 pub const BOLD: u8 = 1;
 pub const ITALIC: u8 = 2;
 pub const CODE: u8 = 4;
+/// What a stretch is, for its colour (`link:`, `quote:`, `heading:` on the
+/// text; code is `CODE`): they do not change how it is laid out.
+pub const LINK: u8 = 8;
+pub const QUOTE: u8 = 16;
+pub const HEADING: u8 = 32;
+/// The marks that change the layout; the others only colour it.
+pub const LOOKS: u8 = BOLD | ITALIC | CODE;
 
 /// The text without its marks, and the stretches of it (byte ranges) that
 /// are bold, italic or code. A mark still open at the end —a model halfway
@@ -34,14 +41,14 @@ pub fn plain(source: &str) -> (String, Vec<(u32, u32, u8)>) {
         let indent = &line[..line.len() - bare.len()];
         let hashes = bare.bytes().take_while(|b| *b == b'#').count();
         if (1..=6).contains(&hashes) && bare[hashes..].starts_with(' ') {
-            inline(bare[hashes..].trim_start(), BOLD, &mut out, &mut looks);
+            inline(bare[hashes..].trim_start(), BOLD | HEADING, &mut out, &mut looks);
         } else if let Some(rest) = ["- ", "* ", "+ "].iter().find_map(|m| bare.strip_prefix(m)) {
             push(&mut out, &mut looks, indent, 0);
             push(&mut out, &mut looks, "• ", 0);
             inline(rest, 0, &mut out, &mut looks);
         } else if let Some(rest) = bare.strip_prefix("> ") {
             push(&mut out, &mut looks, indent, 0);
-            inline(rest, ITALIC, &mut out, &mut looks);
+            inline(rest, ITALIC | QUOTE, &mut out, &mut looks);
         } else {
             inline(line, 0, &mut out, &mut looks);
         }
@@ -112,7 +119,7 @@ fn inline(line: &str, base: u8, out: &mut String, looks: &mut Vec<u8>) {
                 let link = line[i..].find("](").and_then(|m| line[i + m..].find(')').map(|e| (m, e)));
                 match link {
                     Some((m, e)) if m > 1 => {
-                        inline(&line[i + 1..i + m], look, out, looks);
+                        inline(&line[i + 1..i + m], look | LINK, out, looks);
                         k = chars.partition_point(|(j, _)| *j <= i + m + e);
                     }
                     _ => {
@@ -121,12 +128,41 @@ fn inline(line: &str, base: u8, out: &mut String, looks: &mut Vec<u8>) {
                     }
                 }
             }
+            // `@launch-brief.md`, `@Research`: a name, as a link is (`link:`).
+            '@' if !k.checked_sub(1).and_then(at).is_some_and(|b| !b.is_whitespace() && b != '(') && at(k + 1).is_some_and(char::is_alphanumeric) => {
+                let mut e = k + 1;
+                while at(e).is_some_and(|n| n.is_alphanumeric() || "._-/".contains(n)) {
+                    e += 1;
+                }
+                // A full stop after it ends the sentence, not the name.
+                while e > k + 1 && at(e - 1).is_some_and(|n| ".-/".contains(n)) {
+                    e -= 1;
+                }
+                let end = chars.get(e).map_or(line.len(), |c| c.0);
+                push(out, looks, &line[i..end], look | LINK);
+                k = e;
+            }
             _ => {
                 push(out, looks, c.encode_utf8(&mut buf), look);
                 k += 1;
             }
         }
     }
+}
+
+/// The stretches of a text of `len` bytes with `extra` added to `base`:
+/// where they meet, a byte takes the marks of both.
+pub fn merged(len: usize, base: &[(u32, u32, u8)], extra: &[(u32, u32, u8)]) -> Vec<(u32, u32, u8)> {
+    if extra.is_empty() {
+        return base.to_vec();
+    }
+    let mut looks = vec![0u8; len];
+    for &(a, b, l) in base.iter().chain(extra) {
+        for x in &mut looks[(a as usize).min(len)..(b as usize).min(len)] {
+            *x |= l;
+        }
+    }
+    stretches(&looks)
 }
 
 fn stretches(looks: &[u8]) -> Vec<(u32, u32, u8)> {
@@ -162,7 +198,19 @@ mod tests {
     fn titles_quotes_links_and_fenced_code() {
         let (text, parts) = marked("## Pasos\n> nota\n[la web](https://x.y) y ya\n```sh\nls -l\n```\nfin");
         assert_eq!(text, "Pasos\nnota\nla web y ya\nls -l\nfin");
-        assert_eq!(parts, vec![("Pasos".into(), BOLD), ("nota".into(), ITALIC), ("ls -l".into(), CODE)]);
+        assert_eq!(parts, vec![("Pasos".into(), BOLD | HEADING), ("nota".into(), ITALIC | QUOTE), ("la web".into(), LINK), ("ls -l".into(), CODE)]);
+    }
+
+    #[test]
+    fn names_with_an_at_are_links() {
+        let (text, parts) = marked("Fix @launch-brief.md and @Research. Mail a@b.c (@x)");
+        assert_eq!(text, "Fix @launch-brief.md and @Research. Mail a@b.c (@x)");
+        assert_eq!(parts, vec![("@launch-brief.md".into(), LINK), ("@Research".into(), LINK), ("@x".into(), LINK)]);
+    }
+
+    #[test]
+    fn marks_added_to_markdowns_meet() {
+        assert_eq!(merged(10, &[(0, 4, BOLD)], &[(2, 6, ITALIC)]), vec![(0, 2, BOLD), (2, 4, BOLD | ITALIC), (4, 6, ITALIC)]);
     }
 
     #[test]

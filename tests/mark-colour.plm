@@ -1,0 +1,17 @@
+// expect: ok
+language 0.9
+// Stretches of a text in their own colour (`mark`), and markdown's in the colours the text gives it.
+scene Marks {
+    surface { size: 420, 160 }
+    text "Fix @launch-brief.md and @metrics.csv — see `plan`" {
+        at: 12, 12; width: 396; size: 14; color: #f5f7f5
+        mark 4..20, #74b9ff
+        mark 25..37, #31cf76
+        mark 47..51, #d6adf2, bold
+    }
+    text "**Chief**: read @launch-brief.md and `run.sh`\n> quoted" {
+        at: 12, 60; width: 396; size: 14; color: #f5f7f5; markdown: true
+        link: #74b9ff; code: #d6adf2; quote: #9aa0a6; heading: #ffffff
+        mark 0..5, #b48cff
+    }
+}
