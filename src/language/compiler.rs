@@ -899,8 +899,17 @@ fn mentions(entries: &[Entry], word: &str) -> bool {
     let named = |t: &[crate::language::tokens::Token]| t.iter().any(|t| matches!(&t.kind, TokenKind::Id(w) if w == word || w.split('.').next() == Some(word)));
     entries.iter().any(|e| match e {
         Entry::Prop { value, .. } => named(value),
+        // Inside a component with a parameter of that name, the word is the parameter:
+        // `AgentRow(time: text)` kept the whole scene awake with the clock (M21).
+        Entry::Node(n) if has_parameter(n, word) => false,
         Entry::Node(n) => named(&n.head) || n.body.as_ref().is_some_and(|b| mentions(b, word)),
     })
+}
+
+/// `component Row(time: text, …)`: whether that component has a parameter of that name.
+fn has_parameter(n: &Node, word: &str) -> bool {
+    matches!(n.head.first().map(|t| &t.kind), Some(TokenKind::Id(k)) if k == "component")
+        && n.head.windows(2).any(|w| matches!((&w[0].kind, &w[1].kind), (TokenKind::Id(p), TokenKind::Sym(":")) if p == word))
 }
 
 /// The zones named with `.hover` or `.pressed` anywhere in the scene, as they
@@ -943,7 +952,7 @@ fn mentions_part(entries: &[Entry], part: &str) -> bool {
 fn declares(entries: &[Entry], word: &str) -> bool {
     entries.iter().any(|e| match e {
         Entry::Node(n) => {
-            matches!((n.head.first().map(|t| &t.kind), n.head.get(1).map(|t| &t.kind)), (Some(TokenKind::Id(k)), Some(TokenKind::Id(w))) if w == word && ["prop", "pose", "let", "fact"].contains(&k.as_str()))
+            matches!((n.head.first().map(|t| &t.kind), n.head.get(1).map(|t| &t.kind)), (Some(TokenKind::Id(k)), Some(TokenKind::Id(w))) if w == word && ["prop", "pose", "let", "fact", "text"].contains(&k.as_str()))
                 || n.body.as_ref().is_some_and(|b| declares(b, word))
         }
         _ => false,

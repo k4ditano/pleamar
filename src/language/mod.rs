@@ -551,6 +551,12 @@ mod tests {
     }
 
     #[test]
+    fn a_parameter_called_time_does_not_wake_the_clock() {
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/time-parameter.plm")).unwrap();
+        assert!(!scene.props.iter().any(|p| p.0 == "time"), "the scene's clock was not asked for");
+    }
+
+    #[test]
     fn a_measure_in_a_component_is_each_copys() {
         // Two copies of a component, each measuring two words in a `repeat` (`measure cell.$i`):
         // four measures, not two shared by both (M20: a table's chips all as long as the last row's word).

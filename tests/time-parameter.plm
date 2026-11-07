@@ -1,0 +1,14 @@
+// expect: ok
+language 0.9
+// A component with a parameter called `time` does not wake the scene's clock (M21).
+scene Rows {
+    surface { size: 300, 60 }
+    component AgentRow(name: text, time: text) {
+        size: 300, 30
+        text name { at: 10, 15; anchor: left center; size: 13; color: #f5f7f5 }
+        text time { at: 290, 15; anchor: right center; size: 12; color: #9aa0a6 }
+    }
+    column { at: 0, 0
+        AgentRow("Planipro", "12:04")
+    }
+}
