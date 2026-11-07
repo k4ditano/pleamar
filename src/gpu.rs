@@ -4978,6 +4978,8 @@ impl Gpu {
             d.glass_marks
                 .iter()
                 .copied()
+                // A mark can be one past the last element: its glass was not drawn after all.
+                .filter(|&k| (k as usize) < d.element_count())
                 .filter(|&k| {
                     let e = &d.elements[k as usize * PER_ELEMENT..(k as usize + 1) * PER_ELEMENT];
                     e[0] == 0.0 && e[40] > 0.0 && (e[42] < 0.5 || !behind_known)
