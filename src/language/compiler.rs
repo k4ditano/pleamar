@@ -6212,6 +6212,19 @@ impl<'a> Compiler<'a> {
             }
             None => (None, Expr::K(1.0)),
         };
+        // `border: 1, #ffffff 12%`: a line round it, as wide as that, of that colour (and how
+        // much of it shows); it grows with what is inside, as the fill does.
+        let border = match p.get_mut("border") {
+            Some(c) => {
+                let w = self.expr(c)?;
+                c.expect_sym(",")?;
+                let col = self.color(c)?;
+                let alpha = if c.at_end() { Expr::K(1.0) } else { self.expr(c)?.clamp(0.0, 1.0) };
+                c.expect_end()?;
+                Some((w, col, alpha))
+            }
+            None => None,
+        };
         // And its background can be glass, like a loose shape.
         let fill_glass = self.glass_spec(&mut p, n)?;
         // `size: 164, 66`: what the stack measures. It is needed so that a child
@@ -6313,6 +6326,12 @@ impl<'a> Compiler<'a> {
         // The background is painted before the children, but its size is known afterwards:
         // the place is left and filled in at the end.
         let background_slot = fill.as_ref().map(|_| {
+            let k = self.e.instrs.len();
+            self.e.paint(Instr::Clip(None));
+            k
+        });
+        // Its border's place, the same way, over its fill.
+        let border_slot = border.as_ref().map(|_| {
             let k = self.e.instrs.len();
             self.e.paint(Instr::Clip(None));
             k
@@ -6733,6 +6752,10 @@ impl<'a> Compiler<'a> {
         // even if the children do not reach it: it is what was asked for, not what came out.
         let size = given_size.clone().or_else(|| view.clone()).unwrap_or_else(|| content.clone());
 
+        if let (Some(k), Some((w, color, alpha))) = (border_slot, border) {
+            let rect = Shape::Rect { center: (size.0.clone() * 0.5, size.1.clone() * 0.5), half_size: (size.0.clone() * 0.5, size.1.clone() * 0.5), radius: corner.clone() };
+            self.e.instrs[k] = Instr::Solid { shape: rect.stroke(w), color, alpha, glass_spec: None };
+        }
         if let (Some(k), Some(color)) = (background_slot, fill) {
             self.e.instrs[k] = Instr::Solid {
                 shape: Shape::Rect { center: (size.0.clone() * 0.5, size.1.clone() * 0.5), half_size: (size.0.clone() * 0.5, size.1.clone() * 0.5), radius: corner },

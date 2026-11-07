@@ -1,0 +1,9 @@
+// expect: ok
+language 0.9
+// A bubble with a border that grows with its words.
+scene Bubble {
+    surface { size: 300, 120 }
+    column { at: 10, 10; padding: 12; corner: 14; fill: #1e2125; border: 1, #ffffff 12%
+        text "An approval card whose border grows with its words" { width: 240; size: 13; color: #f5f7f5 }
+    }
+}

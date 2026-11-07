@@ -643,7 +643,9 @@ over dark glass lightens it just enough, and each plate gets its own lit edge.
 Inside a `body`, the body says it, not its shapes. Below 30 % of glass (times
 opacity) no blur is asked for. The `fill` of a layout takes an opacity after the colour (`fill: ink 9%`):
 inside a glass card, the plates are veils like that, not more glass —glass on
-glass is what Apple says not to do—.
+glass is what Apple says not to do—. And a line round it with **`border: 1, #ffffff 12%`**
+(its width, its colour and how much of it shows): a card or a bubble with its
+border that grows with its words, without a `group` of fixed size drawn by hand.
 
 ```
 body {
@@ -1981,7 +1983,7 @@ properties.group: pivot rotate scale move opacity size show z grow span blur glo
 properties.popup: at size open keyboard parent
 properties.children: move
 properties.grid: at columns gap width row show opacity
-properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight corner show opacity cursor view step stick content wrap size grow place
+properties.layout: at anchor gap padding align fill border glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight corner show opacity cursor view step stick content wrap size grow place
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick rgb
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still

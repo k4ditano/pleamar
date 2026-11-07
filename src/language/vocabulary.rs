@@ -40,7 +40,7 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("popup", &["at", "size", "open", "keyboard", "parent"]),
     ("children", &["move"]),
     ("grid", &["at", "columns", "gap", "width", "row", "show", "opacity"]),
-    ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "frost", "smoke", "milk", "tint", "vivid", "mirror", "highlight", "corner", "show", "opacity", "cursor", "view", "step", "stick", "content", "wrap", "size", "grow", "place"]),
+    ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "border", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "frost", "smoke", "milk", "tint", "vivid", "mirror", "highlight", "corner", "show", "opacity", "cursor", "view", "step", "stick", "content", "wrap", "size", "grow", "place"]),
 ];
 
 pub const FUNCTIONS: &[&str] = &["min", "max", "abs", "floor", "ceil", "sin", "cos", "clamp", "smooth", "mix", "if", "vel", "sqrt", "pow", "fract", "mod", "sign", "round", "exp", "log", "tan", "atan2", "length", "noise", "random", "pick", "rgb"];
