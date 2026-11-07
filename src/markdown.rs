@@ -302,6 +302,33 @@ fn inline(line: &str, base: u8, out: &mut String, looks: &mut Vec<u8>) {
     }
 }
 
+/// The `@name`s in a plain text (`@Research`, `@launch-brief.md`), as bytes:
+/// an `@` at the start or after a space or `(`, a letter or digit after it,
+/// and the name up to what is not a letter, digit or `._-/` (a full stop or
+/// dash at its end is the sentence's). A field with `mentions:` shows them as chips.
+pub fn mentions(text: &str) -> Vec<(usize, usize)> {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let at = |k: usize| chars.get(k).map(|c| c.1);
+    let mut out = Vec::new();
+    let mut k = 0;
+    while k < chars.len() {
+        if chars[k].1 == '@' && !k.checked_sub(1).and_then(at).is_some_and(|b| !b.is_whitespace() && b != '(') && at(k + 1).is_some_and(char::is_alphanumeric) {
+            let mut e = k + 1;
+            while at(e).is_some_and(|n| n.is_alphanumeric() || "._-/".contains(n)) {
+                e += 1;
+            }
+            while e > k + 1 && at(e - 1).is_some_and(|n| ".-/".contains(n)) {
+                e -= 1;
+            }
+            out.push((chars[k].0, chars.get(e).map_or(text.len(), |c| c.0)));
+            k = e;
+        } else {
+            k += 1;
+        }
+    }
+    out
+}
+
 /// The stretches of a text of `len` bytes with `extra` added to `base`:
 /// where they meet, a byte takes the marks of both.
 pub fn merged(len: usize, base: &[(u32, u32, u8)], extra: &[(u32, u32, u8)]) -> Vec<(u32, u32, u8)> {
@@ -392,6 +419,13 @@ mod tests {
         let (text, parts) = marked("~~old~~ new, ~ 5 and ![a cat](cat.png). Half: ~~stil");
         assert_eq!(text, "old new, ~ 5 and a cat. Half: stil");
         assert_eq!(parts, vec![("old".into(), STRIKE), ("stil".into(), STRIKE)]);
+    }
+
+    #[test]
+    fn mentions_in_a_field() {
+        let t = "ask @Chief about @launch-brief.md. mail a@b.c";
+        let got: Vec<&str> = mentions(t).into_iter().map(|(a, b)| &t[a..b]).collect();
+        assert_eq!(got, vec!["@Chief", "@launch-brief.md"]);
     }
 
     #[test]

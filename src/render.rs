@@ -2136,6 +2136,7 @@ pub fn run(
                 let secret = placed.is_some_and(|f| f.secret);
                 // On several lines, what it laid out says where the line above and below are.
                 let lines = placed.filter(|f| f.multi).map(|f| Multi { layout: f.layout.as_deref(), enter_sends: f.enter_sends });
+                ed.mentions = placed.is_some_and(|f| f.mentions);
                 match ed.handle_key(&mut texts[k], &name, typed.as_deref(), mods, secret, lines) {
                     KeyOutcome::Changed => {
                         last_key = crate::clock::now();
@@ -6041,6 +6042,8 @@ struct Editing {
     /// What an input method is composing at the cursor (not yet written), and
     /// its own cursor or selection inside it.
     preedit: Option<(String, Option<(usize, usize)>)>,
+    /// Its `@name`s are one piece each (`mentions:`): erased whole, gone over at once.
+    mentions: bool,
 }
 
 /// What a field can undo and redo. Letters typed in a row are one step per word,
@@ -6088,7 +6091,7 @@ enum KeyOutcome {
 
 impl Editing {
     fn at(field: usize, cursor: usize, anchor: usize) -> Self {
-        Editing { field, cursor, anchor, history: History::default(), preedit: None }
+        Editing { field, cursor, anchor, history: History::default(), preedit: None, mentions: false }
     }
 
     /// The cursor put somewhere by hand (a click): the step that was open closes.
@@ -6291,6 +6294,14 @@ impl Editing {
                 let a = word_right(t, self.cursor);
                 move_to(self, a)
             }
+            // A mention (`mentions:`) goes whole: Backspace right after it, Delete right before it.
+            "BackSpace" | "Delete" if self.mentions && self.cursor == self.anchor && crate::markdown::mentions(t).iter().any(|&(a, b)| if name == "BackSpace" { b == self.cursor } else { a == self.cursor }) => {
+                let (a, b) = crate::markdown::mentions(t).into_iter().find(|&(a, b)| if name == "BackSpace" { b == self.cursor } else { a == self.cursor }).unwrap();
+                t.replace_range(a..b, "");
+                self.cursor = a;
+                self.anchor = a;
+                KeyOutcome::Changed
+            }
             "BackSpace" | "Delete" => {
                 if !self.delete_selection(t) {
                     let (a, b) = if name == "BackSpace" { (before(t, self.cursor), self.cursor) } else { (self.cursor, after(t, self.cursor)) };
@@ -6302,11 +6313,12 @@ impl Editing {
                 KeyOutcome::Changed
             }
             "Left" => {
-                let a = before(t, self.cursor);
+                // Over a mention at once, to its start.
+                let a = crate::markdown::mentions(t).into_iter().filter(|_| self.mentions).find(|&(a, b)| b == self.cursor && a < b).map_or_else(|| before(t, self.cursor), |m| m.0);
                 move_to(self, a)
             }
             "Right" => {
-                let a = after(t, self.cursor);
+                let a = crate::markdown::mentions(t).into_iter().filter(|_| self.mentions).find(|&(a, _)| a == self.cursor).map_or_else(|| after(t, self.cursor), |m| m.1);
                 move_to(self, a)
             }
             // On several lines: up and down a line, and Home and End to its ends
@@ -7321,6 +7333,15 @@ mod selection_tests {
         assert!(matches!(g.handle_key(&mut chat, "Return", None, Mods { shift: true, ..Mods::default() }, false, sends), KeyOutcome::Changed));
         assert_eq!(chat, "hola\n");
         assert!(matches!(g.handle_key(&mut chat, "Return", None, Mods::default(), false, sends), KeyOutcome::Submitted));
+        // `mentions:`: Backspace after a mention takes it whole, and Left goes over it.
+        let mut m2 = String::from("ask @Chief");
+        let mut h = Editing::at(0, m2.len(), m2.len());
+        h.mentions = true;
+        h.handle_key(&mut m2, "Left", None, Mods::default(), false, None);
+        assert_eq!(h.cursor, 4, "to the start of @Chief at once");
+        h.handle_key(&mut m2, "End", None, Mods::default(), false, None);
+        h.handle_key(&mut m2, "BackSpace", None, Mods::default(), false, None);
+        assert_eq!(m2, "ask ");
         // One line, as it always was: Enter sends.
         let mut one = String::from("hola");
         let mut f = Editing::at(0, 4, 4);

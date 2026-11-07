@@ -378,6 +378,8 @@ pub struct PlacedField {
     pub multi: bool,
     /// On several lines, Enter sends (and Shift+Enter writes the break): `send: enter`.
     pub enter_sends: bool,
+    /// `mentions:`: each `@name` is one piece for the keys.
+    pub mentions: bool,
     /// Whether what is painted are dots: then a byte of the layout is not a
     /// byte of the text, and one has to go from one to the other by letter number.
     pub secret: bool,
@@ -2955,7 +2957,7 @@ impl DrawList {
                         self.timed |= time.is_some();
                     }
                 }
-                Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret, passive, lines, height, send } => {
+                Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret, passive, lines, height, send, mentions } => {
                     // Several lines (`lines:`, `height:`): it wraps at its width and scrolls down.
                     let multi = *lines > 1 || height.is_some();
                     let k = text.0 as usize;
@@ -3022,7 +3024,7 @@ impl DrawList {
                         let b = affine.bounds([x0 - scroll + cx, y0 - scroll_y + top, x0 - scroll + cx + 1.0, y0 - scroll_y + bottom]);
                         [b[0], b[1], (b[2] - b[0]).max(1.0), b[3] - b[1]]
                     });
-                    self.fields.push(PlacedField { text: k, zone, layout: if empty { None } else { m.clone() }, x0, scroll, y0, scroll_y, multi, enter_sends: send.eval(c) != 0.0, secret: *secret, passive: *passive, caret });
+                    self.fields.push(PlacedField { text: k, zone, layout: if empty { None } else { m.clone() }, x0, scroll, y0, scroll_y, multi, enter_sends: send.eval(c) != 0.0, mentions: mentions.is_some(), secret: *secret, passive: *passive, caret });
                     let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
                     if a <= 0.001 {
                         continue;
@@ -3065,12 +3067,35 @@ impl DrawList {
                             });
                         }
                     }
+                    // `mentions:`: each `@name` on a pill of its colour, and in it.
+                    let mut paints: Vec<(u32, u32, [f32; 3])> = Vec::new();
+                    if let (Some(col), false) = (mentions, empty) {
+                        let col = color(col);
+                        for (ma, mb) in crate::markdown::mentions(value) {
+                            paints.push((ma as u32, mb as u32, col));
+                            let boxes: Vec<[f32; 4]> = match (&m, multi) {
+                                (Some(lm), true) => lm.spans(ma, mb),
+                                _ => vec![[x_at_byte(ma), 0.0, x_at_byte(mb), h]],
+                            };
+                            for b in boxes {
+                                let r = crate::shapes::FlatShape { cx: x0 - scroll + (b[0] + b[2]) * 0.5, cy: y0 - scroll_y + (b[1] + b[3]) * 0.5, mx: (b[2] - b[0]) * 0.5 + 3.0, my: (b[3] - b[1]) * 0.5 - 1.0, radius: ((b[3] - b[1]) * 0.5 - 1.0).max(0.0), ..rect };
+                                let (kf, bb) = (self.push_shape(r, 0.0), r.bounds().unwrap_or([0.0; 4]));
+                                self.element(0.0, bb, &clips, |e| {
+                                    affine.encode(&mut e[44..52]);
+                                    e[1] = kf as f32;
+                                    e[2] = 1.0;
+                                    e[3] = a * 0.2;
+                                    e[8..11].copy_from_slice(&col);
+                                });
+                            }
+                        }
+                    }
                     if let Some(m) = &m {
                         let s = tip_scale;
                         let (tx, ty) = (((x0 - scroll) * s).round() / s, ((y0 - scroll_y) * s).round() / s);
                         for g in &m.glyphs {
                             let d = [tx + g.rect[0], ty + g.rect[1], g.rect[2], g.rect[3]];
-                            self.sprite(d, g.uv, if empty { a * 0.4 } else { a }, if g.colored { None } else { Some(rgb) }, true, false, affine, &clips);
+                            self.sprite(d, g.uv, if empty { a * 0.4 } else { a }, if g.colored { None } else { Some(crate::text::colour_of(g, &paints, rgb)) }, true, false, affine, &clips);
                         }
                     }
                     // What is being composed, underlined.

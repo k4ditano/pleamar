@@ -4249,6 +4249,14 @@ impl<'a> Compiler<'a> {
             }
             None => Expr::K(0.0),
         };
+        // `mentions: #74b9ff`: each `@name` a chip of that colour, erased whole.
+        let mentions = match p.get_mut("mentions") {
+            Some(c) => Some(self.color(c)?),
+            None => None,
+        };
+        if secret && mentions.is_some() {
+            return Err(CompileError::at(n.line, n.col, "a `secret` field shows no mentions"));
+        }
         let line = style.px * style.line_height;
         let height: Expr = height_of.clone().unwrap_or(Expr::K(line * lines as f32));
         // Its zone: pressing it focuses it, and over it the cursor is the typing one.
@@ -4262,7 +4270,7 @@ impl<'a> Compiler<'a> {
             active: None, visible: shown, under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None, yields: None,
         });
         self.last_size = Some((width.clone(), height));
-        self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret, passive, lines, height: height_of, send });
+        self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret, passive, lines, height: height_of, send, mentions });
         Ok(())
     }
 

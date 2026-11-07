@@ -1,0 +1,12 @@
+// expect: ok
+language 0.9
+// A composer with mentions as chips: `@Chief`, `@launch-brief.md`, erased whole.
+scene Composer {
+    surface { size: 520, 160 }
+    text draft = "Ask @Chief about @launch-brief.md"
+    input draft {
+        at: 16, 16; width: 488; lines: 4; send: enter
+        size: 14; color: #f5f7f5; mentions: #74b9ff; placeholder: "Message…"
+    }
+    on submit draft { emit send }
+}
