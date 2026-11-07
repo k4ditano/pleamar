@@ -1416,6 +1416,16 @@ in a `row`, a `column` or a cell of a `grid`.
 | `Segmented(value, a, b, press, c: "…", count: 3, width: 240)` | two or three choices in a pill, with the chosen one's background sliding to it; `press` carries which one: `on pick_mode(v) { mode = v }` |
 | `Tile(title, value, press, w, h: 106)` | a plate that answers the mouse, with its name, its value and a ›; what goes in its round badge is whatever is put inside it |
 | `Card(w, h, padding: 16)` | a plate, and in a column inside it whatever is put inside it |
+| `Button(label, press, w, h: 34, kind: 0)` | a button; `kind` 0 the main one (light, dark words), 1 a second one, 2 only its words, 3 one that destroys |
+| `Checkbox(on, press, label: "…", w: 200)` | a box to tick and its words; `accent` is its blue |
+| `Tabs(value, a, b, press, c: "…", d: "…", count: 2, width: 240)` | tabs, with a line under the chosen one that slides to it; `press` carries which one |
+| `Select(value, a, b, press, c … f, count: 2, w: 220)` | a choice from a list that opens under it in the same surface (draw it last, or in a group with `z:`); `press` carries the one chosen |
+| `Tooltip(label, open, w: 180)` | a little floating box with its words, shown while `open` |
+| `Menu(w: 220, h: 200)` and `MenuRow(r, chosen, width: 220)` | a menu's plate, with its rows inside it: records with `label`, `separator`, `enabled`, `checked` (-1, 0, 1) and `children`; `chosen` carries the row's place |
+| `Toast(label, shown, w: 320)` | words that come up from below, sharpening, while `shown` |
+| `Slider(value, press, w: 200)` | a value from 0 to 1; pressed or dragged, `press` carries where it was taken to |
+| `Chip(label, tone: #74b9ff)` | a word on a pill of its colour, as wide as it is |
+| `Avatar(pic, d: 32)` | an image of the scene, round |
 | `Table(w, rows, columns: 3, a: "…", … f: "…", row: 34, head: 32)` | a table: its plate with its border, its head (up to six columns, `a` to `f`), a line between rows and one between columns; its rows go inside it, one under another. For what a model writes as a markdown table, `markdown: true` lines it up in the text itself |
 | `TableRow(r, w, columns: 3, row: 34, tone: #…)` | a row of a `Table`: the cells of the record `r`, a list in it (`model rows max 20 { list cells max 6 { text: text; chip: number } }`), each in its column, cut to one line; a cell with `chip` 1 to 5 (blue, green, amber, red, violet) is a chip of that colour, 0 a plain one |
 

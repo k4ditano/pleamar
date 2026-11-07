@@ -1,38 +1,42 @@
 // expect: ok
+language 0.9
 import "pleamar:ui"
-scene UiLibrary {
-    surface { size: 480, 310 }
-    fact following = false
+// The library's pieces, together: each answers the mouse by itself.
+scene Gallery {
+    surface { size: 520, 460 }
+    fact on = true
+    fact tab = 0
     fact choice = 0
-    fact mode = 1
+    fact level = 0.4
+    fact toasting = 0
     event flip
-    event pick_one
-    event pick_two
-    event pick_mode
-    event opened
-    on flip { toggle following }
-    on pick_one { choice = 0 }
-    on pick_two { choice = 1 }
-    on pick_mode(v) { mode = v }
-    grid {
-        at: 12, 12; columns: 2; gap: 12; width: 456; row: 106
-        Tile("Where she lives", "Follows you", opened, cell.w) {
-            box { size: 22, 14; corner: 3; stroke: 1.6; color: #f5f7f5 }
+    event pick_tab
+    event pick
+    event set_level
+    event picked
+    on flip { toggle on }
+    on pick_tab(v) { tab = v }
+    on pick(v) { choice = v }
+    on set_level(v) { level = v }
+    image me = data "me", 32, 32
+    model items max 4 { label: text; separator: number; enabled: number = 1; checked: number = -1; children: number }
+    column { at: 20, 20; gap: 14
+        Checkbox(on, flip, label: "Notify on finish")
+        Button("Install agent", flip, 180)
+        Button("Cancel", flip, 120, kind: 2)
+        Tabs(tab, "Agents", "Plugins", pick_tab, count: 2, width: 220)
+        Slider(level, set_level, w: 220)
+        row { gap: 8; align: center
+            Chip("@launch-brief.md")
+            Chip("@Research", tone: #31cf76)
+            Avatar(me)
         }
-        Tile("Language", pick(mode, "System", "English", "Español"), opened, cell.w) {
-            text "Aa" { size: 16; weight: 700; color: #f5f7f5 }
-        }
+        Tooltip("Copies the answer", on, w: 160)
+        Toast("Saved", toasting)
     }
-    Card(456, 160) {
-        move: 12, 130
-        row { gap: 12; align: center
-            Switch(following, flip)
-            text "Follow me" { size: 13; color: #f5f7f5 }
-        }
-        row { gap: 12; align: center
-            Radio(choice == 0, pick_one)
-            Radio(choice == 1, pick_two)
-        }
-        Segmented(mode, "System", "English", pick_mode, c: "Español", count: 3, width: 240)
+    Menu(220, 130) {
+        move: 280, 20
+        repeat r in items { MenuRow(r, picked) }
     }
+    Select(choice, "Today", "This week", pick, c: "This month", count: 3, w: 200)
 }
