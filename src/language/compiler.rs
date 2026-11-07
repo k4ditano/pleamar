@@ -4378,6 +4378,13 @@ impl<'a> Compiler<'a> {
                     let t = self.e.live_text(interned(&full), "");
                     self.texts.insert(full, t);
                 }
+                // And whether one is being written: 1 or 0, for a `show:`.
+                let flag = format!("{name}.mentioning");
+                if !self.facts.contains_key(&flag) {
+                    let f = self.e.fact(interned(&flag), 0.0);
+                    self.e.types.push((flag.clone(), FactType::Bool));
+                    self.facts.insert(flag, f);
+                }
                 Some((names, files))
             }
             None => None,

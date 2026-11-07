@@ -11,5 +11,5 @@ scene Composer {
     }
     on submit draft { emit send }
     // While an `@name` is being written: what to suggest.
-    text draft.mention { at: 16, 120; size: 12; color: #9aa0a6 }
+    text draft.mention { show: draft.mentioning; at: 16, 120; size: 12; color: #9aa0a6 }
 }

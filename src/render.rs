@@ -1253,7 +1253,16 @@ pub fn run(
                     }
                 }
                 ToRender::Text(name, value) => match scene.texts.iter().position(|t| t.0 == name) {
-                    Some(i) => texts[i] = value,
+                    Some(i) => {
+                        // The field being written in, written by the logic (a mention
+                        // completed, a draft restored): its cursor goes to the end of what
+                        // it says now, not where it was in what it said before (C5).
+                        if let Some(ed) = editing.as_mut().filter(|e| e.field == i && texts[i] != value) {
+                            ed.cursor = value.len();
+                            ed.anchor = value.len();
+                        }
+                        texts[i] = value;
+                    }
                     None => eprintln!("render · I don't know the text '{name}'"),
                 },
                 ToRender::Fact(name, v) => match scene.facts.iter().position(|h| h.0 == name) {
@@ -2329,10 +2338,20 @@ pub fn run(
             let lone = t[..at].ends_with('@') && t[..at - 1].chars().next_back().is_none_or(|b| b.is_whitespace() || b == '(');
             let writing = if lone { "@".to_owned() } else { crate::markdown::mentions(t).into_iter().find(|&(a, b)| b == at && a < b).map_or(String::new(), |(a, b)| t[a..b].to_owned()) };
             let wanted = format!("{field}.mention");
+            // And `field.mentioning`, 1 while one is being written: what a `show:` reads.
+            let busy = !writing.is_empty();
             if let Some(k) = scene.texts.iter().position(|x| x.0 == wanted) {
                 if texts[k] != writing {
                     texts[k] = writing.clone();
                     let _ = to_logic.send(Event::Text(scene.texts[k].0, writing));
+                }
+            }
+            let flag = format!("{field}.mentioning");
+            if let Some(k) = scene.facts.iter().position(|x| x.0 == flag) {
+                let v = busy as u8 as f32;
+                if facts[k] != v {
+                    facts[k] = v;
+                    let _ = to_logic.send(Event::Fact(scene.facts[k].0, v));
                 }
             }
         }
