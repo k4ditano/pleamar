@@ -1,0 +1,9 @@
+// expect: ok
+language 0.9
+// Attaching a file with the desktop's own chooser: the logic writes the path it gets in `chosen`.
+scene Attach {
+    surface { size: 420, 80 }
+    permissions { services: "files" }
+    text chosen = ""
+    text chosen { at: 12, 40; anchor: left center; size: 13; width: 396; lines: 1; color: #f5f7f5 }
+}

@@ -93,8 +93,86 @@ pub fn query(owner: &str, what: &str, args: &[SysValue]) -> Result<SysValue, Str
             Ok(SysValue::List(names.into_iter().map(SysValue::Text).collect()))
         }
         ("files.folder", []) => Ok(SysValue::Text(dir_for(owner).to_string_lossy().into_owned())),
+        // The system's own window to choose a file: `files.pick("open", "*.md,*.png")`,
+        // `("save", "brief.md")`, `("folder")`. The path chosen, or nil if it was cancelled.
+        ("files.pick", [SysValue::Text(how), rest @ ..]) if matches!(how.as_str(), "open" | "save" | "folder") => {
+            let arg = match rest.first() {
+                Some(SysValue::Text(t)) => Some(t.as_str()),
+                _ => None,
+            };
+            pick(how, arg)
+        }
+        ("files.pick", _) => Err("`files.pick` is asked with \"open\" (and the kinds: \"*.md,*.png\"), \"save\" (and a name) or \"folder\": sys.ask(\"files.pick\", \"open\", \"*.md\")".into()),
         _ => Err(format!("'{what}' is not asked like that: files.read(name[, \"json\"]), files.exists(name), files.list(), files.folder()")),
     }
+}
+
+/// The portal's file chooser (`org.freedesktop.portal.FileChooser`): the
+/// desktop's own window, with its places and its recent files. It waits for
+/// the answer —the logic asking waits with it, as for a password—: the path
+/// chosen, or nil if it was cancelled.
+#[cfg(target_os = "linux")]
+fn pick(how: &str, arg: Option<&str>) -> Result<SysValue, String> {
+    use std::collections::HashMap;
+    use zbus::blocking::{Connection, MessageIterator, Proxy};
+    use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+    let bus = |e: zbus::Error| format!("files.pick: {e}");
+    let conn = Connection::session().map_err(bus)?;
+    // The answer comes as a signal on a path made of our name and a token of our
+    // own: listened to before asking, so it cannot come first and be missed.
+    let token = format!("pleamar{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos()) ^ std::process::id());
+    let sender = conn.unique_name().map(|n| n.trim_start_matches(':').replace('.', "_")).ok_or("files.pick: no name on the session bus")?;
+    let path = format!("/org/freedesktop/portal/desktop/request/{sender}/{token}");
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface("org.freedesktop.portal.Request")
+        .and_then(|b| b.member("Response"))
+        .and_then(|b| b.path(path.as_str()))
+        .map_err(bus)?
+        .build();
+    let answers = MessageIterator::for_match_rule(rule, &conn, Some(4)).map_err(bus)?;
+    let chooser = Proxy::new(&conn, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.FileChooser").map_err(bus)?;
+    let mut options: HashMap<&str, Value> = HashMap::new();
+    options.insert("handle_token", Value::from(token.as_str()));
+    match (how, arg) {
+        ("open", Some(kinds)) => {
+            let patterns: Vec<(u32, String)> = kinds.split(',').map(str::trim).filter(|k| !k.is_empty()).map(|k| (0u32, k.to_owned())).collect();
+            if !patterns.is_empty() {
+                options.insert("filters", Value::from(vec![(kinds.to_owned(), patterns)]));
+            }
+        }
+        ("save", Some(name)) => {
+            options.insert("current_name", Value::from(name));
+        }
+        ("folder", _) => {
+            options.insert("directory", Value::from(true));
+        }
+        _ => {}
+    }
+    let (method, title) = match how {
+        "save" => ("SaveFile", "Save"),
+        "folder" => ("OpenFile", "Choose a folder"),
+        _ => ("OpenFile", "Open"),
+    };
+    let _: OwnedObjectPath = chooser.call(method, &("", title, options)).map_err(bus)?;
+    for message in answers {
+        let message = message.map_err(bus)?;
+        let (code, results): (u32, HashMap<String, OwnedValue>) = message.body().deserialize().map_err(|e| format!("files.pick: {e}"))?;
+        if code != 0 {
+            return Ok(SysValue::Null);
+        }
+        let first = results.get("uris").and_then(|v| match &**v {
+            Value::Array(a) => a.iter().find_map(|u| if let Value::Str(s) = u { Some(s.to_string()) } else { None }),
+            _ => None,
+        });
+        return Ok(first.and_then(|u| u.strip_prefix("file://").map(super::unescape_uri)).map_or(SysValue::Null, SysValue::Text));
+    }
+    Ok(SysValue::Null)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pick(_how: &str, _arg: Option<&str>) -> Result<SysValue, String> {
+    Err("files.pick: the system's file chooser is only asked on Linux for now".into())
 }
 
 /// Writes `path` (inside `folder`) so that only its owner can read it: on Unix the

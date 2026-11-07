@@ -1135,7 +1135,7 @@ pub fn clipboard_paths() -> Vec<String> {
 }
 
 /// `%20` back to a space, and so on: a `file://` path as the file system has it.
-fn unescape_uri(s: &str) -> String {
+pub(crate) fn unescape_uri(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;

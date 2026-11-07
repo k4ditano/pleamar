@@ -403,6 +403,7 @@ The permissions are the scene's, and they are the same as `sys.watch`'s: `servic
 | `sys.ask("files.read", "settings.json")` | whatever it says, or `nil` if it is not there |
 | `sys.ask("files.read", n, "json")` | that same thing, already as a table. If the file is broken, it is an error with its place, not a half table |
 | `sys.ask("files.exists", n)` · `sys.ask("files.list")` · `sys.ask("files.folder")` | whether it is there · what is there · where |
+| `sys.ask("files.pick", "open", "*.md,*.png")` · `("files.pick", "save", "brief.md")` · `("files.pick", "folder")` | the desktop's own window to choose a file (the portal's file chooser, with its places and recent files): the path chosen —anywhere, it is the person who chooses it—, or nil if it was cancelled. The logic waits for it, as for a password. Linux only for now |
 | `sys.call("files.write", n, text)` · `sys.call("files.remove", n)` | write (all or nothing: first alongside, then into place) · remove |
 | `sys.call("files.write", n, { tone = 2 })` | a table is saved as JSON, with its newlines: what is saved can also be read by hand |
 | `sys.watch("files:settings.txt", f)` | reports when that file changes, including when somebody else touches it |
