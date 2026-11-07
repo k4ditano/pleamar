@@ -3244,6 +3244,15 @@ impl<'a> Compiler<'a> {
                 None => return self.unknown(c, "no fact", &h, self.facts.keys().collect()),
             }
         };
+        // `keyboard: true`: it takes the keyboard when it opens, and Escape closes it.
+        let keyboard = match p.get_mut("keyboard") {
+            Some(c) => {
+                let v = c.one_of(&["true", "false"], "true or false")?;
+                c.expect_end()?;
+                v == "true"
+            }
+            None => false,
+        };
         // Each one in its place, far from the surface and from the others.
         self.next_origin += 10000.0;
         let origin = (0.0, self.next_origin);
@@ -3254,7 +3263,7 @@ impl<'a> Compiler<'a> {
         self.group(n.body.as_deref().unwrap_or(&[]).iter());
         self.under.pop();
         self.e.paint(Instr::Transform(None));
-        self.e.popups.push(Popup { name: interned(&name), open, at, size, origin });
+        self.e.popups.push(Popup { name: interned(&name), open, at, size, origin, keyboard });
         Ok(())
     }
 

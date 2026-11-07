@@ -332,6 +332,9 @@ pub fn query(from: &str, name: &str, args: &[SysValue]) -> Result<SysValue, Stri
 ///
 /// On Wayland, an `xdg_popup`. On Windows it will be a frameless window with
 /// `WS_EX_NOACTIVATE`; on macOS, an `NSPanel`.
+/// The popups that take the keyboard when they open (`keyboard: true`), by number.
+pub static KEYBOARD_POPUPS: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+
 pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
     #[cfg(target_os = "linux")]
     wayland::popup(k, what);

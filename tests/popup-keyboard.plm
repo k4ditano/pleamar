@@ -1,0 +1,13 @@
+// expect: ok
+language 0.9
+// A popup that takes the keyboard: its field is typed into, and Escape closes it.
+scene Palette {
+    surface { size: 400, 60; keyboard: on_demand }
+    fact open = false
+    text query = ""
+    on key Ctrl+k { open = true }
+    popup palette { at: 20, 40; size: 360, 48; open: open; keyboard: true
+        box { from: 0, 0; size: 360, 48; corner: 12; color: #25282b }
+        input query { at: 14, 14; width: 332; size: 14; color: #f5f7f5; placeholder: "Search…" }
+    }
+}

@@ -2115,6 +2115,22 @@ pub fn run(
                     continue;
                 }
             }
+            // Escape closes a popup that took the keyboard (`keyboard: true`), the last opened
+            // first, as a click outside it would.
+            if name == "Escape" && !mods.ctrl && !mods.alt && !mods.logo {
+                if let Some(k) = (0..scene.popups.len()).rev().find(|&k| scene.popups[k].keyboard && popups.get(k).is_some_and(Option::is_some)) {
+                    sheets.retain(|l| l.view.popup != Some(k));
+                    crate::platform::popup(k, None);
+                    if let Some(g) = &gpu {
+                        assign_pace(g, &mut sheets, size, op.no_vsync);
+                    }
+                    popups[k] = None;
+                    let h = scene.popups[k].open.0 as usize;
+                    facts[h] = 0.0;
+                    let _ = to_logic.send(Event::Fact(scene.facts[h].0, 0.0));
+                    continue;
+                }
+            }
             // Ctrl+C with something of a text selected copies it, unless the
             // field being typed into has a selection of its own.
             if mods.ctrl && !mods.alt && !mods.logo && name == "c" && editing.as_ref().is_none_or(|e| e.cursor == e.anchor) {
@@ -4021,6 +4037,13 @@ pub fn run(
                     }
                 }
                 if let Some(g) = wants {
+                    {
+                        let mut kb = crate::platform::KEYBOARD_POPUPS.lock().unwrap();
+                        kb.retain(|p| *p != k);
+                        if em.keyboard {
+                            kb.push(k);
+                        }
+                    }
                     crate::platform::popup(k, Some((g, em.origin)));
                 }
                 popups[k] = wants;

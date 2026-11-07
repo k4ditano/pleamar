@@ -2311,6 +2311,9 @@ pub struct Popup {
     pub at: (Expr, Expr),
     pub size: (Expr, Expr),
     pub origin: (f32, f32),
+    /// `keyboard: true`: it takes the keyboard when it opens (what is typed goes
+    /// to its fields and the scene's keys), and Escape closes it.
+    pub keyboard: bool,
 }
 
 /// What this scene's logic can touch of the system. **Undeclared,

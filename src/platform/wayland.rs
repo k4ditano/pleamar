@@ -2154,9 +2154,12 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
         let wl = e.compositor.create_surface(&e.qh);
         let popup = Popup::from_surface(None, &positioner, &e.qh, wl, &e.xdg).ok()?;
         parent.layer.get_popup(popup.xdg_popup());
-        // If it opens because of a click a moment ago, let a click outside close it.
+        // If it opens because of a click or a key a moment ago, let a click outside close it;
+        // one that takes the keyboard (`keyboard: true`) grabs it whenever it can: the
+        // compositor gives it the keyboard while it is open.
+        let keyboard = super::KEYBOARD_POPUPS.lock().unwrap().contains(&k);
         if let (Some(seat), Some((serial, when))) = (e.seat.lock().unwrap().as_ref(), *e.last_press.lock().unwrap()) {
-            if when.elapsed() < std::time::Duration::from_millis(1500) {
+            if keyboard || when.elapsed() < std::time::Duration::from_millis(1500) {
                 popup.xdg_popup().grab(seat, serial);
             }
         }
@@ -2835,10 +2838,14 @@ impl KeyboardHandler for State {
     fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {
         let _ = self.to_render.send(ToRender::KeyboardFocus(false));
     }
-    fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, e: KeyEvent) {
+    fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, serial: u32, e: KeyEvent) {
         // An arrow, an F key: some compositors say they type "" rather than
         // nothing. Nothing is what they type.
         let typed = e.utf8.clone().filter(|t| !t.is_empty() && !t.chars().any(char::is_control));
+        // A key is an input as a press is: a popup opened by it may grab with its serial.
+        if let Some(pp) = POPUPS.get() {
+            *pp.last_press.lock().unwrap() = Some((serial, std::time::Instant::now()));
+        }
         let _ = self.to_render.send(ToRender::Key(key_name(&e), typed, self.mods, e.raw_code));
     }
     /// The layout as the user has it: the scene's own compositor hands the
