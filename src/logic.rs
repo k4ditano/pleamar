@@ -78,7 +78,7 @@ impl Context {
     /// A named alarm; setting it again postpones it.
     pub fn alarm(&mut self, name: &'static str, ms: u64) {
         self.cancel(name);
-        self.alarms.push((Instant::now() + Duration::from_millis(ms), name));
+        self.alarms.push((crate::clock::now() + Duration::from_millis(ms), name));
     }
 
     pub fn cancel(&mut self, name: &'static str) {
@@ -113,11 +113,11 @@ impl Context {
 pub fn run(mut script: Box<dyn Script>, rx: Receiver<Event>, tx: Sender<ToRender>, blocked: Arc<AtomicBool>, op: Options) {
     let demo = op.demo;
     let mut c = Context { tx, blocked, op, alarms: Vec::new() };
-    let mut next_demo = Instant::now() + Duration::from_millis(1200);
+    let mut next_demo = crate::clock::now() + Duration::from_millis(1200);
     script.on_event(Event::Alarm("start"), &mut c);
 
     loop {
-        let mut until = Instant::now() + Duration::from_secs(3600);
+        let mut until = crate::clock::now() + Duration::from_secs(3600);
         if demo {
             until = until.min(next_demo);
         }
@@ -127,10 +127,10 @@ pub fn run(mut script: Box<dyn Script>, rx: Receiver<Event>, tx: Sender<ToRender
         if let Some(p) = script.next_deadline() {
             until = until.min(p);
         }
-        match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
+        match rx.recv_timeout(until.saturating_duration_since(crate::clock::now())) {
             // In the demo the clock is in charge, not the mouse.
             Ok(e) if !(demo && matches!(e, Event::Enter(_) | Event::Leave(_) | Event::Press(_))) => {
-                if c.op.echo {
+                if c.op.echo && !matches!(e, Event::Frame(..)) {
                     // The fake mouse's echo reports what arrives, it does not
                     // dump it: the output of a `run` can be eight hundred
                     // kilobytes of paths from your home, and that is neither read
@@ -150,23 +150,35 @@ pub fn run(mut script: Box<dyn Script>, rx: Receiver<Event>, tx: Sender<ToRender
                         None => println!("logic  · {said}"),
                     }
                 }
+                // Filmed, what is due goes before the frame is answered: the
+                // render waits for that answer, so an `after` lands on the same
+                // frame every time.
+                if matches!(e, Event::Frame(..)) && crate::clock::is_virtual() {
+                    run_due(&mut *script, &mut c);
+                }
                 script.on_event(e, &mut c)
             }
             Ok(_) | Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
-        let now = Instant::now();
-        let due: Vec<&'static str> = c.alarms.iter().filter(|(t, _)| *t <= now).map(|(_, n)| *n).collect();
-        c.alarms.retain(|(t, _)| *t > now);
-        for n in due {
-            script.on_event(Event::Alarm(n), &mut c);
-        }
-        if script.next_deadline().is_some_and(|p| p <= Instant::now()) {
-            script.tick(&mut c);
-        }
+        run_due(&mut *script, &mut c);
+        let now = crate::clock::now();
         if demo && now >= next_demo {
             script.on_event(Event::Demo, &mut c);
-            next_demo = Instant::now() + Duration::from_millis(2600);
+            next_demo = crate::clock::now() + Duration::from_millis(2600);
         }
+    }
+}
+
+/// The alarms and the logic's timers whose moment has come, on the render's clock.
+fn run_due(script: &mut dyn Script, c: &mut Context) {
+    let now = crate::clock::now();
+    let due: Vec<&'static str> = c.alarms.iter().filter(|(t, _)| *t <= now).map(|(_, n)| *n).collect();
+    c.alarms.retain(|(t, _)| *t > now);
+    for n in due {
+        script.on_event(Event::Alarm(n), c);
+    }
+    if script.next_deadline().is_some_and(|p| p <= crate::clock::now()) {
+        script.tick(c);
     }
 }

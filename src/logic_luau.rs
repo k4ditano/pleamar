@@ -481,13 +481,13 @@ impl LuauScript {
         let _ = std::thread::Builder::new().name(name).spawn(move || {
             let mut ctx = Context::for_plugin(plugin.tx.clone(), plugin.blocked.clone());
             loop {
-                let wait = plugin.next_deadline().map_or(Duration::from_secs(3600), |p| p.saturating_duration_since(Instant::now()));
+                let wait = plugin.next_deadline().map_or(Duration::from_secs(3600), |p| p.saturating_duration_since(crate::clock::now()));
                 match letters.recv_timeout(wait) {
                     Ok(e) => plugin.on_event(e, &mut ctx),
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 }
-                if plugin.next_deadline().is_some_and(|p| p <= Instant::now()) {
+                if plugin.next_deadline().is_some_and(|p| p <= crate::clock::now()) {
                     plugin.tick(&mut ctx);
                 }
             }
@@ -1004,7 +1004,7 @@ impl LuauScript {
             c.next += 1;
             let d = Duration::from_secs_f64(ms.max(1.0) / 1000.0);
             let id = c.next;
-            c.timers.push(Timer { id, when: Instant::now() + d, every: repeats.then_some(d), f });
+            c.timers.push(Timer { id, when: crate::clock::now() + d, every: repeats.then_some(d), f });
             id
         };
         let c = self.c.clone();
@@ -1663,7 +1663,7 @@ impl Script for LuauScript {
     }
 
     fn tick(&mut self, _: &mut Context) {
-        let now = Instant::now();
+        let now = crate::clock::now();
         let due: Vec<Function> = {
             let mut c = self.c.lock().unwrap();
             let f = c.timers.iter().filter(|t| t.when <= now).map(|t| t.f.clone()).collect();

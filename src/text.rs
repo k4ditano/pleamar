@@ -770,6 +770,27 @@ pub struct Texts {
     most: u32,
 }
 
+/// How many jobs the workshop has been given and how many it has finished:
+/// a film (`--film`) waits for it to be done before each frame, so a text laid
+/// out or an image read always reaches the same frame.
+static JOBS_SENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static JOBS_DONE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Waits (up to `most`) until the workshop has finished every job it was given;
+/// what it made is then already on its way to the render. False if it did not.
+pub fn workshop_idle(most: std::time::Duration) -> bool {
+    let until = std::time::Instant::now() + most;
+    loop {
+        if JOBS_DONE.load(std::sync::atomic::Ordering::Acquire) >= JOBS_SENT.load(std::sync::atomic::Ordering::Acquire) {
+            return true;
+        }
+        if std::time::Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_micros(200));
+    }
+}
+
 impl Texts {
     /// Starts the workshop. The first thing it does is read the system fonts,
     /// so it is best to call it as early as possible.
@@ -780,11 +801,14 @@ impl Texts {
             .spawn(move || {
                 let mut t = Typesetter::new();
                 for job in jobs {
-                    let Some(parcel) = t.work(job) else { continue };
+                    let parcel = t.work(job);
                     // Through the usual channel, which also wakes the render up if it was asleep.
-                    if to_render.send(ToRender::Workshop(Box::new(parcel))).is_err() {
+                    if let Some(parcel) = parcel
+                        && to_render.send(ToRender::Workshop(Box::new(parcel))).is_err()
+                    {
                         return;
                     }
+                    JOBS_DONE.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 }
             })
             .unwrap();
@@ -799,6 +823,12 @@ impl Texts {
         self.scale
     }
 
+    /// A job for the workshop, counted (see `workshop_idle`).
+    fn to_workshop_send(&self, job: Job) -> Result<(), std::sync::mpsc::SendError<Job>> {
+        JOBS_SENT.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.to_workshop.send(job)
+    }
+
     /// How tall the atlas has to be on the card: it is never made smaller.
     pub fn atlas_height(&self) -> u32 {
         self.height
@@ -810,7 +840,7 @@ impl Texts {
             return;
         }
         self.most = most;
-        let _ = self.to_workshop.send(Job::Limit(most));
+        let _ = self.to_workshop_send(Job::Limit(most));
         if self.too_large.take().is_some() {
             self.exhausted = true;
         }
@@ -848,11 +878,11 @@ impl Texts {
         self.too_large = None;
         // Before anything is laid out with them.
         if !fonts.is_empty() {
-            let _ = self.to_workshop.send(Job::Fonts(fonts.to_vec()));
+            let _ = self.to_workshop_send(Job::Fonts(fonts.to_vec()));
         }
-        let _ = self.to_workshop.send(Job::Clear(scale));
+        let _ = self.to_workshop_send(Job::Clear(scale));
         if !images.is_empty() {
-            let _ = self.to_workshop.send(Job::Images(images.to_vec(), self.generation));
+            let _ = self.to_workshop_send(Job::Images(images.to_vec(), self.generation));
         }
     }
 
@@ -987,7 +1017,7 @@ impl Texts {
             self.generation += 1;
             self.rebuilding = true;
             self.exhausted = false;
-            let _ = self.to_workshop.send(Job::Rebuild(self.working.clone(), self.sources.clone(), self.generation));
+            let _ = self.to_workshop_send(Job::Rebuild(self.working.clone(), self.sources.clone(), self.generation));
         }
     }
 
@@ -1003,7 +1033,7 @@ impl Texts {
             return Some(m.clone());
         }
         if !self.rebuilding && self.requested.insert(key.clone()) {
-            let _ = self.to_workshop.send(Job::Layout(key, self.generation));
+            let _ = self.to_workshop_send(Job::Layout(key, self.generation));
         }
         self.last.get(&place).cloned()
     }
@@ -1043,7 +1073,7 @@ impl Texts {
         let known = self.live.get(&key).copied();
         if !self.rebuilding && known.is_some() && self.live_version.get(&key).map(String::as_str) != Some(version) {
             self.live_version.insert(key.clone(), version.to_string());
-            let _ = self.to_workshop.send(match known {
+            let _ = self.to_workshop_send(match known {
                 Some(Some(slot)) => Job::Reload(key.0.clone(), key.1, slot, self.generation),
                 _ => Job::Live(key.0.clone(), key.1, self.generation),
             });
@@ -1060,7 +1090,7 @@ impl Texts {
                 }
                 self.live_version.insert(key.clone(), version.to_string());
                 if self.live_requested.insert(key.clone()) {
-                    let _ = self.to_workshop.send(Job::Live(key.0, key.1, self.generation));
+                    let _ = self.to_workshop_send(Job::Live(key.0, key.1, self.generation));
                 }
                 self.last_live.get(&k).copied()
             }

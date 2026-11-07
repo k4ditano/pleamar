@@ -1374,6 +1374,7 @@ pub fn start_nest(max: usize, to_render: std::sync::mpsc::Sender<crate::scene::T
 
 /// The sounds a scene plays itself: its mixer, and how files and tones are made.
 pub mod sound;
+pub mod film;
 #[cfg(target_os = "linux")]
 mod gamepad;
 /// How game controller number `n` (from 1) is right now: `{ name, lx, ly, a, b, … }`.

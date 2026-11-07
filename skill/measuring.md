@@ -65,6 +65,10 @@ ms	calma	dibuja	capsula
 - Driving it: `--mouse "360,30@400 click@1500"` for the pointer, `--say` from
   another shell for facts and events. Both are exact in time; the real mouse is
   not.
+- **With `--film /tmp/f` it is exact to the frame**: the clock is virtual, the
+  logic and the text workshop are waited for each frame, and the same run gives
+  the same rows every time, on any machine, faster than real time. Events go in
+  the script: `--mouse "emit:open@200"`.
 - Reading it: `grep -P '^[\d.]+\t' log.tsv | awk …`. What is usually wanted is
   when something crosses 1 % and 99 % of its travel, because a spring declared
   `~320ms` is one that reaches 99 % at 320 ms.

@@ -281,7 +281,18 @@ pleamar --say NAME "get open"                 # ask it
 pleamar --say NAME describe                   # what it holds, by name: every zone should say what it is
 ```
 
-To **see** it without taking over the user's screen, run it inside a
+To **see** it without taking over the user's screen, film it: no screen, no
+compositor, a virtual clock (the same frames every time, as fast as the card
+paints), and the keys and clicks of the script drawn on it:
+
+```sh
+pleamar --scene scene.plm --film /tmp/look --seconds 2         # /tmp/look/frame-00120.png is the end
+pleamar --scene scene.plm --film /tmp/demo.mp4 --mouse "emit:toggle@300 200,40@600 click@800 type:hola@1200 key:Ctrl+z@2000"
+```
+
+Only the scene's own surfaces are filmed (no popups, a glass shows nothing
+behind it). A film is not a sandbox: its logic runs for real, so a script that
+presses Enter in a launcher launches the program. For those, or to see it beside programs' windows, run it inside a
 screenless pleamar-wm and read the picture it writes:
 
 ```sh

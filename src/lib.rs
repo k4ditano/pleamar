@@ -10,6 +10,7 @@
 
 pub mod scene;
 mod scenes;
+mod clock;
 mod skill;
 mod shaders;
 mod blur;
@@ -78,7 +79,8 @@ const HELP: &str = "pleamar [options]
   --naive             the logic blocks the painting thread, as in QtQuick
   --demo              opens and closes by itself, with no mouse
   --mouse SCRIPT      fake mouse: «360,90@1000 click@2500 down@… up@… wheel+@… out@4000» (ms);
-                      and keys: «key:Escape@1200 keydown:Left@1500 keyup:Left@2500 type:hello@3000»
+                      and keys: «key:Escape@1200 keydown:Left@1500 keyup:Left@2500 type:hello@3000»;
+                      and events: «emit:toggle@500 emit:pick=3@900»
   --seconds N         exits by itself after N seconds
   --margin PX         top margin, instead of the scene\u{2019}s
   --no-hud            without the frame graph
@@ -88,6 +90,12 @@ const HELP: &str = "pleamar [options]
                       contract: «--record lid,body.y --seconds 20 > log.tsv»
   --no-vsync          paint without waiting for the screen, to measure what a frame costs
   --reduced-motion    springs settle at once and gestures show their still face
+  --film OUT          films the scene with no screen, on a virtual clock: each frame is a 60th of a
+                      second however long it takes to paint, so the same scene and --mouse script
+                      give the same frames anywhere. OUT is a folder (PNG frames) or a video
+                      (.mp4 .webm .mkv .mov .gif, with ffmpeg); the keys pressed, the clicks and the
+                      pointer are drawn on it. As long as --seconds says, or the script plus a second
+  --fps N             frames per second of a film (60)
 Right-click closes it, if the scene does not use the right button for anything.";
 
 struct Args {
@@ -107,10 +115,15 @@ struct Args {
     /// The name `--say` reaches it by, instead of its scene's (a program that
     /// opens several windows of the same scene tells each apart).
     answer_as: Option<String>,
+    /// `--film OUT`: filmed on a virtual clock, to a folder of PNGs or a video.
+    film: Option<String>,
+    fps: u32,
+    /// Whether `--stall` was said: a film does not stall unless asked.
+    stall_said: bool,
 }
 
 fn args(given: Vec<String>) -> Args {
-    let mut a = Args { scene: String::new(), screen: None, stall: 600, naive: false, demo: false, mouse: None, seconds: None, margin: None, hud: true, reduced: false, no_vsync: false, record: Vec::new(), answer_as: None };
+    let mut a = Args { scene: String::new(), screen: None, stall: 600, naive: false, demo: false, mouse: None, seconds: None, margin: None, hud: true, reduced: false, no_vsync: false, record: Vec::new(), answer_as: None, film: None, fps: 60, stall_said: false };
     let mut it = given.into_iter();
     while let Some(op) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| { eprintln!("{HELP}"); std::process::exit(2) });
@@ -194,7 +207,10 @@ fn args(given: Vec<String>) -> Args {
                 });
             }
             "--screen" => a.screen = Some(value()),
-            "--stall" => a.stall = value().parse().expect("--stall wants milliseconds"),
+            "--stall" => {
+                a.stall = value().parse().expect("--stall wants milliseconds");
+                a.stall_said = true;
+            }
             "--mouse" => a.mouse = Some(value()),
             "--seconds" => a.seconds = Some(value().parse::<f64>().ok().filter(|s| *s > 0.0).expect("--seconds wants a number of seconds, like 8 or 2.5")),
             "--margin" => a.margin = Some(value().parse().expect("--margin wants pixels")),
@@ -204,6 +220,8 @@ fn args(given: Vec<String>) -> Args {
             "--answer-as" => a.answer_as = Some(value()).filter(|n| !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || "-_.".contains(c))),
             "--reduced-motion" => a.reduced = true,
             "--no-vsync" => a.no_vsync = true,
+            "--film" => a.film = Some(value()),
+            "--fps" => a.fps = value().parse().ok().filter(|f: &u32| (1..=240).contains(f)).expect("--fps wants frames per second, from 1 to 240"),
             "--record" => a.record = value().split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect(),
             _ => { eprintln!("{HELP}"); std::process::exit(2) }
         }
@@ -296,7 +314,7 @@ fn graphics_instance(flags: wgpu::InstanceFlags) -> wgpu::Instance {
 
 pub fn run_with(options: Vec<String>) {
     let start_time = std::time::Instant::now();
-    let a = args(options);
+    let mut a = args(options);
     // No terminal to be stopped on, for the programs it starts.
     platform::leave_terminal();
     // The agents' skill, written again if this pleamar is not the one it speaks of.
@@ -364,6 +382,19 @@ pub fn run_with(options: Vec<String>) {
     }
     let instance = graphics_instance(flags);
     let wanted = scene.surfaces.clone();
+    // Filmed: no screen, the clock virtual, no waiting for anything.
+    if let Some(out) = &a.film {
+        if let Err(e) = platform::film::start(out, a.fps, a.mouse.as_deref(), a.seconds) {
+            eprintln!("film   · {e}");
+            std::process::exit(2);
+        }
+        a.no_vsync = true;
+        a.hud = false;
+        if !a.stall_said {
+            a.stall = 0;
+        }
+        platform::provide_platform(Box::new(platform::film::FilmPlatform));
+    }
 
     println!(
         "pleamar · {} mode · the logic blocks {} ms after every decision",
@@ -534,7 +565,7 @@ pub fn run_with(options: Vec<String>) {
             None
         }));
     }
-    if let Some(steps) = a.mouse.clone() {
+    if let Some(steps) = a.mouse.clone().filter(|_| a.film.is_none()) {
         // To rehearse the zones without taking the mouse away from anyone.
         let tx = to_render.clone();
         std::thread::spawn(move || {
@@ -545,62 +576,13 @@ pub fn run_with(options: Vec<String>) {
                 std::thread::sleep(when.saturating_sub(start.elapsed()));
                 // Each step is announced, to know what whatever comes after is responding to.
                 println!("mouse  · {what}");
-                let _ = match what {
-                    // A whole click: down and up.
-                    "click" => tx.send(ToRender::Button(0, true)).and_then(|_| tx.send(ToRender::Button(0, false))),
-                    "down" => tx.send(ToRender::Button(0, true)),
-                    "up" => tx.send(ToRender::Button(0, false)),
-                    "right" => tx.send(ToRender::Button(1, true)).and_then(|_| tx.send(ToRender::Button(1, false))),
-                    // `key:Escape`, `key:Ctrl+a`: down and up.
-                    t if t.starts_with("key:") => {
-                        let mut m = Mods::default();
-                        let mut name = &t[4..];
-                        for (prefix, sets) in [("Ctrl+", 0), ("Alt+", 1), ("Shift+", 2), ("Super+", 3)] {
-                            if let Some(rest) = name.strip_prefix(prefix) {
-                                name = rest;
-                                match sets {
-                                    0 => m.ctrl = true,
-                                    1 => m.alt = true,
-                                    2 => m.shift = true,
-                                    _ => m.logo = true,
-                                }
-                            }
-                        }
-                        tx.send(ToRender::Key(name.to_owned(), None, m, 0)).and_then(|_| tx.send(ToRender::KeyReleased(name.to_owned(), 0)))
-                    }
-                    // `keydown:Left`, `keyup:Left`: a key held, and let go later.
-                    t if t.starts_with("keydown:") => tx.send(ToRender::Key(t[8..].to_owned(), None, Mods::default(), 0)),
-                    t if t.starts_with("keyup:") => tx.send(ToRender::KeyReleased(t[6..].to_owned(), 0)),
-                    // `type:hello`: letter by letter, like a keyboard. A `_` is a space.
-                    t if t.starts_with("type:") => {
-                        for ch in t[5..].chars() {
-                            let ch = if ch == '_' { ' ' } else { ch };
-                            let _ = tx.send(ToRender::Key(ch.to_string(), Some(ch.to_string()), Mods::default(), 0));
-                            let _ = tx.send(ToRender::KeyReleased(ch.to_string(), 0));
-                        }
-                        Ok(())
-                    }
-                    // `code:30`: a key by its evdev code, pressed and released, as
-                    // a real keyboard would —what reaches a window of `windows`—.
-                    t if t.starts_with("code:") => match t[5..].parse::<u32>() {
-                        Ok(code) => tx.send(ToRender::Key(format!("{code:#x}"), None, Mods::default(), code)).and_then(|_| tx.send(ToRender::KeyReleased(format!("{code:#x}"), code))),
-                        Err(_) => Ok(()),
-                    },
-                    "focus+" => tx.send(ToRender::KeyboardFocus(true)),
-                    "focus-" => tx.send(ToRender::KeyboardFocus(false)),
-                    t if t.starts_with("drop:") => tx.send(ToRender::Dropped("text/plain".into(), t[5..].to_owned())),
-                    "wheel+" => tx.send(ToRender::Wheel(1.0)),
-                    "wheel-" => tx.send(ToRender::Wheel(-1.0)),
-                    "out" => tx.send(ToRender::Pointer(None)),
-                    xy => {
-                        let (x, y) = xy.split_once(',').expect("--mouse: x,y");
-                        tx.send(ToRender::Pointer(Some((x.parse().unwrap(), y.parse().unwrap()))))
-                    }
-                };
+                for m in mouse_step(what) {
+                    let _ = tx.send(m);
+                }
             }
         });
     }
-    if let Some(s) = a.seconds {
+    if let Some(s) = a.seconds.filter(|_| a.film.is_none()) {
         let tx = to_render.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs_f64(s));
@@ -621,6 +603,67 @@ pub fn run_with(options: Vec<String>) {
     let _ = to_render.send(ToRender::Quit);
     let _ = render.join();
     quit();
+}
+
+/// One step of a `--mouse` script (what goes before the `@`): what the render
+/// is told for it, in order. Also the film's (`--film`), on its virtual clock.
+pub(crate) fn mouse_step(what: &str) -> Vec<ToRender> {
+    match what {
+        // A whole click: down and up.
+        "click" => vec![ToRender::Button(0, true), ToRender::Button(0, false)],
+        "down" => vec![ToRender::Button(0, true)],
+        "up" => vec![ToRender::Button(0, false)],
+        "right" => vec![ToRender::Button(1, true), ToRender::Button(1, false)],
+        // `key:Escape`, `key:Ctrl+a`: down and up.
+        t if t.starts_with("key:") => {
+            let mut m = Mods::default();
+            let mut name = &t[4..];
+            for (prefix, sets) in [("Ctrl+", 0), ("Alt+", 1), ("Shift+", 2), ("Super+", 3)] {
+                if let Some(rest) = name.strip_prefix(prefix) {
+                    name = rest;
+                    match sets {
+                        0 => m.ctrl = true,
+                        1 => m.alt = true,
+                        2 => m.shift = true,
+                        _ => m.logo = true,
+                    }
+                }
+            }
+            vec![ToRender::Key(name.to_owned(), None, m, 0), ToRender::KeyReleased(name.to_owned(), 0)]
+        }
+        // `keydown:Left`, `keyup:Left`: a key held, and let go later.
+        t if t.starts_with("keydown:") => vec![ToRender::Key(t[8..].to_owned(), None, Mods::default(), 0)],
+        t if t.starts_with("keyup:") => vec![ToRender::KeyReleased(t[6..].to_owned(), 0)],
+        // `type:hello`: letter by letter, like a keyboard. A `_` is a space.
+        t if t.starts_with("type:") => t[5..]
+            .chars()
+            .flat_map(|ch| {
+                let ch = if ch == '_' { ' ' } else { ch };
+                [ToRender::Key(ch.to_string(), Some(ch.to_string()), Mods::default(), 0), ToRender::KeyReleased(ch.to_string(), 0)]
+            })
+            .collect(),
+        // `code:30`: a key by its evdev code, pressed and released, as
+        // a real keyboard would —what reaches a window of `windows`—.
+        t if t.starts_with("code:") => match t[5..].parse::<u32>() {
+            Ok(code) => vec![ToRender::Key(format!("{code:#x}"), None, Mods::default(), code), ToRender::KeyReleased(format!("{code:#x}"), code)],
+            Err(_) => Vec::new(),
+        },
+        // `emit:toggle`, `emit:pick=3`: an event, as `--say … emit` sends it.
+        t if t.starts_with("emit:") => {
+            let (name, n) = t[5..].split_once('=').map_or((&t[5..], None), |(e, n)| (e, n.parse().ok()));
+            vec![ToRender::ExternalSignal(scene::intern(name), n)]
+        }
+        "focus+" => vec![ToRender::KeyboardFocus(true)],
+        "focus-" => vec![ToRender::KeyboardFocus(false)],
+        t if t.starts_with("drop:") => vec![ToRender::Dropped("text/plain".into(), t[5..].to_owned())],
+        "wheel+" => vec![ToRender::Wheel(1.0)],
+        "wheel-" => vec![ToRender::Wheel(-1.0)],
+        "out" => vec![ToRender::Pointer(None)],
+        xy => {
+            let (x, y) = xy.split_once(',').expect("--mouse: x,y");
+            vec![ToRender::Pointer(Some((x.parse().unwrap(), y.parse().unwrap())))]
+        }
+    }
 }
 
 static QUIT_TX: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<ToRender>>> = std::sync::OnceLock::new();
@@ -647,6 +690,7 @@ fn quit_after_render(tx: &std::sync::mpsc::Sender<ToRender>) -> ! {
 }
 
 fn quit() -> ! {
+    platform::film::finish();
     if let Some(f) = BEFORE_QUIT.lock().unwrap().take() {
         f();
     }

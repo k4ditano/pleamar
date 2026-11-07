@@ -606,7 +606,7 @@ pub fn run(
     // What is selected of a text that can be (`selectable: true`), and the
     // clicks in a row on it: a second one takes a word, a third the whole text.
     let mut selection: Option<TextSelection> = None;
-    let mut clicks: (Instant, (f32, f32), u32) = (Instant::now(), (0.0, 0.0), 0);
+    let mut clicks: (Instant, (f32, f32), u32) = (crate::clock::now(), (0.0, 0.0), 0);
     // The zone a drag out was tried from, until the button is let go.
     let mut carry_tried: Option<usize> = None;
     let mut repeat: Option<(String, Option<String>, Mods, Instant)> = None;
@@ -617,20 +617,20 @@ pub fn run(
     // which buttons of the mouse, and how long since the last frame it heard of.
     let mut keys_held: Vec<(u32, String)> = Vec::new();
     let mut mouse_buttons = 0u8;
-    let mut frame_told = Instant::now();
-    let mut last_key = Instant::now();
+    let mut frame_told = crate::clock::now();
+    let mut last_key = crate::clock::now();
     let mut last_pointer: Option<(f32, f32)> = None;
-    let mut last_activity = Instant::now();
+    let mut last_activity = crate::clock::now();
     let mut rng = Rng(0x9E3779B97F4A7C15);
-    let start = Instant::now();
+    let start = crate::clock::now();
 
     let mut history = [0f32; 120];
     let mut cycle = Cycle::default();
-    let mut last = Instant::now();
+    let mut last = crate::clock::now();
     let mut resting = false;
     let mut next_appointment: Option<Instant> = None;
     let mut period_ms = 16.7f32;
-    let mut last_presented = Instant::now();
+    let mut last_presented = crate::clock::now();
     // When the compositor last showed a frame of the sheet that sets the
     // pace, and how often its screen refreshes: what the springs are worked
     // out for is when each frame will be seen (`seen_at`).
@@ -651,7 +651,7 @@ pub fn run(
     // The "this does not compile" banner, and the good scene with it on top.
     let mut warning: Option<Vec<Instr>> = None;
     let mut with_warning: Vec<Instr> = Vec::new();
-    let mut next_frame = Instant::now();
+    let mut next_frame = crate::clock::now();
     let mut frames_for_period = 0u32;
     // The compositor inside the scene (`windows`), once the scene asks for it;
     // it outlives reloads, and so do the programs in it.
@@ -695,7 +695,7 @@ pub fn run(
     // Programs' buffers the card is still copying, by the work they went in:
     // they go back as soon as it says it has finished, and nobody waits for it.
     let mut nest_lent: Vec<(crate::gpu::Sent, Vec<u64>)> = Vec::new();
-    let mut last_card_ask = Instant::now();
+    let mut last_card_ask = crate::clock::now();
     // Where each window was last told to be seen.
     let mut nest_shown: std::collections::HashMap<usize, (String, [i32; 4])> = Default::default();
     // Programs' buffers already destroyed that a window is still showing.
@@ -716,8 +716,8 @@ pub fn run(
     let mut prof_cpu = [0f64; 8];
     let mut prof_c = thread_cpu_ms();
     let mut prof_frames = 0u32;
-    let mut prof_t = Instant::now();
-    let mut prof_since = Instant::now();
+    let mut prof_t = crate::clock::now();
+    let mut prof_since = crate::clock::now();
     let mut prof_window_frames = 0u32;
     let mut prof_painted = 0u32;
     let mut prof_awake = [0u32; 8];
@@ -739,6 +739,11 @@ pub fn run(
     let mut reduced_motion = op.reduced_motion;
     let mut reduced_at: Option<usize> = None;
     loop {
+        // Filmed (`--film`): the frame made last round is written, the virtual
+        // clock goes on one frame, and the script's steps that are due arrive.
+        if crate::platform::film::on() && crate::platform::film::round(&op.to_self) {
+            let _ = op.to_self.send(ToRender::Quit);
+        }
         // ── 1. what has arrived ─────────────────────────────────
         let mut block = None;
         // (which button, whether it goes down or up), the wheel notches and the keys of this frame.
@@ -776,7 +781,7 @@ pub fn run(
         if resting {
             // Still: not a single frame. Only a message or the next appointment wakes it
             // up: a delay that expires, a blink, a claim that runs out.
-            let until = next_appointment.unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
+            let until = next_appointment.unwrap_or_else(|| crate::clock::now() + Duration::from_secs(3600));
             // The compositor's notice that a frame was shown does not wake it:
             // resting, there is nothing to paint after it. It woke it once per
             // frame of a window in the scene —a round for nothing, every time—.
@@ -784,9 +789,9 @@ pub fn run(
                 // A program's buffer still on loan is looked at every couple of
                 // milliseconds, without a round: it goes back as soon as it is copied.
                 if let (Some(g), Some(send)) = (&gpu, &nest) {
-                    let ask = last_card_ask.elapsed() >= Duration::from_millis(5);
+                    let ask = crate::clock::since(last_card_ask) >= Duration::from_millis(5);
                     if ask && !nest_lent.is_empty() {
-                        last_card_ask = Instant::now();
+                        last_card_ask = crate::clock::now();
                     }
                     nest_lent.retain(|(index, buffers)| {
                         let done = index.finished() || (ask && g.is_done(index));
@@ -796,7 +801,7 @@ pub fn run(
                         !done
                     });
                 }
-                let wait = until.saturating_duration_since(Instant::now());
+                let wait = until.saturating_duration_since(crate::clock::now());
                 let wait = if nest_lent.is_empty() { wait } else { wait.min(Duration::from_millis(2)) };
                 match rx.recv_timeout(wait) {
                     // A sheet that skipped a round for it paints now: it wakes the render.
@@ -820,13 +825,13 @@ pub fn run(
                         }
                     }
                     Ok(m) => incoming.push(m),
-                    Err(RecvTimeoutError::Timeout) if Instant::now() < until => {}
+                    Err(RecvTimeoutError::Timeout) if crate::clock::now() < until => {}
                     Err(RecvTimeoutError::Timeout) => break,
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
             }
             resting = false;
-            last = Instant::now() - Duration::from_secs_f32(period_ms / 1000.0);
+            last = crate::clock::now() - Duration::from_secs_f32(period_ms / 1000.0);
             woke = true;
         }
         // A logic that plays hears every frame before it is made: how long since
@@ -836,14 +841,20 @@ pub fn run(
         // frame is made without it, as ever, and what it says goes into the
         // next. One at a time: while it has not finished with one, the next
         // are not queued behind it.
-        let plays = crate::scene::FRAME_LISTENERS.load(std::sync::atomic::Ordering::Relaxed) > 0;
+        // Filmed, every frame waits for the logic to be done with all it was
+        // told before it: what it answers goes in the same frame every time,
+        // however long it takes to think it (the logic hears its messages in
+        // order, so its answer to the frame comes after the rest).
+        let filming = crate::platform::film::on();
+        let plays = filming || crate::scene::FRAME_LISTENERS.load(std::sync::atomic::Ordering::Relaxed) > 0;
         if plays && !crate::scene::FRAME_OWED.swap(true, std::sync::atomic::Ordering::AcqRel) {
-            let now = Instant::now();
+            let now = crate::clock::now();
             let _ = to_logic.send(Event::Frame((now - frame_told).as_secs_f32().min(0.1), pointer, mouse_buttons));
             frame_told = now;
-            let until = now + FRAME_PATIENCE;
+            let patience = if filming { Duration::from_secs(10) } else { FRAME_PATIENCE };
+            let until = std::time::Instant::now() + patience;
             loop {
-                match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
+                match rx.recv_timeout(until.saturating_duration_since(std::time::Instant::now())) {
                     Ok(ToRender::FrameSeen) => break,
                     Ok(m) => incoming.push(m),
                     Err(RecvTimeoutError::Timeout) => break,
@@ -851,13 +862,17 @@ pub fn run(
                 }
             }
         }
+        // And for the workshop to have laid out and read all it was asked for.
+        if filming && !crate::text::workshop_idle(Duration::from_secs(10)) {
+            eprintln!("film   · the workshop took more than 10 s: this frame goes without what it was making");
+        }
         incoming.extend(rx.try_iter());
         if let (Some(g), Some(send)) = (&gpu, &nest) {
             // The card is asked at most every 5 ms from here: its notices are set
             // by whoever asks, and each monitor already does, every frame.
-            let ask = last_card_ask.elapsed() >= Duration::from_millis(5);
+            let ask = crate::clock::since(last_card_ask) >= Duration::from_millis(5);
             if ask && !nest_lent.is_empty() {
-                last_card_ask = Instant::now();
+                last_card_ask = crate::clock::now();
             }
             nest_lent.retain(|(index, buffers)| {
                 let done = index.finished() || (ask && g.is_done(index));
@@ -947,7 +962,7 @@ pub fn run(
                         .iter()
                         .filter_map(|c| match c {
                             Behavior::Blink { every, .. } => {
-                                Some((Instant::now() + Duration::from_secs_f32(rng.between(every.0, every.1) * 0.6), None))
+                                Some((crate::clock::now() + Duration::from_secs_f32(rng.between(every.0, every.1) * 0.6), None))
                             }
                             _ => None,
                         })
@@ -959,7 +974,7 @@ pub fn run(
                         .map(|r| {
                             let mut e = RuleState::default();
                             if let Trigger::Every { between, .. } = &r.when {
-                                e.next = Some(Instant::now() + Duration::from_secs_f32(rng.between(between.0, between.1)));
+                                e.next = Some(crate::clock::now() + Duration::from_secs_f32(rng.between(between.0, between.1)));
                             }
                             e
                         })
@@ -1225,7 +1240,7 @@ pub fn run(
                         }
                     }
                 }
-                ToRender::Command(Command::Animate(t)) => pending.push((Instant::now() + t.delay, t)),
+                ToRender::Command(Command::Animate(t)) => pending.push((crate::clock::now() + t.delay, t)),
                 ToRender::Command(Command::Impulse { prop, velocity }) => props[prop.0 as usize].v += velocity,
                 ToRender::Command(Command::Block(d)) => block = Some(d),
                 // What is unread, told from outside (`--say wm "text win.badges discord:2"`): the docks show it.
@@ -1319,7 +1334,7 @@ pub fn run(
                 ToRender::Act(act, reply_to) => acts.push_back((act, reply_to)),
                 ToRender::Wait(src, reply_to) => match crate::agent::Cond::parse(&scene, &src) {
                     Ok((cond, timeout)) => {
-                        let now = Instant::now();
+                        let now = crate::clock::now();
                         waits.push((cond, now, now + timeout, reply_to));
                     }
                     Err(m) => {
@@ -1328,8 +1343,8 @@ pub fn run(
                 },
                 ToRender::Watch(lines, until) => {
                     let c = Ctx { props: &props, facts: &facts, seen: None };
-                    let _ = lines.send(format!("watching for {:.0} s", until.saturating_duration_since(Instant::now()).as_secs_f32()));
-                    watchers.push(Watcher { lines, until, start: Instant::now(), before: crate::agent::before(&scene, c, &texts, open_surfaces(&scene, &sheets)) });
+                    let _ = lines.send(format!("watching for {:.0} s", until.saturating_duration_since(crate::clock::now()).as_secs_f32()));
+                    watchers.push(Watcher { lines, until, start: crate::clock::now(), before: crate::agent::before(&scene, c, &texts, open_surfaces(&scene, &sheets)) });
                 }
                 ToRender::Follow(mut f) => {
                     f.start(&scene, &facts, &texts);
@@ -1373,7 +1388,7 @@ pub fn run(
                 // as much as moving it over the scene.
                 ToRender::Cursor(at, monitors) => {
                     if cursor.as_ref().is_some_and(|c| c.0 != at) {
-                        last_activity = Instant::now();
+                        last_activity = crate::clock::now();
                     }
                     cursor = Some((at, monitors));
                 }
@@ -1383,7 +1398,7 @@ pub fn run(
                 ToRender::Pointer(p) => {
                     pointer = p;
                     real_pointer = p;
-                    last_activity = Instant::now();
+                    last_activity = crate::clock::now();
                     // Gone with the button down, its release goes elsewhere: a
                     // press that changed the input region under it (a panel that
                     // opens on a click) never heard it, and its light stayed on
@@ -1413,20 +1428,20 @@ pub fn run(
                             finger = p;
                             finger_light = 1.0;
                             if !reduced_motion {
-                                ripple = Some((p, Instant::now()));
+                                ripple = Some((p, crate::clock::now()));
                             }
                         }
                     }
-                    last_activity = Instant::now();
+                    last_activity = crate::clock::now();
                 }
                 ToRender::Wheel(d) => {
                     wheel += d;
-                    last_activity = Instant::now();
+                    last_activity = crate::clock::now();
                 }
                 ToRender::Scroll { x, y, notches } => {
                     wheel += notches;
                     fingers = (fingers.0 + x, fingers.1 + y, fingers.2 + notches);
-                    last_activity = Instant::now();
+                    last_activity = crate::clock::now();
                 }
                 ToRender::ScrollEnd => fingers_up = true,
                 ToRender::Wake | ToRender::FrameSeen => {}
@@ -1440,13 +1455,13 @@ pub fn run(
                 ToRender::Thumbnails => {}
                 ToRender::KeyRepeat(r) => key_repeat = r,
                 ToRender::Ime(input) => {
-                    last_activity = Instant::now();
+                    last_activity = crate::clock::now();
                     ime_inputs.push(input);
                 }
                 ToRender::Key(name, typed, mods, code) => {
-                    last_activity = Instant::now();
+                    last_activity = crate::clock::now();
                     // If it is held down, it repeats, however this user has it set up.
-                    repeat = key_repeat.map(|(delay, _)| (name.clone(), typed.clone(), mods, Instant::now() + Duration::from_millis(delay as u64)));
+                    repeat = key_repeat.map(|(delay, _)| (name.clone(), typed.clone(), mods, crate::clock::now() + Duration::from_millis(delay as u64)));
                     repeat_code = code;
                     key_presses.push((name, typed, mods, code));
                 }
@@ -1869,7 +1884,7 @@ pub fn run(
                     crate::terminal::with(|r| r.focus = None);
                     parked = None;
                     editing = name.and_then(|n| scene.texts.iter().position(|t| t.0 == n)).map(|k| Editing::at(k, texts[k].len(), texts[k].len()));
-                    last_key = Instant::now();
+                    last_key = crate::clock::now();
                     // Lent or not once this round's focus changes are in (below).
                     focus_asked = editing.is_some();
                 }
@@ -1897,7 +1912,7 @@ pub fn run(
                 gone: &gone,
                 rank: rank.as_ref().map(|r| r.as_slice()),
             };
-            let now = Instant::now();
+            let now = crate::clock::now();
             if acting.is_none()
                 && let Some((act, reply)) = acts.pop_front()
             {
@@ -2056,17 +2071,17 @@ pub fn run(
         }
         profiling = timing || probe.is_some();
         if profiling {
-            prof_t = Instant::now();
+            prof_t = crate::clock::now();
             let c = thread_cpu_ms();
             prof_outside[0] += c - prof_c;
             prof_c = c;
         }
         // The key that is still held down counts again.
         if let Some((name, typed, mods, when)) = &mut repeat {
-            if Instant::now() >= *when {
+            if crate::clock::now() >= *when {
                 // A repeat is made up here: a window repeats on its own, it is not handed one.
                 key_presses.push((name.clone(), typed.clone(), *mods, 0));
-                *when = Instant::now() + Duration::from_millis(key_repeat.map_or(33, |r| r.1) as u64);
+                *when = crate::clock::now() + Duration::from_millis(key_repeat.map_or(33, |r| r.1) as u64);
             }
         }
         // What an input method wrote or composes, in the field drawn now that is being written in.
@@ -2074,7 +2089,7 @@ pub fn run(
             let Some(ed) = editing.as_mut().filter(|e| draw.fields.iter().any(|f| f.text == e.field && !f.passive)) else { continue };
             let k = ed.field;
             let secret = draw.fields.iter().any(|f| f.text == k && f.secret);
-            last_key = Instant::now();
+            last_key = crate::clock::now();
             if ed.ime(&mut texts[k], input, secret) {
                 let _ = to_logic.send(Event::Text(scene.texts[k].0, texts[k].clone()));
             }
@@ -2096,7 +2111,7 @@ pub fn run(
                 combo.push_str(&name);
                 let scenes = scene.rules.iter().any(|r| matches!(&r.when, Trigger::Key(t) if *t == combo) && r.guard.as_ref().is_none_or(|g| g.is_true(Ctx { props: &props, facts: &facts, seen: None })));
                 if editing.is_none() && crate::terminal::key(&name, typed.as_deref(), mods.ctrl, mods.alt, mods.shift, mods.logo, scenes, &draw.terminals) {
-                    last_activity = Instant::now();
+                    last_activity = crate::clock::now();
                     continue;
                 }
             }
@@ -2120,12 +2135,12 @@ pub fn run(
                 let secret = draw.fields.iter().any(|f| f.text == k && f.secret);
                 match ed.handle_key(&mut texts[k], &name, typed.as_deref(), mods, secret) {
                     KeyOutcome::Changed => {
-                        last_key = Instant::now();
+                        last_key = crate::clock::now();
                         let _ = to_logic.send(Event::Text(scene.texts[k].0, texts[k].clone()));
                         continue;
                     }
                     KeyOutcome::Moved => {
-                        last_key = Instant::now();
+                        last_key = crate::clock::now();
                         continue;
                     }
                     KeyOutcome::Submitted => {
@@ -2253,7 +2268,7 @@ pub fn run(
         }
 
         if profiling {
-            let n = Instant::now();
+            let n = crate::clock::now();
             { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[0] += d; sec[0] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
@@ -2275,7 +2290,7 @@ pub fn run(
             props.iter_mut().for_each(Animated::settle);
         }
         reduced_motion = asked;
-        let now = Instant::now();
+        let now = crate::clock::now();
         // Time moves to when this frame will be seen, not to when it is made:
         // the refresh after it is handed over (at the clock's deadline when the
         // render keeps the step, or now). Made a little earlier or later, a
@@ -4001,7 +4016,7 @@ pub fn run(
         }
 
         if profiling {
-            let n = Instant::now();
+            let n = crate::clock::now();
             { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[1] += d; sec[1] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
@@ -4038,7 +4053,7 @@ pub fn run(
         }
         let to_paint: &[Instr] = if warning.is_some() { &with_warning } else { &scene.instrs };
         draw.set_attached_edges(scene.surface().anchor.attached_edges());
-        let reading = Instant::now();
+        let reading = crate::clock::now();
         let skip: Vec<std::ops::Range<usize>> = asleep.iter().map(|t| t.instrs.clone()).collect();
         draw.skip = skip;
         // A selection whose text was not painted last frame (closed, gone) is forgotten.
@@ -4055,7 +4070,7 @@ pub fn run(
             draw.signal_times = vec![-1.0; scene.signals.len()];
         }
         if profiling {
-            let n = Instant::now();
+            let n = crate::clock::now();
             { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[2] += d; sec[2] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
@@ -4197,7 +4212,7 @@ pub fn run(
             }
         }
         if profiling {
-            let n = Instant::now();
+            let n = crate::clock::now();
             { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[7] += d; sec[7] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
@@ -4415,7 +4430,7 @@ pub fn run(
         if let Some(t) = draw.wake_at {
             appointments.push(start + Duration::from_secs_f32(t.max(t_total + 0.001)));
         }
-        cycle.compose_ms += reading.elapsed().as_secs_f32() * 1000.0;
+        cycle.compose_ms += crate::clock::since(reading).as_secs_f32() * 1000.0;
         // The monitors, from a text (`screens: on_screen`, its value `"DP-1"`
         // or `"DP-1, HDMI-A-1"`): the surface goes there and the scene stays as
         // it is. Before waiting for a card: a scene that starts on no monitor
@@ -4448,7 +4463,7 @@ pub fn run(
         // `lens every` and `lens hold while`: how often what is behind a glass is captured, and whether at all.
         let capture_interval = crate::lens::capture_interval(scene.lens_every.as_ref().map(|e| e.eval(Ctx { props: &props, facts: &facts, seen: None })));
         let capture_held = scene.lens_hold_while.as_ref().is_some_and(|e| e.is_true(Ctx { props: &props, facts: &facts, seen: None }));
-        let pace = |l: &Sheet| crate::lens::Pace { interval: capture_interval, held: capture_held, warming: l.lens.as_ref().is_some_and(|x| x.warming()), since: l.capture_taken.elapsed() };
+        let pace = |l: &Sheet| crate::lens::Pace { interval: capture_interval, held: capture_held, warming: l.lens.as_ref().is_some_and(|x| x.warming()), since: crate::clock::since(l.capture_taken) };
         // The numbers the blur is given, worked out for this frame.
         g.blur_values = match &scene.blur {
             Some(_) => {
@@ -4488,7 +4503,7 @@ pub fn run(
         // What has changed, and where. The frame graph always changes.
         // The light of a click changes the glass without changing the list: everything is painted.
         if profiling {
-            let n = Instant::now();
+            let n = crate::clock::now();
             { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[3] += d; sec[3] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
@@ -4501,7 +4516,7 @@ pub fn run(
             if let Some(p) = ripple_origin(&scene, z, c, &draw.hidden)
                 .filter(|p| sheets.iter().any(|s| s.open && crate::agent::inside_box(s.view.bounds(), *p)))
             {
-                ripple = Some((p, Instant::now()));
+                ripple = Some((p, crate::clock::now()));
             }
         }
         // A list not composed again is the one compared last time: comparing it
@@ -4766,11 +4781,11 @@ pub fn run(
         }
         uniforms[129..132].copy_from_slice(&[finger.0, finger.1, finger_light]);
         // It lasts 0.9 s, and while it lasts there are frames.
-        if ripple.is_some_and(|(_, t)| t.elapsed().as_secs_f32() > 0.9) {
+        if ripple.is_some_and(|(_, t)| crate::clock::since(t).as_secs_f32() > 0.9) {
             ripple = None;
         }
         uniforms[132..136].copy_from_slice(&match ripple {
-            Some(((x, y), t)) => [x, y, t.elapsed().as_secs_f32(), 1.0],
+            Some(((x, y), t)) => [x, y, crate::clock::since(t).as_secs_f32(), 1.0],
             None => [0.0; 4],
         });
         // The one that sets the pace goes last: it is the one that waits for the screen.
@@ -4876,7 +4891,7 @@ pub fn run(
             sheets.sort_by_key(|l| l.drives_pace);
         }
         if profiling {
-            let n = Instant::now();
+            let n = crate::clock::now();
             { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[4] += d; sec[4] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
@@ -4896,7 +4911,7 @@ pub fn run(
         // that is late is a slow frame on screen, and the telltale is there to see it.
         let mut paced = Duration::ZERO;
         if !op.no_vsync && !op.naive {
-            let right_now = Instant::now();
+            let right_now = crate::clock::now();
             if g.uses_mailbox() {
                 let mhz = sheets.iter().find(|l| l.drives_pace).map_or(60_000, |l| l.pace_mhz());
                 // With `rate:`, the scene decides the step and not the monitor: a bar
@@ -4912,7 +4927,7 @@ pub fn run(
                 // and if a frame reaches it right after, it composes again and notifies
                 // straight away: two frames per refresh—, but it does say something else: whether
                 // anyone is watching.
-                let clock_from = Instant::now();
+                let clock_from = crate::clock::now();
                 // The deadline was set by the last round's period. If the pace has just
                 // risen (a `rate: 60, 12 while idle` that stopped being idle in this round),
                 // that deadline is still a slow period away: waiting it out put the first
@@ -4929,7 +4944,7 @@ pub fn run(
                     let awaits_capture = sheets.iter().any(|l| l.capture == crate::gpu::BackdropCapture::AfterPresent);
                     if awaits_capture {
                         loop {
-                            let left = next_frame.saturating_duration_since(Instant::now());
+                            let left = next_frame.saturating_duration_since(crate::clock::now());
                             if left.is_zero() {
                                 next_frame += period;
                                 break;
@@ -4937,7 +4952,7 @@ pub fn run(
                             match rx.recv_timeout(left) {
                                 Ok(ToRender::Backdrop(d)) => {
                                     if handle_backdrop(g, &mut sheets, d) {
-                                        next_frame = Instant::now() + period;
+                                        next_frame = crate::clock::now() + period;
                                         break;
                                     }
                                 }
@@ -4962,20 +4977,20 @@ pub fn run(
                 } else {
                     next_frame = right_now + period;
                 }
-                paced += clock_from.elapsed();
+                paced += crate::clock::since(clock_from);
                 // What it is not showing —a monitor that is off, a window on another
                 // workspace— it does not notify. After three waits in vain, it paints once
                 // a second instead of 60 or 165 times for nobody.
                 if let Some(id) = frame_requested {
                     let patience = if missed_notices >= 3 { Duration::from_secs(1) } else { (period * 3).max(Duration::from_millis(50)) };
-                    let (unseen_pace, notice_from) = (missed_notices >= 3, Instant::now());
+                    let (unseen_pace, notice_from) = (missed_notices >= 3, crate::clock::now());
                     // Not shown, the second counts from when that frame was handed over, not from now:
                     // after a rest (a minute with nothing to paint) a notice of it that has not come
                     // will not, and the first frame of whatever woke it —a key bound to `--say … emit`,
                     // a click— waited the whole second for it before painting anything.
                     let limit = if unseen_pace { last_presented + patience } else { notice_from + patience };
                     while !frame_ready {
-                        let left = limit.saturating_duration_since(Instant::now());
+                        let left = limit.saturating_duration_since(crate::clock::now());
                         if left.is_zero() {
                             missed_notices += 1;
                             if missed_notices == 3 {
@@ -5011,7 +5026,7 @@ pub fn run(
                         }
                     }
                     if unseen_pace {
-                        paced += notice_from.elapsed();
+                        paced += crate::clock::since(notice_from);
                     }
                     if frame_ready {
                         if missed_notices >= 3 {
@@ -5019,8 +5034,8 @@ pub fn run(
                         }
                         missed_notices = 0;
                     }
-                    if Instant::now() > next_frame {
-                        next_frame = Instant::now() + period;
+                    if crate::clock::now() > next_frame {
+                        next_frame = crate::clock::now() + period;
                     }
                 }
             } else {
@@ -5034,7 +5049,7 @@ pub fn run(
         }
         let waited_ms = paced.as_secs_f32() * 1000.0;
         if profiling {
-            let n = Instant::now();
+            let n = crate::clock::now();
             sec_wait = (n - prof_t).as_secs_f64() * 1000.0;
             prof_t = n;
             let c = thread_cpu_ms();
@@ -5042,7 +5057,7 @@ pub fn run(
             prof_c = c;
         }
         let before_painting = last_presented;
-        last_presented = Instant::now();
+        last_presented = crate::clock::now();
         let mut painted = 0;
         let mut up_to_date = 0;
         let mut waiting_for_screen = false;
@@ -5078,10 +5093,10 @@ pub fn run(
             // that stays still from its first frame never saw its background.
             // The same for a capture it owed and asked without presenting (`capture_forced`).
             let unseen = (l.capture_forced || l.lens.as_ref().is_some_and(|x| x.warming())) && l.capture == crate::gpu::BackdropCapture::AfterPresent;
-            if unseen && l.capture_since().elapsed() < Duration::from_millis(100) {
+            if unseen && crate::clock::since(l.capture_since()) < Duration::from_millis(100) {
                 appointments.push(l.capture_since() + Duration::from_millis(101));
             }
-            let nudge = unseen && l.capture_since().elapsed() >= Duration::from_millis(100);
+            let nudge = unseen && crate::clock::since(l.capture_since()) >= Duration::from_millis(100);
             let its_turn = !l.open || all_changed || nudge || l.painted != Some(where_) || !l.owed_damage.is_empty() || changed.iter().any(|b| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]);
             // A round it skips: what changed in it is owed, if it is known
             // where; if not, it is painted whole when its turn comes.
@@ -5103,7 +5118,7 @@ pub fn run(
                 let r = scene.surfaces.get(l.view.surface).map_or(0, |s| surface_rate(s, Ctx { props: &props, facts: &facts, seen: None }));
                 if r > 0 && (rate_now == 0 || r < rate_now) {
                     let period = Duration::from_secs_f64(1.0 / r as f64);
-                    if let Some(last) = l.rate_last.filter(|t| t.elapsed() + Duration::from_millis(2) < period) {
+                    if let Some(last) = l.rate_last.filter(|t| crate::clock::since(*t) + Duration::from_millis(2) < period) {
                         skip(l);
                         appointments.push(last + period);
                         up_to_date += 1;
@@ -5117,7 +5132,7 @@ pub fn run(
             if l.lens.is_some() {
                 match l.capture {
                     // It arrives in less than a refresh. If it takes longer, it has been lost.
-                    crate::gpu::BackdropCapture::AfterPresent if l.capture_since().elapsed() < Duration::from_millis(100) => {
+                    crate::gpu::BackdropCapture::AfterPresent if crate::clock::since(l.capture_since()) < Duration::from_millis(100) => {
                         skip(l);
                         up_to_date += 1;
                         continue;
@@ -5141,9 +5156,9 @@ pub fn run(
             if fifo && l.open && in_flight.iter().any(|f| f.0 == l.id) {
                 if !l.unseen {
                     let period = Duration::from_secs_f64(1000.0 / l.pace_mhz() as f64);
-                    let limit = Instant::now() + (period * 3).max(Duration::from_millis(50));
+                    let limit = crate::clock::now() + (period * 3).max(Duration::from_millis(50));
                     while in_flight.iter().any(|f| f.0 == l.id) {
-                        let left = limit.saturating_duration_since(Instant::now());
+                        let left = limit.saturating_duration_since(crate::clock::now());
                         if left.is_zero() {
                             break;
                         }
@@ -5187,7 +5202,7 @@ pub fn run(
             // scene on a 165 Hz monitor and a 60 Hz one went at 60 on both—.
             // Not beyond a while: what is not shown is never answered.
             let others = !l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive;
-            if others && l.open && in_flight.iter().any(|f| f.0 == l.id && f.1.elapsed() < Duration::from_millis(100)) {
+            if others && l.open && in_flight.iter().any(|f| f.0 == l.id && crate::clock::since(f.1) < Duration::from_millis(100)) {
                 if !owed.contains(&l.id) {
                     owed.push(l.id);
                 }
@@ -5204,7 +5219,7 @@ pub fn run(
             // again, so it does not paint the monitor, and the capture the nudge is for is never answered (#118).
             let was_painted = g.paint(l, &draw, &uniforms, asks || others || fifo, (knows_where && l.painted == Some(where_) && !nudge).then(|| with_owed.as_deref().unwrap_or(&changed[..])));
             if was_painted {
-                l.rate_last = Some(Instant::now());
+                l.rate_last = Some(crate::clock::now());
                 // What the scene painted itself (not what a capture taken in owed): where the next capture may
                 // differ from the last one because of us (#125). In the surface's pixels; not known, all of it.
                 let o = l.view.origin;
@@ -5215,7 +5230,7 @@ pub fn run(
             }
             if was_painted && ((others && answers.contains(&l.id)) || (fifo && l.open)) {
                 in_flight.retain(|f| f.0 != l.id);
-                in_flight.push((l.id, Instant::now()));
+                in_flight.push((l.id, crate::clock::now()));
             }
             // With a lens, what was presented is captured to keep track of what is behind.
             // Not on every frame: for Hyprland each capture costs reading the screen
@@ -5237,7 +5252,7 @@ pub fn run(
                     // else waking the render, what it owes was only taken when something made it paint again, and
                     // the glass kept showing what was behind it before (#118).
                     if !p.held {
-                        appointments.push(Instant::now() + p.interval.saturating_sub(p.since) + Duration::from_millis(1));
+                        appointments.push(crate::clock::now() + p.interval.saturating_sub(p.since) + Duration::from_millis(1));
                     }
                 }
             }
@@ -5280,7 +5295,7 @@ pub fn run(
         // nudge for it. It is asked again, owed; and a monitor that answers none (switched off) less and less often.
         for l in sheets.iter_mut().filter(|l| l.lens.is_some() && l.capture == crate::gpu::BackdropCapture::AfterPresent) {
             let lost_after = crate::lens::capture_lost_after(l.captures_lost);
-            if l.capture_since().elapsed() < lost_after {
+            if crate::clock::since(l.capture_since()) < lost_after {
                 appointments.push(l.capture_since() + lost_after);
                 continue;
             }
@@ -5289,7 +5304,7 @@ pub fn run(
             l.captures_lost = l.captures_lost.saturating_add(1);
             l.capture_owed = true;
             // (A sheet that painted this round asks it on its next one, which this wakes.)
-            appointments.push(Instant::now() + Duration::from_millis(1));
+            appointments.push(crate::clock::now() + Duration::from_millis(1));
         }
         for l in &mut sheets {
             if l.lens.is_none() || std::mem::take(&mut l.painted_now) {
@@ -5308,7 +5323,7 @@ pub fn run(
             // the next time it paints the monitor (see `lens::WATCH_PATIENCE`, #118).
             if l.capture == crate::gpu::BackdropCapture::Watching && !crate::lens::watch_heard() {
                 let due = l.capture_since() + crate::lens::WATCH_PATIENCE;
-                if Instant::now() >= due {
+                if crate::clock::now() >= due {
                     crate::lens::log_still(l.id, "a watch not answered: a plain capture instead");
                     l.cancel_backdrop();
                     l.request_backdrop(false);
@@ -5328,7 +5343,7 @@ pub fn run(
             crate::lens::log_still(l.id, &format!("{:?}", pace.still(l.capture_owed)));
             match pace.still(l.capture_owed) {
                 crate::lens::Still::Nothing => {}
-                crate::lens::Still::Wait(left) => appointments.push(Instant::now() + left),
+                crate::lens::Still::Wait(left) => appointments.push(crate::clock::now() + left),
                 // What changed behind while it could not capture is not
                 // waited for: it may already have happened.
                 crate::lens::Still::Capture => {
@@ -5346,7 +5361,7 @@ pub fn run(
                     // (Or the scene's slower pace, `lens every`.)
                     let every = crate::lens::DEAF_EVERY.max(pace.interval);
                     if pace.since < every {
-                        appointments.push(Instant::now() + (every - pace.since));
+                        appointments.push(crate::clock::now() + (every - pace.since));
                     } else {
                         l.request_backdrop(false);
                         l.capture_forced = l.capture == crate::gpu::BackdropCapture::AfterPresent;
@@ -5372,12 +5387,12 @@ pub fn run(
         // If it was not its turn to paint this time, the clock gives the step: a whole period.
         if painted + up_to_date > 0 && !waiting_for_screen && !g.uses_mailbox() && !op.no_vsync && !op.naive {
             let period = Duration::from_secs_f32(period_ms / 1000.0);
-            let since = before_painting.elapsed();
+            let since = crate::clock::since(before_painting);
             if since < period {
                 std::thread::sleep(period - since);
                 sec_paced = (period - since).as_secs_f64() * 1000.0;
             }
-            last_presented = Instant::now();
+            last_presented = crate::clock::now();
         }
         if crate::gpu::timing_enabled() && painted + up_to_date > 0 {
             sheet_counts.0 += painted;
@@ -5411,7 +5426,7 @@ pub fn run(
             }
         }
         if profiling {
-            let n = Instant::now();
+            let n = crate::clock::now();
             { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[5] += d; sec[5] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
@@ -5474,7 +5489,7 @@ pub fn run(
             std::thread::sleep(Duration::from_secs_f32((period_ms / 4.0).clamp(1.0, 8.0) / 1000.0));
         } else if painted > 0 && first_frame {
             first_frame = false;
-            println!("render · first frame {} ms after starting", op.start_time.elapsed().as_millis());
+            println!("render · first frame {} ms after starting", crate::clock::since(op.start_time).as_millis());
         }
 
         // What the texts measured goes into their properties: the coming frame,
@@ -5539,7 +5554,7 @@ pub fn run(
             println!("{:.1}\t{}", t_total * 1000.0, values.join("\t"));
         }
         if profiling {
-            let n = Instant::now();
+            let n = crate::clock::now();
             { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[6] += d; sec[6] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
@@ -5575,7 +5590,7 @@ pub fn run(
                 prof_awake = [0; 8];
                 println!(
                     "timing · {:.0} rounds, {:.0} windows' frames and {:.0} paintings a second · per round: input {:.2} · rules and springs {:.2} · windows' frames to the card {:.2} · compose {:.2} · regions {:.2} · paint {:.2} · rest {:.2} ms",
-                    f / prof_since.elapsed().as_secs_f64(), prof_window_frames as f64 / prof_since.elapsed().as_secs_f64(), prof_painted as f64 / prof_since.elapsed().as_secs_f64(), prof[0] / f, (prof[1] + prof[2]) / f, prof[7] / f, prof[3] / f, prof[4] / f, prof[5] / f, prof[6] / f
+                    f / crate::clock::since(prof_since).as_secs_f64(), prof_window_frames as f64 / crate::clock::since(prof_since).as_secs_f64(), prof_painted as f64 / crate::clock::since(prof_since).as_secs_f64(), prof[0] / f, (prof[1] + prof[2]) / f, prof[7] / f, prof[3] / f, prof[4] / f, prof[5] / f, prof[6] / f
                 );
                 println!(
                     "timing · CPU per round: input {:.2} · rules and springs {:.2} · windows' frames to the card {:.2} · compose {:.2} · regions {:.2} · paint {:.2} · rest {:.2} ms",
@@ -5604,7 +5619,7 @@ pub fn run(
                 }
                 prof_arrived = [0; 10];
                 prof_outside = [0.0; 2];
-                prof_since = Instant::now();
+                prof_since = crate::clock::now();
                 prof_window_frames = 0;
                 prof_painted = 0;
                 prof = [0.0; 8];
@@ -5748,13 +5763,13 @@ fn glass_regions_said(sheet: impl std::fmt::Debug, bent: &[[i32; 4]], read: &[[i
 fn capture_stats(taken: u64, parts: usize, surface: (f32, f32)) {
     static STATS: std::sync::Mutex<Option<(Instant, u32, u64, f32, usize)>> = std::sync::Mutex::new(None);
     let mut s = STATS.lock().unwrap();
-    let (since, n, px, share, most) = s.get_or_insert_with(|| (Instant::now(), 0, 0, 0.0, 0));
+    let (since, n, px, share, most) = s.get_or_insert_with(|| (crate::clock::now(), 0, 0, 0.0, 0));
     *n += 1;
     *px += taken;
     *most = (*most).max(parts);
     *share += taken as f32 / (surface.0 * surface.1).max(1.0);
-    if since.elapsed() >= Duration::from_secs(5) {
-        let secs = since.elapsed().as_secs_f32();
+    if crate::clock::since(*since) >= Duration::from_secs(5) {
+        let secs = crate::clock::since(*since).as_secs_f32();
         eprintln!("lens · {:.1} captures a second · {:.2} Mpx each on average · {:.2} Mpx/s · {:.0}% of the surface on average · up to {} parts", *n as f32 / secs, *px as f32 / *n as f32 / 1e6, *px as f32 / secs / 1e6, *share / *n as f32 * 100.0, *most);
         *s = None;
     }
@@ -5770,7 +5785,7 @@ fn handle_backdrop(g: &Gpu, sheets: &mut [Sheet], d: Box<crate::platform::Backdr
     // One that was watching counts from when it arrives: it was read back now.
     let watched = l.capture == crate::gpu::BackdropCapture::Watching;
     if watched {
-        l.capture_taken = Instant::now();
+        l.capture_taken = crate::clock::now();
     }
     l.capture = crate::gpu::BackdropCapture::Idle;
     l.capture_forced = false;
@@ -5817,7 +5832,7 @@ fn make_card_backdrop(g: &Gpu, sheet: u32, fourcc: u32, size: (u32, u32)) {
     }
     let refuse = |why: String| {
         println!("render · captures stay in shared memory ({why})");
-        CARD_REFUSED.lock().unwrap().push((sheet, Instant::now()));
+        CARD_REFUSED.lock().unwrap().push((sheet, crate::clock::now()));
     };
     if !g.device.features().contains(wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF) {
         return refuse("the card does not share its memory with the compositor".into());
@@ -7026,7 +7041,7 @@ fn debug_seen() -> bool {
 
 fn ms_since_epoch(t: Instant) -> f64 {
     static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-    let e = *EPOCH.get_or_init(|| Instant::now() - Duration::from_secs(1));
+    let e = *EPOCH.get_or_init(|| crate::clock::now() - Duration::from_secs(1));
     t.checked_duration_since(e).unwrap_or_default().as_secs_f64() * 1000.0
 }
 
@@ -7410,7 +7425,7 @@ impl Acting {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
     fn plan(scene: &Scene, c: Ctx, sight: &crate::agent::Sight, act: crate::agent::Act, reply: std::sync::mpsc::Sender<String>, texts: &[String], open: Vec<String>) -> Result<Acting, (std::sync::mpsc::Sender<String>, String)> {
         use crate::agent::Act;
-        let now = Instant::now();
+        let now = crate::clock::now();
         let ms = |n: u64| now + Duration::from_millis(n);
         let mut steps = std::collections::VecDeque::new();
         let mut zone = usize::MAX;
@@ -7560,7 +7575,7 @@ mod motion_tests {
 
     #[test]
     fn a_frame_is_seen_at_the_refresh_after_it_is_handed_over() {
-        let t0 = Instant::now();
+        let t0 = crate::clock::now();
         let shown = Some((t0, REFRESH));
         assert_eq!(seen_at(t0 + Duration::from_millis(5), shown), Some(t0 + REFRESH));
         assert_eq!(seen_at(t0 + REFRESH + Duration::from_millis(1), shown), Some(t0 + REFRESH * 2));
@@ -7578,7 +7593,7 @@ mod motion_tests {
     /// between when they were made, it is not.
     #[test]
     fn springs_move_by_the_time_frames_are_seen_not_made() {
-        let t0 = Instant::now();
+        let t0 = crate::clock::now();
         let start = |_: ()| {
             let mut a = Animated::at(0.0, Spring::LIVELY);
             a.target = 100.0;

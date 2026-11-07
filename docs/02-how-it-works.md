@@ -166,6 +166,17 @@ If no property is moving and no behavior is alive, the renderer does not paint: 
 ./target/release/pleamar --mouse "360,90@500 500,172@1100 click@3200 out@4500"
 ```
 
+To see it without a screen, film it: on a virtual clock, so the same scene and script give the same frames on any machine, and as fast as the card paints them:
+
+```sh
+./target/release/pleamar --scene launcher.plm --film /tmp/look --seconds 2      # a PNG a frame
+./target/release/pleamar --scene launcher.plm --film demo.mp4 \
+    --mouse "emit:toggle@300 type:fire@900 key:Down@1700 key:Escape@2400"     # a video, keys drawn on it
+./target/release/pleamar --scene launcher.plm --film /tmp/look --record sel   # its values, frame by frame, the same every time
+```
+
+A film is not a sandbox: the logic does what it does, so an Enter in a launcher launches the program.
+
 It comes up where the scene asks; `--screen NAME` puts it on another monitor. The graph at the bottom is one bar per frame; the red band is the time with the logic blocked. **Do not measure while capturing with `grim`**: it causes dropped frames.
 
 ## Known debts
