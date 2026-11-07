@@ -1209,7 +1209,10 @@ impl<'a> Compiler<'a> {
     fn zone_springs_for(&mut self, local: &str) {
         let interpolated = self.interpolate(local);
         let suffix = self.copy_suffix();
-        let mut g = if !suffix.is_empty() && !local.contains('$') { format!("{interpolated}{suffix}") } else { interpolated.clone() };
+        // The same name `declare` gives the zone: inside a component's copy a `$` name is
+        // the copy's too (B12, as M20: every copy's `tabs.$i` was one zone and one rule).
+        let in_component = self.scopes.iter().any(|e| e.instance.is_some());
+        let mut g = if !suffix.is_empty() && (!local.contains('$') || in_component) { format!("{interpolated}{suffix}") } else { interpolated.clone() };
         if let Some(mark) = self.screen_mark().filter(|m| !g.contains(m.as_str())) {
             g = format!("{g}{mark}");
         }

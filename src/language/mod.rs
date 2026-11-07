@@ -551,6 +551,24 @@ mod tests {
     }
 
     #[test]
+    fn zones_in_a_component_are_each_copys() {
+        // Two copies of a component, each with three zones in a `repeat` (`opt.$i`) and a rule
+        // on each: six zones and six rules on six different zones, not three shared (B12).
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/zones-per-copy.plm")).unwrap();
+        let zones: Vec<&str> = scene.zones.iter().map(|z| z.id).filter(|id| id.starts_with("opt.")).collect();
+        assert_eq!(zones.len(), 6, "{zones:?}");
+        let mut pressed: Vec<u32> = scene.rules.iter().filter_map(|r| match r.when { crate::scene::Trigger::Press(z) => Some(z.0), _ => None }).collect();
+        assert_eq!(pressed.len(), 6, "a rule a zone");
+        pressed.sort_unstable();
+        pressed.dedup();
+        assert_eq!(pressed.len(), 6, "each copy's rule on its own zone");
+        // And each zone has its own springs (`opt.$i.hover`), named as the zone is.
+        for z in &zones {
+            assert!(scene.props.iter().any(|p| p.0 == format!("{z}.hover")), "{z}.hover");
+        }
+    }
+
+    #[test]
     fn a_parameter_called_time_does_not_wake_the_clock() {
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/time-parameter.plm")).unwrap();
         assert!(!scene.props.iter().any(|p| p.0 == "time"), "the scene's clock was not asked for");

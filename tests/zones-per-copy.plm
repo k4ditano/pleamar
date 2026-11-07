@@ -1,0 +1,19 @@
+// expect: ok
+language 0.9
+// Two copies of a component with zones in a `repeat`: each copy's are its own (B12).
+scene Pickers {
+    surface { size: 300, 80 }
+    event picked
+    component Pick(press: event) {
+        size: 300, 30
+        repeat i in 0..3 {
+            box { at: 50 + i * 100, 15; size: 90, 26; corner: 8; color: #2c3033; opacity: 0.5 + opt.$i.hover * 0.5 }
+            zone box opt.$i { at: 50 + i * 100, 15; size: 90, 26; corner: 8; cursor: pointer }
+            on press opt.$i { emit press(i) }
+        }
+    }
+    column { at: 0, 0
+        Pick(picked)
+        Pick(picked)
+    }
+}
