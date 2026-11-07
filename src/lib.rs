@@ -15,6 +15,7 @@ mod skill;
 mod shaders;
 mod blur;
 mod shapes;
+mod soften;
 mod lsp;
 mod luau_types;
 pub mod gpu;

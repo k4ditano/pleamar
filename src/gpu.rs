@@ -108,9 +108,9 @@ pub struct DrawList {
     /// The images that are pictures of their own, not pieces of the atlas:
     /// which element, and which picture. Each is drawn with its texture bound.
     pub picture_marks: Vec<(u32, u32)>,
-    /// Where a glass that bends what is behind it starts among the elements:
-    /// where a scene that is the whole screen takes what it has painted so far
-    /// as what is behind (`lens::Own`).
+    /// Where each glass is among the elements (and each shader that reads
+    /// what is behind): where what the scene has painted so far is taken as
+    /// what is under it (`lens::Own`), for a glass to bend or to frost.
     pub glass_marks: Vec<u32>,
     /// Some particle is still alive: the scene must not rest.
     pub particles_alive: bool,
@@ -404,6 +404,12 @@ pub fn unmasked_byte(value: &str, in_dots: usize) -> usize {
     value.char_indices().nth(in_dots / MASK_DOT.len()).map_or(value.len(), |(i, _)| i)
 }
 
+/// How far a group's `blur: r` spreads what it holds: a gaussian of r / 2,
+/// to three of those, where what is left of it is too little to see.
+fn blur_spill(r: f32) -> f32 {
+    r.max(0.0) * 1.5
+}
+
 /// A group with opacity, while it is being filled.
 enum OpacityGroup {
     /// No layer needed: fully opaque, or there are no layers left. It multiplies and that is it.
@@ -602,6 +608,19 @@ const BLENDS: [wgpu::BlendState; 2] = [
     wgpu::BlendState {
         color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Dst, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
         alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
+    },
+];
+
+/// The veil's two draws (see `fs_veil_cut` in shape.wgsl): the first keeps
+/// 1 − coverage of what is there, colour and alpha alike; the second adds.
+const VEIL: [wgpu::BlendState; 2] = [
+    wgpu::BlendState {
+        color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
+        alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
+    },
+    wgpu::BlendState {
+        color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
+        alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
     },
 ];
 
@@ -1315,7 +1334,7 @@ impl DrawList {
         self.elements.len() / PER_ELEMENT
     }
 
-    /// Whether some glass that bends the light, in that piece of the plane,
+    /// Whether some glass, in that piece of the plane,
     /// has something of the scene's painted under it: an element drawn before
     /// it, seen, whose box crosses its own.
     fn glass_over_own(&self, v: [f32; 4]) -> bool {
@@ -2023,15 +2042,21 @@ impl DrawList {
         if e[40] > 0.0 || particles || glass {
             return Reach::Anywhere;
         }
-        let paints = (span.start..span.end).map(|k| {
-            let b = &self.elements[k as usize * PER_ELEMENT + 4..k as usize * PER_ELEMENT + 8];
-            [b[0], b[1], b[2], b[3]]
-        });
-        let Some(paints) = paints.reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]) else { return Reach::Nothing };
+        let Some(paints) = self.painted_by(span) else { return Reach::Nothing };
         // The blend reads its box, and a blur or a glow as far as its radius
         // around it; and a pixel more, between two.
-        let r = e[20].max(e[21]).max(0.0) + 2.0;
+        let r = blur_spill(e[20]).max(e[21]).max(0.0) + 2.0;
         Reach::Within(paints, [e[4] - r, e[5] - r, e[6] + r, e[7] + r])
+    }
+
+    /// Where the elements of a group paint, all of them together.
+    fn painted_by(&self, span: &Range<u32>) -> Option<[f32; 4]> {
+        (span.start..span.end)
+            .map(|k| {
+                let b = &self.elements[k as usize * PER_ELEMENT + 4..k as usize * PER_ELEMENT + 8];
+                [b[0], b[1], b[2], b[3]]
+            })
+            .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
     }
 
     /// Which edges the surface is attached to, which whoever requests it knows.
@@ -2583,7 +2608,7 @@ impl DrawList {
                         });
                         if let Some(bounds) = bounds {
                             // A blur and a glow spill out of what is inside: the box grows with them.
-                            let spill = fx.map_or(0.0, |f| f.blur.max(f.glow.0) * 1.5 + 2.0);
+                            let spill = fx.map_or(0.0, |f| blur_spill(f.blur).max(f.glow.0 * 1.5) + 2.0);
                             let bounds = [bounds[0] - spill, bounds[1] - spill, bounds[2] + spill, bounds[3] + spill];
                             let before = self.element_count();
                             if let Some(f) = fx.filter(|f| f.mode >= 2) {
@@ -2669,9 +2694,9 @@ impl DrawList {
                     let lens = glass_spec.as_ref().is_some_and(|v| v.lens.is_true(c));
                     if v * a * layered > GLASS_VISIBLE {
                         self.request_glass(&g.flats, &clips, lens);
-                        if lens {
-                            self.glass_marks.push(self.element_count() as u32);
-                        }
+                        // Any glass: one that bends takes what the scene painted under it as what
+                        // is behind, and one that does not frosts it (a veil, see `fs_veil_cut`).
+                        self.glass_marks.push(self.element_count() as u32);
                     }
                     self.element(0.0, bounds, &clips, |e| {
                         affine.encode(&mut e[44..52]);
@@ -2729,9 +2754,9 @@ impl DrawList {
                     let lens = glass_spec.as_ref().is_some_and(|v| v.lens.is_true(c));
                     if v * a * layered > GLASS_VISIBLE {
                         self.request_glass(&[p], &clips, lens);
-                        if lens {
-                            self.glass_marks.push(self.element_count() as u32);
-                        }
+                        // Any glass: one that bends takes what the scene painted under it as what
+                        // is behind, and one that does not frosts it (a veil, see `fs_veil_cut`).
+                        self.glass_marks.push(self.element_count() as u32);
                     }
                     let k = self.push_shape(p, 0.0);
                     let rgb = color(col);
@@ -3331,6 +3356,8 @@ pub struct Sheet {
     uniforms: wgpu::Buffer,
     uniform_group: wgpu::BindGroup,
     layer_views: Vec<wgpu::TextureView>,
+    /// Where its blurred groups are blurred (see `soften`).
+    soft: crate::soften::Levels,
     layer_group: wgpu::BindGroup,
     /// How many layers it has of the surface's size (0: only the dummy one),
     /// and how many frames it has gone without using any.
@@ -3441,9 +3468,14 @@ pub struct Gpu {
     /// screen` or `mode: multiply` is drawn with one of these. See `BLENDS`.
     screen: wgpu::RenderPipeline,
     multiply: wgpu::RenderPipeline,
+    /// A glass's veil over what the scene painted under it: what takes it
+    /// away as far as the glass covers, and what adds it frosted. See `VEIL`.
+    veil: [wgpu::RenderPipeline; 2],
     /// Transparent over whatever is there, blending nothing: what empties the
     /// piece painted again before painting it (a clear ignores the scissor).
     erase: wgpu::RenderPipeline,
+    /// What blurs a group's layer in place (`blur:`).
+    soften: crate::soften::Soften,
     pipeline_layout: wgpu::PipelineLayout,
     /// The scene's own shaders, as they went into `pipeline`.
     user_code: String,
@@ -3714,7 +3746,7 @@ impl Gpu {
         // layout, and every bind group already made keeps being valid for it.
         let pipeline_layout = Self::pipeline_layout(&device);
         let base = crate::shaders::generate(&[]);
-        let [pipeline, particles, screen, multiply] = Self::build_pipeline(&device, &pipeline_layout, format, &base, false).expect("pleamar's own shader does not compile");
+        let [pipeline, particles, screen, multiply, veil_cut, veil_add] = Self::build_pipeline(&device, &pipeline_layout, format, &base, false).expect("pleamar's own shader does not compile");
         // A single atlas for glyphs and images. 2048² in RGBA is 16 MB; it
         // grows taller only when what is seen does not fit (`fit_atlas`).
         let (atlas, atlas_view) = Self::atlas_texture(&device, ATLAS_SIZE);
@@ -3725,6 +3757,7 @@ impl Gpu {
         let limit = device.limits().max_storage_buffer_binding_size as usize / 4;
         let no_layers_group = Self::make_layers(&device, &pipeline, format, 1, 1, 1).1;
         let erase = Self::erase_pipeline(&device, format);
+        let soften = crate::soften::Soften::new(&device, format);
         let lens = crate::lens::Pipelines::new(&device);
         let blur = crate::blur::Built::new(&device, crate::blur::default_plan(), 1).expect("the default blur builds");
         let blur_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -3747,7 +3780,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { _gl_instance: gl_instance, lens, blur, blur_sampler, blur_values: crate::blur::DEFAULT_VALUES, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, lens_image: Default::default(), built_for_image: false, lens_epoch: 0, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, backdrop_sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group, no_picture_view, pictures: Default::default() };
+        let mut g = Gpu { _gl_instance: gl_instance, lens, blur, blur_sampler, blur_values: crate::blur::DEFAULT_VALUES, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, veil: [veil_cut, veil_add], erase, soften, pipeline_layout, user_code: base, lens_image: Default::default(), built_for_image: false, lens_epoch: 0, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, backdrop_sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group, no_picture_view, pictures: Default::default() };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -3814,7 +3847,7 @@ impl Gpu {
     /// pleamar's shader with the scene's own ones added. An error comes back as
     /// text instead of bringing the program down: they were checked when the
     /// scene was read, but a driver can still say no.
-    fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str, picture: bool) -> Result<[wgpu::RenderPipeline; 4], String> {
+    fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str, picture: bool) -> Result<[wgpu::RenderPipeline; 6], String> {
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         // With a picture for a backdrop (`lens = image`) the glass is all bent picture: the
         // 12 % that lets what is really behind through is cancelled by subtracting the backdrop, which is
@@ -3846,6 +3879,8 @@ impl Gpu {
             make("particles", "vs_particle", "fs_particle", over),
             make("screen", "vs", "fs", BLENDS[0]),
             make("multiply", "vs", "fs", BLENDS[1]),
+            make("veil: cut", "vs", "fs_veil_cut", VEIL[0]),
+            make("veil: add", "vs", "fs_veil_add", VEIL[1]),
         ];
         match pollster::block_on(scope.pop()) {
             None => Ok(pipelines),
@@ -3885,11 +3920,11 @@ impl Gpu {
         }
         self.built_for_image = picture;
         match Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &code, picture) {
-            Ok([p, q, sc, mu]) => (self.pipeline, self.particles, self.screen, self.multiply) = (p, q, sc, mu),
+            Ok([p, q, sc, mu, vc, va]) => (self.pipeline, self.particles, self.screen, self.multiply, self.veil) = (p, q, sc, mu, [vc, va]),
             Err(e) => {
                 eprintln!("shader · the scene's own shaders could not be built, and they are not painted: {e}");
-                if let Ok([p, q, sc, mu]) = Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &crate::shaders::generate(&[]), picture) {
-                    (self.pipeline, self.particles, self.screen, self.multiply) = (p, q, sc, mu);
+                if let Ok([p, q, sc, mu, vc, va]) = Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &crate::shaders::generate(&[]), picture) {
+                    (self.pipeline, self.particles, self.screen, self.multiply, self.veil) = (p, q, sc, mu, [vc, va]);
                 }
             }
         }
@@ -4084,7 +4119,7 @@ impl Gpu {
         let (layer_views, layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
         let mut l = Sheet {
             id: n.id, frame_no: 0, painted_as: Vec::new(), damage_log: Default::default(), known_as: (0, (0, 0)), kept: None, idle_kept_frames: 0, name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, unseen: false, missed: 0, cleared: false, view: n.view,
-            target: n.target, spare: None, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, own: None, idle_own_frames: 0, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, glass_rects: Vec::new(), glass_src: Vec::new(), asked_box: [0; 4], capture_asked: std::time::Instant::now(), rate_last: None, capture_taken: long_ago(), capture_owed: false, capture_forced: false, captures_lost: 0, glass_grew: false, watch_replaced: false, owed_damage: Vec::new(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], presented: false, keyboard_mode: None,
+            target: n.target, spare: None, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, soft: Default::default(), layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, own: None, idle_own_frames: 0, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, glass_rects: Vec::new(), glass_src: Vec::new(), asked_box: [0; 4], capture_asked: std::time::Instant::now(), rate_last: None, capture_taken: long_ago(), capture_owed: false, capture_forced: false, captures_lost: 0, glass_grew: false, watch_replaced: false, owed_damage: Vec::new(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], presented: false, keyboard_mode: None,
         };
         // Frames of our own where the platform makes them, so the compositor
         // is told which piece of each changed: a swapchain's are handed over
@@ -4868,6 +4903,8 @@ impl Gpu {
         let v = l.view.bounds();
         let needed = d.offscreen_groups.iter().filter(|(t, _)| d.touches_view(t, v)).map(|(_, c)| *c as u32 + 1).max().unwrap_or(0);
         self.ensure_layers(l, needed);
+        self.soften.new_frame();
+        crate::soften::Soften::fit(&mut l.soft, l.px);
         // The lens, if it shows glass and the screen lets a canvas be copied onto it.
         // A monitor of pleamar-wm's own has nothing behind it to capture: what
         // is behind its glass is what it painted itself before it.
@@ -4901,8 +4938,8 @@ impl Gpu {
         // unmixed background. It needs the canvas, so only with a lens; and
         // only while some glass is over something, so a glass with nothing of
         // ours under it costs what it did.
-        let glass = l.wants_lens && !d.glass_marks.is_empty();
-        let over_own = glass && !whole_screen && l.lens.is_some() && d.glass_over_own(v);
+        let glass = !d.glass_marks.is_empty();
+        let over_own = glass && !whole_screen && d.glass_over_own(v);
         if glass && (whole_screen || over_own) {
             l.idle_own_frames = 0;
             if l.own.as_ref().is_none_or(|o| o.px != l.px || o.blur_generation() != self.blur.generation) {
@@ -4918,7 +4955,23 @@ impl Gpu {
         let with_own = whole_screen || over_own;
         let mut u = uniforms.to_vec();
         u[3] = l.scale;
-        u[128] = (l.lens.as_ref().is_some_and(|x| x.ready) || (with_own && l.own.is_some())) as u8 as f32;
+        // A glass bends what is behind it when that is known: captured, or all
+        // the scene's own on a monitor of pleamar-wm's. Otherwise what the scene
+        // painted under it is veiled (frosted in place), and the rest is the compositor's.
+        let behind_known = l.lens.as_ref().is_some_and(|x| x.ready) || (whole_screen && l.own.is_some());
+        u[128] = behind_known as u8 as f32;
+        let veils: Vec<u32> = if with_own && l.own.is_some() {
+            d.glass_marks
+                .iter()
+                .copied()
+                .filter(|&k| {
+                    let e = &d.elements[k as usize * PER_ELEMENT..(k as usize + 1) * PER_ELEMENT];
+                    e[0] == 0.0 && e[40] > 0.0 && (e[42] < 0.5 || !behind_known)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let (v, o) = (l.view.size, l.view.origin);
         (u[0], u[1], u[4], u[7]) = (v.0, v.1, o.0, o.1);
         self.queue.write_buffer(&l.uniforms, 0, bytemuck::cast_slice(&u));
@@ -5110,6 +5163,7 @@ impl Gpu {
                 let mut special: Vec<(u32, u32, u8)> = d.particle_marks.iter().filter(|(at, _)| t.contains(at)).map(|&(at, n)| (at, n, 0)).collect();
                 special.extend(d.blend_marks.iter().filter(|(at, _)| t.contains(at)).map(|&(at, m)| (at, 1, m)));
                 special.extend(d.picture_marks.iter().filter(|(at, _)| t.contains(at)).map(|&(at, page)| (at, page, 4)));
+                special.extend(veils.iter().filter(|at| t.contains(at)).map(|&at| (at, 1, 5)));
                 special.sort_by_key(|s| s.0);
                 for (at, count, how) in special {
                     if at > from {
@@ -5119,6 +5173,15 @@ impl Gpu {
                         0 => {
                             pass.set_pipeline(&self.particles);
                             pass.draw(0..6, at * PARTICLE_SLOTS..at * PARTICLE_SLOTS + count);
+                        }
+                        // A glass over what the scene painted: that, frosted in its place, then the glass.
+                        5 => {
+                            for veil in &self.veil {
+                                pass.set_pipeline(veil);
+                                pass.draw(0..6, at..at + 1);
+                            }
+                            pass.set_pipeline(&self.pipeline);
+                            pass.draw(0..6, at..at + 1);
                         }
                         // A picture of its own (`count`: which), with its texture bound.
                         4 => {
@@ -5289,7 +5352,7 @@ impl Gpu {
                                     if e[40] > 0.5 {
                                         return None;
                                     }
-                                    reach = reach.max(e[20].max(e[21]));
+                                    reach = reach.max(blur_spill(e[20]).max(e[21]));
                                 }
                                 let m = (reach * l.scale).ceil() as u32 + 2;
                                 let (x0, y0) = (x.saturating_sub(m), y.saturating_sub(m));
@@ -5297,6 +5360,24 @@ impl Gpu {
                                 Some([x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0)])
                             });
                             pass_to(&mut encoder, view, &self.no_layers_group, &spans, false, cut, false);
+                            // Those blurred, blurred in place before they are blended.
+                            for span in &spans {
+                                let at = span.end as usize * PER_ELEMENT;
+                                let Some(e) = d.elements.get(at..at + PER_ELEMENT) else { continue };
+                                if e[20] * l.scale < 0.5 {
+                                    continue;
+                                }
+                                let Some(b) = d.painted_by(span) else { continue };
+                                let spill = blur_spill(e[20]);
+                                let o = l.view.bounds();
+                                let px = |x: f32, origin: f32, up: bool| (if up { ((x - origin) * l.scale).ceil() } else { ((x - origin) * l.scale).floor() }) as i32;
+                                let mut area = [px(b[0] - spill, o[0], false), px(b[1] - spill, o[1], false), px(b[2] + spill, o[0], true), px(b[3] + spill, o[1], true)];
+                                // Only where the layer was painted this frame.
+                                if let Some([x, y, w, h]) = cut {
+                                    area = [area[0].max(x as i32), area[1].max(y as i32), area[2].min((x + w) as i32), area[3].min((y + h) as i32)];
+                                }
+                                self.soften.run(&self.device, &self.queue, &mut encoder, &l.soft, view, area, e[20] * l.scale * 0.5);
+                            }
                         }
                     }
                 }

@@ -229,6 +229,7 @@ A `group` can also treat what it holds as one thing: `blur: 6`, `glow: 14, 90%,
 mint` (or without a colour, a bloom), `saturation`, `brightness`, `contrast`,
 `hue: 120deg`, `mask: x1, y1 to x2, y2` / `mask: radial x, y radius r1 to r2`,
 `mode: add | screen | multiply` (multiply only darkens what the scene painted). All animatable; §8.2. Two groups with effects cannot nest.
+`blur: r` is a real gaussian (r / 2, reaching 1.5 r) and a wide one costs no more than a narrow one.
 
 Particles are an element: `particles { at: x, y; count: 400; life: 0.8s .. 1.6s;
 speed: 120 .. 220; direction: -90deg; spread: 40deg; gravity: 0, 260; size: 3, 1;
@@ -290,8 +291,8 @@ pleamar --scene scene.plm --film /tmp/look --seconds 2         # /tmp/look/frame
 pleamar --scene scene.plm --film /tmp/demo.mp4 --mouse "emit:toggle@300 200,40@600 click@800 type:hola@1200 key:Ctrl+z@2000"
 ```
 
-Only the scene's own surfaces are filmed (no popups, a glass shows nothing
-behind it). A film is not a sandbox: its logic runs for real, so a script that
+Only the scene's own surfaces are filmed (no popups; a glass sees what its
+scene painted under it, not the desktop). A film is not a sandbox: its logic runs for real, so a script that
 presses Enter in a launcher launches the program. For those, or to see it beside programs' windows, run it inside a
 screenless pleamar-wm and read the picture it writes:
 

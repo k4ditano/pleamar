@@ -434,6 +434,34 @@ fn instruments(p: vec2<f32>) -> vec4<f32> {
 
 @fragment
 fn fs(e: VertexOut) -> @location(0) vec4<f32> {
+    return shade(e);
+}
+
+// ── a veil over what the scene painted under a glass ──────────────
+// A glass with nothing real behind it to bend (no capture: `lens: false`, a
+// compositor without screencopy, a frame before the first one) still has what
+// the scene painted under it, which is known: right before the glass it is
+// taken and frosted (`lens::Own`). Two draws of the glass put it in place of
+// what is there, exactly, before the glass is drawn as usual on top: the first
+// takes away as much of what is under it as the glass covers, the second adds
+// that much of it frosted. What the scene left transparent stays so, and the
+// compositor blurs the desktop there as before.
+var<private> veil_cov: f32 = 0.0;
+
+@fragment
+fn fs_veil_cut(e: VertexOut) -> @location(0) vec4<f32> {
+    let c = shade(e);
+    return vec4<f32>(0.0, 0.0, 0.0, veil_cov);
+}
+
+@fragment
+fn fs_veil_add(e: VertexOut) -> @location(0) vec4<f32> {
+    let c = shade(e);
+    let size = u.header.xy * u.header.w;
+    return textureSampleLevel(backdrop_blurred, backdrop_sampler, e.pos.xy / size, 0.0) * veil_cov;
+}
+
+fn shade(e: VertexOut) -> vec4<f32> {
     // The position arrives in real pixels; the scene thinks in logical ones.
     let p = e.pos.xy / u.header.w + u.hud.xw;
     let el = elements[e.element];
@@ -816,6 +844,7 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
     } else {
         // Without it, the fill is a tint: it lets what is behind show through
         // (which the compositor blurs) and keeps its colour; and on top, its light.
+        veil_cov = coverage(d) * alpha * glass;
         c = over(c, tone, edge_coverage(d, tone) * alpha * mix(1.0, 0.36, glass));
         // Smoke and milk over what the compositor blurs, which we never see:
         // a veil of black or of white, as near as it gets.
@@ -865,7 +894,7 @@ fn layer_with_effects(el: Element, at: vec2<f32>, p: vec2<f32>, alpha: f32) -> v
     var c = textureLoad(layers, vec2<i32>(at), layer, 0);
     // A shader of the scene's: what it holds, as that shader sees it.
     if (el.uv.x > 0.5) { c = user_layer_shader(el, p, layer); }
-    if (el.light.x > 0.25) { c = layer_blurred(layer, at, el.light.x * scale); }
+    // Its `blur` is already in the layer: blurred in place before this (see soften.rs).
     // The glow goes under what is inside: light that spills from its edges.
     if (el.light.y > 0.25 && el.color0.w > 0.0) {
         let g = layer_blurred(layer, at, el.light.y * scale);

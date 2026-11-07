@@ -622,7 +622,9 @@ picture, a text, another shape— sees that as well, in front of what is behind
 the surface: it is what the scene painted itself, so it is known exactly, and
 a lens over an opaque picture bends the picture. (A glass with nothing of the
 scene's under it costs what it did.) Where it cannot be done (another
-system, a compositor without screencopy),
+system, a compositor without screencopy, `lens: false`), what the scene painted
+under the glass is frosted by pleamar all the same —it knows it exactly—, put in
+its place as far as the glass covers; and for the rest
 **the compositor is asked to blur what is
 behind the silhouette** instead, following its shape in 2 px strips —a round thing
 gets round blur, not a square—, through the standard `ext-background-effect`
@@ -1064,7 +1066,7 @@ scene Effects {
 
 | | |
 | --- | --- |
-| `blur: r` | out of focus, over `r` pixels |
+| `blur: r` | out of focus: a gaussian of `r / 2`, so it reaches about `1.5 r` past what the group holds. Wide is no dearer than narrow |
 | `glow: r, amount` · `glow: r, amount, color` | a light spilling from its edges, under what it holds: with a colour, a halo of that colour; without one, a *bloom* of its own colours. `amount` can go over 100 % |
 | `saturation: s` | 0 is grey, 1 as it is, more than 1 more vivid |
 | `brightness: b` · `contrast: k` | 1 is as it is |
@@ -1078,8 +1080,9 @@ All of them are expressions, so they animate like anything else: `blur: 8 * (1
 - open)` brings something into focus as it opens. The mask moves with the group
 (`move:`, `rotate:`). Each group with effects is painted into a layer right
 before it is blended, one after another, so there can be as many as the scene
-wants; what they cost is the pixels they cover, and `blur` and `glow` read 32
-points per pixel.
+wants; what they cost is the pixels they cover. `glow` reads 32 points per pixel;
+`blur` blurs the layer in a few passes at a fraction of its size (a whole
+1920 × 1080 screen blurred costs a card like an RTX 2060 about a millisecond).
 
 Two groups with effects cannot go **one inside the other** —only the outer one
 would get them, and so it is an error—; side by side, as many as needed. A group
