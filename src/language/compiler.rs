@@ -1250,8 +1250,13 @@ impl<'a> Compiler<'a> {
         let from_scene = self.scopes.last().is_some_and(|e| e.suffix.starts_with("#screen"))
             && (self.texts.contains_key(&interpolated) || self.facts.contains_key(&interpolated) || self.props.contains_key(&interpolated) || self.lets.contains_key(&interpolated));
         let suffix = self.copy_suffix();
+        // A name with `$` (`cell.$i`) stays the scene's, readable from anywhere as
+        // `cell.3`; but inside a component's copy it is that copy's, as its other
+        // names are: two `TableRow`s measured their cells in one `cell.0`, and every
+        // chip of a column was as long as the last row's word (M20).
+        let in_component = self.scopes.iter().any(|e| e.instance.is_some());
         match self.scopes.last_mut().map(Rc::make_mut) {
-            Some(e) if !e.suffix.is_empty() && !local.contains('$') && !from_scene => {
+            Some(e) if !e.suffix.is_empty() && (!local.contains('$') || in_component) && !from_scene => {
                 let g = format!("{interpolated}{suffix}");
                 e.alias.insert(interpolated, g.clone());
                 g

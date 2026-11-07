@@ -1,0 +1,18 @@
+// expect: ok
+language 0.9
+// A component measuring its words in a `repeat`: each copy measures its own (M20).
+scene Rows {
+    surface { size: 300, 100 }
+    component Pills(a: text, b: text) {
+        size: 300, 30
+        repeat i in 0..2 {
+            measure cell.$i
+            box { at: 10 + i * 150 + cell.$i.width / 2, 15; size: cell.$i.width + 16, 22; corner: 11; color: #74b9ff; opacity: 18% }
+            text pick(i, a, b) { measure: cell.$i; at: 18 + i * 150, 15; anchor: left center; size: 13; color: #74b9ff }
+        }
+    }
+    column { at: 0, 0
+        Pills("Golio", "Listo")
+        Pills("Planipro", "En revisión")
+    }
+}

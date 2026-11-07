@@ -551,6 +551,22 @@ mod tests {
     }
 
     #[test]
+    fn a_measure_in_a_component_is_each_copys() {
+        // Two copies of a component, each measuring two words in a `repeat` (`measure cell.$i`):
+        // four measures, not two shared by both (M20: a table's chips all as long as the last row's word).
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/measure-per-copy.plm")).unwrap();
+        let widths: Vec<_> = scene.instrs.iter().filter_map(|i| match i {
+            crate::scene::Instr::Text { measure: Some((w, _)), .. } => Some(*w),
+            _ => None,
+        }).collect();
+        assert_eq!(widths.len(), 4, "four texts measured");
+        let mut unique = widths.clone();
+        unique.sort_by_key(|p| p.0);
+        unique.dedup();
+        assert_eq!(unique.len(), 4, "each copy measures its own: {widths:?}");
+    }
+
+    #[test]
     fn a_chain_of_lets_from_the_screen_is_computed_once_per_copy() {
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/chained-lets-per-screen.plm")).unwrap();
         // Each link names the previous one twice: substituted, the last one was
