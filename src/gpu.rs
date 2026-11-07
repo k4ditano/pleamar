@@ -3151,7 +3151,7 @@ impl DrawList {
                     // With `images:`, a picture alone on its line takes as many lines as it is tall.
                     let picture_lines = style.images.map_or(0, |h| (h / (style.px * style.line_height)).ceil().max(1.0) as u32);
                     let (text, md_marks, md_links, md_pictures, md_code) = if style.markdown {
-                        let r = crate::markdown::read(&text, picture_lines, style.code_block.is_some());
+                        let r = crate::markdown::read(&text, crate::markdown::Options { picture_lines, boxed: style.code_block.is_some(), paragraph: style.paragraph.is_some(), list_indent: style.list_indent });
                         (std::borrow::Cow::Owned(r.text), r.marks, r.links, r.pictures, r.code)
                     } else {
                         (text, Vec::new(), Vec::new(), Vec::new(), Vec::new())
@@ -3181,6 +3181,7 @@ impl DrawList {
                     } else {
                         LayoutKey::marked(text.to_string(), laid, style, width.as_ref().map(|w| w.eval(c)))
                     };
+                    let key = key.paragraphed(style.paragraph.filter(|_| style.markdown));
                     // And what is in a colour of its own: what the markdown marks, in the
                     // colours the text gives it, then each mark; where they meet, the last.
                     let mut paints: Vec<(u32, u32, [f32; 3])> = Vec::new();

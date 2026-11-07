@@ -165,6 +165,9 @@ pub struct LayoutKey {
     max_lines: Option<usize>,
     /// As wide as its longest line, not its `width` (`Style::tight`).
     tight: bool,
+    /// `paragraph:`: how tall a blank line between blocks is (an f32's bits); its
+    /// lines that are a lone space are that tall (see `crate::markdown::Options`).
+    paragraph: Option<u32>,
     /// Stretches of it (byte ranges) bold, italic or code: `crate::markdown`.
     marks: Vec<(u32, u32, u8)>,
 }
@@ -173,7 +176,7 @@ impl LayoutKey {
     pub fn new(text: &str, e: &Style, width: Option<f32>) -> LayoutKey {
         LayoutKey {
             text: text.to_owned(), family: e.family, px: e.px.to_bits(), weight: e.weight, line_height: e.line_height.to_bits(),
-            width: width.map(|a| a.round().max(1.0) as u32), align: e.align, max_lines: e.max_lines, tight: e.tight, marks: Vec::new(),
+            width: width.map(|a| a.round().max(1.0) as u32), align: e.align, max_lines: e.max_lines, tight: e.tight, paragraph: None, marks: Vec::new(),
         }
     }
 
@@ -187,6 +190,12 @@ impl LayoutKey {
     /// The same, in another family (`None`: the system sans).
     pub fn familied(mut self, family: Option<&'static str>) -> LayoutKey {
         self.family = family;
+        self
+    }
+
+    /// The same, with its blank lines that tall (`paragraph:` on a markdown text).
+    pub fn paragraphed(mut self, h: Option<f32>) -> LayoutKey {
+        self.paragraph = h.map(f32::to_bits);
         self
     }
 
@@ -324,7 +333,8 @@ impl Typesetter {
             TextAlign::Center => Align::Center,
             TextAlign::Right => Align::Right,
         };
-        if c.marks.is_empty() {
+        let paragraph = c.paragraph.map(f32::from_bits);
+        if c.marks.is_empty() && paragraph.is_none() {
             buffer.set_text(&c.text, &attrs, Shaping::Advanced, Some(align));
         } else {
             // The marked stretches with their looks, and what is between them plain.
@@ -341,20 +351,49 @@ impl Typesetter {
                 }
                 a
             };
-            let mut spans = Vec::with_capacity(c.marks.len() * 2 + 1);
+            let mut spans: Vec<(usize, usize, Attrs)> = Vec::with_capacity(c.marks.len() * 2 + 1);
             let mut at = 0usize;
             for &(from, to, m) in &c.marks {
                 let (from, to) = (from as usize, to as usize);
                 if from > at {
-                    spans.push((&c.text[at..from], attrs.clone()));
+                    spans.push((at, from, attrs.clone()));
                 }
-                spans.push((&c.text[from..to], look(m)));
+                spans.push((from, to, look(m)));
                 at = to;
             }
             if at < c.text.len() {
-                spans.push((&c.text[at..], attrs.clone()));
+                spans.push((at, c.text.len(), attrs.clone()));
             }
-            buffer.set_rich_text(spans, &attrs, Shaping::Advanced, Some(align));
+            // `paragraph:`: a line that is a lone space (a blank line between blocks) is
+            // that tall, not a whole line: its space is cut out of the span it is in.
+            if let Some(h) = paragraph {
+                let short = Metrics::new(h.min(px).max(1.0), h.max(1.0));
+                let mut start = 0usize;
+                let mut blanks = Vec::new();
+                for line in c.text.split('\n') {
+                    if line == " " {
+                        blanks.push((start, start + 1));
+                    }
+                    start += line.len() + 1;
+                }
+                for (a, b) in blanks {
+                    if let Some(k) = spans.iter().position(|s| s.0 <= a && b <= s.1) {
+                        let (s0, s1, at) = spans.remove(k);
+                        let mut parts = Vec::new();
+                        if s0 < a {
+                            parts.push((s0, a, at.clone()));
+                        }
+                        parts.push((a, b, at.clone().metrics(short)));
+                        if b < s1 {
+                            parts.push((b, s1, at));
+                        }
+                        for (i, p) in parts.into_iter().enumerate() {
+                            spans.insert(k + i, p);
+                        }
+                    }
+                }
+            }
+            buffer.set_rich_text(spans.iter().map(|(a, b, at)| (&c.text[*a..*b], at.clone())), &attrs, Shaping::Advanced, Some(align));
         }
         buffer.shape_until_scroll(&mut self.fonts, false);
 

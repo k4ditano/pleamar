@@ -62,6 +62,8 @@ pub struct CodeBlock {
 thread_local! {
     /// Whether fenced blocks are shown as blocks while a text is read (`code_block:`).
     static BOXED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SHORT_BLANKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static LIST_INDENT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static CODE_BLOCKS: std::cell::RefCell<Vec<CodeBlock>> = const { std::cell::RefCell::new(Vec::new()) };
     /// How many lines a picture takes while a text is read (0: pictures are their words).
     static PICTURE_LINES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
@@ -71,7 +73,7 @@ thread_local! {
 /// The same, and with `lines` above 0, each picture alone on its line is room of
 /// that many empty lines for it to be painted in (`images:` on the text).
 pub fn plain_with_pictures(source: &str, lines: u32) -> (String, Vec<(u32, u32, u8)>, Vec<(u32, u32, String)>, Vec<Picture>) {
-    let r = read(source, lines, false);
+    let r = read(source, Options { picture_lines: lines, ..Default::default() });
     (r.text, r.marks, r.links, r.pictures)
 }
 
@@ -86,11 +88,29 @@ pub struct Read {
     pub code: Vec<CodeBlock>,
 }
 
-pub fn read(source: &str, picture_lines: u32, boxed: bool) -> Read {
-    BOXED.with(|b| b.set(boxed));
+/// How a text with `markdown:` asks to be read.
+#[derive(Clone, Copy, Default)]
+pub struct Options {
+    /// How many lines a picture alone on its line takes (`images:`); 0, its words.
+    pub picture_lines: u32,
+    /// Fenced blocks as blocks (`code_block:`).
+    pub boxed: bool,
+    /// A blank line between blocks as a lone space, for the layout to make it as
+    /// tall as `paragraph:` says (a line that is only a space).
+    pub paragraph: bool,
+    /// Spaces before every point of a list, the first level too (`list_indent:`).
+    pub list_indent: usize,
+}
+
+pub fn read(source: &str, o: Options) -> Read {
+    BOXED.with(|b| b.set(o.boxed));
+    SHORT_BLANKS.with(|b| b.set(o.paragraph));
+    LIST_INDENT.with(|b| b.set(o.list_indent));
     CODE_BLOCKS.with(|c| c.borrow_mut().clear());
-    let (text, marks, links, pictures) = plain_with_pictures_inner(source, picture_lines);
+    let (text, marks, links, pictures) = plain_with_pictures_inner(source, o.picture_lines);
     BOXED.with(|b| b.set(false));
+    SHORT_BLANKS.with(|b| b.set(false));
+    LIST_INDENT.with(|b| b.set(0));
     Read { text, marks, links, pictures, code: CODE_BLOCKS.with(|c| std::mem::take(&mut *c.borrow_mut())) }
 }
 
@@ -211,7 +231,7 @@ fn blocks(source: &str) -> (String, Vec<(u32, u32, u8)>) {
         } else if is_rule(bare) {
             push(&mut out, &mut looks, "────────────────────────", QUOTE);
         } else if let Some(rest) = ["- ", "* ", "+ "].iter().find_map(|m| bare.strip_prefix(m)) {
-            push(&mut out, &mut looks, &"   ".repeat(depth), 0);
+            push(&mut out, &mut looks, &(" ".repeat(LIST_INDENT.with(|b| b.get())) + &"   ".repeat(depth)), 0);
             // `- [ ]` and `- [x]`: a box to tick, empty or ticked.
             let (mark, rest) = match rest.get(..4) {
                 Some("[ ] ") => ("☐ ", &rest[4..]),
@@ -221,12 +241,15 @@ fn blocks(source: &str) -> (String, Vec<(u32, u32, u8)>) {
             push(&mut out, &mut looks, mark, 0);
             inline(rest, 0, &mut out, &mut looks);
         } else if digits > 0 && (bare[digits..].starts_with(". ") || bare[digits..].starts_with(") ")) {
-            push(&mut out, &mut looks, &"   ".repeat(depth), 0);
+            push(&mut out, &mut looks, &(" ".repeat(LIST_INDENT.with(|b| b.get())) + &"   ".repeat(depth)), 0);
             push(&mut out, &mut looks, &bare[..digits + 2], 0);
             inline(&bare[digits + 2..], 0, &mut out, &mut looks);
         } else if let Some(rest) = bare.strip_prefix("> ") {
             push(&mut out, &mut looks, indent, 0);
             inline(rest, ITALIC | QUOTE, &mut out, &mut looks);
+        } else if line.trim().is_empty() && SHORT_BLANKS.with(|b| b.get()) {
+            // A blank line between blocks: a lone space, which the layout makes `paragraph:` tall.
+            push(&mut out, &mut looks, " ", 0);
         } else {
             inline(line, 0, &mut out, &mut looks);
         }
@@ -530,8 +553,14 @@ mod tests {
     }
 
     #[test]
+    fn blank_lines_short_and_lists_indented() {
+        let r = read("One.\n\nTwo:\n- a\n  - b", Options { paragraph: true, list_indent: 2, ..Default::default() });
+        assert_eq!(r.text, "One.\n \nTwo:\n  • a\n     ◦ b");
+    }
+
+    #[test]
     fn a_fenced_block_as_a_block() {
-        let r = read("Run:\n```sh\nnpm i\nnpm run build\n```\ndone", 0, true);
+        let r = read("Run:\n```sh\nnpm i\nnpm run build\n```\ndone", Options { boxed: true, ..Default::default() });
         assert_eq!(r.text, "Run:\nsh   Copy\n1  npm i\n2  npm run build\ndone");
         assert_eq!(r.code.len(), 1);
         let b = &r.code[0];

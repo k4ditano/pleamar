@@ -3983,6 +3983,22 @@ impl<'a> Compiler<'a> {
                 style.markdown_colors[k] = Some(self.color(c)?);
             }
         }
+        // `paragraph: 9.5`: with `markdown:`, a blank line between blocks that tall, not a whole line.
+        if let Some(c) = p.get_mut("paragraph") {
+            let h = self.constant(c, "a text's `paragraph:` (how tall a blank line is)")?;
+            if h < 0.0 {
+                return c.error("`paragraph:` is how tall a blank line between blocks is: 0 or more");
+            }
+            style.paragraph = Some(h);
+        }
+        // `list_indent: 2`: with `markdown:`, spaces before every point of a list, the first level too.
+        if let Some(c) = p.get_mut("list_indent") {
+            let n = self.constant(c, "a text's `list_indent:` (spaces before a list's points)")?;
+            if !(0.0..=16.0).contains(&n) {
+                return c.error("`list_indent:` is how many spaces go before a list's points: 0 to 16");
+            }
+            style.list_indent = n as usize;
+        }
         // `code_block: #1b1e22`: with `markdown:`, each fenced block in a box of that colour.
         if let Some(c) = p.get_mut("code_block") {
             style.code_block = Some(self.color(c)?);

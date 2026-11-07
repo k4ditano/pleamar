@@ -1271,6 +1271,10 @@ pub struct Style {
     /// `code_block: #1b1e22`: with `markdown:`, each fenced block in a box of that
     /// colour, with a head (its language and «Copy») and its lines numbered.
     pub code_block: Option<Color>,
+    /// `paragraph: 9.5`: with `markdown:`, how tall a blank line between blocks is.
+    pub paragraph: Option<f32>,
+    /// `list_indent: 2`: with `markdown:`, spaces before every point of a list.
+    pub list_indent: usize,
 }
 
 /// A stretch of a text marked in the scene: bytes of the text as it is shown
@@ -1289,7 +1293,7 @@ pub const MOST_MARKS: usize = 16;
 
 impl Style {
     pub fn new(px: f32, color: Color) -> Self {
-        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, tight: false, size: None, weight_of: None, lines_of: None, family_from: None, marks: Vec::new(), markdown_colors: [None, None, None, None, None], images: None, code_block: None }
+        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, tight: false, size: None, weight_of: None, lines_of: None, family_from: None, marks: Vec::new(), markdown_colors: [None, None, None, None, None], images: None, code_block: None, paragraph: None, list_indent: 0 }
     }
     pub fn weight(mut self, p: u16) -> Self {
         self.weight = p;
