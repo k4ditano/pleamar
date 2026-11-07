@@ -4,7 +4,7 @@ import "pleamar:ui"
 // A table from the library: each row a record with its cells as a list, as the logic split them.
 scene Tables {
     surface { size: 520, 220 }
-    model rows max 8 { list cells max 6 { text: text } }
+    model rows max 8 { list cells max 6 { text: text; chip: number } }
     Table(480, 3, columns: 3, a: "Workstream", b: "Owner", c: "Status") {
         move: 20, 20
         repeat r in rows { TableRow(r, 480, columns: 3) }

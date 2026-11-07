@@ -1399,8 +1399,8 @@ in a `row`, a `column` or a cell of a `grid`.
 | `Segmented(value, a, b, press, c: "…", count: 3, width: 240)` | two or three choices in a pill, with the chosen one's background sliding to it; `press` carries which one: `on pick_mode(v) { mode = v }` |
 | `Tile(title, value, press, w, h: 106)` | a plate that answers the mouse, with its name, its value and a ›; what goes in its round badge is whatever is put inside it |
 | `Card(w, h, padding: 16)` | a plate, and in a column inside it whatever is put inside it |
-| `Table(w, rows, columns: 3, a: "…", … f: "…", row: 34, head: 32)` | a table: its plate, its head (up to six columns, `a` to `f`) and a line between rows; its rows go inside it, one under another. For what a model writes as a markdown table, `markdown: true` lines it up in the text itself |
-| `TableRow(r, w, columns: 3, row: 34, tone: #…)` | a row of a `Table`: the cells of the record `r`, a list in it (`model rows max 20 { list cells max 6 { text: text } }`), each in its column, cut to one line |
+| `Table(w, rows, columns: 3, a: "…", … f: "…", row: 34, head: 32)` | a table: its plate with its border, its head (up to six columns, `a` to `f`), a line between rows and one between columns; its rows go inside it, one under another. For what a model writes as a markdown table, `markdown: true` lines it up in the text itself |
+| `TableRow(r, w, columns: 3, row: 34, tone: #…)` | a row of a `Table`: the cells of the record `r`, a list in it (`model rows max 20 { list cells max 6 { text: text; chip: number } }`), each in its column, cut to one line; a cell with `chip` 1 to 5 (blue, green, amber, red, violet) is a chip of that colour, 0 a plain one |
 
 All of them take `accent:` (the colour of what is on, in a `Table` its head's line), except `Card`.
 

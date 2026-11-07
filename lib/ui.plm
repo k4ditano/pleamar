@@ -79,18 +79,21 @@ library Ui {
         on press touch { emit press }
     }
 
-    //  A table: its plate, its head (up to six columns, `a` to `f`) and a line
-    //  between rows; its rows go inside it, one under another. Each row is a
-    //  record with its cells as a list, as the logic split them:
+    //  A table: its plate with its border, its head (up to six columns, `a`
+    //  to `f`), a line between rows and one between columns; its rows go
+    //  inside it, one under another. Each row is a record with its cells as a
+    //  list, as the logic split them; a cell with `chip` (1 blue, 2 green,
+    //  3 amber, 4 red, 5 violet) is shown as a chip:
     //
-    //      model rows max 20 { list cells max 6 { text: text } }
+    //      model rows max 20 { list cells max 6 { text: text; chip: number } }
     //      Table(480, rows.count, columns: 3, a: "Workstream", b: "Owner", c: "Status") {
     //          repeat r in rows { TableRow(r, 480, columns: 3) }
     //      }
     component Table(w: number, rows: number, columns: number = 3, a: text = "", b: text = "", c: text = "", d: text = "", e: text = "", f: text = "", row: number = 34, head: number = 32, accent: color = #9ed6bd) {
         size: w, head + rows * row
         let col = w / columns
-        box { at: w / 2, (head + rows * row) / 2; size: w, head + rows * row; corner: 12; color: #25282b }
+        let tall = head + rows * row
+        box { at: w / 2, tall / 2; size: w, tall; corner: 12; color: #25282b }
         box { at: w / 2, head / 2; size: w, head; corner: 12; color: #ffffff; opacity: 4% }
         repeat i in 0..6 {
             text pick(i, a, b, c, d, e, f) { show: i < columns; at: 12 + i * col, head / 2; anchor: left center; size: 11.5; weight: 600; width: col - 16; lines: 1; color: #f5f7f5; opacity: 70% }
@@ -99,18 +102,28 @@ library Ui {
         repeat k in 0..63 {
             box { show: k < rows - 1; at: w / 2, head + (k + 1) * row; size: w - 16, 1; color: #ffffff; opacity: 7% }
         }
+        repeat i in 1..6 {
+            box { show: i < columns; at: i * col, tall / 2; size: 1, tall - 12; color: #ffffff; opacity: 7% }
+        }
+        box { at: w / 2, tall / 2; size: w, tall; corner: 12; stroke: 1; color: #ffffff; opacity: 12% }
         column body {
             at: 0, head
             children
         }
     }
 
-    //  A row of a `Table`: the cells of its record (`r.cells`), each in its
-    //  column, cut to one line. `tone` is their colour.
+    //  A row of a `Table`: the cells of its record (`r.cells`: `text`, and
+    //  `chip` 0 for a plain cell), each in its column, cut to one line. `tone`
+    //  is the colour of the plain ones.
     component TableRow(r: record, w: number, columns: number = 3, row: number = 34, tone: color = #f5f7f5) {
         size: w, row
+        let col = w / columns
         repeat i in 0..6 {
-            text r.cells[i].text { show: i < columns; at: 12 + i * w / columns, row / 2; anchor: left center; size: 13; width: w / columns - 16; lines: 1; color: tone }
+            measure cell.$i
+            let chip = r.cells[i].chip
+            let hue = pick(max(chip - 1, 0), #74b9ff, #31cf76, #f5b041, #ff6b6b, #b48cff)
+            box { show: i < columns and chip > 0; at: 12 + i * col + cell.$i.width / 2, row / 2; size: cell.$i.width + 16, 22; corner: 11; color: hue; opacity: 18% }
+            text r.cells[i].text { show: i < columns; measure: cell.$i; at: 12 + i * col + if(chip > 0, 8, 0), row / 2; anchor: left center; size: 13; width: col - 24; lines: 1; tight: true; color: if(chip > 0, hue, tone) }
         }
     }
 
