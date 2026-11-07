@@ -390,6 +390,10 @@ pub struct PlacedField {
     pub caret: Option<[f32; 4]>,
 }
 
+/// What a code block's «Copy» carries before its code, as a link: pressed, the
+/// code goes to the clipboard and to the logic (`on("copy", …)`), not to `on("link", …)`.
+pub const COPY_LINK: &str = "\u{1}copy:";
+
 /// A link of a markdown text as it was painted: a box it takes on the
 /// surface (one per line it goes over) and where it goes.
 #[derive(Clone, Debug)]
@@ -3146,11 +3150,11 @@ impl DrawList {
                     // With `markdown:`, its marks go; everything from here on reads it without them.
                     // With `images:`, a picture alone on its line takes as many lines as it is tall.
                     let picture_lines = style.images.map_or(0, |h| (h / (style.px * style.line_height)).ceil().max(1.0) as u32);
-                    let (text, md_marks, md_links, md_pictures) = if style.markdown {
-                        let (plain, marks, links, pictures) = crate::markdown::plain_with_pictures(&text, picture_lines);
-                        (std::borrow::Cow::Owned(plain), marks, links, pictures)
+                    let (text, md_marks, md_links, md_pictures, md_code) = if style.markdown {
+                        let r = crate::markdown::read(&text, picture_lines, style.code_block.is_some());
+                        (std::borrow::Cow::Owned(r.text), r.marks, r.links, r.pictures, r.code)
                     } else {
-                        (text, Vec::new(), Vec::new(), Vec::new())
+                        (text, Vec::new(), Vec::new(), Vec::new(), Vec::new())
                     };
                     // `mark from..to, …`: its bytes as they are now, on whole letters.
                     let marks: Vec<(u32, u32, Option<[f32; 3]>, u8)> = style
@@ -3264,7 +3268,34 @@ impl DrawList {
                             self.picture_marks.push((at as u32, slot.page));
                         }
                     }
-                    // Its links, where they are, for a press on them (`on("link", …)`).
+                    // Its fenced blocks as blocks (`code_block:`): a box behind each, a band
+                    // behind its head and a line round it; its «Copy» is pressed as a link is.
+                    if let Some(fill) = style.code_block.as_ref().map(&color) {
+                        let w = m.size.0;
+                        for b in &md_code {
+                            let (Some(head), Some(last)) = (m.lines.get(m.line_of(b.head as usize)), m.lines.get(m.line_of(b.end.saturating_sub(1) as usize))) else { continue };
+                            let (top, bottom, head_bottom) = (head.top - 4.0, last.bottom + 4.0, head.bottom + 2.0);
+                            let pad = 8.0;
+                            let plate = |cy: f32, my: f32, stroke: f32| crate::shapes::FlatShape { kind: 1, cx: x0 + w * 0.5, cy, mx: w * 0.5 + pad, my, radius: 8.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke, affine };
+                            for (shape, rgb, alpha) in [
+                                (plate((top + bottom) * 0.5 + y0, (bottom - top) * 0.5, 0.0), fill, 1.0),
+                                (crate::shapes::FlatShape { radius: 0.0, ..plate((top + head_bottom) * 0.5 + y0, (head_bottom - top) * 0.5, 0.0) }, [1.0, 1.0, 1.0], 0.05),
+                                (plate((top + bottom) * 0.5 + y0, (bottom - top) * 0.5, 1.0), [1.0, 1.0, 1.0], 0.12),
+                            ] {
+                                let (kf, bb) = (self.push_shape(shape, 0.0), shape.bounds().unwrap_or([0.0; 4]));
+                                self.element(0.0, bb, &clips, |e| {
+                                    affine.encode(&mut e[44..52]);
+                                    e[1] = kf as f32;
+                                    e[2] = 1.0;
+                                    e[3] = a * alpha;
+                                    e[8..11].copy_from_slice(&rgb);
+                                });
+                            }
+                        }
+                    }
+                    // Its links, where they are, for a press on them (`on("link", …)`); and the
+                    // «Copy» of its code blocks, which carry their code (see `COPY_LINK`).
+                    let md_links: Vec<(u32, u32, String)> = md_links.into_iter().chain(md_code.iter().map(|b| (b.copy.0, b.copy.1, format!("{COPY_LINK}{}", b.code)))).collect();
                     if !md_links.is_empty() {
                         let limit = clips.iter().map(|k| k.1).reduce(|a, b| [a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])]);
                         for (from, to, href) in &md_links {

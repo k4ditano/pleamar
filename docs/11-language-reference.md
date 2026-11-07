@@ -1215,6 +1215,8 @@ text r.text { at: 2, 2; width: 520; size: 13.5; color: ink; markdown: true; sele
 
 In colour, with `markdown: true`: **`link:`** colours a link's words and an `@name` (`@launch-brief.md`, `@Research`; one in the middle of a word, like an e-mail, is not one), **`code:`** what is between backticks and fenced, **`quote:`** a `> quote`, a fenced block's language and a table's lines, **`heading:`** a `# title`, and **`strike:`** the line across what is struck through (otherwise the colour of its letters). Each is a colour like `color:` (`if(…)`, `mix(…)` and names work); the ones not given keep the text's colour.
 
+**Code as a block: `code_block: #1b1e22`.** With it, each fenced block of a markdown text is a box of that colour with a line round it, a head with its language (`code` if it says none) and **Copy**, and its lines numbered; pressing Copy puts its code on the clipboard and tells the logic, `on("copy", function(code) … end)`. Without it, the block is its language over the code in monospace.
+
 **Its links can be pressed.** A `[link](where)` and an `@name` in a text with `markdown: true` show the hand under the pointer, and pressing one tells the logic where it goes —`on("link", function(href) … end)`, with the address, or the `@name` as it is written— and, if the scene has an `event link`, fires its rules (`on link { … }`). Nothing opens on its own: the scene decides what a link does (`sys.open(href)`, a page of its own for an `@file`). The press goes no further, as a button's would not.
 
 **A stretch of its own.** `mark from..to, colour` inside a text paints those bytes in that colour, and `bold`, `italic` or `code` after it (or instead of the colour) change how they look: `mark 4..20, #74b9ff`, `mark 12..19, #31cf76, bold`, `mark r.hl_from..r.hl_to, amber`. The ends are expressions worked out every frame, so the logic can mark what it finds; they count bytes of the text as it is shown —with `markdown:`, without its marks— and fall back to the start of a letter if they land inside one. Up to 16 marks a text. They go over the markdown's colours, and where two meet, the one written later wins. A change of colour does not lay the text out again; a change of look does.
@@ -1965,7 +1967,7 @@ properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
 properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight opacity show
-properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown link code quote heading strike images place tight
+properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown link code quote heading strike images code_block place tight
 properties.image: at size opacity tint cell fit show grow place
 properties.window: at size ask opacity show
 properties.terminal: at size family font_size line_height colors cursor selection command folder env run opacity show label agent place grow

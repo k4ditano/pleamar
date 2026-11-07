@@ -2519,9 +2519,18 @@ pub fn run(
                     // `on("link", function(href) … end)`, and to the rules if the scene has an
                     // `event link`; the press goes no further, as a button's would not.
                     if let Some(l) = pointer.and_then(|p| draw.links.iter().rev().find(|l| p.0 >= l.rect[0] && p.0 < l.rect[2] && p.1 >= l.rect[1] && p.1 < l.rect[3])) {
-                        let _ = to_logic.send(Event::Link(l.href.to_string()));
-                        if let Some(i) = scene.signals.iter().position(|s| s.0 == "link") {
-                            signals.push((i, false, None));
+                        match l.href.strip_prefix(crate::gpu::COPY_LINK) {
+                            // A code block's «Copy»: its code to the clipboard, and to the logic.
+                            Some(code) => {
+                                crate::platform::clipboard_write(code);
+                                let _ = to_logic.send(Event::Copied(code.to_owned()));
+                            }
+                            None => {
+                                let _ = to_logic.send(Event::Link(l.href.to_string()));
+                                if let Some(i) = scene.signals.iter().position(|s| s.0 == "link") {
+                                    signals.push((i, false, None));
+                                }
+                            }
                         }
                         continue;
                     }

@@ -47,7 +47,22 @@ pub fn plain_with_links(source: &str) -> (String, Vec<(u32, u32, u8)>, Vec<(u32,
 /// empty lines that room is, and where the picture is.
 pub type Picture = (u32, u32, String);
 
+/// A fenced block shown as a block (`code_block:` on the text): where its head
+/// starts, where its «Copy» is, where it ends, its code as written, and how
+/// many figures its line numbers take.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodeBlock {
+    pub head: u32,
+    pub copy: (u32, u32),
+    pub end: u32,
+    pub code: String,
+    numbers: usize,
+}
+
 thread_local! {
+    /// Whether fenced blocks are shown as blocks while a text is read (`code_block:`).
+    static BOXED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CODE_BLOCKS: std::cell::RefCell<Vec<CodeBlock>> = const { std::cell::RefCell::new(Vec::new()) };
     /// How many lines a picture takes while a text is read (0: pictures are their words).
     static PICTURE_LINES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     static PICTURES: std::cell::RefCell<Vec<Picture>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -56,6 +71,30 @@ thread_local! {
 /// The same, and with `lines` above 0, each picture alone on its line is room of
 /// that many empty lines for it to be painted in (`images:` on the text).
 pub fn plain_with_pictures(source: &str, lines: u32) -> (String, Vec<(u32, u32, u8)>, Vec<(u32, u32, String)>, Vec<Picture>) {
+    let r = read(source, lines, false);
+    (r.text, r.marks, r.links, r.pictures)
+}
+
+/// All a markdown text is, read: its plain text, its marks, its links, its
+/// pictures (with `picture_lines` above 0) and its fenced blocks as blocks
+/// (with `boxed`: `code_block:` on the text).
+pub struct Read {
+    pub text: String,
+    pub marks: Vec<(u32, u32, u8)>,
+    pub links: Vec<(u32, u32, String)>,
+    pub pictures: Vec<Picture>,
+    pub code: Vec<CodeBlock>,
+}
+
+pub fn read(source: &str, picture_lines: u32, boxed: bool) -> Read {
+    BOXED.with(|b| b.set(boxed));
+    CODE_BLOCKS.with(|c| c.borrow_mut().clear());
+    let (text, marks, links, pictures) = plain_with_pictures_inner(source, picture_lines);
+    BOXED.with(|b| b.set(false));
+    Read { text, marks, links, pictures, code: CODE_BLOCKS.with(|c| std::mem::take(&mut *c.borrow_mut())) }
+}
+
+fn plain_with_pictures_inner(source: &str, lines: u32) -> (String, Vec<(u32, u32, u8)>, Vec<(u32, u32, String)>, Vec<Picture>) {
     LINKS.with(|l| l.borrow_mut().clear());
     PICTURES.with(|p| p.borrow_mut().clear());
     PICTURE_LINES.with(|p| p.set(lines));
@@ -83,8 +122,30 @@ fn blocks(source: &str) -> (String, Vec<(u32, u32, u8)>) {
         n += 1;
         if let Some(lang) = bare.strip_prefix("```") {
             fenced = !fenced;
-            // ```rust: the language, over the block, as a quote is.
             let lang = lang.trim();
+            if BOXED.with(|b| b.get()) {
+                // As a block (`code_block:`): a head with its language and «Copy», and each
+                // line with its number; the box, its lines and the code go to `CODE_BLOCKS`.
+                if fenced {
+                    // How many lines it has, for the numbers' width.
+                    let count = lines[n..].iter().take_while(|l| !l.trim_start().starts_with("```")).count();
+                    start(&mut out, &mut looks, &mut first);
+                    let head = out.len() as u32;
+                    push(&mut out, &mut looks, if lang.is_empty() { "code" } else { lang }, QUOTE);
+                    push(&mut out, &mut looks, "   ", 0);
+                    let copy = out.len() as u32;
+                    push(&mut out, &mut looks, "Copy", LINK);
+                    CODE_BLOCKS.with(|c| c.borrow_mut().push(CodeBlock { head, copy: (copy, out.len() as u32), end: out.len() as u32, code: String::new(), numbers: count.to_string().len() }));
+                } else {
+                    CODE_BLOCKS.with(|c| {
+                        if let Some(b) = c.borrow_mut().last_mut() {
+                            b.end = out.len() as u32;
+                        }
+                    });
+                }
+                continue;
+            }
+            // ```rust: the language, over the block, as a quote is.
             if fenced && !lang.is_empty() {
                 start(&mut out, &mut looks, &mut first);
                 push(&mut out, &mut looks, lang, QUOTE);
@@ -93,6 +154,25 @@ fn blocks(source: &str) -> (String, Vec<(u32, u32, u8)>) {
         }
         if fenced {
             start(&mut out, &mut looks, &mut first);
+            if BOXED.with(|b| b.get()) {
+                CODE_BLOCKS.with(|c| {
+                    if let Some(b) = c.borrow_mut().last_mut() {
+                        if !b.code.is_empty() || b.end > b.copy.1 {
+                            b.code.push('\n');
+                        }
+                        b.code.push_str(line);
+                        let k = b.code.matches('\n').count() + 1;
+                        push(&mut out, &mut looks, &format!("{k:>w$}  ", w = b.numbers), QUOTE);
+                    }
+                });
+                push(&mut out, &mut looks, line, CODE);
+                CODE_BLOCKS.with(|c| {
+                    if let Some(b) = c.borrow_mut().last_mut() {
+                        b.end = out.len() as u32;
+                    }
+                });
+                continue;
+            }
             push(&mut out, &mut looks, line, CODE);
             continue;
         }
@@ -447,6 +527,17 @@ mod tests {
         let (text, _, links) = plain_with_links("See [the docs](https://example.org/a) and @plan.md.");
         let got: Vec<(&str, &str)> = links.iter().map(|(a, b, h)| (&text[*a as usize..*b as usize], h.as_str())).collect();
         assert_eq!(got, vec![("the docs", "https://example.org/a"), ("@plan.md", "@plan.md")]);
+    }
+
+    #[test]
+    fn a_fenced_block_as_a_block() {
+        let r = read("Run:\n```sh\nnpm i\nnpm run build\n```\ndone", 0, true);
+        assert_eq!(r.text, "Run:\nsh   Copy\n1  npm i\n2  npm run build\ndone");
+        assert_eq!(r.code.len(), 1);
+        let b = &r.code[0];
+        assert_eq!(&r.text[b.copy.0 as usize..b.copy.1 as usize], "Copy");
+        assert_eq!(b.code, "npm i\nnpm run build");
+        assert_eq!(&r.text[b.head as usize..b.end as usize], "sh   Copy\n1  npm i\n2  npm run build");
     }
 
     #[test]

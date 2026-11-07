@@ -1268,6 +1268,9 @@ pub struct Style {
     /// `images: 160`: with `markdown:`, a picture alone on its line is painted,
     /// that tall, in the room it takes; without it, it is its words.
     pub images: Option<f32>,
+    /// `code_block: #1b1e22`: with `markdown:`, each fenced block in a box of that
+    /// colour, with a head (its language and «Copy») and its lines numbered.
+    pub code_block: Option<Color>,
 }
 
 /// A stretch of a text marked in the scene: bytes of the text as it is shown
@@ -1286,7 +1289,7 @@ pub const MOST_MARKS: usize = 16;
 
 impl Style {
     pub fn new(px: f32, color: Color) -> Self {
-        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, tight: false, size: None, weight_of: None, lines_of: None, family_from: None, marks: Vec::new(), markdown_colors: [None, None, None, None, None], images: None }
+        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, tight: false, size: None, weight_of: None, lines_of: None, family_from: None, marks: Vec::new(), markdown_colors: [None, None, None, None, None], images: None, code_block: None }
     }
     pub fn weight(mut self, p: u16) -> Self {
         self.weight = p;
@@ -2864,6 +2867,8 @@ pub enum Event {
     Submit(&'static str, String),
     /// A link of a text was pressed: where it goes (`[words](where)`, or the `@name`).
     Link(String),
+    /// A code block's «Copy» was pressed (`code_block:`): the code, already on the clipboard.
+    Copied(String),
     Focus(bool),
     /// Something dropped on a zone: (zone, type, content).
     Received(&'static str, String, String),

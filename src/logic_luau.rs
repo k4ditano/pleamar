@@ -1567,6 +1567,7 @@ impl Script for LuauScript {
             }
             Event::Submit(n, value) => self.dispatch_text(&format!("submit:{n}"), value),
             Event::Link(href) => self.dispatch_text("link", href),
+            Event::Copied(code) => self.dispatch_text("copy", code),
             Event::Focus(yes) => self.dispatch(if yes { "focus" } else { "blur" }, Value::Nil),
             Event::Received(zone, kind, data) => {
                 // By its name as written: a zone in a copy per monitor is

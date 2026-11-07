@@ -3979,6 +3979,10 @@ impl<'a> Compiler<'a> {
                 style.markdown_colors[k] = Some(self.color(c)?);
             }
         }
+        // `code_block: #1b1e22`: with `markdown:`, each fenced block in a box of that colour.
+        if let Some(c) = p.get_mut("code_block") {
+            style.code_block = Some(self.color(c)?);
+        }
         // `images: 160`: with `markdown:`, a picture alone on its line is painted that tall.
         if let Some(c) = p.get_mut("images") {
             let h = self.constant(c, "a text's `images:` (how tall a picture is)")?;
