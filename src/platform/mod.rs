@@ -1121,23 +1121,26 @@ fn wayland_clipboard_read() -> Option<Option<String>> {
     Some(Some(text))
 }
 
-/// A picture on the clipboard, as PNG bytes: as the one who copied it offers
-/// it (`image/png`, or another picture type turned into PNG). Only on Wayland
-/// for now (arboard is built without its pictures).
+/// A picture on the clipboard, as PNG bytes: on Wayland as the one who copied
+/// it offers it (`image/png`, or another picture type turned into PNG);
+/// elsewhere (X11, macOS, Windows), what arboard reads.
 pub fn clipboard_picture() -> Option<Vec<u8>> {
     #[cfg(target_os = "linux")]
-    {
-        let (kind, bytes) = wayland_clipboard_bytes(&["image/png", "image/jpeg", "image/webp", "image/gif"])??;
+    if let Some(read) = wayland_clipboard_bytes(&["image/png", "image/jpeg", "image/webp", "image/gif"]) {
+        let (kind, bytes) = read?;
         if kind == "image/png" {
             return Some(bytes);
         }
         let picture = image::load_from_memory(&bytes).ok()?;
         let mut png = Vec::new();
         picture.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
-        Some(png)
+        return Some(png);
     }
-    #[cfg(not(target_os = "linux"))]
-    None
+    let shot = arboard::Clipboard::new().ok()?.get_image().ok()?;
+    let rgba = image::RgbaImage::from_raw(shot.width as u32, shot.height as u32, shot.bytes.into_owned())?;
+    let mut png = Vec::new();
+    rgba.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    Some(png)
 }
 
 /// The paths of the files copied (`text/uri-list`): `file://` addresses,

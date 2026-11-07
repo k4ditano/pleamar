@@ -7,7 +7,7 @@ description = "A desktop shell language and runtime where animation does not dep
 repository = "https://github.com/k4ditano/pleamar"
 
 [dependencies]
-arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control", "image-data"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 cosmic-text = { version = "0.19.0", default-features = false, features = ["std", "swash"] }

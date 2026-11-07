@@ -414,7 +414,7 @@ The permissions are the scene's, and they are the same as `sys.watch`'s: `servic
 | --- | --- |
 | `sys.ask("env", "HOME")` | an environment variable, or `nil` |
 | `sys.ask("clipboard")` | whatever has been copied, as text |
-| `sys.ask("clipboard.image")` | a picture copied (a screenshot), kept in memory: what an image shows it by —`text.shot = sys.ask("clipboard.image")` with `image pic = from shot, 64, 64`—, or nil if there is none. Wayland only for now |
+| `sys.ask("clipboard.image")` | a picture copied (a screenshot), kept in memory: what an image shows it by —`text.shot = sys.ask("clipboard.image")` with `image pic = from shot, 64, 64`—, or nil if there is none |
 | `sys.ask("clipboard.uris")` | the files copied in a file manager, as a list of their paths (empty if none) |
 | `sys.call("clipboard.set", t)` | copy that. On Wayland, whoever copies has to stay alive: the platform takes care of that |
 
