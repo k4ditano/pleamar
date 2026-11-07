@@ -243,12 +243,38 @@ library Ui {
         box { from: 6, 4; size: width - 12, 1; color: ink; opacity: r.separator * 14% }
         text r.label { at: 12, 15; anchor: left center; size: 13.5; family: family; width: width - 50; lines: 1; color: ink
                        opacity: (1 - r.separator) * (0.45 + r.enabled * 0.55) }
-        ellipse { at: width - 16, 15; radius: 3.5; color: tone; opacity: r.checked > 0.5 }
-        ellipse { at: width - 16, 15; radius: 3.5; stroke: 1.2; color: ink; opacity: if(r.checked > -0.5, 0.5, 0) }
+        text "✓" { at: width - 16, 15; anchor: center; size: 14; color: tone; opacity: if(r.checked > 0.5, 1, 0) }
         text "›" { at: width - 16, 14; anchor: center; size: 16; color: ink; opacity: if(r.children > 0, 0.6, 0) }
         on enter hit { on: 1 ~quick }
         on leave hit { on: 0 ~quick }
         on press hit { emit chosen(r.index) }
+    }
+
+    //  A row of a menu as an application has them, told what it is rather than
+    //  read from a record: an icon (a glyph of `icon_family`, Material Symbols by
+    //  default: "delete", "content_copy"), its words, its shortcut on the right
+    //  ("Ctrl+K"), `danger` (in red: «Delete»), `checked` (-1 none, 0 empty, 1 ✓),
+    //  `enabled`, and `focused`: lit as under the pointer, for a menu gone through
+    //  with the keyboard (the scene moves it with its `on key Down` rules).
+    //
+    //      MenuItem("Delete history", wipe, icon: "delete", shortcut: "Ctrl+⌫", danger: 1)
+    component MenuItem(label: text, press: event, icon: text = "", shortcut: text = "", danger: number = 0, checked: number = -1, enabled: number = 1, focused: number = 0, width: number = 220, accent: color = #9ed6bd, ink: color = #f5f7f5, red: color = #ff6b6b, icon_family: text = "Material Symbols Rounded", family: text = "") {
+        size: width, 32
+        prop on = 0 ~quick
+        let words = if(danger > 0.5, red, ink)
+        let lit = max(on, if(focused > 0.5, 1, 0))
+        box hit { from: 0, 0; size: width, 32; corner: 7; color: if(danger > 0.5, red, accent)
+                  opacity: lit * if(danger > 0.5, 16%, 20%); cursor: pointer; active: enabled }
+        //  (Measured, to know whether it has one: words go after it only then.)
+        measure glyph
+        text icon { measure: glyph; at: 22, 16; anchor: center; size: 17; family: icon_family; color: words; opacity: 0.5 + enabled * 0.35 }
+        text label { at: if(glyph.width > 0.5, 40, 12), 16; anchor: left center; size: 13.5; family: family; width: width - 110; lines: 1; color: words
+                     opacity: 0.45 + enabled * 0.55 }
+        text shortcut { at: width - 12 - if(checked > -0.5, 20, 0), 16; anchor: right center; size: 12; family: family; color: ink; opacity: 45% }
+        text "✓" { at: width - 16, 16; anchor: center; size: 14; color: accent; opacity: if(checked > 0.5, 1, 0) }
+        on enter hit { on: 1 ~quick }
+        on leave hit { on: 0 ~quick }
+        on press hit { emit press }
     }
 
     //  A menu: its plate, and its rows (`MenuRow`) inside it, one under another.

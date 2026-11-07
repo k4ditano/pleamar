@@ -1429,6 +1429,7 @@ in a `row`, a `column` or a cell of a `grid`.
 | `Select(value, a, b, press, c … f, count: 2, w: 220)` | a choice from a list that opens under it in the same surface (draw it last, or in a group with `z:`); `press` carries the one chosen |
 | `Tooltip(label, open, w: 180)` | a little floating box with its words, shown while `open` |
 | `Menu(w: 220, h: 200)` and `MenuRow(r, chosen, width: 220)` | a menu's plate, with its rows inside it: records with `label`, `separator`, `enabled`, `checked` (-1, 0, 1) and `children`; `chosen` carries the row's place |
+| `MenuItem(label, press, icon: "delete", shortcut: "Ctrl+K", danger: 1, checked: 1, enabled: 0, focused: 1)` | a row of an application's menu, told what it is: an icon (a glyph of `icon_family:`, Material Symbols by default), its shortcut on the right, in red if it destroys, ✓ if ticked, faint if not enabled, and lit while `focused` —a menu gone through with the keyboard: the scene moves it with its `on key` rules— |
 | `Toast(label, shown, w: 320)` | words that come up from below, sharpening, while `shown` |
 | `Slider(value, press, w: 200)` | a value from 0 to 1; pressed or dragged, `press` carries where it was taken to |
 | `Chip(label, tone: #74b9ff)` | a word on a pill of its colour, as wide as it is |

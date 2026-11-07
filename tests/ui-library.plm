@@ -38,5 +38,14 @@ scene Gallery {
         move: 280, 20
         for r in items { MenuRow(r, picked) }
     }
+    fact row = 0
+    Menu(240, 110) {
+        move: 270, 170
+        MenuItem("Copy", picked, icon: "content_copy", shortcut: "Ctrl+C", focused: row == 0)
+        MenuItem("Pinned", picked, checked: 1, focused: row == 1)
+        MenuItem("Delete history", picked, icon: "delete", danger: 1, focused: row == 2)
+    }
+    on key Down { row = min(row + 1, 2) }
+    on key Up { row = max(row - 1, 0) }
     Select(choice, "Today", "This week", pick, c: "This month", count: 3, w: 200)
 }
