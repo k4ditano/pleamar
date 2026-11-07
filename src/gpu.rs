@@ -376,6 +376,8 @@ pub struct PlacedField {
     pub y0: f32,
     pub scroll_y: f32,
     pub multi: bool,
+    /// On several lines, Enter sends (and Shift+Enter writes the break): `send: enter`.
+    pub enter_sends: bool,
     /// Whether what is painted are dots: then a byte of the layout is not a
     /// byte of the text, and one has to go from one to the other by letter number.
     pub secret: bool,
@@ -2953,7 +2955,7 @@ impl DrawList {
                         self.timed |= time.is_some();
                     }
                 }
-                Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret, passive, lines, height } => {
+                Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret, passive, lines, height, send } => {
                     // Several lines (`lines:`, `height:`): it wraps at its width and scrolls down.
                     let multi = *lines > 1 || height.is_some();
                     let k = text.0 as usize;
@@ -3020,7 +3022,7 @@ impl DrawList {
                         let b = affine.bounds([x0 - scroll + cx, y0 - scroll_y + top, x0 - scroll + cx + 1.0, y0 - scroll_y + bottom]);
                         [b[0], b[1], (b[2] - b[0]).max(1.0), b[3] - b[1]]
                     });
-                    self.fields.push(PlacedField { text: k, zone, layout: if empty { None } else { m.clone() }, x0, scroll, y0, scroll_y, multi, secret: *secret, passive: *passive, caret });
+                    self.fields.push(PlacedField { text: k, zone, layout: if empty { None } else { m.clone() }, x0, scroll, y0, scroll_y, multi, enter_sends: send.eval(c) != 0.0, secret: *secret, passive: *passive, caret });
                     let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
                     if a <= 0.001 {
                         continue;

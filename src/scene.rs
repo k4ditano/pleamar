@@ -1376,7 +1376,9 @@ pub enum Instr {
     /// text is still the live text; what changes is what gets painted.
     /// `lines:` above 1 makes it a field of several lines, that tall (or `height:`):
     /// its text wraps at its width, Enter writes a line break and Ctrl+Enter sends it.
-    Field { text: TextId, zone: &'static str, at: Point, width: Expr, style: Style, alpha: Expr, placeholder: Content, selection: Color, secret: bool, passive: bool, lines: u8, height: Option<Expr> },
+    /// `send:` on several lines: whether Enter sends (Shift+Enter writes the line
+    /// break) or writes it (Ctrl+Enter sends); worked out every frame, not 0 is Enter.
+    Field { text: TextId, zone: &'static str, at: Point, width: Expr, style: Style, alpha: Expr, placeholder: Content, selection: Color, secret: bool, passive: bool, lines: u8, height: Option<Expr>, send: Expr },
     /// An image or an icon. With `tint`, its shape is painted in that color: what
     /// a symbolic icon wants.
     /// `cell`: the image is a sheet of pictures in a grid, and only one is

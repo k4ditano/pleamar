@@ -2135,7 +2135,7 @@ pub fn run(
                 let placed = draw.fields.iter().find(|f| f.text == k);
                 let secret = placed.is_some_and(|f| f.secret);
                 // On several lines, what it laid out says where the line above and below are.
-                let lines = placed.filter(|f| f.multi).map(|f| f.layout.as_deref());
+                let lines = placed.filter(|f| f.multi).map(|f| Multi { layout: f.layout.as_deref(), enter_sends: f.enter_sends });
                 match ed.handle_key(&mut texts[k], &name, typed.as_deref(), mods, secret, lines) {
                     KeyOutcome::Changed => {
                         last_key = crate::clock::now();
@@ -5736,6 +5736,14 @@ fn plain_key(name: &str) -> String {
 /// A capture of what is behind a sheet arrives: the background is unmixed with the
 /// canvas that was presented. If something has changed, it has to be painted again (and
 /// after painting it another will be asked for); if not, it watches until something changes behind.
+/// A field of several lines, for its keys: its layout (None while it is empty)
+/// and whether Enter sends (`send: enter`).
+#[derive(Clone, Copy)]
+struct Multi<'a> {
+    layout: Option<&'a crate::text::Layout>,
+    enter_sends: bool,
+}
+
 /// Returns whether it has to paint.
 /// What changed in a sheet's piece that it has not painted yet (`Sheet::owed_damage`).
 /// Past a few dozen boxes, one round them all.
@@ -6156,9 +6164,9 @@ impl Editing {
     /// `secret`: a field whose letters are hidden is one word, for Ctrl and its
     /// arrows and deletes, so that where they stop says nothing of what it holds;
     /// and it remembers nothing to undo.
-    /// `lines`: a field of several lines, with its layout (None while empty):
+    /// `lines`: a field of several lines, with its layout (None while empty) and what Enter does:
     /// Enter writes a line break, Ctrl+Enter sends, and the arrows go by line.
-    fn handle_key(&mut self, t: &mut String, name: &str, typed: Option<&str>, m: Mods, secret: bool, lines: Option<Option<&crate::text::Layout>>) -> KeyOutcome {
+    fn handle_key(&mut self, t: &mut String, name: &str, typed: Option<&str>, m: Mods, secret: bool, lines: Option<Multi>) -> KeyOutcome {
         if secret || self.history.left.as_deref().is_some_and(|l| l != t.as_str()) {
             self.history = History::default();
         }
@@ -6211,7 +6219,7 @@ impl Editing {
     }
 
     /// What a key does to the field, without the history (see `handle_key`).
-    fn apply(&mut self, t: &mut String, name: &str, typed: Option<&str>, m: Mods, secret: bool, lines: Option<Option<&crate::text::Layout>>) -> KeyOutcome {
+    fn apply(&mut self, t: &mut String, name: &str, typed: Option<&str>, m: Mods, secret: bool, lines: Option<Multi>) -> KeyOutcome {
         let word_left = |t: &str, b: usize| if secret { 0 } else { word_left(t, b) };
         let word_right = |t: &str, b: usize| if secret { t.len() } else { word_right(t, b) };
         self.cursor = self.cursor.min(t.len());
@@ -6304,14 +6312,14 @@ impl Editing {
             // On several lines: up and down a line, and Home and End to its ends
             // (with Ctrl, to the text's).
             "Up" | "Down" if lines.is_some() => {
-                let a = match lines.flatten() {
+                let a = match lines.and_then(|l| l.layout) {
                     Some(l) => l.byte_a_line_away(self.cursor, if name == "Up" { -1 } else { 1 }, t.len()).min(t.len()),
                     None => self.cursor,
                 };
                 move_to(self, a)
             }
-            "Home" | "End" if !m.ctrl && lines.flatten().is_some() => {
-                let (a, b) = lines.flatten().unwrap().line_ends(self.cursor);
+            "Home" | "End" if !m.ctrl && lines.and_then(|l| l.layout).is_some() => {
+                let (a, b) = lines.and_then(|l| l.layout).unwrap().line_ends(self.cursor);
                 let to = if name == "Home" { a } else { b };
                 move_to(self, to.min(t.len()))
             }
@@ -6320,8 +6328,9 @@ impl Editing {
                 let a = t.len();
                 move_to(self, a)
             }
-            // On several lines Enter writes a line break, and Ctrl+Enter sends it.
-            "Return" | "KP_Enter" if lines.is_some() && !m.ctrl => {
+            // On several lines Enter writes a line break, and Ctrl+Enter sends it; with
+            // `send: enter`, Enter sends and Shift+Enter writes the break.
+            "Return" | "KP_Enter" if lines.is_some_and(|l| if l.enter_sends { m.shift && !m.ctrl } else { !m.ctrl }) => {
                 if !self.delete_selection(t) {
                     self.history.this = Some(Run::Typing { spaced: true });
                 }
@@ -7277,11 +7286,11 @@ mod selection_tests {
         for piece in ["uno", "\n", "dos", "\n", "tres"] {
             let m = lay(&mut t, &s);
             let out = if piece == "\n" {
-                e.handle_key(&mut s, "Return", Some("\r"), Mods::default(), false, Some(Some(&m)))
+                e.handle_key(&mut s, "Return", Some("\r"), Mods::default(), false, Some(Multi { layout: Some(&m), enter_sends: false }))
             } else {
                 let mut last = KeyOutcome::Unhandled;
                 for c in piece.chars().map(String::from) {
-                    last = e.handle_key(&mut s, &c, Some(&c), Mods::default(), false, Some(Some(&m)));
+                    last = e.handle_key(&mut s, &c, Some(&c), Mods::default(), false, Some(Multi { layout: Some(&m), enter_sends: false }));
                 }
                 last
             };
@@ -7292,18 +7301,26 @@ mod selection_tests {
         assert_eq!(m.lines.len(), 3);
         assert_eq!(m.line_of(e.cursor), 2, "the cursor on the third line");
         // Up: the second line, after its second letter as it was after the third's second… at the same x.
-        e.handle_key(&mut s, "Left", None, Mods::default(), false, Some(Some(&m)));
-        e.handle_key(&mut s, "Left", None, Mods::default(), false, Some(Some(&m)));
+        e.handle_key(&mut s, "Left", None, Mods::default(), false, Some(Multi { layout: Some(&m), enter_sends: false }));
+        e.handle_key(&mut s, "Left", None, Mods::default(), false, Some(Multi { layout: Some(&m), enter_sends: false }));
         let x = m.caret_at(e.cursor).0;
-        e.handle_key(&mut s, "Up", None, Mods::default(), false, Some(Some(&m)));
+        e.handle_key(&mut s, "Up", None, Mods::default(), false, Some(Multi { layout: Some(&m), enter_sends: false }));
         assert_eq!(m.line_of(e.cursor), 1);
         assert!((m.caret_at(e.cursor).0 - x).abs() < 6.0, "same column: {} vs {x}", m.caret_at(e.cursor).0);
         // End: the end of that line, not of the text; Ctrl+End, of the text.
-        e.handle_key(&mut s, "End", None, Mods::default(), false, Some(Some(&m)));
+        e.handle_key(&mut s, "End", None, Mods::default(), false, Some(Multi { layout: Some(&m), enter_sends: false }));
         assert_eq!(e.cursor, "uno\ndos".len());
-        e.handle_key(&mut s, "End", None, Mods { ctrl: true, ..Mods::default() }, false, Some(Some(&m)));
+        e.handle_key(&mut s, "End", None, Mods { ctrl: true, ..Mods::default() }, false, Some(Multi { layout: Some(&m), enter_sends: false }));
         assert_eq!(e.cursor, s.len());
-        assert!(matches!(e.handle_key(&mut s, "Return", None, Mods { ctrl: true, ..Mods::default() }, false, Some(Some(&m))), KeyOutcome::Submitted));
+        assert!(matches!(e.handle_key(&mut s, "Return", None, Mods { ctrl: true, ..Mods::default() }, false, Some(Multi { layout: Some(&m), enter_sends: false })), KeyOutcome::Submitted));
+        // `send: enter`: Enter sends, and Shift+Enter writes the line break.
+        let mut chat = String::from("hola");
+        let mut g = Editing::at(0, 4, 4);
+        let ml = lay(&mut t, &chat);
+        let sends = Some(Multi { layout: Some(&ml), enter_sends: true });
+        assert!(matches!(g.handle_key(&mut chat, "Return", None, Mods { shift: true, ..Mods::default() }, false, sends), KeyOutcome::Changed));
+        assert_eq!(chat, "hola\n");
+        assert!(matches!(g.handle_key(&mut chat, "Return", None, Mods::default(), false, sends), KeyOutcome::Submitted));
         // One line, as it always was: Enter sends.
         let mut one = String::from("hola");
         let mut f = Editing::at(0, 4, 4);

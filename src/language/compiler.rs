@@ -4229,6 +4229,26 @@ impl<'a> Compiler<'a> {
         if secret && (lines > 1 || height_of.is_some()) {
             return Err(CompileError::at(n.line, n.col, "a `secret` field is one line: no `lines:` or `height:`"));
         }
+        // `send: enter` —Enter sends, Shift+Enter a line break— or `send: ctrl_enter` —Enter a
+        // line break, Ctrl+Enter sends, as without it—, or what an expression says (not 0: Enter).
+        let send = match p.get_mut("send") {
+            Some(c) => {
+                let e = match c.peek() {
+                    Some(TokenKind::Id(w)) if w == "enter" => {
+                        c.i += 1;
+                        Expr::K(1.0)
+                    }
+                    Some(TokenKind::Id(w)) if w == "ctrl_enter" => {
+                        c.i += 1;
+                        Expr::K(0.0)
+                    }
+                    _ => self.expr(c)?,
+                };
+                c.expect_end()?;
+                e
+            }
+            None => Expr::K(0.0),
+        };
         let line = style.px * style.line_height;
         let height: Expr = height_of.clone().unwrap_or(Expr::K(line * lines as f32));
         // Its zone: pressing it focuses it, and over it the cursor is the typing one.
@@ -4242,7 +4262,7 @@ impl<'a> Compiler<'a> {
             active: None, visible: shown, under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None, yields: None,
         });
         self.last_size = Some((width.clone(), height));
-        self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret, passive, lines, height: height_of });
+        self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret, passive, lines, height: height_of, send });
         Ok(())
     }
 
