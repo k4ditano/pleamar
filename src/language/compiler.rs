@@ -6236,6 +6236,9 @@ impl<'a> Compiler<'a> {
             place: Option<Expr>,
             /// Its instructions, to be able to tell it its width when it is known.
             own_instrs: std::ops::Range<usize>,
+            /// A copy of a `for … key`: its place in the list, which is where it goes,
+            /// whatever copy it is (they are all as long as the first).
+            keyed: Option<Expr>,
         }
         // What is seen is a window onto what there is: it is clipped, and what is inside goes shifted.
         let scroller = view.as_ref().map(|(vw, vh)| {
@@ -6346,9 +6349,13 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
+            let mut keyed: Option<Expr> = None;
             for e in &self.scopes[self.scopes.len() - extra..] {
                 if let Some(v) = &e.visible {
                     visible = if matches!(visible, Expr::K(k) if k == 1.0) { v.clone() } else { visible * v.clone() };
+                }
+                if let Some(p) = e.exprs.get("·place") {
+                    keyed = Some(p.clone());
                 }
             }
             if let Some(f) = &forced {
@@ -6415,6 +6422,7 @@ impl<'a> Compiler<'a> {
                 grow,
                 place,
                 own_instrs: instr + 1..self.e.instrs.len(),
+                keyed,
             };
             match forced {
                 // A separator is painted after its child, but its place is just before.
@@ -6503,6 +6511,10 @@ impl<'a> Compiler<'a> {
         for (k, p) in placed_items.iter().enumerate() {
             // A separator does not open another gap: it goes in the middle of the one already between its neighbours.
             let mut along = if p.separator { running.clone() - gap.clone() * 0.5 } else { running.clone() };
+            // A copy of a `for … key` goes to its record's place: what copy it is says nothing.
+            if let Some(place) = &p.keyed {
+                along = padding.clone() + place.clone().max(Expr::K(0.0)) * (length_of(p) + gap.clone());
+            }
             let mut grid_across = None;
             if let Some(how_many) = wrap {
                 let per_line = Expr::K(how_many as f32);
@@ -6708,9 +6720,9 @@ impl<'a> Compiler<'a> {
                 self.scopes.extend(scope.iter().cloned());
                 let head = self.for_head(&mut c);
                 self.scopes.truncate(self.scopes.len() - scope.len());
-                let (var, model, capacity, from) = head?;
+                let (var, model, capacity, from, keyed) = head?;
                 for k in 0..capacity {
-                    scope.push(Rc::new(self.for_iteration(&var, &model, k, &from)));
+                    scope.push(Rc::new(self.for_iteration(&var, &model, k, &from, keyed)));
                     self.unroll(n.body.as_deref().unwrap_or(&[]).iter().collect(), scope, children)?;
                     scope.pop();
                 }
@@ -7519,7 +7531,7 @@ impl<'a> Compiler<'a> {
         let capacity = if c.word("max") { c.num()? as usize } else { 16 };
         c.expect_end()?;
         let fields = self.fields_of(n, capacity)?;
-        let model = Model { name: name.clone(), capacity, fields };
+        let model = Model { name: name.clone(), capacity, fields, key: None };
         let mut how_many = 0;
         self.declare_rows(&name, &model, &mut how_many).map_err(|m| CompileError::at(n.line, n.col, m))?;
         self.e.models.push(model);
@@ -7560,7 +7572,7 @@ impl<'a> Compiler<'a> {
                     }
                     c.expect_end()?;
                     let inside = self.fields_of(x, capacity)?;
-                    Field { name: name.clone(), kind: FieldType::List(Box::new(Model { name, capacity, fields: inside })), fallback: FieldValue::Number(0.0) }
+                    Field { name: name.clone(), kind: FieldType::List(Box::new(Model { name, capacity, fields: inside, key: None })), fallback: FieldValue::Number(0.0) }
                 }
                 Entry::Prop { name, value, line, col } => {
                     let mut c = Cur::new(value, *line, *col);
@@ -7610,7 +7622,7 @@ impl<'a> Compiler<'a> {
             let mut level = fields.clone();
             for _ in 0..depth {
                 let mut above = fields.clone();
-                above.push(Field { name: name.clone(), kind: FieldType::List(Box::new(Model { name: name.clone(), capacity, fields: level })), fallback: FieldValue::Number(0.0) });
+                above.push(Field { name: name.clone(), kind: FieldType::List(Box::new(Model { name: name.clone(), capacity, fields: level, key: None })), fallback: FieldValue::Number(0.0) });
                 level = above;
             }
             fields = level;
@@ -7671,7 +7683,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// `for r in rows`: the name of the record, the model and how many fit.
-    fn for_head(&mut self, c: &mut Cur) -> R<(String, String, usize, Expr)> {
+    fn for_head(&mut self, c: &mut Cur) -> R<(String, String, usize, Expr, bool)> {
         let var = c.id("a name for the record")?;
         c.expect_word("in")?;
         let model = self.global(&c.id("the name of a model")?);
@@ -7679,30 +7691,74 @@ impl<'a> Compiler<'a> {
         // real list, so `r.index` counts from there. It is what lets a
         // list of five thousand fit in twelve copies.
         let from = if c.word("from") { self.expr(c)? } else { Expr::K(0.0) };
+        // `key r.id`: who each record is. A record keeps its copy while it is
+        // there —its springs, its hover, what it has open— and the copy goes to
+        // its place in the list, instead of the copy at each place being filled
+        // with whoever is there now.
+        let key = if c.word("key") {
+            let field = c.id("the record's field that says who it is: `key m.id`")?;
+            let Some(field) = field.strip_prefix(&format!("{var}.")).map(str::to_owned) else {
+                return c.error(&format!("`key` is a field of the record: `key {var}.id`"));
+            };
+            Some(field)
+        } else {
+            None
+        };
         c.expect_end()?;
-        match self.models.get(&model) {
-            Some(capacity) => Ok((var, model, *capacity, from)),
-            None => self.unknown(c, "no model", &model, self.models.keys().collect()),
+        let Some(capacity) = self.models.get(&model).copied() else {
+            return self.unknown(c, "no model", &model, self.models.keys().collect());
+        };
+        if let Some(field) = key {
+            let Some(m) = self.e.models.iter_mut().find(|m| m.name == model) else {
+                return c.error("`key` goes on a model's own list, not on a list inside a record");
+            };
+            if !m.fields.iter().any(|f| f.name == field && !matches!(f.kind, FieldType::List(_))) {
+                return c.error(&format!("model '{model}' has no field '{field}' to be its key"));
+            }
+            if m.key.as_ref().is_some_and(|k| *k != field) {
+                return c.error(&format!("model '{model}' is already walked with another key ('{}'): a model has one", m.key.as_ref().unwrap()));
+            }
+            m.key = Some(field);
+            for k in 0..capacity {
+                for (part, initial) in [("__there", 0.0), ("__place", -1.0)] {
+                    let full = format!("{model}.{k}.{part}");
+                    if !self.facts.contains_key(&full) {
+                        let id = self.e.fact(interned(&full), initial);
+                        self.facts.insert(full, id);
+                    }
+                }
+            }
         }
+        let keyed = self.e.models.iter().any(|m| m.name == model && m.key.is_some());
+        Ok((var, model, capacity, from, keyed))
     }
 
     /// Inside iteration `k`, `r.label` is `rows.k.label`, `r.index` is `k`, and
-    /// everything drawn only exists if the list reaches that far.
-    fn for_iteration(&self, var: &str, model: &str, k: usize, from: &Expr) -> Scope {
+    /// everything drawn only exists if the list reaches that far. With `key`, copy
+    /// `k` shows the record the logic keeps in it: there if it has one, and its
+    /// index the place of that record (`·place`, for the layout to put it there).
+    fn for_iteration(&self, var: &str, model: &str, k: usize, from: &Expr, keyed: bool) -> Scope {
         let mut env = Scope { suffix: format!("#{var}{k}"), ..Default::default() };
         env.alias.insert(var.to_owned(), format!("{model}.{k}"));
         env.with_parts.insert(var.to_owned());
-        env.exprs.insert(format!("{var}.index"), from.clone() + Expr::K(k as f32));
-        env.visible = Some(self.facts[&format!("{model}.count")].e().gt(Expr::K(k as f32 + 0.5)));
+        if keyed {
+            let place = self.facts[&format!("{model}.{k}.__place")].e();
+            env.exprs.insert(format!("{var}.index"), from.clone() + place.clone());
+            env.exprs.insert("·place".to_owned(), place);
+            env.visible = Some(self.facts[&format!("{model}.{k}.__there")].e().gt(Expr::K(0.5)));
+        } else {
+            env.exprs.insert(format!("{var}.index"), from.clone() + Expr::K(k as f32));
+            env.visible = Some(self.facts[&format!("{model}.count")].e().gt(Expr::K(k as f32 + 0.5)));
+        }
         env
     }
 
     /// A loose `for`, outside a stack: each iteration is painted where it says, if it exists.
     fn for_loop(&mut self, n: &'a Node, c: &mut Cur) -> R<()> {
-        let (var, model, capacity, from) = self.for_head(c)?;
+        let (var, model, capacity, from, keyed) = self.for_head(c)?;
         for k in 0..capacity {
             let mark = self.rules.len();
-            let env = self.for_iteration(&var, &model, k, &from);
+            let env = self.for_iteration(&var, &model, k, &from, keyed);
             let is_present = env.visible.clone().unwrap();
             self.scopes.push(Rc::new(env));
             let from = self.candidates.len();

@@ -1,0 +1,14 @@
+// expect: ok
+language 0.9
+// A chat's feed walked by identity: removing the first message moves the others up with the spring.
+scene Feed {
+    surface { size: 760, 700 }
+    model said max 200 { id: number; text: text; mine: bool }
+    column feed ~quick { at: 20, 20; view: 720, 640; step: 84
+        for m in said key m.id {
+            row { size: 720, 76; place: if(m.mine, 1, 0)
+                text m.text { size: 13; width: 480; color: #f5f7f5; markdown: true }
+            }
+        }
+    }
+}

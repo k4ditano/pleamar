@@ -68,6 +68,9 @@ struct Shared {
     texts: HashMap<String, String>,
     permissions: crate::scene::Permissions,
     models: Vec<crate::scene::Model>,
+    /// A model walked with `key` (`for m in said key m.id`): which record's key each
+    /// copy shows, so a record keeps its copy while it is there (see `slotted`).
+    slots: HashMap<String, Vec<Option<String>>>,
     /// Of the facts that are not plain numbers, what they are: the logic sees them as `true` or as `"critical"`.
     types: HashMap<String, crate::scene::FactType>,
     signals: std::collections::HashSet<String>,
@@ -113,6 +116,7 @@ impl Shared {
             translations: self.translations.clone(),
             services: self.services.clone(),
             subscribed: self.subscribed.clone(),
+            slots: self.slots.clone(),
             plugin: self.plugin.clone(),
             unapproved: self.unapproved,
             ..Default::default()
@@ -127,7 +131,18 @@ impl Shared {
 /// was there stays as it was, not half-done.
 fn spread_list(c: &mut Shared, tx: &Sender<ToRender>, prefix: &str, m: &crate::scene::Model, list: &Table) -> mlua::Result<()> {
     let mut changes = Vec::new();
-    read_rows(&mut changes, prefix, m, list)?;
+    match &m.key {
+        Some(key) => {
+            let copies = slotted(c.slots.entry(prefix.to_owned()).or_default(), key, m.capacity, list)?;
+            read_rows(&mut changes, prefix, m, list, Some(&copies))?;
+            // Each copy: whether it shows a record, and at which place of the list.
+            for (k, place) in copies.iter().enumerate() {
+                changes.push(Change::Fact(format!("{prefix}.{k}.__there"), place.is_some() as u8 as f64));
+                changes.push(Change::Fact(format!("{prefix}.{k}.__place"), place.map_or(-1.0, |p| p as f64)));
+            }
+        }
+        None => read_rows(&mut changes, prefix, m, list, None)?,
+    }
     for change in changes {
         match change {
             Change::Text(name, t) => if c.texts.get(&name) != Some(&t) {
@@ -148,23 +163,75 @@ enum Change {
     Fact(String, f64),
 }
 
-fn read_rows(changes: &mut Vec<Change>, prefix: &str, m: &crate::scene::Model, list: &Table) -> mlua::Result<()> {
+/// Which record each copy of a model walked with `key` shows: a key that was
+/// there keeps its copy, a new one takes the first copy left free, and one
+/// that went frees its own. `slots` is what each copy showed (kept between
+/// writes); the answer, for each copy, the record it shows now: its place in
+/// `list`. Records past the capacity, and a key said twice after the first,
+/// are not shown.
+fn slotted(slots: &mut Vec<Option<String>>, key: &str, capacity: usize, list: &Table) -> mlua::Result<Vec<Option<usize>>> {
+    slots.resize(capacity, None);
+    let total = list.raw_len().min(capacity);
+    let mut keys: Vec<Option<String>> = Vec::with_capacity(total);
+    for i in 0..total {
+        let row: Value = list.raw_get(i + 1)?;
+        let k = match row {
+            Value::Table(t) => match t.get::<Value>(key)? {
+                Value::Nil => None,
+                Value::Integer(n) => Some(n.to_string()),
+                Value::Number(x) => Some(x.to_string()),
+                v => Some(v.to_string()?),
+            },
+            _ => None,
+        };
+        // A key said again is not a second record of the same identity.
+        keys.push(k.filter(|k| !keys.iter().flatten().any(|o| o == k)));
+    }
+    let mut copies: Vec<Option<usize>> = vec![None; capacity];
+    // The ones that were there keep their copy.
+    for (s, had) in slots.iter_mut().enumerate() {
+        match had.as_ref().and_then(|h| keys.iter().position(|k| k.as_ref() == Some(h))) {
+            Some(i) => copies[s] = Some(i),
+            None => *had = None,
+        }
+    }
+    // The new ones (and those without a key), into the copies left free, in order.
+    for (i, k) in keys.iter().enumerate() {
+        if copies.contains(&Some(i)) {
+            continue;
+        }
+        if let Some(s) = copies.iter().position(Option::is_none) {
+            copies[s] = Some(i);
+            slots[s] = k.clone();
+        }
+    }
+    Ok(copies)
+}
+
+/// `copies`: with `key`, which record of `list` each copy shows (see `slotted`);
+/// without it, copy k is record k.
+fn read_rows(changes: &mut Vec<Change>, prefix: &str, m: &crate::scene::Model, list: &Table, copies: Option<&[Option<usize>]>) -> mlua::Result<()> {
     use crate::scene::{FactType, FieldType, FieldValue};
     let total = list.raw_len();
     let text = |c: &mut Vec<Change>, name: String, t: String| c.push(Change::Text(name, t));
     let fact = |c: &mut Vec<Change>, name: String, n: f64| c.push(Change::Fact(name, n));
     let c = changes;
-    for i in 0..total.min(m.capacity) {
+    // Which copy each record goes to: its own place, or with `key` the copy it keeps.
+    let order: Vec<(usize, usize)> = match copies {
+        Some(cs) => cs.iter().enumerate().filter_map(|(k, i)| i.map(|i| (k, i))).collect(),
+        None => (0..total.min(m.capacity)).map(|i| (i, i)).collect(),
+    };
+    for (copy, i) in order {
         let row: Value = list.raw_get(i + 1)?;
         let Value::Table(row) = row else {
             return Err(mlua::Error::runtime(format!("'{prefix}' is a list of records, and number {} is not a table", i + 1)));
         };
         for field in &m.fields {
-            let name = format!("{prefix}.{i}.{}", field.name);
+            let name = format!("{prefix}.{copy}.{}", field.name);
             let v: Value = row.get(field.name.as_str())?;
             match (&field.kind, &field.fallback) {
                 (FieldType::List(inner), _) => match v {
-                    Value::Table(t) => read_rows(c, &name, inner, &t)?,
+                    Value::Table(t) => read_rows(c, &name, inner, &t, None)?,
                     // No list means an empty one: don't leave behind the one from the record that was here before.
                     _ => {
                         fact(c, format!("{name}.count"), 0.0);
@@ -1762,6 +1829,46 @@ pub static REQUIRED: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mute
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// `for m in said key m.id`: taking the first of three away moves the other
+    /// two up a place, each in the copy it already had, which is not written again.
+    #[test]
+    fn a_record_keeps_its_copy_by_its_key() {
+        let lua = Lua::new();
+        let list = |ids: &[i64]| {
+            let t = lua.create_table().unwrap();
+            for (i, id) in ids.iter().enumerate() {
+                let r = lua.create_table().unwrap();
+                r.set("id", *id).unwrap();
+                r.set("text", format!("message {id}")).unwrap();
+                t.raw_set(i + 1, r).unwrap();
+            }
+            t
+        };
+        let mut slots = Vec::new();
+        assert_eq!(slotted(&mut slots, "id", 4, &list(&[10, 11, 12])).unwrap(), vec![Some(0), Some(1), Some(2), None]);
+        // Without 10: 11 and 12 stay in copies 1 and 2, now at places 0 and 1; copy 0 is free.
+        assert_eq!(slotted(&mut slots, "id", 4, &list(&[11, 12])).unwrap(), vec![None, Some(0), Some(1), None]);
+        // A new one takes the first copy left free; the others do not move from theirs.
+        assert_eq!(slotted(&mut slots, "id", 4, &list(&[13, 11, 12])).unwrap(), vec![Some(0), Some(1), Some(2), None]);
+        assert_eq!(slots[0].as_deref(), Some("13"));
+        // What is written: copy 1 keeps 11's text, so nothing of it travels again.
+        let m = crate::scene::Model {
+            name: "said".into(),
+            capacity: 4,
+            fields: vec![
+                crate::scene::Field { name: "id".into(), kind: crate::scene::FieldType::Number, fallback: crate::scene::FieldValue::Number(0.0) },
+                crate::scene::Field { name: "text".into(), kind: crate::scene::FieldType::Text, fallback: crate::scene::FieldValue::Text(String::new()) },
+            ],
+            key: Some("id".into()),
+        };
+        let mut changes = Vec::new();
+        let copies = slotted(&mut Vec::new(), "id", 4, &list(&[11, 12])).unwrap();
+        read_rows(&mut changes, "said", &m, &list(&[11, 12]), Some(&copies)).unwrap();
+        let texts: Vec<(String, String)> = changes.iter().filter_map(|c| if let Change::Text(n, t) = c { Some((n.clone(), t.clone())) } else { None }).collect();
+        assert_eq!(texts, vec![("said.0.text".to_owned(), "message 11".to_owned()), ("said.1.text".to_owned(), "message 12".to_owned())]);
+    }
     use super::{command_allowed, say_allowed};
 
     #[test]

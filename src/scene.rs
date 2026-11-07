@@ -2220,6 +2220,10 @@ pub struct Model {
     /// How many rows fit. Whatever goes beyond that is not seen, but is counted: `rows.total`.
     pub capacity: usize,
     pub fields: Vec<Field>,
+    /// Walked with `for m in rows key m.id`: the field that says who each record
+    /// is. The logic keeps each record in its copy while it is there, and tells
+    /// each copy whether it shows one (`rows.k.__there`) and at which place (`rows.k.__place`).
+    pub key: Option<String>,
 }
 
 /// A system service requested from the scene: whatever arrives fills

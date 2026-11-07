@@ -1,0 +1,9 @@
+// expect: error «has no field 'uid' to be its key»
+language 0.9
+scene Feed {
+    surface { size: 760, 700 }
+    model said max 20 { id: number; text: text }
+    column feed { at: 20, 20
+        for m in said key m.uid { text m.text { size: 13; color: #f5f7f5 } }
+    }
+}
