@@ -148,6 +148,9 @@ pub struct Surface {
     /// `.desktop` file is called, so the dock gives it its icon and groups its
     /// windows. Without it, "pleamar", like every other.
     pub app_id: Option<String>,
+    /// `decorations: none`: a window with no frame of the compositor's; the
+    /// scene draws its own, and carries and stretches it with `handle: self`.
+    pub frameless: bool,
     /// If it is the lock screen: a surface that does NOT exist until its
     /// `open:` becomes true, and that, once it exists, has the session really
     /// locked —the compositor guarantees it, not the drawing—, on all
@@ -207,7 +210,7 @@ pub enum Keyboard {
 impl Default for Surface {
     fn default() -> Self {
         // Neutral: full width, at the top, on all monitors. Whatever the scene asks for wins.
-        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, app_id: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, rate_said: false, rate_while: Vec::new(), screens: Screens::All, screens_from: None, keyboard: Keyboard::Never, keyboard_while: false, keyboard_said: false, keyboard_when: None, right_click_quits: true, hidden_from_captures: false, agent_hidden: false }
+        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, app_id: None, frameless: false, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, rate_said: false, rate_while: Vec::new(), screens: Screens::All, screens_from: None, keyboard: Keyboard::Never, keyboard_while: false, keyboard_said: false, keyboard_when: None, right_click_quits: true, hidden_from_captures: false, agent_hidden: false }
     }
 }
 
@@ -1600,6 +1603,7 @@ pub struct Zone {
 /// carries it). The edges are xdg-shell's: 1 top, 2 bottom, 4 left, 8 right.
 #[derive(Clone, Debug)]
 pub struct Handle {
+    /// Which window: `win.$i`'s place, or -1 for the scene's own (`handle: self`).
     pub window: Expr,
     pub edges: u32,
 }

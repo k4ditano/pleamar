@@ -2080,7 +2080,8 @@ impl<'a> Compiler<'a> {
         // `handle: i`, or `handle: i, left`: a window's handle (see `Zone::handle`).
         let handle = match p.get_mut("handle") {
             Some(c) => {
-                let window = self.expr(c)?;
+                // `handle: self`: the scene's own window, when it draws its frame (`decorations: none`).
+                let window = if c.word("self") { Expr::K(-1.0) } else { self.expr(c)? };
                 let edges = if c.sym(",") {
                     let names = ["top", "bottom", "left", "right", "top_left", "top_right", "bottom_left", "bottom_right"];
                     match c.one_of(&names, "the edge it stretches")?.as_str() {
@@ -4978,6 +4979,15 @@ impl<'a> Compiler<'a> {
                 return Err(CompileError::at(n.line, n.col, "an app_id is letters, digits, `.`, `_` and `-`, as a `.desktop` file is named: `app_id: \"org.me.notes\"`"));
             }
             s.app_id = Some(id);
+        }
+        // `decorations: none`: no frame of the compositor's; `server`, its frame (as without it).
+        if let Some(c) = p.get_mut("decorations") {
+            let v = c.one_of(&["server", "none"], "a window's decorations: server or none")?;
+            c.expect_end()?;
+            if s.window.is_none() {
+                return Err(CompileError::at(n.line, n.col, "only a window has decorations: add `kind: window`"));
+            }
+            s.frameless = v == "none";
         }
         if s.window.is_some() && s.width == 0 {
             return Err(CompileError::at(n.line, n.col, "a window says how wide it is: `full` is for a panel, which is as wide as its monitor"));

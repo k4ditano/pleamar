@@ -869,6 +869,8 @@ struct WaylandWindow {
     serial: Arc<AtomicU32>,
     /// A popup doesn't have one: the keyboard is its parent's business.
     layer: Option<LayerSurface>,
+    /// A window's toplevel: what is asked to be carried or stretched (`handle: self`).
+    toplevel: Option<wayland_protocols::xdg::shell::client::xdg_toplevel::XdgToplevel>,
     /// To ask for the "you can paint another one now" notice: with which queue, and whose it is.
     qh: QueueHandle<State>,
     id: u32,
@@ -1051,6 +1053,32 @@ impl PlatformWindow for WaylandWindow {
     }
 
     /// Like the input region, it takes effect with the next frame presented.
+    fn begin_move(&self, edges: u32) {
+        use wayland_protocols::xdg::shell::client::xdg_toplevel::ResizeEdge;
+        let (Some(top), Some(pp)) = (&self.toplevel, POPUPS.get()) else { return };
+        let seat = pp.seat.lock().unwrap();
+        let (Some(seat), Some((serial, when))) = (seat.as_ref(), *pp.last_press.lock().unwrap()) else { return };
+        // Only from a press just made: the compositor refuses an old one anyway.
+        if when.elapsed() > std::time::Duration::from_millis(1500) {
+            return;
+        }
+        if edges == 0 {
+            top._move(seat, serial);
+        } else {
+            let edge = match edges {
+                1 => ResizeEdge::Top,
+                2 => ResizeEdge::Bottom,
+                4 => ResizeEdge::Left,
+                8 => ResizeEdge::Right,
+                5 => ResizeEdge::TopLeft,
+                9 => ResizeEdge::TopRight,
+                6 => ResizeEdge::BottomLeft,
+                _ => ResizeEdge::BottomRight,
+            };
+            top.resize(seat, serial, edge);
+        }
+    }
+
     fn update_blur_region(&self, boxes: &[[i32; 4]]) {
         let Some(effects) = BACKGROUND_EFFECTS.get() else { return };
         let mut effect = self.effect.lock().unwrap();
@@ -1121,6 +1149,12 @@ impl Role {
         match self {
             Role::Layer(c) => Some(c),
             Role::Window(_) => None,
+        }
+    }
+    fn toplevel(&self) -> Option<wayland_protocols::xdg::shell::client::xdg_toplevel::XdgToplevel> {
+        match self {
+            Role::Layer(_) => None,
+            Role::Window(w) => Some(w.xdg_toplevel().clone()),
         }
     }
 }
@@ -1441,7 +1475,8 @@ impl State {
             let level = layer_of(said.level.unwrap_or(p.level));
             // `kind: window`: one of the normal windows, with its title and its frame.
             if let (Some(title), Some(pp)) = (&p.window, POPUPS.get()) {
-                let window = pp.xdg.create_window(wl, WindowDecorations::RequestServer, qh);
+                // `decorations: none`: no frame of the compositor's; the scene draws its own.
+                let window = pp.xdg.create_window(wl, if p.frameless { WindowDecorations::None } else { WindowDecorations::RequestServer }, qh);
                 window.set_title(if title.is_empty() { "pleamar" } else { title });
                 window.set_app_id(p.app_id.as_deref().unwrap_or("pleamar"));
                 window.set_min_size(Some((p.width, height)));
@@ -2184,7 +2219,7 @@ impl PopupHandler for State {
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: a.id,
                 target: gpu::Target::Surface(surface),
-                window: Box::new(WaylandWindow { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursors: e.cursors.clone(), serial: e.serial.clone(), layer: None, qh: e.qh.clone(), id: a.id, effect: Mutex::new(None), backdrop: a.backdrop.clone(), shown: Default::default() }),
+                window: Box::new(WaylandWindow { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursors: e.cursors.clone(), serial: e.serial.clone(), layer: None, toplevel: None, qh: e.qh.clone(), id: a.id, effect: Mutex::new(None), backdrop: a.backdrop.clone(), shown: Default::default() }),
                 scale: a.parent.scale,
                 size: a.size,
                 mhz: a.parent.mhz,
@@ -2413,7 +2448,7 @@ impl State {
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: p.id,
                 target: gpu::Target::Surface(surface),
-                window: Box::new(WaylandWindow { wl: p.role.wl().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: p.role.layer().cloned(), qh: self.qh.clone(), id: p.id, effect: Mutex::new(None), backdrop: p.backdrop.clone(), shown: Default::default() }),
+                window: Box::new(WaylandWindow { wl: p.role.wl().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: p.role.layer().cloned(), toplevel: p.role.toplevel(), qh: self.qh.clone(), id: p.id, effect: Mutex::new(None), backdrop: p.backdrop.clone(), shown: Default::default() }),
                 scale: p.scale,
                 size,
                 mhz,
@@ -2485,7 +2520,7 @@ impl smithay_client_toolkit::session_lock::SessionLockHandler for State {
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: face.id,
                 target: gpu::Target::Surface(paints),
-                window: Box::new(WaylandWindow { wl: face.surface.wl_surface().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: None, qh: self.qh.clone(), id: face.id, effect: Mutex::new(None), backdrop: None, shown: Default::default() }),
+                window: Box::new(WaylandWindow { wl: face.surface.wl_surface().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: None, toplevel: None, qh: self.qh.clone(), id: face.id, effect: Mutex::new(None), backdrop: None, shown: Default::default() }),
                 scale: 1.0,
                 size,
                 mhz: face.mhz,

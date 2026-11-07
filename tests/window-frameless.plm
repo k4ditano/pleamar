@@ -1,0 +1,10 @@
+// expect: ok
+language 0.9
+// A window that draws its own frame: no title bar of the compositor's, carried by its top and stretched by its corner.
+scene Frameless {
+    surface { size: 1180, 780; kind: window; title: "OpenBot"; app_id: "openbot"; decorations: none }
+    box { from: 0, 0; size: 1180, 780; corner: 14; color: #16181c }
+    box { from: 8, 8; size: 1164, 764; corner: 14; color: #1e2125 }
+    zone box drag { from: 0, 0; size: 1180, 40; handle: self }
+    zone box corner { from: 1160, 760; size: 20, 20; handle: self, bottom_right; cursor: pointer }
+}

@@ -2442,6 +2442,22 @@ pub fn run(
                             continue;
                         }
                     }
+                    // On a `handle: self` (a window that draws its frame, `decorations: none`): the
+                    // compositor carries it, or stretches it by that edge, until the button is let go.
+                    if let (Some(k), Some(p)) = (hovered, pointer) {
+                        let c = Ctx { props: &props, facts: &facts, seen: None };
+                        if let Some(h) = scene.zones[k].handle.as_ref().filter(|h| h.window.eval(c) < -0.5) {
+                            let edges = h.edges;
+                            if let Some(l) = sheets.iter().filter(|l| l.view.popup.is_none()).find(|l| {
+                                let v = l.view.bounds();
+                                p.0 >= v[0] && p.0 < v[2] && p.1 >= v[1] && p.1 < v[3]
+                            }) {
+                                l.window.begin_move(edges);
+                            }
+                            let _ = to_logic.send(Event::Press(scene.zones[k].id));
+                            continue;
+                        }
+                    }
                     // On a link of a text (`[words](where)`, `@name`): it is told to the logic,
                     // `on("link", function(href) … end)`, and to the rules if the scene has an
                     // `event link`; the press goes no further, as a button's would not.

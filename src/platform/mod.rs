@@ -1231,6 +1231,10 @@ pub trait PlatformWindow: Send {
     /// What the system blurs behind the window: rectangles in logical
     /// pixels, those of its glass. Empty, nothing. Where it can't be asked for, it does nothing.
     fn update_blur_region(&self, _boxes: &[[i32; 4]]) {}
+    /// A window that draws its own frame is carried (`edges` 0) or stretched by
+    /// those edges (1 top, 2 bottom, 4 left, 8 right) from the press just made
+    /// on its `handle: self`: the compositor takes the pointer until it is let go.
+    fn begin_move(&self, _edges: u32) {}
     /// Ask for what's shown on screen in that box of the window —x, y, width and
     /// height, logical—, **with the window on top**: it arrives as `ToRender::Backdrop`. It's
     /// what lets you see what's behind the glass: what the window itself painted
