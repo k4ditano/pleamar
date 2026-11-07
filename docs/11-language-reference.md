@@ -1432,7 +1432,7 @@ in a `row`, a `column` or a cell of a `grid`.
 | `Table(w, rows, columns: 3, a: "…", … f: "…", row: 34, head: 32)` | a table: its plate with its border, its head (up to six columns, `a` to `f`), a line between rows and one between columns; its rows go inside it, one under another. For what a model writes as a markdown table, `markdown: true` lines it up in the text itself |
 | `TableRow(r, w, columns: 3, row: 34, tone: #…)` | a row of a `Table`: the cells of the record `r`, a list in it (`model rows max 20 { list cells max 6 { text: text; chip: number } }`), each in its column, cut to one line; a cell with `chip` 1 to 5 (blue, green, amber, red, violet) is a chip of that colour, 0 a plain one |
 
-All of them take `accent:` (the colour of what is on, in a `Table` its head's line), except `Card`.
+All of them take `accent:` (the colour of what is on, in a `Table` its head's line), except `Card`. **And a theme:** the ones with colours and words of their own take them as parameters, defaulting to these dark ones —`plate:` (their plate), `ink:` (their words), `line:` (lines and borders), `family:` (their words' font, `""` the system's)—, and `Table` its head's `head_weight:`, `Button` `on_plate:` (the main one's words) and `danger:`, `Select` `list:`, `Slider` `knob:`: `Table(480, n, a: "Name", plate: surface, ink: on_surface, line: outline, family: "Inter")`.
 
 ```plm
 import "pleamar:ui"

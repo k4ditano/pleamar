@@ -1298,15 +1298,19 @@ impl<'a> Compiler<'a> {
     /// followed while the scene runs.
     fn family(&mut self, c: &mut Cur) -> R<(Option<&'static str>, Option<TextId>)> {
         let found = match c.peek() {
-            Some(TokenKind::Str(_)) => return Ok((Some(interned(&c.string()?)), None)),
+            // An empty name is the system's sans: what a component's `family: text = ""` gives by default.
+            Some(TokenKind::Str(_)) => {
+                let s = c.string()?;
+                return Ok((Some(interned(&s)).filter(|s| !s.is_empty()), None));
+            }
             Some(TokenKind::Id(name)) => {
                 let name = name.clone();
                 c.i += 1;
                 if let Some(s) = self.scopes.iter().rev().find_map(|e| e.strings.get(&name)) {
-                    (Some(interned(s)), None)
+                    (Some(interned(s)).filter(|s| !s.is_empty()), None)
                 } else if let Some(k) = self.scopes.iter().rev().find_map(|e| e.contents.get(&name)) {
                     match k {
-                        Content::Literal(s) => (Some(interned(s)), None),
+                        Content::Literal(s) => (Some(interned(s)).filter(|s| !s.is_empty()), None),
                         Content::Live(t) => (None, Some(*t)),
                         _ => return c.error("a family is a name in quotes or a text: `family: \"Inter\"`, or `text face = \"Inter\"` and `family: face`"),
                     }

@@ -89,23 +89,23 @@ library Ui {
     //      Table(480, rows.count, columns: 3, a: "Workstream", b: "Owner", c: "Status") {
     //          for r in rows { TableRow(r, 480, columns: 3) }
     //      }
-    component Table(w: number, rows: number, columns: number = 3, a: text = "", b: text = "", c: text = "", d: text = "", e: text = "", f: text = "", row: number = 34, head: number = 32, accent: color = #9ed6bd) {
+    component Table(w: number, rows: number, columns: number = 3, a: text = "", b: text = "", c: text = "", d: text = "", e: text = "", f: text = "", row: number = 34, head: number = 32, accent: color = #9ed6bd, plate: color = #25282b, ink: color = #f5f7f5, line: color = #ffffff, head_weight: number = 600, family: text = "") {
         size: w, head + rows * row
         let col = w / columns
         let tall = head + rows * row
-        box { at: w / 2, tall / 2; size: w, tall; corner: 12; color: #25282b }
-        box { at: w / 2, head / 2; size: w, head; corner: 12; color: #ffffff; opacity: 4% }
+        box { at: w / 2, tall / 2; size: w, tall; corner: 12; color: plate }
+        box { at: w / 2, head / 2; size: w, head; corner: 12; color: line; opacity: 4% }
         repeat i in 0..6 {
-            text pick(i, a, b, c, d, e, f) { show: i < columns; at: 12 + i * col, head / 2; anchor: left center; size: 11.5; weight: 600; width: col - 16; lines: 1; color: #f5f7f5; opacity: 70% }
+            text pick(i, a, b, c, d, e, f) { show: i < columns; at: 12 + i * col, head / 2; anchor: left center; size: 11.5; weight: head_weight; family: family; width: col - 16; lines: 1; color: ink; opacity: 70% }
         }
         box { at: w / 2, head; size: w, 1; color: accent; opacity: 35% }
         repeat k in 0..63 {
-            box { show: k < rows - 1; at: w / 2, head + (k + 1) * row; size: w - 16, 1; color: #ffffff; opacity: 7% }
+            box { show: k < rows - 1; at: w / 2, head + (k + 1) * row; size: w - 16, 1; color: line; opacity: 7% }
         }
         repeat i in 1..6 {
-            box { show: i < columns; at: i * col, tall / 2; size: 1, tall - 12; color: #ffffff; opacity: 7% }
+            box { show: i < columns; at: i * col, tall / 2; size: 1, tall - 12; color: line; opacity: 7% }
         }
-        box { at: w / 2, tall / 2; size: w, tall; corner: 12; stroke: 1; color: #ffffff; opacity: 12% }
+        box { at: w / 2, tall / 2; size: w, tall; corner: 12; stroke: 1; color: line; opacity: 12% }
         column body {
             at: 0, head
             children
@@ -115,7 +115,7 @@ library Ui {
     //  A row of a `Table`: the cells of its record (`r.cells`: `text`, and
     //  `chip` 0 for a plain cell), each in its column, cut to one line. `tone`
     //  is the colour of the plain ones.
-    component TableRow(r: record, w: number, columns: number = 3, row: number = 34, tone: color = #f5f7f5) {
+    component TableRow(r: record, w: number, columns: number = 3, row: number = 34, tone: color = #f5f7f5, family: text = "") {
         size: w, row
         let col = w / columns
         repeat i in 0..6 {
@@ -123,7 +123,7 @@ library Ui {
             let chip = r.cells[i].chip
             let hue = pick(max(chip - 1, 0), #74b9ff, #31cf76, #f5b041, #ff6b6b, #b48cff)
             box { show: i < columns and chip > 0; at: 12 + i * col + 8 + cell.$i.width / 2, row / 2; size: cell.$i.width + 16, 22; corner: 11; color: hue; opacity: 18% }
-            text r.cells[i].text { show: i < columns; measure: cell.$i; at: 12 + i * col + if(chip > 0, 8, 0), row / 2; anchor: left center; size: 13; width: col - 24; lines: 1; tight: true; color: if(chip > 0, hue, tone) }
+            text r.cells[i].text { show: i < columns; measure: cell.$i; at: 12 + i * col + if(chip > 0, 8, 0), row / 2; anchor: left center; size: 13; family: family; width: col - 24; lines: 1; tight: true; color: if(chip > 0, hue, tone) }
         }
     }
 
@@ -143,20 +143,20 @@ library Ui {
     //  2 only its words (a plate under the pointer), 3 one that destroys.
     //
     //      Button("Install agent", install, 180)      on install { … }
-    component Button(label: text, press: event, w: number, h: number = 34, kind: number = 0, accent: color = #9ed6bd) {
+    component Button(label: text, press: event, w: number, h: number = 34, kind: number = 0, accent: color = #9ed6bd, plate: color = #f5f7f5, on_plate: color = #16181c, ink: color = #f5f7f5, danger: color = #ff6b6b, family: text = "") {
         size: w, h
-        let plate = pick(kind, #f5f7f5, #ffffff, #ffffff, #ff6b6b)
-        let words = pick(kind, #16181c, #f5f7f5, #f5f7f5, #ffffff)
-        box { at: w / 2, h / 2; size: w, h; corner: h / 2; color: plate
+        let fill = pick(kind, plate, ink, ink, danger)
+        let words = pick(kind, on_plate, ink, ink, #ffffff)
+        box { at: w / 2, h / 2; size: w, h; corner: h / 2; color: fill
               opacity: pick(kind, 1, 0.1, 0, 1) + touch.hover * pick(kind, -0.08, 0.06, 0.08, -0.1) - touch.pressed * 0.1 }
         box { at: w / 2, h / 2; size: w, h; corner: h / 2; stroke: 1.2; color: accent; opacity: if(kind == 1, touch.hover * 40%, 0) }
-        text label { at: w / 2, h / 2; anchor: center; size: 13; weight: 600; width: w - 20; lines: 1; align: center; color: words }
+        text label { at: w / 2, h / 2; anchor: center; size: 13; weight: 600; family: family; width: w - 20; lines: 1; align: center; color: words }
         zone box touch { at: w / 2, h / 2; size: w, h; corner: h / 2; cursor: pointer }
         on press touch { emit press }
     }
 
     //  A box to tick, with its words beside it (`w` is how much room it takes).
-    component Checkbox(on: number, press: event, label: text = "", w: number = 200, accent: color = #007cf7) {
+    component Checkbox(on: number, press: event, label: text = "", w: number = 200, accent: color = #007cf7, ink: color = #f5f7f5, family: text = "") {
         size: w, 22
         prop pos = 0 ~160ms
         follow pos = if(on > 0.5, 1, 0)
@@ -164,24 +164,24 @@ library Ui {
         box { at: 10, 11; size: 18, 18; corner: 5; stroke: 1.5; color: mix(#8b8f95, accent, pos); opacity: 1 - pos * 0.5 + touch.hover * 0.2 }
         path { at: 4, 6; color: #ffffff; stroke: 2; opacity: pos
                move 2, 5; line 5, 8; line 10, 2 }
-        text label { at: 28, 11; anchor: left center; size: 13; width: w - 30; lines: 1; color: #f5f7f5 }
+        text label { at: 28, 11; anchor: left center; size: 13; family: family; width: w - 30; lines: 1; color: ink }
         zone box touch { at: w / 2, 11; size: w, 26; corner: 6; cursor: pointer }
         on press touch { emit press }
     }
 
     //  Tabs: their names, and a line under the chosen one that slides to it.
     //  `press` carries the one pressed: `on pick_tab(v) { tab = v }`.
-    component Tabs(value: number, a: text, b: text, press: event, c: text = "", d: text = "", count: number = 2, width: number = 240, accent: color = #9ed6bd) {
+    component Tabs(value: number, a: text, b: text, press: event, c: text = "", d: text = "", count: number = 2, width: number = 240, accent: color = #9ed6bd, ink: color = #f5f7f5, line: color = #ffffff, family: text = "") {
         size: width, 34
         prop pos = 0 ~quick
         follow pos = value
         let tab = width / count
-        box { at: width / 2, 33; size: width, 1; color: #ffffff; opacity: 10% }
+        box { at: width / 2, 33; size: width, 1; color: line; opacity: 10% }
         box { at: tab / 2 + pos * tab, 32; size: tab - 16, 3; corner: 1.5; color: accent }
         repeat i in 0..4 {
             group {
                 show: i < count
-                text pick(i, a, b, c, d) { at: tab / 2 + i * tab, 15; anchor: center; size: 13; weight: 600; color: #f5f7f5
+                text pick(i, a, b, c, d) { at: tab / 2 + i * tab, 15; anchor: center; size: 13; weight: 600; family: family; color: ink
                                            opacity: 50% + max(0, 1 - abs(pos - i)) * 50% + tabs.$i.hover * 20% }
                 zone box tabs.$i { at: tab / 2 + i * tab, 17; size: tab, 34; cursor: pointer }
             }
@@ -192,25 +192,25 @@ library Ui {
     //  A choice from a list that opens under it, in the same surface (it is
     //  drawn over what follows it: put it last, or in a group with `z:`).
     //  `value` is which one (0 to 5), `press` carries the one chosen.
-    component Select(value: number, a: text, b: text, press: event, c: text = "", d: text = "", e: text = "", f: text = "", count: number = 2, w: number = 220, accent: color = #9ed6bd) {
+    component Select(value: number, a: text, b: text, press: event, c: text = "", d: text = "", e: text = "", f: text = "", count: number = 2, w: number = 220, accent: color = #9ed6bd, plate: color = #2c3033, list: color = #25282b, ink: color = #f5f7f5, family: text = "") {
         size: w, 34
         prop open = 0 ~quick
-        box { at: w / 2, 17; size: w, 34; corner: 10; color: #2c3033; opacity: 1 - head.pressed * 0.1 }
+        box { at: w / 2, 17; size: w, 34; corner: 10; color: plate; opacity: 1 - head.pressed * 0.1 }
         box { at: w / 2, 17; size: w, 34; corner: 10; stroke: 1.2; color: accent; opacity: head.hover * 40% + open * 40% }
-        text pick(value, a, b, c, d, e, f) { at: 14, 17; anchor: left center; size: 13; width: w - 44; lines: 1; color: #f5f7f5 }
-        path { at: w - 24, 14; color: #f5f7f5; stroke: 1.6; opacity: 70%
+        text pick(value, a, b, c, d, e, f) { at: 14, 17; anchor: left center; size: 13; family: family; width: w - 44; lines: 1; color: ink }
+        path { at: w - 24, 14; color: ink; stroke: 1.6; opacity: 70%
                move 0, 0; line 5, 5; line 10, 0 }
         zone box head { at: w / 2, 17; size: w, 34; corner: 10; cursor: pointer }
         on press head { open: if(open > 0.5, 0, 1) }
         group {
             show: open > 0.02
             opacity: open
-            body { color: #25282b; shadow: 0, 8, 24, 40%; box { at: w / 2, 40 + count * 15 + 4; size: w, count * 30 + 8; corner: 10 } }
+            body { color: list; shadow: 0, 8, 24, 40%; box { at: w / 2, 40 + count * 15 + 4; size: w, count * 30 + 8; corner: 10 } }
             repeat i in 0..6 {
                 group {
                     show: i < count
                     box { at: w / 2, 44 + i * 30 + 15; size: w - 8, 28; corner: 7; color: accent; opacity: opts.$i.hover * 20% + if(i == value, 0.12, 0) }
-                    text pick(i, a, b, c, d, e, f) { at: 14, 44 + i * 30 + 15; anchor: left center; size: 13; width: w - 28; lines: 1; color: #f5f7f5 }
+                    text pick(i, a, b, c, d, e, f) { at: 14, 44 + i * 30 + 15; anchor: left center; size: 13; family: family; width: w - 28; lines: 1; color: ink }
                     zone box opts.$i { at: w / 2, 44 + i * 30 + 15; size: w - 8, 28; corner: 7; cursor: pointer; active: open > 0.5 }
                 }
                 on press opts.$i { emit press(i); open: 0 }
@@ -220,41 +220,41 @@ library Ui {
 
     //  What something is, in a little floating box over where it is put: `open`
     //  (an expression, a hover) shows it.
-    component Tooltip(label: text, open: number, w: number = 180) {
+    component Tooltip(label: text, open: number, w: number = 180, plate: color = #101214, ink: color = #f5f7f5, family: text = "") {
         size: w, 28
         prop seen = 0 ~quick
         follow seen = if(open > 0.5, 1, 0)
         group {
             opacity: seen
             move: 0, 4 - 4 * seen
-            body { color: #101214; opacity: 92%; shadow: 0, 4, 12, 30%; box { at: w / 2, 14; size: w, 28; corner: 8 } }
-            text label { at: w / 2, 14; anchor: center; size: 12; width: w - 16; lines: 1; align: center; color: #f5f7f5 }
+            body { color: plate; opacity: 92%; shadow: 0, 4, 12, 30%; box { at: w / 2, 14; size: w, 28; corner: 8 } }
+            text label { at: w / 2, 14; anchor: center; size: 12; family: family; width: w - 16; lines: 1; align: center; color: ink }
         }
     }
 
     //  A row of a menu, for records with `label`, `separator`, `enabled`,
     //  `checked` (-1 none, 0 empty, 1 ticked) and `children` (more under it):
     //  `chosen` carries its place. `for r in items { MenuRow(r, picked) }`.
-    component MenuRow(r: record, chosen: event, tone: color = #9ed6bd, width: number = 220) {
+    component MenuRow(r: record, chosen: event, tone: color = #9ed6bd, width: number = 220, ink: color = #f5f7f5, family: text = "") {
         size: width, 30 - r.separator * 21
         prop on = 0 ~quick
         box hit { from: 0, 0; size: width, 30 - r.separator * 21; corner: 7; color: tone
                   opacity: on * 20%; cursor: pointer; active: r.enabled and not r.separator }
-        box { from: 6, 4; size: width - 12, 1; color: #f5f7f5; opacity: r.separator * 14% }
-        text r.label { at: 12, 15; anchor: left center; size: 13.5; width: width - 50; lines: 1; color: #f5f7f5
+        box { from: 6, 4; size: width - 12, 1; color: ink; opacity: r.separator * 14% }
+        text r.label { at: 12, 15; anchor: left center; size: 13.5; family: family; width: width - 50; lines: 1; color: ink
                        opacity: (1 - r.separator) * (0.45 + r.enabled * 0.55) }
         ellipse { at: width - 16, 15; radius: 3.5; color: tone; opacity: r.checked > 0.5 }
-        ellipse { at: width - 16, 15; radius: 3.5; stroke: 1.2; color: #f5f7f5; opacity: if(r.checked > -0.5, 0.5, 0) }
-        text "›" { at: width - 16, 14; anchor: center; size: 16; color: #f5f7f5; opacity: if(r.children > 0, 0.6, 0) }
+        ellipse { at: width - 16, 15; radius: 3.5; stroke: 1.2; color: ink; opacity: if(r.checked > -0.5, 0.5, 0) }
+        text "›" { at: width - 16, 14; anchor: center; size: 16; color: ink; opacity: if(r.children > 0, 0.6, 0) }
         on enter hit { on: 1 ~quick }
         on leave hit { on: 0 ~quick }
         on press hit { emit chosen(r.index) }
     }
 
     //  A menu: its plate, and its rows (`MenuRow`) inside it, one under another.
-    component Menu(w: number = 220, h: number = 200) {
+    component Menu(w: number = 220, h: number = 200, plate: color = #25282b) {
         size: w, h
-        body { color: #25282b; shadow: 0, 10, 28, 40%; box { at: w / 2, h / 2; size: w, h; corner: 12 } }
+        body { color: plate; shadow: 0, 10, 28, 40%; box { at: w / 2, h / 2; size: w, h; corner: 12 } }
         column rows {
             at: 4, 4
             children
@@ -263,7 +263,7 @@ library Ui {
 
     //  A word that comes up from below and goes: `shown` (0 to 1, a fact or a
     //  spring) brings it in, sharpening as it arrives.
-    component Toast(label: text, shown: number, w: number = 320) {
+    component Toast(label: text, shown: number, w: number = 320, plate: color = #2c3033, ink: color = #f5f7f5, family: text = "") {
         size: w, 44
         prop seen = 0 ~240ms
         follow seen = if(shown > 0.5, 1, 0)
@@ -271,30 +271,30 @@ library Ui {
             opacity: seen
             move: 0, 16 - 16 * seen
             blur: 8 - 8 * seen
-            body { color: #2c3033; shadow: 0, 10, 24, 40%; box { at: w / 2, 22; size: w, 44; corner: 14 } }
-            text label { at: w / 2, 22; anchor: center; size: 13; width: w - 28; lines: 1; align: center; color: #f5f7f5 }
+            body { color: plate; shadow: 0, 10, 24, 40%; box { at: w / 2, 22; size: w, 44; corner: 14 } }
+            text label { at: w / 2, 22; anchor: center; size: 13; family: family; width: w - 28; lines: 1; align: center; color: ink }
         }
     }
 
     //  A slider: `value` from 0 to 1; `press` carries where it was taken to,
     //  pressed or dragged: `on set_volume(v) { volume = v }`.
-    component Slider(value: number, press: event, w: number = 200, accent: color = #9ed6bd) {
+    component Slider(value: number, press: event, w: number = 200, accent: color = #9ed6bd, line: color = #ffffff, knob: color = #f6f6f5) {
         size: w, 24
         let at = clamp(value, 0, 1)
-        box { at: w / 2, 12; size: w, 4; corner: 2; color: #ffffff; opacity: 14% }
+        box { at: w / 2, 12; size: w, 4; corner: 2; color: line; opacity: 14% }
         box { at: w * at / 2, 12; size: w * at, 4; corner: 2; color: accent }
-        ellipse { at: w * at, 12; radius: 8 + track.hover + track.pressed; color: #f6f6f5 }
+        ellipse { at: w * at, 12; radius: 8 + track.hover + track.pressed; color: knob }
         zone box track { from: 0, 0; size: w, 24; cursor: pointer }
         on press track { emit press(clamp(local.x / w, 0, 1)) }
         on drag track { emit press(clamp(local.x / w, 0, 1)) }
     }
 
     //  A chip: a word on a pill of its colour (an `@file.md`, an `@agent`, a state).
-    component Chip(label: text, tone: color = #74b9ff) {
+    component Chip(label: text, tone: color = #74b9ff, family: text = "") {
         measure chip
         size: chip.width + 20, 24
         box { at: (chip.width + 20) / 2, 12; size: chip.width + 20, 24; corner: 12; color: tone; opacity: 18% }
-        text label { measure: chip; at: 10, 12; anchor: left center; size: 12.5; weight: 500; color: tone }
+        text label { measure: chip; at: 10, 12; anchor: left center; size: 12.5; weight: 500; family: family; color: tone }
     }
 
     //  A round picture (an avatar): an `image` of the scene, cut to a circle.
