@@ -37,9 +37,30 @@ thread_local! {
 /// The same, and its links: the bytes of each one's words in the plain text and
 /// where it goes —a `[link](where)`'s address, an `@name` itself—.
 pub fn plain_with_links(source: &str) -> (String, Vec<(u32, u32, u8)>, Vec<(u32, u32, String)>) {
+    let (text, marks, links, _) = plain_with_pictures(source, 0);
+    (text, marks, links)
+}
+
+/// A picture alone on its line (`![what it shows](where)`), when the text shows
+/// them (`images:`): the byte its room starts at in the plain text, how many
+/// empty lines that room is, and where the picture is.
+pub type Picture = (u32, u32, String);
+
+thread_local! {
+    /// How many lines a picture takes while a text is read (0: pictures are their words).
+    static PICTURE_LINES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static PICTURES: std::cell::RefCell<Vec<Picture>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The same, and with `lines` above 0, each picture alone on its line is room of
+/// that many empty lines for it to be painted in (`images:` on the text).
+pub fn plain_with_pictures(source: &str, lines: u32) -> (String, Vec<(u32, u32, u8)>, Vec<(u32, u32, String)>, Vec<Picture>) {
     LINKS.with(|l| l.borrow_mut().clear());
+    PICTURES.with(|p| p.borrow_mut().clear());
+    PICTURE_LINES.with(|p| p.set(lines));
     let (text, marks) = blocks(source);
-    (text, marks, LINKS.with(|l| std::mem::take(&mut *l.borrow_mut())))
+    PICTURE_LINES.with(|p| p.set(0));
+    (text, marks, LINKS.with(|l| std::mem::take(&mut *l.borrow_mut())), PICTURES.with(|p| std::mem::take(&mut *p.borrow_mut())))
 }
 
 fn blocks(source: &str) -> (String, Vec<(u32, u32, u8)>) {
@@ -86,6 +107,19 @@ fn blocks(source: &str) -> (String, Vec<(u32, u32, u8)>) {
             continue;
         }
         start(&mut out, &mut looks, &mut first);
+        // A picture alone on its line, when the text shows them: room for it.
+        let room = PICTURE_LINES.with(|p| p.get());
+        if room > 0 {
+            let t = bare.trim_end();
+            if let Some(inside) = t.strip_prefix("![").and_then(|r| r.strip_suffix(')')) {
+                if let Some((_, src)) = inside.split_once("](") {
+                    let from = out.len() as u32;
+                    push(&mut out, &mut looks, &"\n".repeat(room as usize - 1), 0);
+                    PICTURES.with(|p| p.borrow_mut().push((from, room, src.trim().to_owned())));
+                    continue;
+                }
+            }
+        }
         let indent = &line[..line.len() - bare.len()];
         // How deep a list goes: two spaces (or a tab) a level.
         let depth = indent.chars().map(|c| if c == '\t' { 2 } else { 1 }).sum::<usize>() / 2;
@@ -412,6 +446,15 @@ mod tests {
         let (text, _, links) = plain_with_links("See [the docs](https://example.org/a) and @plan.md.");
         let got: Vec<(&str, &str)> = links.iter().map(|(a, b, h)| (&text[*a as usize..*b as usize], h.as_str())).collect();
         assert_eq!(got, vec![("the docs", "https://example.org/a"), ("@plan.md", "@plan.md")]);
+    }
+
+    #[test]
+    fn a_picture_alone_takes_its_room() {
+        let (text, _, _, pictures) = plain_with_pictures("Look:\n![a cat](/tmp/cat.png)\nnice", 3);
+        assert_eq!(text, "Look:\n\n\n\nnice");
+        assert_eq!(pictures, vec![(6, 3, "/tmp/cat.png".to_owned())]);
+        // Without `images:`, its words.
+        assert_eq!(plain_with_pictures("![a cat](/tmp/cat.png)", 0).0, "a cat");
     }
 
     #[test]

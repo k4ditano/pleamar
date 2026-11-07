@@ -1207,7 +1207,7 @@ row { padding: 10; fill: #2f5a50; corner: 14; place: end
 }
 ```
 
-**What a model writes.** With `markdown: true` a text shows what its marks mean instead of the marks: `**bold**`, `*italic*` (and `_italic_` outside a word), `` `code` `` in the monospace font, `# a title` in bold, `- a point` as `• a point` (nested two spaces a level, as `◦` and `▪`), `- [ ]` and `- [x]` as `☐` and `☑`, `1.` numbered as it is, `> a quote` in italics, `[a link](…)` as its words, `![a picture](…)` as its words, `~~struck~~` with a line across, `---` as a rule, a block between ` ``` ` lines in monospace with its language (` ```rust `) over it, and a table (`| a | b |` with a line of dashes under its head) in monospace, its columns lined up between `│`, its head in bold. A star between spaces (`2 * 3`) or an underscore inside a name stays as it is, and `\*` is a star. A mark still open at the end —a model halfway through `**this`— does not show. Everything else reads the text without its marks: its letters (`letter_*`), what is selected and copied, and what an agent is told.
+**What a model writes.** With `markdown: true` a text shows what its marks mean instead of the marks: `**bold**`, `*italic*` (and `_italic_` outside a word), `` `code` `` in the monospace font, `# a title` in bold, `- a point` as `• a point` (nested two spaces a level, as `◦` and `▪`), `- [ ]` and `- [x]` as `☐` and `☑`, `1.` numbered as it is, `> a quote` in italics, `[a link](…)` as its words, `![a picture](…)` as its words (or, with **`images: 160`** on the text, alone on its line, the picture itself, that tall at most and as wide as the text, its shape kept: an absolute path, an icon's name or a `data:` name, as `image … = from` takes), `~~struck~~` with a line across, `---` as a rule, a block between ` ``` ` lines in monospace with its language (` ```rust `) over it, and a table (`| a | b |` with a line of dashes under its head) in monospace, its columns lined up between `│`, its head in bold. A star between spaces (`2 * 3`) or an underscore inside a name stays as it is, and `\*` is a star. A mark still open at the end —a model halfway through `**this`— does not show. Everything else reads the text without its marks: its letters (`letter_*`), what is selected and copied, and what an agent is told.
 
 ```
 text r.text { at: 2, 2; width: 520; size: 13.5; color: ink; markdown: true; selectable: true }
@@ -1965,7 +1965,7 @@ properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
 properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight opacity show
-properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown link code quote heading strike place tight
+properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown link code quote heading strike images place tight
 properties.image: at size opacity tint cell fit show grow place
 properties.window: at size ask opacity show
 properties.terminal: at size family font_size line_height colors cursor selection command folder env run opacity show label agent place grow

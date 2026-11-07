@@ -3959,6 +3959,14 @@ impl<'a> Compiler<'a> {
                 style.markdown_colors[k] = Some(self.color(c)?);
             }
         }
+        // `images: 160`: with `markdown:`, a picture alone on its line is painted that tall.
+        if let Some(c) = p.get_mut("images") {
+            let h = self.constant(c, "a text's `images:` (how tall a picture is)")?;
+            if h <= 0.0 {
+                return c.error("`images:` is how tall a picture is: more than 0");
+            }
+            style.images = Some(h);
+        }
         // `mark from..to, colour, bold`: a stretch of it on its own.
         for e in n.body.as_deref().unwrap_or(&[]) {
             let Entry::Node(m) = e else { continue };

@@ -1116,7 +1116,25 @@ impl Texts {
         let Some((ImageSource::Live(t), size)) = self.sources.get(k) else {
             return self.images.get(k).copied().flatten();
         };
-        let name = texts.get(t.0 as usize).filter(|n| !n.is_empty())?;
+        let (name, size) = (texts.get(t.0 as usize).filter(|n| !n.is_empty())?.clone(), *size);
+        self.live_image(k, &name, size)
+    }
+
+    /// A picture by what a live image would say —an absolute path, an icon's
+    /// name, `data:name`—, at that size, with no image of the scene behind it:
+    /// a markdown text's `![…](…)` (see `images:`).
+    pub fn named_image(&mut self, name: &str, size: (u32, u32)) -> Option<AtlasSlot> {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (name, size).hash(&mut h);
+        // Its own place among the ones kept while a new one arrives: far past the scene's images.
+        let k = usize::MAX / 2 + (h.finish() as usize % (usize::MAX / 4));
+        self.live_image(k, name, size)
+    }
+
+    fn live_image(&mut self, k: usize, name: &str, size: (u32, u32)) -> Option<AtlasSlot> {
+        let name = &name.to_owned();
+        let size = &size;
         if let Some(r) = &mut self.recording {
             r.push(WorkingKey::Live((name.clone(), *size)));
         }

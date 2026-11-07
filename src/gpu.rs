@@ -3144,11 +3144,13 @@ impl DrawList {
                     let select = text_select.take();
                     let text = content_text(content, c, texts);
                     // With `markdown:`, its marks go; everything from here on reads it without them.
-                    let (text, md_marks, md_links) = if style.markdown {
-                        let (plain, marks, links) = crate::markdown::plain_with_links(&text);
-                        (std::borrow::Cow::Owned(plain), marks, links)
+                    // With `images:`, a picture alone on its line takes as many lines as it is tall.
+                    let picture_lines = style.images.map_or(0, |h| (h / (style.px * style.line_height)).ceil().max(1.0) as u32);
+                    let (text, md_marks, md_links, md_pictures) = if style.markdown {
+                        let (plain, marks, links, pictures) = crate::markdown::plain_with_pictures(&text, picture_lines);
+                        (std::borrow::Cow::Owned(plain), marks, links, pictures)
                     } else {
-                        (text, Vec::new(), Vec::new())
+                        (text, Vec::new(), Vec::new(), Vec::new())
                     };
                     // `mark from..to, …`: its bytes as they are now, on whole letters.
                     let marks: Vec<(u32, u32, Option<[f32; 3]>, u8)> = style
@@ -3232,6 +3234,31 @@ impl DrawList {
                         let seen = limit.is_none_or(|l| b[0] < l[2] && b[2] > l[0] && b[1] < l[3] && b[3] > l[1]);
                         if !text.trim().is_empty() {
                             self.texts_seen.push(SeenText { at: idx, text: text.to_owned(), bounds: b, clipped: !seen });
+                        }
+                    }
+                    // Its pictures (`images:`), each in the room its lines make, as wide as the text
+                    // at most, its shape kept; while one arrives, the room is empty.
+                    for (from, lines, src) in &md_pictures {
+                        let (Some(first), Some(last)) = (m.lines.get(m.line_of(*from as usize)), m.lines.get(m.line_of((*from + lines - 1) as usize))) else { continue };
+                        let (top, bottom) = (first.top, last.bottom);
+                        let room = [x0, y0 + top, m.size.0.max(1.0), (bottom - top).max(1.0)];
+                        let Some(slot) = tip.named_image(src, (room[2].round() as u32, room[3].round() as u32)) else { continue };
+                        let uv = slot.uv();
+                        let (pw, ph) = (uv[2] - uv[0], uv[3] - uv[1]);
+                        let mut d = room;
+                        if pw > 0.0 && ph > 0.0 {
+                            let k = (pw / ph) / (d[2] / d[3]);
+                            if k > 1.0 {
+                                (d[1], d[3]) = (d[1] + (d[3] - d[3] / k) * 0.5, d[3] / k);
+                            } else {
+                                d[2] *= k;
+                            }
+                        }
+                        let at = self.element_count();
+                        self.sprite(d, uv, a, None, false, false, affine, &clips);
+                        if slot.page > 0 && self.element_count() > at {
+                            self.elements[at * PER_ELEMENT + 1] = slot.page as f32;
+                            self.picture_marks.push((at as u32, slot.page));
                         }
                     }
                     // Its links, where they are, for a press on them (`on("link", …)`).
