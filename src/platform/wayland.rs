@@ -2161,7 +2161,13 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
         let _ = e.connection.flush();
         return;
     };
-    let Some(parent) = e.parent.lock().unwrap().clone() else { return };
+    // Out of another popup (`parent:`): that one's surface is its parent, and its place is inside it.
+    let above = super::POPUP_PARENTS.lock().unwrap().iter().find(|(c, _)| *c == k).map(|(_, p)| *p);
+    let nested = above.and_then(|p| e.open.lock().unwrap().iter().find(|a| a.k == p).map(|a| (a.popup.xdg_surface().clone(), a.parent.clone())));
+    if above.is_some() && nested.is_none() {
+        return;
+    }
+    let Some(parent) = nested.as_ref().map(|n| n.1.clone()).or_else(|| e.parent.lock().unwrap().clone()) else { return };
     let open = || -> Option<OpenPopup> {
         let positioner = XdgPositioner::new(&e.xdg).ok()?;
         positioner.set_size(w, h);
@@ -2174,8 +2180,10 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
             positioner.set_constraint_adjustment(ConstraintAdjustment::SlideX | ConstraintAdjustment::SlideY);
         }
         let wl = e.compositor.create_surface(&e.qh);
-        let popup = Popup::from_surface(None, &positioner, &e.qh, wl, &e.xdg).ok()?;
-        parent.layer.get_popup(popup.xdg_popup());
+        let popup = Popup::from_surface(nested.as_ref().map(|n| &n.0), &positioner, &e.qh, wl, &e.xdg).ok()?;
+        if nested.is_none() {
+            parent.layer.get_popup(popup.xdg_popup());
+        }
         // If it opens because of a click or a key a moment ago, let a click outside close it;
         // one that takes the keyboard (`keyboard: true`) grabs it whenever it can: the
         // compositor gives it the keyboard while it is open.
@@ -2197,7 +2205,8 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
                 })
                 .ok()?
         };
-        let backdrop = parent.backdrop.clone().map(|m| {
+        // (Glass in a popup out of a popup sees nothing behind it yet: its place on the monitor is its parent's plus its own.)
+        let backdrop = parent.backdrop.clone().filter(|_| nested.is_none()).map(|m| {
             let d = BackdropTarget::new(id, None, BackdropKind::Popup { parent: m, offset: Mutex::new((0, 0)) });
             *d.size.lock().unwrap() = (w as u32, h as u32);
             d

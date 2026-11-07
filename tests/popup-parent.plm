@@ -1,0 +1,18 @@
+// expect: ok
+language 0.9
+// A menu with a submenu: the second popup opens out of the first, and closes with it.
+scene Menus {
+    surface { size: 300, 40 }
+    fact menu = false
+    fact more = false
+    zone box button { from: 0, 0; size: 80, 40 }
+    on press button { menu = true }
+    popup main { at: 0, 40; size: 200, 120; open: menu; keyboard: true
+        box { from: 0, 0; size: 200, 120; corner: 10; color: #25282b }
+        zone box sub { from: 0, 40; size: 200, 30 }
+        on press sub { more = true }
+    }
+    popup submenu { at: 200, 40; size: 180, 90; open: more; parent: main
+        box { from: 0, 0; size: 180, 90; corner: 10; color: #2c3033 }
+    }
+}

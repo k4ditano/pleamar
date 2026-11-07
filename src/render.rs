@@ -1280,6 +1280,18 @@ pub fn run(
                 }
                 ToRender::PopupClosed(k) => {
                     // They have clicked outside: first what was painting in it is released, then it.
+                    // Its children (`parent:`) go first: a popup cannot go while one of its own is open.
+                    for c in (k + 1..scene.popups.len()).rev() {
+                        let mut up = scene.popups[c].parent;
+                        while let Some(p) = up.filter(|p| *p != k) {
+                            up = scene.popups[p].parent;
+                        }
+                        if up == Some(k) && popups.get(c).is_some_and(Option::is_some) {
+                            sheets.retain(|l| l.view.popup != Some(c));
+                            crate::platform::popup(c, None);
+                            popups[c] = None;
+                        }
+                    }
                     sheets.retain(|l| l.view.popup != Some(k));
                     crate::platform::popup(k, None);
                     if let Some(g) = &gpu {
@@ -2119,6 +2131,18 @@ pub fn run(
             // first, as a click outside it would.
             if name == "Escape" && !mods.ctrl && !mods.alt && !mods.logo {
                 if let Some(k) = (0..scene.popups.len()).rev().find(|&k| scene.popups[k].keyboard && popups.get(k).is_some_and(Option::is_some)) {
+                    // Its children first (`parent:`): a popup cannot go while one of its own is open.
+                    for c in (k + 1..scene.popups.len()).rev() {
+                        let mut up = scene.popups[c].parent;
+                        while let Some(p) = up.filter(|p| *p != k) {
+                            up = scene.popups[p].parent;
+                        }
+                        if up == Some(k) && popups.get(c).is_some_and(Option::is_some) {
+                            sheets.retain(|l| l.view.popup != Some(c));
+                            crate::platform::popup(c, None);
+                            popups[c] = None;
+                        }
+                    }
                     sheets.retain(|l| l.view.popup != Some(k));
                     crate::platform::popup(k, None);
                     if let Some(g) = &gpu {
@@ -4040,30 +4064,43 @@ pub fn run(
         let open = |k: usize| scene.surfaces.get(k).and_then(|s| s.open.as_ref()).is_none_or(|e| e.is_true(Ctx { props: &props, facts: &facts, seen: None }));
         draw.views.clear();
         draw.views.extend(sheets.iter().filter(|l| open(l.view.surface)).map(|l| l.view.bounds()));
-        for (k, em) in scene.popups.iter().enumerate() {
+        // What each popup wants now: open (and where) or not. One out of another (`parent:`)
+        // only while that one is open; the parent is always written above it.
+        let mut wants_all: Vec<Option<[i32; 4]>> = Vec::with_capacity(scene.popups.len());
+        for em in scene.popups.iter() {
             let c = Ctx { props: &props, facts: &facts, seen: None };
-            let wants = (facts[em.open.0 as usize] > 0.5 && !sheets.is_empty()).then(|| {
+            let parent_open = em.parent.is_none_or(|p| wants_all.get(p).is_some_and(Option::is_some));
+            wants_all.push((facts[em.open.0 as usize] > 0.5 && !sheets.is_empty() && parent_open).then(|| {
                 [em.at.0.eval(c).round() as i32, em.at.1.eval(c).round() as i32, em.size.0.eval(c).round().max(1.0) as i32, em.size.1.eval(c).round().max(1.0) as i32]
-            });
-            if wants != popups[k] {
-                if popups[k].is_some() {
-                    sheets.retain(|l| l.view.popup != Some(k));
-                    crate::platform::popup(k, None);
-                    if let Some(g) = &gpu {
-                        assign_pace(g, &mut sheets, size, op.no_vsync);
+            }));
+        }
+        // Closed from the innermost out (a popup's children go before it), opened from the outermost in.
+        for k in (0..scene.popups.len()).rev() {
+            if wants_all[k] != popups[k] && popups[k].is_some() {
+                sheets.retain(|l| l.view.popup != Some(k));
+                crate::platform::popup(k, None);
+                if let Some(g) = &gpu {
+                    assign_pace(g, &mut sheets, size, op.no_vsync);
+                }
+                popups[k] = None;
+            }
+        }
+        for (k, em) in scene.popups.iter().enumerate() {
+            if let (Some(g), None) = (wants_all[k], popups[k]) {
+                {
+                    let mut kb = crate::platform::KEYBOARD_POPUPS.lock().unwrap();
+                    kb.retain(|p| *p != k);
+                    if em.keyboard {
+                        kb.push(k);
+                    }
+                    let mut parents = crate::platform::POPUP_PARENTS.lock().unwrap();
+                    parents.retain(|(c, _)| *c != k);
+                    if let Some(p) = em.parent {
+                        parents.push((k, p));
                     }
                 }
-                if let Some(g) = wants {
-                    {
-                        let mut kb = crate::platform::KEYBOARD_POPUPS.lock().unwrap();
-                        kb.retain(|p| *p != k);
-                        if em.keyboard {
-                            kb.push(k);
-                        }
-                    }
-                    crate::platform::popup(k, Some((g, em.origin)));
-                }
-                popups[k] = wants;
+                crate::platform::popup(k, Some((g, em.origin)));
+                popups[k] = Some(g);
             }
             if let Some(g) = popups[k] {
                 draw.views.push([em.origin.0, em.origin.1, em.origin.0 + g[2] as f32, em.origin.1 + g[3] as f32]);

@@ -2317,6 +2317,9 @@ pub struct Popup {
     /// `keyboard: true`: it takes the keyboard when it opens (what is typed goes
     /// to its fields and the scene's keys), and Escape closes it.
     pub keyboard: bool,
+    /// `parent: other`: it opens out of that popup (a submenu), its `at:` inside
+    /// it, only while that one is open, and closes with it.
+    pub parent: Option<usize>,
 }
 
 /// What this scene's logic can touch of the system. **Undeclared,

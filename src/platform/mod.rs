@@ -343,6 +343,9 @@ pub fn parent_window() -> String {
     EXPORTED_WINDOWS.lock().unwrap().last().map_or(String::new(), |(_, h)| format!("wayland:{h}"))
 }
 
+/// Which popup each one opens out of (`parent:`): (child, parent), by number.
+pub static POPUP_PARENTS: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+
 /// The popups that take the keyboard when they open (`keyboard: true`), by number.
 pub static KEYBOARD_POPUPS: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
 

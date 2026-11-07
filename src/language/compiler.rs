@@ -3253,6 +3253,18 @@ impl<'a> Compiler<'a> {
             }
             None => false,
         };
+        // `parent: menu`: it opens out of that popup, which is written before it.
+        let parent = match p.get_mut("parent") {
+            Some(c) => {
+                let other = self.global(&c.id("the popup it opens out of")?);
+                c.expect_end()?;
+                match self.e.popups.iter().position(|q| q.name == other) {
+                    Some(k) => Some(k),
+                    None => return c.error(&format!("no popup '{other}' before this one: a popup's `parent:` is written above it")),
+                }
+            }
+            None => None,
+        };
         // Each one in its place, far from the surface and from the others.
         self.next_origin += 10000.0;
         let origin = (0.0, self.next_origin);
@@ -3263,7 +3275,7 @@ impl<'a> Compiler<'a> {
         self.group(n.body.as_deref().unwrap_or(&[]).iter());
         self.under.pop();
         self.e.paint(Instr::Transform(None));
-        self.e.popups.push(Popup { name: interned(&name), open, at, size, origin, keyboard });
+        self.e.popups.push(Popup { name: interned(&name), open, at, size, origin, keyboard, parent });
         Ok(())
     }
 
