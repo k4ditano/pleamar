@@ -2132,8 +2132,11 @@ pub fn run(
             // in a window manager no window could be typed into.
             if let Some(ed) = editing.as_mut().filter(|e| draw.fields.iter().any(|f| f.text == e.field && !f.passive)) {
                 let k = ed.field;
-                let secret = draw.fields.iter().any(|f| f.text == k && f.secret);
-                match ed.handle_key(&mut texts[k], &name, typed.as_deref(), mods, secret) {
+                let placed = draw.fields.iter().find(|f| f.text == k);
+                let secret = placed.is_some_and(|f| f.secret);
+                // On several lines, what it laid out says where the line above and below are.
+                let lines = placed.filter(|f| f.multi).map(|f| f.layout.as_deref());
+                match ed.handle_key(&mut texts[k], &name, typed.as_deref(), mods, secret, lines) {
                     KeyOutcome::Changed => {
                         last_key = crate::clock::now();
                         let _ = to_logic.send(Event::Text(scene.texts[k].0, texts[k].clone()));
@@ -2466,7 +2469,7 @@ pub fn run(
                         let id = scene.zones[k].id;
                         if let Some(placed) = draw.fields.iter().find(|c| c.zone == id) {
                             let local = scene.zones[k].to_local(Ctx { props: &props, facts: &facts, seen: None }, p.0, p.1);
-                            let b = placed.layout.as_ref().map_or(0, |m| m.byte_at_x(local.0 - placed.x0 + placed.scroll));
+                            let b = placed.layout.as_ref().map_or(0, |m| if placed.multi { m.byte_at(local.0 - placed.x0, local.1 - placed.y0 + placed.scroll_y) } else { m.byte_at_x(local.0 - placed.x0 + placed.scroll) });
                             let b = if placed.secret { crate::gpu::unmasked_byte(&texts[placed.text], b) } else { b };
                             let b = b.min(texts[placed.text].len());
                             // A second click in a row takes the word it lands on (in «cat.png», «cat»
@@ -6106,10 +6109,10 @@ impl Editing {
             }
             self.anchor = a;
             self.cursor = b;
-            self.handle_key(t, "BackSpace", None, Mods::default(), secret);
+            self.handle_key(t, "BackSpace", None, Mods::default(), secret, None);
         }
         if let Some(c) = i.commit {
-            self.handle_key(t, "type", Some(&c), Mods::default(), secret);
+            self.handle_key(t, "type", Some(&c), Mods::default(), secret, None);
         }
         if let Some((n, cursor, anchor)) = one_step {
             let h = &mut self.history;
@@ -6141,7 +6144,9 @@ impl Editing {
     /// `secret`: a field whose letters are hidden is one word, for Ctrl and its
     /// arrows and deletes, so that where they stop says nothing of what it holds;
     /// and it remembers nothing to undo.
-    fn handle_key(&mut self, t: &mut String, name: &str, typed: Option<&str>, m: Mods, secret: bool) -> KeyOutcome {
+    /// `lines`: a field of several lines, with its layout (None while empty):
+    /// Enter writes a line break, Ctrl+Enter sends, and the arrows go by line.
+    fn handle_key(&mut self, t: &mut String, name: &str, typed: Option<&str>, m: Mods, secret: bool, lines: Option<Option<&crate::text::Layout>>) -> KeyOutcome {
         if secret || self.history.left.as_deref().is_some_and(|l| l != t.as_str()) {
             self.history = History::default();
         }
@@ -6154,7 +6159,7 @@ impl Editing {
         }
         let before = (!secret).then(|| Snapshot { text: t.clone(), cursor: self.cursor, anchor: self.anchor });
         self.history.this = None;
-        let outcome = self.apply(t, name, typed, m, secret);
+        let outcome = self.apply(t, name, typed, m, secret, lines);
         let h = &mut self.history;
         let this = h.this.take();
         match (&outcome, before) {
@@ -6194,7 +6199,7 @@ impl Editing {
     }
 
     /// What a key does to the field, without the history (see `handle_key`).
-    fn apply(&mut self, t: &mut String, name: &str, typed: Option<&str>, m: Mods, secret: bool) -> KeyOutcome {
+    fn apply(&mut self, t: &mut String, name: &str, typed: Option<&str>, m: Mods, secret: bool, lines: Option<Option<&crate::text::Layout>>) -> KeyOutcome {
         let word_left = |t: &str, b: usize| if secret { 0 } else { word_left(t, b) };
         let word_right = |t: &str, b: usize| if secret { t.len() } else { word_right(t, b) };
         self.cursor = self.cursor.min(t.len());
@@ -6239,8 +6244,9 @@ impl Editing {
                 // Nothing to write (a picture copied): the key goes on to the
                 // scene's rules and logic, which may take the picture.
                 let Some(pasted) = crate::platform::clipboard_read().filter(|p| !p.is_empty()) else { return KeyOutcome::Unhandled };
-                // A field is single-line: whatever comes with line breaks, without them.
-                let pasted: String = pasted.chars().filter(|c| !c.is_control()).collect();
+                // A field of one line: whatever comes with line breaks, without them; of
+                // several, with them (as `\n`, whatever the system's were).
+                let pasted: String = if lines.is_some() { pasted.replace("\r\n", "\n").chars().filter(|c| *c == '\n' || !c.is_control()).collect() } else { pasted.chars().filter(|c| !c.is_control()).collect() };
                 self.delete_selection(t);
                 t.insert_str(self.cursor, &pasted);
                 self.cursor += pasted.len();
@@ -6283,10 +6289,34 @@ impl Editing {
                 let a = after(t, self.cursor);
                 move_to(self, a)
             }
+            // On several lines: up and down a line, and Home and End to its ends
+            // (with Ctrl, to the text's).
+            "Up" | "Down" if lines.is_some() => {
+                let a = match lines.flatten() {
+                    Some(l) => l.byte_a_line_away(self.cursor, if name == "Up" { -1 } else { 1 }, t.len()).min(t.len()),
+                    None => self.cursor,
+                };
+                move_to(self, a)
+            }
+            "Home" | "End" if !m.ctrl && lines.flatten().is_some() => {
+                let (a, b) = lines.flatten().unwrap().line_ends(self.cursor);
+                let to = if name == "Home" { a } else { b };
+                move_to(self, to.min(t.len()))
+            }
             "Home" => move_to(self, 0),
             "End" => {
                 let a = t.len();
                 move_to(self, a)
+            }
+            // On several lines Enter writes a line break, and Ctrl+Enter sends it.
+            "Return" | "KP_Enter" if lines.is_some() && !m.ctrl => {
+                if !self.delete_selection(t) {
+                    self.history.this = Some(Run::Typing { spaced: true });
+                }
+                t.insert(self.cursor, '\n');
+                self.cursor += 1;
+                self.anchor = self.cursor;
+                KeyOutcome::Changed
             }
             "Return" | "KP_Enter" => KeyOutcome::Submitted,
             _ => match typed {
@@ -7224,6 +7254,50 @@ mod follows_tests {
 mod selection_tests {
     use super::*;
 
+    /// A field of several lines (`lines: 4`): Enter writes a line break and does not
+    /// send, Ctrl+Enter does, and Up goes to the line above at the same place.
+    #[test]
+    fn field_of_several_lines() {
+        let mut t = crate::text::Typesetter::new();
+        let style = crate::scene::Style::new(14.0, crate::scene::color(1.0, 1.0, 1.0));
+        let lay = |t: &mut crate::text::Typesetter, s: &str| t.lay_out(&crate::text::LayoutKey::new(s, &style, Some(488.0)));
+        let (mut s, mut e) = (String::new(), Editing::at(0, 0, 0));
+        for piece in ["uno", "\n", "dos", "\n", "tres"] {
+            let m = lay(&mut t, &s);
+            let out = if piece == "\n" {
+                e.handle_key(&mut s, "Return", Some("\r"), Mods::default(), false, Some(Some(&m)))
+            } else {
+                let mut last = KeyOutcome::Unhandled;
+                for c in piece.chars().map(String::from) {
+                    last = e.handle_key(&mut s, &c, Some(&c), Mods::default(), false, Some(Some(&m)));
+                }
+                last
+            };
+            assert!(matches!(out, KeyOutcome::Changed), "{piece:?} must write, not send");
+        }
+        assert_eq!(s, "uno\ndos\ntres");
+        let m = lay(&mut t, &s);
+        assert_eq!(m.lines.len(), 3);
+        assert_eq!(m.line_of(e.cursor), 2, "the cursor on the third line");
+        // Up: the second line, after its second letter as it was after the third's second… at the same x.
+        e.handle_key(&mut s, "Left", None, Mods::default(), false, Some(Some(&m)));
+        e.handle_key(&mut s, "Left", None, Mods::default(), false, Some(Some(&m)));
+        let x = m.caret_at(e.cursor).0;
+        e.handle_key(&mut s, "Up", None, Mods::default(), false, Some(Some(&m)));
+        assert_eq!(m.line_of(e.cursor), 1);
+        assert!((m.caret_at(e.cursor).0 - x).abs() < 6.0, "same column: {} vs {x}", m.caret_at(e.cursor).0);
+        // End: the end of that line, not of the text; Ctrl+End, of the text.
+        e.handle_key(&mut s, "End", None, Mods::default(), false, Some(Some(&m)));
+        assert_eq!(e.cursor, "uno\ndos".len());
+        e.handle_key(&mut s, "End", None, Mods { ctrl: true, ..Mods::default() }, false, Some(Some(&m)));
+        assert_eq!(e.cursor, s.len());
+        assert!(matches!(e.handle_key(&mut s, "Return", None, Mods { ctrl: true, ..Mods::default() }, false, Some(Some(&m))), KeyOutcome::Submitted));
+        // One line, as it always was: Enter sends.
+        let mut one = String::from("hola");
+        let mut f = Editing::at(0, 4, 4);
+        assert!(matches!(f.handle_key(&mut one, "Return", None, Mods::default(), false, None), KeyOutcome::Submitted));
+    }
+
     #[test]
     fn a_double_click_in_a_field_takes_the_word() {
         assert_eq!(word_around("cat.png", 1), (0, 3));
@@ -7241,16 +7315,16 @@ mod selection_tests {
         assert_eq!(word_right(t, 5), t.len());
         let mut e = Editing::at(0, 9, 9);
         let mut s = String::from(t);
-        e.handle_key(&mut s, "BackSpace", None, Mods { ctrl: true, ..Mods::default() }, false);
+        e.handle_key(&mut s, "BackSpace", None, Mods { ctrl: true, ..Mods::default() }, false, None);
         assert_eq!(s, "cat 1.");
         e.cursor = 0;
         e.anchor = 0;
-        e.handle_key(&mut s, "Delete", None, Mods { ctrl: true, ..Mods::default() }, false);
+        e.handle_key(&mut s, "Delete", None, Mods { ctrl: true, ..Mods::default() }, false, None);
         assert_eq!(s, " 1.");
         // A secret field is one word: Ctrl+Backspace takes all of it before the cursor.
         let mut e = Editing::at(0, 9, 9);
         let mut s = String::from("my.pass 1");
-        e.handle_key(&mut s, "BackSpace", None, Mods { ctrl: true, ..Mods::default() }, true);
+        e.handle_key(&mut s, "BackSpace", None, Mods { ctrl: true, ..Mods::default() }, true, None);
         assert_eq!(s, "");
     }
 
@@ -7263,42 +7337,42 @@ mod selection_tests {
         let mut type_ = |e: &mut Editing, s: &mut String, w: &str| {
             for c in w.chars() {
                 let c = c.to_string();
-                e.handle_key(s, &c, Some(&c), Mods::default(), false);
+                e.handle_key(s, &c, Some(&c), Mods::default(), false, None);
             }
         };
         type_(&mut e, &mut s, "hola que tal");
         // Typed in a row: a word per step.
-        e.handle_key(&mut s, "z", None, ctrl, false);
+        e.handle_key(&mut s, "z", None, ctrl, false, None);
         assert_eq!(s, "hola que ");
-        e.handle_key(&mut s, "z", None, ctrl, false);
+        e.handle_key(&mut s, "z", None, ctrl, false, None);
         assert_eq!(s, "hola ");
         assert_eq!((e.cursor, e.anchor), (5, 5));
         // Forward again, with Ctrl+Shift+Z or Ctrl+Y.
-        e.handle_key(&mut s, "Z", None, ctrl_shift, false);
+        e.handle_key(&mut s, "Z", None, ctrl_shift, false, None);
         assert_eq!(s, "hola que ");
-        e.handle_key(&mut s, "y", None, ctrl, false);
+        e.handle_key(&mut s, "y", None, ctrl, false, None);
         assert_eq!(s, "hola que tal");
         // Deletes in a row are one step, and moving closes it.
         for _ in 0..3 {
-            e.handle_key(&mut s, "BackSpace", None, Mods::default(), false);
+            e.handle_key(&mut s, "BackSpace", None, Mods::default(), false, None);
         }
-        e.handle_key(&mut s, "Left", None, Mods::default(), false);
-        e.handle_key(&mut s, "BackSpace", None, Mods::default(), false);
+        e.handle_key(&mut s, "Left", None, Mods::default(), false, None);
+        e.handle_key(&mut s, "BackSpace", None, Mods::default(), false, None);
         assert_eq!(s, "hola qu ");
-        e.handle_key(&mut s, "z", None, ctrl, false);
+        e.handle_key(&mut s, "z", None, ctrl, false, None);
         assert_eq!(s, "hola que ");
-        e.handle_key(&mut s, "z", None, ctrl, false);
+        e.handle_key(&mut s, "z", None, ctrl, false, None);
         assert_eq!(s, "hola que tal");
         // A new edit forgets what could be redone.
-        e.handle_key(&mut s, "End", None, Mods::default(), false);
+        e.handle_key(&mut s, "End", None, Mods::default(), false, None);
         type_(&mut e, &mut s, "!");
-        e.handle_key(&mut s, "y", None, ctrl, false);
+        e.handle_key(&mut s, "y", None, ctrl, false, None);
         assert_eq!(s, "hola que tal!");
         // Writing over a selection is a step of its own.
-        e.handle_key(&mut s, "a", None, ctrl, false);
+        e.handle_key(&mut s, "a", None, ctrl, false, None);
         type_(&mut e, &mut s, "x");
         assert_eq!(s, "x");
-        e.handle_key(&mut s, "z", None, ctrl, false);
+        e.handle_key(&mut s, "z", None, ctrl, false, None);
         assert_eq!(s, "hola que tal!");
         assert_eq!((e.anchor, e.cursor), (0, 13), "the selection comes back with it");
     }
@@ -7308,19 +7382,19 @@ mod selection_tests {
         let ctrl = Mods { ctrl: true, ..Mods::default() };
         let mut e = Editing::at(0, 0, 0);
         let mut s = String::new();
-        e.handle_key(&mut s, "a", Some("a"), Mods::default(), false);
+        e.handle_key(&mut s, "a", Some("a"), Mods::default(), false, None);
         // The logic writes the field: Ctrl+Z does not bring back the «a».
         s = String::from("from the logic");
         e.cursor = s.len();
         e.anchor = s.len();
-        assert!(matches!(e.handle_key(&mut s, "z", None, ctrl, false), KeyOutcome::Moved));
+        assert!(matches!(e.handle_key(&mut s, "z", None, ctrl, false, None), KeyOutcome::Moved));
         assert_eq!(s, "from the logic");
         // A secret field remembers nothing.
         let mut e = Editing::at(0, 0, 0);
         let mut s = String::new();
-        e.handle_key(&mut s, "p", Some("p"), Mods::default(), true);
+        e.handle_key(&mut s, "p", Some("p"), Mods::default(), true, None);
         assert!(e.history.undo.is_empty());
-        e.handle_key(&mut s, "z", None, ctrl, true);
+        e.handle_key(&mut s, "z", None, ctrl, true, None);
         assert_eq!(s, "p");
     }
 
@@ -7340,9 +7414,9 @@ mod selection_tests {
         // A letter taken back (3 bytes before the cursor) and another written: one step.
         assert!(e.ime(&mut s, ImeInput { delete: (3, 0), commit: Some("!".into()), ..Default::default() }, false));
         assert_eq!(s, "abc仮!");
-        e.handle_key(&mut s, "z", None, ctrl, false);
+        e.handle_key(&mut s, "z", None, ctrl, false, None);
         assert_eq!((s.as_str(), e.cursor, e.anchor), ("abc仮名", 9, 9));
-        e.handle_key(&mut s, "z", None, ctrl, false);
+        e.handle_key(&mut s, "z", None, ctrl, false, None);
         assert_eq!(s, "abc");
         // Taking back more than there is, or inside a letter, stays on whole letters.
         let mut e = Editing::at(0, 3, 3);

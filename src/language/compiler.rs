@@ -4206,7 +4206,31 @@ impl<'a> Compiler<'a> {
             Some(v) => alpha * v.clone(),
             None => alpha,
         };
-        let height = style.px * style.line_height;
+        // `lines: 4`: a field of several lines, that tall (`height:` says it in
+        // pixels instead); 1, as it always was.
+        let lines = match p.get_mut("lines") {
+            Some(c) => {
+                let n = self.constant(c, "an input's `lines:` (a number from 1 to 20)")?;
+                if !(1.0..=20.0).contains(&n) || n.fract() != 0.0 {
+                    return c.error("an input's `lines:` is a whole number from 1 to 20");
+                }
+                n as u8
+            }
+            None => 1,
+        };
+        let height_of = match p.get_mut("height") {
+            Some(c) => {
+                let e = self.expr(c)?;
+                c.expect_end()?;
+                Some(e)
+            }
+            None => None,
+        };
+        if secret && (lines > 1 || height_of.is_some()) {
+            return Err(CompileError::at(n.line, n.col, "a `secret` field is one line: no `lines:` or `height:`"));
+        }
+        let line = style.px * style.line_height;
+        let height: Expr = height_of.clone().unwrap_or(Expr::K(line * lines as f32));
         // Its zone: pressing it focuses it, and over it the cursor is the typing one.
         // It is named like the text: `on drop query`, `on enter query`.
         let zone = self.declare_zone(&local);
@@ -4214,11 +4238,11 @@ impl<'a> Compiler<'a> {
             name: zone.clone(),
             at: self.e.instrs.len(),
             zblock: self.zblock,
-            shape: Shape::Rect { center: (at.0.clone() + width.clone() * 0.5, at.1.clone() + height * 0.5), half_size: (width.clone() * 0.5, (height * 0.5 + 3.0).into()), radius: 0.0.into() },
+            shape: Shape::Rect { center: (at.0.clone() + width.clone() * 0.5, at.1.clone() + height.clone() * 0.5), half_size: (width.clone() * 0.5, height.clone() * 0.5 + 3.0), radius: 0.0.into() },
             active: None, visible: shown, under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None, yields: None,
         });
-        self.last_size = Some((width.clone(), height.into()));
-        self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret, passive });
+        self.last_size = Some((width.clone(), height));
+        self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret, passive, lines, height: height_of });
         Ok(())
     }
 

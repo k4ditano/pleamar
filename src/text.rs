@@ -93,6 +93,40 @@ impl Layout {
         line.cursors.iter().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(0, |c| c.0)
     }
 
+    /// Which line the cursor in front of byte `b` is on: the last one that
+    /// starts at or before it (at a wrap, the cursor goes to the line below).
+    pub fn line_of(&self, b: usize) -> usize {
+        self.lines.iter().rposition(|l| l.cursors.first().is_some_and(|c| c.0 <= b)).unwrap_or(0)
+    }
+
+    /// Where the cursor in front of byte `b` is drawn, on any line: x, and the
+    /// top and bottom of its line. Before anything is laid out, at the start.
+    pub fn caret_at(&self, b: usize) -> (f32, f32, f32) {
+        match self.lines.get(self.line_of(b)) {
+            Some(l) => (l.cursors.iter().rev().find(|c| c.0 <= b).or(l.cursors.first()).map_or(0.0, |c| c.1), l.top, l.bottom),
+            None => (self.x_at_byte(b), 0.0, self.size.1),
+        }
+    }
+
+    /// The byte a line up (`-1`) or down (`1`) from byte `b`, as near its x as
+    /// there is one; past the first line, the start, and past the last, the end.
+    pub fn byte_a_line_away(&self, b: usize, by: i32, end: usize) -> usize {
+        let (x, _, _) = self.caret_at(b);
+        let k = self.line_of(b) as i32 + by;
+        if k < 0 {
+            return 0;
+        }
+        match self.lines.get(k as usize) {
+            Some(l) => l.cursors.iter().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(0, |c| c.0),
+            None => end,
+        }
+    }
+
+    /// Where the line of byte `b` starts and ends, in bytes.
+    pub fn line_ends(&self, b: usize) -> (usize, usize) {
+        self.lines.get(self.line_of(b)).map_or((0, b), |l| (l.cursors.first().map_or(0, |c| c.0), l.cursors.last().map_or(b, |c| c.0)))
+    }
+
     /// The boxes (x0, y0, x1, y1) that cover the bytes from `a` to `b`, one
     /// per line they touch.
     pub fn spans(&self, a: usize, b: usize) -> Vec<[f32; 4]> {
@@ -257,7 +291,7 @@ struct Typesetter {
 }
 
 impl Typesetter {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let t0 = std::time::Instant::now();
         let fonts = FontSystem::new();
         println!("text   · {} system fonts in {} ms", fonts.db().len(), t0.elapsed().as_millis());
@@ -276,7 +310,7 @@ impl Typesetter {
         self.frames.clear();
     }
 
-    fn lay_out(&mut self, c: &LayoutKey) -> Layout {
+    pub(crate) fn lay_out(&mut self, c: &LayoutKey) -> Layout {
         let (px, line_height, width) = (f32::from_bits(c.px), f32::from_bits(c.line_height), c.width.map(|a| a as f32));
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(px, px * line_height));
         buffer.set_wrap(if width.is_some() { Wrap::WordOrGlyph } else { Wrap::None });

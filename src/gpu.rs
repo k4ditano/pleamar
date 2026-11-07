@@ -368,6 +368,11 @@ pub struct PlacedField {
     /// Where the text starts, and how much it has scrolled so the cursor is visible.
     pub x0: f32,
     pub scroll: f32,
+    /// On several lines (`lines:`): where its top is, how far it has gone up
+    /// so the cursor is seen, and that it is so.
+    pub y0: f32,
+    pub scroll_y: f32,
+    pub multi: bool,
     /// Whether what is painted are dots: then a byte of the layout is not a
     /// byte of the text, and one has to go from one to the other by letter number.
     pub secret: bool,
@@ -2929,7 +2934,9 @@ impl DrawList {
                         self.timed |= time.is_some();
                     }
                 }
-                Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret, passive } => {
+                Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret, passive, lines, height } => {
+                    // Several lines (`lines:`, `height:`): it wraps at its width and scrolls down.
+                    let multi = *lines > 1 || height.is_some();
                     let k = text.0 as usize;
                     let mine = field.as_ref().filter(|v| v.text == k);
                     // What an input method is composing goes in at the cursor, as if
@@ -2956,14 +2963,23 @@ impl DrawList {
                     let value = if *secret { dots.as_str() } else { real };
                     // When empty, it shows what is expected of it, fainter.
                     let placeholder = content_text(placeholder, c, texts);
-                    let key = LayoutKey::new(if empty { &placeholder } else { value }, style, None);
+                    let (x0, y0, w) = (at.0.eval(c), at.1.eval(c), width.eval(c));
+                    let key = LayoutKey::new(if empty { &placeholder } else { value }, style, multi.then_some(w));
                     let key = match style.family_from {
                         Some(t) => key.familied(texts.get(t.0 as usize).map(|f| f.trim()).filter(|f| !f.is_empty()).map(crate::scene::intern)),
                         None => key,
                     };
                     let m = tip.layout(idx, key);
-                    let (x0, y0, w) = (at.0.eval(c), at.1.eval(c), width.eval(c));
                     let h = style.px * style.line_height;
+                    // The box: one line, or as many as it says (or `height:`).
+                    let box_h = if multi { height.as_ref().map_or(h * *lines as f32, |e| e.eval(c).max(h)) } else { h };
+                    // Where the cursor in front of a byte is: x, and its line's top and bottom.
+                    let caret_at = |b: usize| -> (f32, f32, f32) {
+                        match (&m, multi && !empty) {
+                            (Some(m), true) => m.caret_at(b),
+                            _ => (0.0, 0.0, h),
+                        }
+                    };
                     // The cursor counts bytes of the real text; in dots, they are letters times three.
                     let x_at_byte = |b: usize| {
                         let b = if *secret { real[..b.min(real.len())].chars().count() * MASK_DOT.len() } else { b };
@@ -2974,24 +2990,46 @@ impl DrawList {
                         Some((at, (p, c))) => at + (*c).min(p.len()),
                         None => shown(v.cursor),
                     };
-                    // If the cursor goes out on the right, the text scrolls.
-                    let scroll = mine.map_or(0.0, |v| (x_at_byte(caret_byte(v)) - w + 6.0).max(0.0));
+                    // The cursor's place: on one line, its x; on several, its line too.
+                    let caret_xy = |v: &FieldView| if multi { caret_at(caret_byte(v)) } else { (x_at_byte(caret_byte(v)), 0.0, h) };
+                    // If the cursor goes out on the right, the text scrolls; on several
+                    // lines, if it goes out below, the text goes up.
+                    let scroll = if multi { 0.0 } else { mine.map_or(0.0, |v| (x_at_byte(caret_byte(v)) - w + 6.0).max(0.0)) };
+                    let scroll_y = if multi { mine.map_or(0.0, |v| (caret_xy(v).2 - box_h).max(0.0)) } else { 0.0 };
                     let caret = mine.map(|v| {
-                        let b = affine.bounds([x0 - scroll + x_at_byte(caret_byte(v)), y0, x0 - scroll + x_at_byte(caret_byte(v)) + 1.0, y0 + h]);
+                        let (cx, top, bottom) = caret_xy(v);
+                        let b = affine.bounds([x0 - scroll + cx, y0 - scroll_y + top, x0 - scroll + cx + 1.0, y0 - scroll_y + bottom]);
                         [b[0], b[1], (b[2] - b[0]).max(1.0), b[3] - b[1]]
                     });
-                    self.fields.push(PlacedField { text: k, zone, layout: if empty { None } else { m.clone() }, x0, scroll, secret: *secret, passive: *passive, caret });
+                    self.fields.push(PlacedField { text: k, zone, layout: if empty { None } else { m.clone() }, x0, scroll, y0, scroll_y, multi, secret: *secret, passive: *passive, caret });
                     let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
                     if a <= 0.001 {
                         continue;
                     }
                     // Clipped to its box: what does not fit is not seen.
-                    let mut rect = crate::shapes::FlatShape { kind: 1, cx: x0 + w * 0.5, cy: y0 + h * 0.5, mx: w * 0.5, my: h * 0.5 + 2.0, radius: 0.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke: 0.0, affine };
+                    let mut rect = crate::shapes::FlatShape { kind: 1, cx: x0 + w * 0.5, cy: y0 + box_h * 0.5, mx: w * 0.5, my: box_h * 0.5 + 2.0, radius: 0.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke: 0.0, affine };
                     let limit = rect.bounds().unwrap_or([0.0; 4]);
                     let kf = self.push_shape(rect, 0.0);
                     clips.push((kf, limit));
                     let rgb = color(&style.color);
-                    if let Some(v) = mine.filter(|_| composing.is_none()) {
+                    if let (Some(v), Some(lm), true) = (mine.filter(|_| composing.is_none()), &m, multi && !empty) {
+                        // On several lines, a box for each line it takes.
+                        let sel = color(selection);
+                        for b in lm.spans(v.cursor.min(v.anchor), v.cursor.max(v.anchor)) {
+                            if b[2] - b[0] < 0.5 {
+                                continue;
+                            }
+                            let r = crate::shapes::FlatShape { cx: x0 + (b[0] + b[2]) * 0.5, cy: y0 - scroll_y + (b[1] + b[3]) * 0.5, mx: (b[2] - b[0]) * 0.5, my: (b[3] - b[1]) * 0.5, ..rect };
+                            let (kf, bb) = (self.push_shape(r, 0.0), r.bounds().unwrap_or([0.0; 4]));
+                            self.element(0.0, bb, &clips, |e| {
+                                affine.encode(&mut e[44..52]);
+                                e[1] = kf as f32;
+                                e[2] = 1.0;
+                                e[3] = a;
+                                e[8..11].copy_from_slice(&sel);
+                            });
+                        }
+                    } else if let Some(v) = mine.filter(|_| composing.is_none()) {
                         let (s0, s1) = (x_at_byte(v.cursor.min(v.anchor)), x_at_byte(v.cursor.max(v.anchor)));
                         if s1 > s0 {
                             rect = crate::shapes::FlatShape { cx: x0 - scroll + (s0 + s1) * 0.5, mx: (s1 - s0) * 0.5, my: h * 0.5, ..rect };
@@ -3008,7 +3046,7 @@ impl DrawList {
                     }
                     if let Some(m) = &m {
                         let s = tip_scale;
-                        let (tx, ty) = (((x0 - scroll) * s).round() / s, (y0 * s).round() / s);
+                        let (tx, ty) = (((x0 - scroll) * s).round() / s, ((y0 - scroll_y) * s).round() / s);
                         for g in &m.glyphs {
                             let d = [tx + g.rect[0], ty + g.rect[1], g.rect[2], g.rect[3]];
                             self.sprite(d, g.uv, if empty { a * 0.4 } else { a }, if g.colored { None } else { Some(rgb) }, true, false, affine, &clips);
@@ -3016,19 +3054,26 @@ impl DrawList {
                     }
                     // What is being composed, underlined.
                     if let Some((at, (p, _))) = composing {
-                        let (u0, u1) = (x_at_byte(at), x_at_byte(at + p.len()));
-                        rect = crate::shapes::FlatShape { cx: x0 - scroll + (u0 + u1) * 0.5, cy: y0 + h - 1.0, mx: (u1 - u0) * 0.5, my: 0.5, ..rect };
-                        let (kf, b) = (self.push_shape(rect, 0.0), rect.bounds().unwrap_or([0.0; 4]));
-                        self.element(0.0, [b[0], b[1] - 1.0, b[2], b[3] + 1.0], &clips, |e| {
-                            affine.encode(&mut e[44..52]);
-                            e[1] = kf as f32;
-                            e[2] = 1.0;
-                            e[3] = a;
-                            e[8..11].copy_from_slice(&rgb);
-                        });
+                        // Under each line of it (on one line, the one).
+                        let under: Vec<[f32; 4]> = match (&m, multi) {
+                            (Some(lm), true) => lm.spans(at, at + p.len()),
+                            _ => vec![[x_at_byte(at), 0.0, x_at_byte(at + p.len()), h]],
+                        };
+                        for u in under {
+                            rect = crate::shapes::FlatShape { cx: x0 - scroll + (u[0] + u[2]) * 0.5, cy: y0 - scroll_y + u[3] - 1.0, mx: (u[2] - u[0]) * 0.5, my: 0.5, ..rect };
+                            let (kf, b) = (self.push_shape(rect, 0.0), rect.bounds().unwrap_or([0.0; 4]));
+                            self.element(0.0, [b[0], b[1] - 1.0, b[2], b[3] + 1.0], &clips, |e| {
+                                affine.encode(&mut e[44..52]);
+                                e[1] = kf as f32;
+                                e[2] = 1.0;
+                                e[3] = a;
+                                e[8..11].copy_from_slice(&rgb);
+                            });
+                        }
                     }
                     if let Some(v) = mine.filter(|v| v.visible) {
-                        rect = crate::shapes::FlatShape { cx: x0 - scroll + x_at_byte(caret_byte(v)) + 0.5, cy: y0 + h * 0.5, mx: 0.8, my: h * 0.5 - 1.0, ..rect };
+                        let (cx, top, bottom) = caret_xy(v);
+                        rect = crate::shapes::FlatShape { cx: x0 - scroll + cx + 0.5, cy: y0 - scroll_y + (top + bottom) * 0.5, mx: 0.8, my: (bottom - top) * 0.5 - 1.0, ..rect };
                         let (kf, b) = (self.push_shape(rect, 0.0), rect.bounds().unwrap_or([0.0; 4]));
                         self.element(0.0, [b[0] - 1.0, b[1], b[2] + 1.0, b[3]], &clips, |e| {
                             affine.encode(&mut e[44..52]);

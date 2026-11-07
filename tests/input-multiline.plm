@@ -1,0 +1,12 @@
+// expect: ok
+language 0.9
+// A composer: four lines tall; Enter writes a line break, Ctrl+Enter sends.
+scene Composer {
+    surface { size: 520, 160 }
+    text draft = ""
+    input draft {
+        at: 16, 16; width: 488; lines: 4
+        size: 14; color: #f5f7f5; placeholder: "Message…"
+    }
+    on submit draft { emit send }
+}
