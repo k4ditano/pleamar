@@ -77,6 +77,9 @@ pub struct DrawList {
     /// The texts that can be selected (`selectable: true`), as they ended up
     /// this frame, in the order they were painted.
     pub selectable: Vec<PlacedText>,
+    /// The links of the markdown texts painted this frame —`[words](where)`
+    /// and `@name`—: each box they take on the surface, and where they go.
+    pub links: Vec<PlacedLink>,
     /// While someone from outside asks what the scene says (`describe`):
     /// every text painted this frame and seen, with its box in the scene's
     /// plane. Only then: it is a copy of every text.
@@ -383,6 +386,14 @@ pub struct PlacedField {
     pub caret: Option<[f32; 4]>,
 }
 
+/// A link of a markdown text as it was painted: a box it takes on the
+/// surface (one per line it goes over) and where it goes.
+#[derive(Clone, Debug)]
+pub struct PlacedLink {
+    pub rect: [f32; 4],
+    pub href: std::sync::Arc<str>,
+}
+
 /// A terminal as the drawing laid it out: where its cells are, how many and
 /// how big, for the render to size its screen, and to know which cell the mouse is on.
 #[derive(Clone, Debug)]
@@ -451,6 +462,7 @@ struct Lens {
     windows_drawn: usize,
     fields: usize,
     selectable: usize,
+    links: usize,
     measurements: usize,
 }
 
@@ -473,6 +485,7 @@ impl Lens {
             windows_drawn: f(self.windows_drawn, b.windows_drawn, a.windows_drawn),
             fields: f(self.fields, b.fields, a.fields),
             selectable: f(self.selectable, b.selectable, a.selectable),
+            links: f(self.links, b.links, a.links),
             measurements: f(self.measurements, b.measurements, a.measurements),
         }
     }
@@ -519,6 +532,7 @@ struct LastFrame {
     windows_drawn: Vec<(usize, [f32; 4], Affine)>,
     fields: Vec<PlacedField>,
     selectable: Vec<PlacedText>,
+    links: Vec<PlacedLink>,
     measurements: Vec<(PropId, f32)>,
     hidden: Vec<bool>,
 }
@@ -1236,6 +1250,7 @@ impl DrawList {
             windows_drawn: self.windows_drawn.len(),
             fields: self.fields.len(),
             selectable: self.selectable.len(),
+            links: self.links.len(),
             measurements: self.measurements.len(),
         }
     }
@@ -2146,6 +2161,7 @@ impl DrawList {
         std::mem::swap(&mut self.windows_drawn, &mut self.last.windows_drawn);
         std::mem::swap(&mut self.fields, &mut self.last.fields);
         std::mem::swap(&mut self.selectable, &mut self.last.selectable);
+        std::mem::swap(&mut self.links, &mut self.last.links);
         std::mem::swap(&mut self.measurements, &mut self.last.measurements);
         std::mem::swap(&mut self.hidden, &mut self.last.hidden);
         self.reads.reset(c.facts.len(), c.props.len());
@@ -2154,6 +2170,7 @@ impl DrawList {
         self.fields.clear();
         self.terminals.clear();
         self.selectable.clear();
+        self.links.clear();
         self.texts_seen.clear();
         self.size = size;
         self.own_size = (size.0, size.1 - if hud { HUD_HEIGHT } else { 0.0 });
@@ -2351,6 +2368,7 @@ impl DrawList {
                             && e.windows_drawn <= last.windows_drawn.len()
                             && e.fields <= last.fields.len()
                             && e.selectable <= last.selectable.len()
+                            && e.links <= last.links.len()
                             && e.measurements <= last.measurements.len()
                     };
                     // Where it starts in the lists need not be where it started:
@@ -2382,6 +2400,7 @@ impl DrawList {
                         self.windows_drawn.extend_from_slice(&last.windows_drawn[a.windows_drawn..b.windows_drawn]);
                         self.fields.extend_from_slice(&last.fields[a.fields..b.fields]);
                         self.selectable.extend_from_slice(&last.selectable[a.selectable..b.selectable]);
+                        self.links.extend_from_slice(&last.links[a.links..b.links]);
                         self.measurements.extend_from_slice(&last.measurements[a.measurements..b.measurements]);
                         if k.any_hidden {
                             for &i in &sequence[here..to] {
@@ -3093,11 +3112,11 @@ impl DrawList {
                     let select = text_select.take();
                     let text = content_text(content, c, texts);
                     // With `markdown:`, its marks go; everything from here on reads it without them.
-                    let (text, md_marks) = if style.markdown {
-                        let (plain, marks) = crate::markdown::plain(&text);
-                        (std::borrow::Cow::Owned(plain), marks)
+                    let (text, md_marks, md_links) = if style.markdown {
+                        let (plain, marks, links) = crate::markdown::plain_with_links(&text);
+                        (std::borrow::Cow::Owned(plain), marks, links)
                     } else {
-                        (text, Vec::new())
+                        (text, Vec::new(), Vec::new())
                     };
                     // `mark from..to, …`: its bytes as they are now, on whole letters.
                     let marks: Vec<(u32, u32, Option<[f32; 3]>, u8)> = style
@@ -3181,6 +3200,22 @@ impl DrawList {
                         let seen = limit.is_none_or(|l| b[0] < l[2] && b[2] > l[0] && b[1] < l[3] && b[3] > l[1]);
                         if !text.trim().is_empty() {
                             self.texts_seen.push(SeenText { at: idx, text: text.to_owned(), bounds: b, clipped: !seen });
+                        }
+                    }
+                    // Its links, where they are, for a press on them (`on("link", …)`).
+                    if !md_links.is_empty() {
+                        let limit = clips.iter().map(|k| k.1).reduce(|a, b| [a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])]);
+                        for (from, to, href) in &md_links {
+                            let href: std::sync::Arc<str> = href.as_str().into();
+                            for b in m.spans(*from as usize, *to as usize) {
+                                let mut r = affine.bounds([x0 + b[0], y0 + b[1], x0 + b[2], y0 + b[3]]);
+                                if let Some(l) = limit {
+                                    r = [r[0].max(l[0]), r[1].max(l[1]), r[2].min(l[2]), r[3].min(l[3])];
+                                }
+                                if r[2] > r[0] && r[3] > r[1] {
+                                    self.links.push(PlacedLink { rect: r, href: href.clone() });
+                                }
+                            }
                         }
                     }
                     if let Some(sel) = select {

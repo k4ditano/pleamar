@@ -2441,6 +2441,16 @@ pub fn run(
                             continue;
                         }
                     }
+                    // On a link of a text (`[words](where)`, `@name`): it is told to the logic,
+                    // `on("link", function(href) … end)`, and to the rules if the scene has an
+                    // `event link`; the press goes no further, as a button's would not.
+                    if let Some(l) = pointer.and_then(|p| draw.links.iter().rev().find(|l| p.0 >= l.rect[0] && p.0 < l.rect[2] && p.1 >= l.rect[1] && p.1 < l.rect[3])) {
+                        let _ = to_logic.send(Event::Link(l.href.to_string()));
+                        if let Some(i) = scene.signals.iter().position(|s| s.0 == "link") {
+                            signals.push((i, false, None));
+                        }
+                        continue;
+                    }
                     // On the letters of a text that can be selected, the press
                     // selects —unless a button, a field or something to carry
                     // out is on top of them: that one keeps its click—.
@@ -2917,6 +2927,8 @@ pub fn run(
 
         // The cursor, the one of the zone it is over.
         let wanted = drag.map(|a| a.0).or(hovered).and_then(|k| scene.zones.get(k)).map_or(Cursor::Normal, |z| z.cursor_in(Ctx { props: &props, facts: &facts, seen: None }));
+        // Over a link of a text, the hand: it can be pressed.
+        let wanted = if drag.is_none() && pointer.is_some_and(|p| draw.links.iter().any(|l| p.0 >= l.rect[0] && p.0 < l.rect[2] && p.1 >= l.rect[1] && p.1 < l.rect[3])) { Cursor::Hand } else { wanted };
         // Over letters that can be selected, or selecting them, the text one.
         let wanted = if selection.as_ref().is_some_and(|s| s.dragging)
             || (wanted == Cursor::Normal && drag.is_none() && pointer.is_some_and(|p| draw.selectable.iter().any(|t| t.contains(p.0, p.1))))

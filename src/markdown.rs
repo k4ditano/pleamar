@@ -23,7 +23,26 @@ pub const LOOKS: u8 = BOLD | ITALIC | CODE;
 /// The text without its marks, and the stretches of it (byte ranges) that
 /// are bold, italic or code. A mark still open at the end —a model halfway
 /// through writing `**this`— holds to the end of its line, without showing.
+#[cfg(test)]
 pub fn plain(source: &str) -> (String, Vec<(u32, u32, u8)>) {
+    let (text, marks, _) = plain_with_links(source);
+    (text, marks)
+}
+
+thread_local! {
+    /// The links found while reading a text: (from, to, where it goes).
+    static LINKS: std::cell::RefCell<Vec<(u32, u32, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The same, and its links: the bytes of each one's words in the plain text and
+/// where it goes —a `[link](where)`'s address, an `@name` itself—.
+pub fn plain_with_links(source: &str) -> (String, Vec<(u32, u32, u8)>, Vec<(u32, u32, String)>) {
+    LINKS.with(|l| l.borrow_mut().clear());
+    let (text, marks) = blocks(source);
+    (text, marks, LINKS.with(|l| std::mem::take(&mut *l.borrow_mut())))
+}
+
+fn blocks(source: &str) -> (String, Vec<(u32, u32, u8)>) {
     let mut out = String::with_capacity(source.len());
     let mut looks: Vec<u8> = Vec::with_capacity(source.len());
     let mut fenced = false;
@@ -125,15 +144,18 @@ fn cells(row: &str) -> Vec<&str> {
 /// A table, in monospace so its columns line up: each cell with its own marks,
 /// padded to its column, the head in bold and a line under it.
 fn table(rows: &[Vec<&str>], out: &mut String, looks: &mut Vec<u8>, first: &mut bool) {
-    let shown: Vec<Vec<(String, Vec<u8>)>> = rows
+    // Each cell on its own, with the links it has (counted from its start).
+    let shown: Vec<Vec<(String, Vec<u8>, Vec<(u32, u32, String)>)>> = rows
         .iter()
         .enumerate()
         .map(|(r, row)| {
             row.iter()
                 .map(|cell| {
                     let (mut o, mut l) = (String::new(), Vec::new());
+                    let before = LINKS.with(|k| k.borrow().len());
                     inline(cell, CODE | TABLE | if r == 0 { BOLD } else { 0 }, &mut o, &mut l);
-                    (o, l)
+                    let links = LINKS.with(|k| k.borrow_mut().split_off(before));
+                    (o, l, links)
                 })
                 .collect()
         })
@@ -146,8 +168,9 @@ fn table(rows: &[Vec<&str>], out: &mut String, looks: &mut Vec<u8>, first: &mut 
         }
         for (k, w) in widths.iter().enumerate() {
             push(out, looks, if k == 0 { "│ " } else { " │ " }, CODE | TABLE | QUOTE);
-            let (text, marks) = row.get(k).map_or((String::new(), Vec::new()), |c| (c.0.clone(), c.1.clone()));
+            let (text, marks, links) = row.get(k).map_or((String::new(), Vec::new(), Vec::new()), |c| (c.0.clone(), c.1.clone(), c.2.clone()));
             let from = out.len();
+            LINKS.with(|l| l.borrow_mut().extend(links.into_iter().map(|(a, b, h)| (a + from as u32, b + from as u32, h))));
             out.push_str(&text);
             looks.extend(marks.iter().copied().chain(std::iter::repeat(CODE | TABLE)).take(text.len()));
             debug_assert_eq!(looks.len(), from + text.len());
@@ -243,7 +266,10 @@ fn inline(line: &str, base: u8, out: &mut String, looks: &mut Vec<u8>) {
                 let link = line[i..].find("](").and_then(|m| line[i + m..].find(')').map(|e| (m, e)));
                 match link {
                     Some((m, e)) if m > 1 => {
+                        let from = out.len() as u32;
                         inline(&line[i + 1..i + m], look | LINK, out, looks);
+                        let href = line[i + m + 2..i + m + e].trim().to_owned();
+                        LINKS.with(|l| l.borrow_mut().push((from, out.len() as u32, href)));
                         k = chars.partition_point(|(j, _)| *j <= i + m + e);
                     }
                     _ => {
@@ -263,7 +289,9 @@ fn inline(line: &str, base: u8, out: &mut String, looks: &mut Vec<u8>) {
                     e -= 1;
                 }
                 let end = chars.get(e).map_or(line.len(), |c| c.0);
+                let from = out.len() as u32;
                 push(out, looks, &line[i..end], look | LINK);
+                LINKS.with(|l| l.borrow_mut().push((from, out.len() as u32, line[i..end].to_owned())));
                 k = e;
             }
             _ => {
@@ -350,6 +378,13 @@ mod tests {
         }
         assert_eq!(of("shell"), Some(QUOTE));
         assert_eq!(of("npm run build"), Some(CODE));
+    }
+
+    #[test]
+    fn links_know_where_they_go() {
+        let (text, _, links) = plain_with_links("See [the docs](https://example.org/a) and @plan.md.");
+        let got: Vec<(&str, &str)> = links.iter().map(|(a, b, h)| (&text[*a as usize..*b as usize], h.as_str())).collect();
+        assert_eq!(got, vec![("the docs", "https://example.org/a"), ("@plan.md", "@plan.md")]);
     }
 
     #[test]

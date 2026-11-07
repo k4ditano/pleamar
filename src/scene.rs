@@ -2841,6 +2841,8 @@ pub enum Event {
     Text(&'static str, String),
     /// Enter in a field.
     Submit(&'static str, String),
+    /// A link of a text was pressed: where it goes (`[words](where)`, or the `@name`).
+    Link(String),
     Focus(bool),
     /// Something dropped on a zone: (zone, type, content).
     Received(&'static str, String, String),
