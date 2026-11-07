@@ -1259,8 +1259,9 @@ pub struct Style {
     /// look, in the order they were written (a later one wins where they meet).
     pub marks: Vec<TextMark>,
     /// With `markdown:`, the colour of what it marks: `link:` (a link's text and
-    /// an `@name`), `code:`, `quote:` and `heading:`. None keeps the text's.
-    pub markdown_colors: [Option<Color>; 4],
+    /// an `@name`), `code:`, `quote:`, `heading:`, and `strike:` the line across
+    /// what is struck through. None keeps the text's.
+    pub markdown_colors: [Option<Color>; 5],
 }
 
 /// A stretch of a text marked in the scene: bytes of the text as it is shown
@@ -1279,7 +1280,7 @@ pub const MOST_MARKS: usize = 16;
 
 impl Style {
     pub fn new(px: f32, color: Color) -> Self {
-        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, tight: false, size: None, weight_of: None, lines_of: None, family_from: None, marks: Vec::new(), markdown_colors: [None, None, None, None] }
+        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, tight: false, size: None, weight_of: None, lines_of: None, family_from: None, marks: Vec::new(), markdown_colors: [None, None, None, None, None] }
     }
     pub fn weight(mut self, p: u16) -> Self {
         self.weight = p;

@@ -1187,13 +1187,13 @@ row { padding: 10; fill: #2f5a50; corner: 14; place: end
 }
 ```
 
-**What a model writes.** With `markdown: true` a text shows what its marks mean instead of the marks: `**bold**`, `*italic*` (and `_italic_` outside a word), `` `code` `` in the monospace font, `# a title` in bold, `- a point` as `• a point`, `> a quote` in italics, `[a link](…)` as its words, and a block between ` ``` ` lines in monospace. A star between spaces (`2 * 3`) or an underscore inside a name stays as it is, and `\*` is a star. A mark still open at the end —a model halfway through `**this`— does not show. Everything else reads the text without its marks: its letters (`letter_*`), what is selected and copied, and what an agent is told.
+**What a model writes.** With `markdown: true` a text shows what its marks mean instead of the marks: `**bold**`, `*italic*` (and `_italic_` outside a word), `` `code` `` in the monospace font, `# a title` in bold, `- a point` as `• a point` (nested two spaces a level, as `◦` and `▪`), `- [ ]` and `- [x]` as `☐` and `☑`, `1.` numbered as it is, `> a quote` in italics, `[a link](…)` as its words, `![a picture](…)` as its words, `~~struck~~` with a line across, `---` as a rule, a block between ` ``` ` lines in monospace with its language (` ```rust `) over it, and a table (`| a | b |` with a line of dashes under its head) in monospace, its columns lined up between `│`, its head in bold. A star between spaces (`2 * 3`) or an underscore inside a name stays as it is, and `\*` is a star. A mark still open at the end —a model halfway through `**this`— does not show. Everything else reads the text without its marks: its letters (`letter_*`), what is selected and copied, and what an agent is told.
 
 ```
 text r.text { at: 2, 2; width: 520; size: 13.5; color: ink; markdown: true; selectable: true }
 ```
 
-In colour, with `markdown: true`: **`link:`** colours a link's words and an `@name` (`@launch-brief.md`, `@Research`; one in the middle of a word, like an e-mail, is not one), **`code:`** what is between backticks and fenced, **`quote:`** a `> quote` and **`heading:`** a `# title`. Each is a colour like `color:` (`if(…)`, `mix(…)` and names work); the ones not given keep the text's colour.
+In colour, with `markdown: true`: **`link:`** colours a link's words and an `@name` (`@launch-brief.md`, `@Research`; one in the middle of a word, like an e-mail, is not one), **`code:`** what is between backticks and fenced, **`quote:`** a `> quote`, a fenced block's language and a table's lines, **`heading:`** a `# title`, and **`strike:`** the line across what is struck through (otherwise the colour of its letters). Each is a colour like `color:` (`if(…)`, `mix(…)` and names work); the ones not given keep the text's colour.
 
 **A stretch of its own.** `mark from..to, colour` inside a text paints those bytes in that colour, and `bold`, `italic` or `code` after it (or instead of the colour) change how they look: `mark 4..20, #74b9ff`, `mark 12..19, #31cf76, bold`, `mark r.hl_from..r.hl_to, amber`. The ends are expressions worked out every frame, so the logic can mark what it finds; they count bytes of the text as it is shown —with `markdown:`, without its marks— and fall back to the start of a letter if they land inside one. Up to 16 marks a text. They go over the markdown's colours, and where two meet, the one written later wins. A change of colour does not lay the text out again; a change of look does.
 
@@ -1930,7 +1930,7 @@ properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
 properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight opacity show
-properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown link code quote heading place tight
+properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown link code quote heading strike place tight
 properties.image: at size opacity tint cell fit show grow place
 properties.window: at size ask opacity show
 properties.terminal: at size family font_size line_height colors cursor selection command folder env run opacity show label agent place grow

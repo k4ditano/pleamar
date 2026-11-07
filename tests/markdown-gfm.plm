@@ -1,0 +1,11 @@
+// expect: ok
+language 0.9
+// A model's answer with what GitHub's markdown has: a table with chips, a fix struck through,
+// nested steps, boxes to tick, a numbered list, a rule and a fenced block with its language.
+scene Gfm {
+    surface { size: 560, 520 }
+    text "Status:\n\n| Workstream | Owner | Status |\n|---|---|---|\n| Brief | @Chief | **Fix** |\n| Metrics | @Research | ~~old~~ new |\n\n- Plan\n  - draft\n    - review\n- [ ] ship\n- [x] test\n1. one\n---\nSee [the docs](https://example.org)\n```shell\nnpm run build\n```" {
+        at: 16, 16; width: 528; size: 14; color: #f5f7f5; markdown: true
+        link: #74b9ff; code: #d6adf2; quote: #9aa0a6; heading: #ffffff; strike: #ff6b6b
+    }
+}

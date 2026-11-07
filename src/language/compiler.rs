@@ -3929,7 +3929,7 @@ impl<'a> Compiler<'a> {
             style.color = self.color(c)?;
         }
         // With `markdown:`, the colour of what it marks.
-        for (k, name) in ["link", "code", "quote", "heading"].into_iter().enumerate() {
+        for (k, name) in ["link", "code", "quote", "heading", "strike"].into_iter().enumerate() {
             if let Some(c) = p.get_mut(name) {
                 style.markdown_colors[k] = Some(self.color(c)?);
             }

@@ -13,6 +13,10 @@ pub const CODE: u8 = 4;
 pub const LINK: u8 = 8;
 pub const QUOTE: u8 = 16;
 pub const HEADING: u8 = 32;
+/// `~~struck through~~`: a line across it (`strike:` on the text, its colour).
+pub const STRIKE: u8 = 64;
+/// A table's cell or rule (`| a | b |`), laid out in monospace.
+pub const TABLE: u8 = 128;
 /// The marks that change the layout; the others only colour it.
 pub const LOOKS: u8 = BOLD | ITALIC | CODE;
 
@@ -24,28 +28,68 @@ pub fn plain(source: &str) -> (String, Vec<(u32, u32, u8)>) {
     let mut looks: Vec<u8> = Vec::with_capacity(source.len());
     let mut fenced = false;
     let mut first = true;
-    for line in source.split('\n') {
+    let lines: Vec<&str> = source.split('\n').collect();
+    let mut n = 0;
+    // Each line shown starts a line, but the first.
+    let start = |out: &mut String, looks: &mut Vec<u8>, first: &mut bool| {
+        if !std::mem::take(first) {
+            push(out, looks, "\n", 0);
+        }
+    };
+    while n < lines.len() {
+        let line = lines[n];
         let bare = line.trim_start();
-        if bare.starts_with("```") {
+        n += 1;
+        if let Some(lang) = bare.strip_prefix("```") {
             fenced = !fenced;
+            // ```rust: the language, over the block, as a quote is.
+            let lang = lang.trim();
+            if fenced && !lang.is_empty() {
+                start(&mut out, &mut looks, &mut first);
+                push(&mut out, &mut looks, lang, QUOTE);
+            }
             continue;
         }
-        if !first {
-            push(&mut out, &mut looks, "\n", 0);
-        }
-        first = false;
         if fenced {
+            start(&mut out, &mut looks, &mut first);
             push(&mut out, &mut looks, line, CODE);
             continue;
         }
+        // A table: a row, and under it the line of dashes that says it is one.
+        if is_row(bare) && lines.get(n).is_some_and(|l| is_rule_of_table(l)) {
+            let mut rows = vec![cells(bare)];
+            n += 1;
+            while n < lines.len() && is_row(lines[n].trim_start()) {
+                rows.push(cells(lines[n].trim_start()));
+                n += 1;
+            }
+            table(&rows, &mut out, &mut looks, &mut first);
+            continue;
+        }
+        start(&mut out, &mut looks, &mut first);
         let indent = &line[..line.len() - bare.len()];
+        // How deep a list goes: two spaces (or a tab) a level.
+        let depth = indent.chars().map(|c| if c == '\t' { 2 } else { 1 }).sum::<usize>() / 2;
         let hashes = bare.bytes().take_while(|b| *b == b'#').count();
+        let digits = bare.bytes().take_while(u8::is_ascii_digit).count();
         if (1..=6).contains(&hashes) && bare[hashes..].starts_with(' ') {
             inline(bare[hashes..].trim_start(), BOLD | HEADING, &mut out, &mut looks);
+        } else if is_rule(bare) {
+            push(&mut out, &mut looks, "────────────────────────", QUOTE);
         } else if let Some(rest) = ["- ", "* ", "+ "].iter().find_map(|m| bare.strip_prefix(m)) {
-            push(&mut out, &mut looks, indent, 0);
-            push(&mut out, &mut looks, "• ", 0);
+            push(&mut out, &mut looks, &"   ".repeat(depth), 0);
+            // `- [ ]` and `- [x]`: a box to tick, empty or ticked.
+            let (mark, rest) = match rest.get(..4) {
+                Some("[ ] ") => ("☐ ", &rest[4..]),
+                Some("[x] " | "[X] ") => ("☑ ", &rest[4..]),
+                _ => (["• ", "◦ ", "▪ "][depth.min(2)], rest),
+            };
+            push(&mut out, &mut looks, mark, 0);
             inline(rest, 0, &mut out, &mut looks);
+        } else if digits > 0 && (bare[digits..].starts_with(". ") || bare[digits..].starts_with(") ")) {
+            push(&mut out, &mut looks, &"   ".repeat(depth), 0);
+            push(&mut out, &mut looks, &bare[..digits + 2], 0);
+            inline(&bare[digits + 2..], 0, &mut out, &mut looks);
         } else if let Some(rest) = bare.strip_prefix("> ") {
             push(&mut out, &mut looks, indent, 0);
             inline(rest, ITALIC | QUOTE, &mut out, &mut looks);
@@ -54,6 +98,68 @@ pub fn plain(source: &str) -> (String, Vec<(u32, u32, u8)>) {
         }
     }
     (out, stretches(&looks))
+}
+
+/// `---`, `***` or `___` (spaces between them or not): a rule across.
+fn is_rule(bare: &str) -> bool {
+    let marks: String = bare.chars().filter(|c| !c.is_whitespace()).collect();
+    marks.len() >= 3 && ["-", "*", "_"].iter().any(|m| marks.chars().all(|c| c.to_string() == *m))
+}
+
+fn is_row(bare: &str) -> bool {
+    bare.starts_with('|') && bare.trim_end().len() > 1
+}
+
+/// `|---|:--:|`: what makes the row above it a table's head.
+fn is_rule_of_table(line: &str) -> bool {
+    let t = line.trim();
+    t.starts_with('|') && t.contains('-') && t.chars().all(|c| "|-: ".contains(c))
+}
+
+fn cells(row: &str) -> Vec<&str> {
+    let t = row.trim().trim_start_matches('|');
+    let t = t.strip_suffix('|').unwrap_or(t);
+    t.split('|').map(str::trim).collect()
+}
+
+/// A table, in monospace so its columns line up: each cell with its own marks,
+/// padded to its column, the head in bold and a line under it.
+fn table(rows: &[Vec<&str>], out: &mut String, looks: &mut Vec<u8>, first: &mut bool) {
+    let shown: Vec<Vec<(String, Vec<u8>)>> = rows
+        .iter()
+        .enumerate()
+        .map(|(r, row)| {
+            row.iter()
+                .map(|cell| {
+                    let (mut o, mut l) = (String::new(), Vec::new());
+                    inline(cell, CODE | TABLE | if r == 0 { BOLD } else { 0 }, &mut o, &mut l);
+                    (o, l)
+                })
+                .collect()
+        })
+        .collect();
+    let columns = shown.iter().map(Vec::len).max().unwrap_or(0);
+    let widths: Vec<usize> = (0..columns).map(|k| shown.iter().filter_map(|r| r.get(k)).map(|c| c.0.chars().count()).max().unwrap_or(0)).collect();
+    for (r, row) in shown.iter().enumerate() {
+        if !std::mem::take(first) {
+            push(out, looks, "\n", 0);
+        }
+        for (k, w) in widths.iter().enumerate() {
+            push(out, looks, if k == 0 { "│ " } else { " │ " }, CODE | TABLE | QUOTE);
+            let (text, marks) = row.get(k).map_or((String::new(), Vec::new()), |c| (c.0.clone(), c.1.clone()));
+            let from = out.len();
+            out.push_str(&text);
+            looks.extend(marks.iter().copied().chain(std::iter::repeat(CODE | TABLE)).take(text.len()));
+            debug_assert_eq!(looks.len(), from + text.len());
+            push(out, looks, &" ".repeat(w - text.chars().count()), CODE | TABLE);
+        }
+        push(out, looks, " │", CODE | TABLE | QUOTE);
+        if r == 0 {
+            push(out, looks, "\n", 0);
+            let line: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
+            push(out, looks, &format!("├{}┤", line.join("┼")), CODE | TABLE | QUOTE);
+        }
+    }
 }
 
 fn push(out: &mut String, looks: &mut Vec<u8>, s: &str, look: u8) {
@@ -67,14 +173,14 @@ fn inline(line: &str, base: u8, out: &mut String, looks: &mut Vec<u8>) {
     let chars: Vec<(usize, char)> = line.char_indices().collect();
     let at = |k: usize| chars.get(k).map(|c| c.1);
     let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
-    let (mut bold, mut italic) = (false, false);
+    let (mut bold, mut italic, mut strike) = (false, false, false);
     let mut k = 0;
     while k < chars.len() {
         let (i, c) = chars[k];
-        let look = base | if bold { BOLD } else { 0 } | if italic { ITALIC } else { 0 };
+        let look = base | if bold { BOLD } else { 0 } | if italic { ITALIC } else { 0 } | if strike { STRIKE } else { 0 };
         let mut buf = [0u8; 4];
         match c {
-            '\\' if at(k + 1).is_some_and(|n| "*_`[]\\#".contains(n)) => {
+            '\\' if at(k + 1).is_some_and(|n| "*_`[]\\#~!@|".contains(n)) => {
                 push(out, looks, at(k + 1).unwrap().encode_utf8(&mut buf), look);
                 k += 2;
             }
@@ -88,6 +194,24 @@ fn inline(line: &str, base: u8, out: &mut String, looks: &mut Vec<u8>) {
                     k += 1;
                 }
             },
+            // `~~struck~~`; a lone `~` (about 5) stays.
+            '~' if at(k + 1) == Some('~') => {
+                let opens = !strike && at(k + 2).is_some_and(|n| !n.is_whitespace()) && line[i + 2..].contains("~~");
+                let closes = strike && k.checked_sub(1).and_then(at).is_some_and(|b| !b.is_whitespace());
+                if opens || closes {
+                    strike = !strike;
+                } else if !(at(k + 2).is_none() && !strike) {
+                    push(out, looks, "~~", look);
+                }
+                k += 2;
+            }
+            // `![what it shows](picture)`: its words, as a link's are, but not a link.
+            '!' if at(k + 1) == Some('[') && line[i..].find("](").is_some_and(|m| line[i + m..].contains(')')) => {
+                let m = line[i..].find("](").unwrap();
+                let e = line[i + m..].find(')').unwrap();
+                inline(&line[i + 2..i + m], look, out, looks);
+                k = chars.partition_point(|(j, _)| *j <= i + m + e);
+            }
             '*' | '_' if at(k + 1) == Some(c) => {
                 // `__` inside a word (snake__case) is left as it is.
                 let opens = !bold && !at(k + 2).is_some_and(char::is_whitespace) && at(k + 2).is_some() && (c == '*' || !word(k.checked_sub(1).and_then(at)));
@@ -197,8 +321,42 @@ mod tests {
     #[test]
     fn titles_quotes_links_and_fenced_code() {
         let (text, parts) = marked("## Pasos\n> nota\n[la web](https://x.y) y ya\n```sh\nls -l\n```\nfin");
-        assert_eq!(text, "Pasos\nnota\nla web y ya\nls -l\nfin");
-        assert_eq!(parts, vec![("Pasos".into(), BOLD | HEADING), ("nota".into(), ITALIC | QUOTE), ("la web".into(), LINK), ("ls -l".into(), CODE)]);
+        assert_eq!(text, "Pasos\nnota\nla web y ya\nsh\nls -l\nfin");
+        assert_eq!(parts, vec![("Pasos".into(), BOLD | HEADING), ("nota".into(), ITALIC | QUOTE), ("la web".into(), LINK), ("sh".into(), QUOTE), ("ls -l".into(), CODE)]);
+    }
+
+    /// An agent's answer as the chat shows it: a table with chips in its cells,
+    /// a fix struck through, nested steps, boxes to tick and a fenced block.
+    const THREAD: &str = "Status of the launch:\n\n| Workstream | Owner | Status |\n|---|---|:---:|\n| Brief | @Chief | **Fix** |\n| Metrics | @Research | ~~old~~ new |\n| Copy | @Launch | done |\n\n- Plan\n  - draft\n    - review\n- [ ] ship\n- [x] test\n1. one\n---\n```shell\nnpm run build\n```";
+
+    #[test]
+    fn a_thread_message_with_a_table() {
+        let (text, marks) = plain(THREAD);
+        let lines: Vec<&str> = text.split('\n').collect();
+        // The table: its head, the line under it and three rows, all as wide, in monospace.
+        let rows: Vec<&str> = lines.iter().copied().filter(|l| l.starts_with('│') || l.starts_with('├')).collect();
+        assert_eq!(rows.len(), 5, "{rows:#?}");
+        assert!(rows.iter().all(|r| r.chars().count() == rows[0].chars().count()), "{rows:#?}");
+        assert_eq!(rows[0].matches('│').count(), 4, "three columns: {}", rows[0]);
+        assert_eq!(rows[0], "│ Workstream │ Owner     │ Status       │");
+        let of = |what: &str| marks.iter().find(|m| &text[m.0 as usize..m.1 as usize] == what).map(|m| m.2);
+        assert_eq!(of("Fix"), Some(BOLD | CODE | TABLE));
+        assert_eq!(of("old"), Some(STRIKE | CODE | TABLE));
+        assert_eq!(of("@Chief"), Some(LINK | CODE | TABLE));
+        assert_eq!(of("Workstream"), Some(BOLD | CODE | TABLE));
+        // The rest, block by block.
+        for l in ["• Plan", "   ◦ draft", "      ▪ review", "☐ ship", "☑ test", "1. one", "────────────────────────", "shell", "npm run build"] {
+            assert!(lines.contains(&l), "missing {l:?} in {lines:#?}");
+        }
+        assert_eq!(of("shell"), Some(QUOTE));
+        assert_eq!(of("npm run build"), Some(CODE));
+    }
+
+    #[test]
+    fn struck_through_and_pictures() {
+        let (text, parts) = marked("~~old~~ new, ~ 5 and ![a cat](cat.png). Half: ~~stil");
+        assert_eq!(text, "old new, ~ 5 and a cat. Half: stil");
+        assert_eq!(parts, vec![("old".into(), STRIKE), ("stil".into(), STRIKE)]);
     }
 
     #[test]

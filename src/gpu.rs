@@ -1691,6 +1691,25 @@ impl DrawList {
         });
     }
 
+    /// The lines across what is struck through (`~~…~~`): each a box of the
+    /// text's line (`Layout::spans`, from the text's corner `at`) and a colour.
+    fn strike_through(&mut self, lines: &[([f32; 4], [f32; 3])], at: (f32, f32), alpha: f32, affine: Affine, clips: &[(usize, [f32; 4])]) {
+        for (b, col) in lines {
+            let tall = b[3] - b[1];
+            let thick = (tall * 0.06).clamp(1.0, 3.0);
+            let (cx, cy) = (at.0 + (b[0] + b[2]) * 0.5, at.1 + b[1] + tall * 0.55);
+            let rect = crate::shapes::FlatShape { kind: 1, cx, cy, mx: (b[2] - b[0]) * 0.5, my: thick * 0.5, radius: 0.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke: 0.0, affine };
+            let (k, bounds) = (self.push_shape(rect, 0.0), rect.bounds().unwrap_or([0.0; 4]));
+            self.element(0.0, bounds, clips, |e| {
+                affine.encode(&mut e[44..52]);
+                e[1] = k as f32;
+                e[2] = 1.0;
+                e[3] = alpha;
+                e[8..11].copy_from_slice(col);
+            });
+        }
+    }
+
     fn sprite(&mut self, d: [f32; 4], uv: [f32; 4], alpha: f32, tint: Option<[f32; 3]>, text: bool, sharp: bool, affine: Affine, clips: &[(usize, [f32; 4])]) {
         let bounds = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
         self.element(1.0, [bounds[0] - 1.0, bounds[1] - 1.0, bounds[2] + 1.0, bounds[3] + 1.0], clips, |e| {
@@ -3063,7 +3082,7 @@ impl DrawList {
                     // And what is in a colour of its own: what the markdown marks, in the
                     // colours the text gives it, then each mark; where they meet, the last.
                     let mut paints: Vec<(u32, u32, [f32; 3])> = Vec::new();
-                    if style.markdown_colors.iter().any(Option::is_some) {
+                    if style.markdown_colors[..4].iter().any(Option::is_some) {
                         use crate::markdown::{CODE, HEADING, LINK, QUOTE};
                         for &(a, b, l) in &md_marks {
                             let pick = [(CODE, 1), (LINK, 0), (HEADING, 3), (QUOTE, 2)].into_iter().find_map(|(bit, k)| (l & bit != 0).then_some(style.markdown_colors[k].as_ref()).flatten());
@@ -3140,11 +3159,22 @@ impl DrawList {
                     }
                     // A letter's colour: the last stretch it falls in, or the text's.
                     let tint = |g: &crate::text::PlacedGlyph| crate::text::colour_of(g, &paints, rgb);
+                    // `~~struck~~`: a line across it, a line of the text at a time, in
+                    // `strike:` or the colour of its first letter; drawn over the letters.
+                    let struck: Vec<([f32; 4], [f32; 3])> = md_marks
+                        .iter()
+                        .filter(|k| k.2 & crate::markdown::STRIKE != 0)
+                        .flat_map(|&(from, to, _)| {
+                            let col = style.markdown_colors[4].as_ref().map_or_else(|| m.glyphs.iter().find(|g| g.at >= from).map_or(rgb, &tint), color);
+                            m.spans(from as usize, to as usize).into_iter().map(move |b| (b, col))
+                        })
+                        .collect();
                     let Some(fx) = fx else {
                         for g in &m.glyphs {
                             let d = [x0 + g.rect[0], y0 + g.rect[1], g.rect[2], g.rect[3]];
                             self.sprite(d, g.uv, a, if g.colored { None } else { Some(tint(g)) }, true, false, affine, &clips);
                         }
+                        self.strike_through(&struck, (x0, y0), a, affine, &clips);
                         continue;
                     };
                     // With effects: what is the same for every letter, worked out once.
@@ -3185,6 +3215,7 @@ impl DrawList {
                         }
                     }
                     LETTER.with(|l| l.set((0.0, 0.0)));
+                    self.strike_through(&struck, (x0, y0), a, affine, &clips);
                 }
                 Instr::Clip(Some((shape, margin))) => {
                     let p = flatten(shape, &transforms, &mut self.points).shrink(*margin);
