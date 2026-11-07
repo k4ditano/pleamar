@@ -796,7 +796,7 @@ path {
 
 A path carries **a single stroke** (one `move`, the first) and up to 192 already flattened points; for several, several `path`. In a layout it has to be told what it takes up with `size:`, because its box is not known until it is evaluated.
 
-**Lists longer than what is unfolded.** A model unfolds its `max` records on load, and that is the ceiling (1024). For a list of thousands, the scene declares only the **window** —what is seen and a little more— and says how long the whole list is:
+**Lists longer than what is unfolded.** A model unfolds its `max` records on load, and that is the ceiling (1024). For a list of thousands the model is only the **window** —what is seen and a little more—, and **the layout works it out itself**: a `column` or `row` with `view:` and a `for` straight inside it (no `from`, no `key`, no `content:` of its own) makes `name.first`, the record the window starts at —two before what is seen—, and moves it as the list moves; the logic hears it, `on("fact:list.first", function(first) … end)`, and hands over the slice from there (`model.rows = …`), and says how long the whole list is in `name.total` (`fact["list.total"] = 5000`; 0, the model's own). Copy 0 is record `first`, `r.index` the number that belongs to it, each copy sits where its record is, and the length to scroll over is the whole list's. `examples/long-list.plm` is five thousand rows in sixteen copies so. The same by hand, for a layout that wants it otherwise:
 
 | | |
 | --- | --- |

@@ -290,6 +290,9 @@ struct Param {
 
 struct Compiler<'a> {
     e: Scene,
+    /// A layout with `view:` working out its own window (see `stack`): the fact
+    /// its `for` starts from (`feed.first`), and the model that `for` walks.
+    auto_window: Option<(FactId, FactId, Option<String>)>,
     /// Where each fact's type is in `e.types`, by its name: the first one, as a search
     /// from the start finds it. Brought up to date as it is asked (`e.types` only grows).
     /// Every bare name in a sum or a comparison asks whether it is an enum, and searching
@@ -494,7 +497,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         generated: &generated,
         translations: Vec::new(), untranslated: Default::default(),
         props: HashMap::new(), facts: HashMap::new(), signals: HashMap::new(), texts: HashMap::new(), images: HashMap::new(), figures: HashMap::new(), shaders: HashMap::new(), models: HashMap::new(),
-        measurements: HashMap::new(), gestures: HashMap::new(), zones: HashMap::new(), lets: HashMap::new(), let_lines: HashMap::new(), scene_let_lines: Default::default(), twice_noted: Default::default(), loose_lets: HashMap::new(), groups: Vec::new(), colors: HashMap::new(),
+        measurements: HashMap::new(), gestures: HashMap::new(), zones: HashMap::new(), lets: HashMap::new(), let_lines: HashMap::new(), scene_let_lines: Default::default(), twice_noted: Default::default(), auto_window: None, loose_lets: HashMap::new(), groups: Vec::new(), colors: HashMap::new(),
         springs: vocab::SPRINGS.iter().map(|n| ((*n).to_owned(), match *n {
             "lively" => Spring::LIVELY,
             "calm" => Spring::CALM,
@@ -6288,7 +6291,41 @@ impl<'a> Compiler<'a> {
 
         // The children, with the `repeat`s already unrolled.
         let mut children: Vec<(&'a Node, Vec<Rc<Scope>>)> = Vec::new();
-        self.unroll(n.body.as_deref().unwrap_or(&[]).iter().collect(), &mut Vec::new(), &mut children)?;
+        // A window it works out itself: with `view:`, no `content:`, and a `for` straight inside
+        // with no `from` and no `key`, the copies are the window onto the whole list. It makes
+        // `name.first` —the record the window starts at, a little before what is seen— and
+        // moves it as it scrolls; the logic hears it (`on("fact:feed.first", …)`) and sends
+        // the slice from there; the copies go where their records are, and `content:` is the
+        // whole list's.
+        let windowed = view.is_some() && given_content.is_none() && wrap.is_none() && n.body.as_deref().unwrap_or(&[]).iter().any(|e| match e {
+            Entry::Node(x) => matches!(x.head.first().map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "for") && !x.head.iter().any(|t| matches!(&t.kind, TokenKind::Id(w) if w == "from" || w == "key")),
+            _ => false,
+        });
+        let outer_window = self.auto_window.take();
+        if windowed {
+            self.copies += 1;
+            // `feed.first`, and `feed.total`: how long the whole list is, which only the
+            // logic knows (it hands over a slice); 0, the model's own.
+            let fact_of = |o: &mut Self, part: &str| {
+                let full = match &name {
+                    Some(local) => o.global(&format!("{local}.{part}")),
+                    None => format!("·window{}.{part}", o.copies),
+                };
+                match o.facts.get(&full) {
+                    Some(f) => *f,
+                    None => {
+                        let f = o.e.fact(interned(&full), 0.0);
+                        o.facts.insert(full, f);
+                        f
+                    }
+                }
+            };
+            let (first, total) = (fact_of(self, "first"), fact_of(self, "total"));
+            self.auto_window = Some((first, total, None));
+        }
+        let unrolled = self.unroll(n.body.as_deref().unwrap_or(&[]).iter().collect(), &mut Vec::new(), &mut children);
+        let window = std::mem::replace(&mut self.auto_window, outer_window);
+        unrolled?;
 
         struct Placed {
             instr: usize,
@@ -6306,6 +6343,8 @@ impl<'a> Compiler<'a> {
             /// A copy of a `for … key`: its place in the list, which is where it goes,
             /// whatever copy it is (they are all as long as the first).
             keyed: Option<Expr>,
+            /// A copy of a window the layout works out: where the window starts.
+            windowed: Option<Expr>,
         }
         // What is seen is a window onto what there is: it is clipped, and what is inside goes shifted.
         let scroller = view.as_ref().map(|(vw, vh)| {
@@ -6417,7 +6456,11 @@ impl<'a> Compiler<'a> {
                 }
             }
             let mut keyed: Option<Expr> = None;
+            let mut windowed: Option<Expr> = None;
             for e in &self.scopes[self.scopes.len() - extra..] {
+                if let Some(w) = e.exprs.get("·window") {
+                    windowed = Some(w.clone());
+                }
                 if let Some(v) = &e.visible {
                     visible = if matches!(visible, Expr::K(k) if k == 1.0) { v.clone() } else { visible * v.clone() };
                 }
@@ -6490,6 +6533,7 @@ impl<'a> Compiler<'a> {
                 place,
                 own_instrs: instr + 1..self.e.instrs.len(),
                 keyed,
+                windowed,
             };
             match forced {
                 // A separator is painted after its child, but its place is just before.
@@ -6582,6 +6626,10 @@ impl<'a> Compiler<'a> {
             if let Some(place) = &p.keyed {
                 along = padding.clone() + place.clone().max(Expr::K(0.0)) * (length_of(p) + gap.clone());
             }
+            // A copy of a window the layout works out sits where its record is in the whole list.
+            if let Some(first) = &p.windowed {
+                along = along + first.clone() * (length_of(p) + gap.clone());
+            }
             let mut grid_across = None;
             if let Some(how_many) = wrap {
                 let per_line = Expr::K(how_many as f32);
@@ -6634,6 +6682,17 @@ impl<'a> Compiler<'a> {
             None => (running + padding.clone(), max_across + padding.clone() * 2.0),
         };
         let mut content = if is_row { (total_along, total_across) } else { (total_across, total_along) };
+        // A window it works out itself: the whole list's length, and the rule that moves the window.
+        if let (Some((first, said_total, Some(model))), Some(scroll), Some(p0)) = (&window, &scroller, placed_items.iter().find(|p| p.windowed.is_some())) {
+            let step = length_of(p0) + gap.clone();
+            let total = said_total.e().max(self.facts.get(&format!("{model}.total")).map_or(Expr::K(0.0), |t| t.e()));
+            let capacity = self.models.get(model).copied().unwrap_or(0) as f32;
+            let whole = total.clone() * step.clone() + padding.clone() * 2.0;
+            if is_row { content.0 = whole } else { content.1 = whole }
+            // Two records before what is seen, so a little scrolling back finds them there.
+            let wanted = ((scroll.e() / step.max(Expr::K(1.0))).floor() - Expr::K(2.0)).max(Expr::K(0.0)).min((total - Expr::K(capacity)).max(Expr::K(0.0)));
+            self.e.rules.push(Rule { when: Trigger::Change(wanted.clone()), guard: None, effects: vec![Effect::Fact(*first, wanted)] });
+        }
         // What the scene says rules: the stack only holds the window, but the
         // scrolling is over the whole list.
         if let Some(e) = &given_content {
@@ -6788,8 +6847,21 @@ impl<'a> Compiler<'a> {
                 let head = self.for_head(&mut c);
                 self.scopes.truncate(self.scopes.len() - scope.len());
                 let (var, model, capacity, from, keyed) = head?;
+                // In a window the layout works out (see `stack`): from its first, and marked so.
+                let auto = match (&mut self.auto_window, keyed, matches!(from, Expr::K(k) if k == 0.0)) {
+                    (Some((f, _, m)), false, true) if m.as_ref().is_none_or(|m| *m == model) => {
+                        *m = Some(model.clone());
+                        Some(f.e())
+                    }
+                    _ => None,
+                };
+                let from = auto.clone().unwrap_or(from);
                 for k in 0..capacity {
-                    scope.push(Rc::new(self.for_iteration(&var, &model, k, &from, keyed)));
+                    let mut it = self.for_iteration(&var, &model, k, &from, keyed);
+                    if let Some(first) = &auto {
+                        it.exprs.insert("·window".to_owned(), first.clone());
+                    }
+                    scope.push(Rc::new(it));
                     self.unroll(n.body.as_deref().unwrap_or(&[]).iter().collect(), scope, children)?;
                     scope.pop();
                 }
