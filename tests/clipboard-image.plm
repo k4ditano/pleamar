@@ -1,0 +1,10 @@
+// expect: ok
+language 0.9
+// A screenshot pasted from the clipboard: the logic sets `shot` to sys.ask("clipboard.image").
+scene Paste {
+    surface { size: 120, 120 }
+    permissions { services: "clipboard" }
+    text shot = ""
+    image pic = from shot, 64, 64
+    image pic { at: 28, 28; size: 64, 64 }
+}

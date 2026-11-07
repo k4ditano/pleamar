@@ -291,6 +291,20 @@ pub fn query(from: &str, name: &str, args: &[SysValue]) -> Result<SysValue, Stri
         }
         ("env", _) => return Err("`env` takes the name of one variable: sys.ask(\"env\", \"HOME\")".into()),
         ("clipboard", []) => return Ok(clipboard_read().map_or(SysValue::Null, SysValue::Text)),
+        // A picture copied (a screenshot): kept in memory, and the name an image says to
+        // show it (`image pic = from shot, 64, 64` with `text.shot` set to it); nil if none.
+        ("clipboard.image", []) => {
+            return Ok(match clipboard_picture() {
+                Some(png) => {
+                    let version = crate::text::put_data_image("clipboard", png);
+                    SysValue::Text(format!("data:clipboard?{version}"))
+                }
+                None => SysValue::Null,
+            });
+        }
+        // Files copied in a file manager: their paths.
+        ("clipboard.uris", []) => return Ok(SysValue::List(clipboard_paths().into_iter().map(SysValue::Text).collect())),
+        ("clipboard.image" | "clipboard.uris", _) => return Err(format!("`{name}` takes nothing: sys.ask(\"{name}\")")),
         // Is that the password of whoever owns the session? What a lock screen
         // needs in order to open. It is slow on purpose when it isn't.
         #[cfg(target_os = "linux")]
@@ -1090,6 +1104,79 @@ fn wayland_clipboard_read() -> Option<Option<String>> {
     Some(Some(text))
 }
 
+/// A picture on the clipboard, as PNG bytes: as the one who copied it offers
+/// it (`image/png`, or another picture type turned into PNG). Only on Wayland
+/// for now (arboard is built without its pictures).
+pub fn clipboard_picture() -> Option<Vec<u8>> {
+    #[cfg(target_os = "linux")]
+    {
+        let (kind, bytes) = wayland_clipboard_bytes(&["image/png", "image/jpeg", "image/webp", "image/gif"])??;
+        if kind == "image/png" {
+            return Some(bytes);
+        }
+        let picture = image::load_from_memory(&bytes).ok()?;
+        let mut png = Vec::new();
+        picture.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+        Some(png)
+    }
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
+/// The paths of the files copied (`text/uri-list`): `file://` addresses,
+/// unescaped; whatever is not a local file is left out.
+pub fn clipboard_paths() -> Vec<String> {
+    #[cfg(target_os = "linux")]
+    let list = wayland_clipboard_bytes(&["text/uri-list", "x-special/gnome-copied-files"]).flatten().map(|(_, b)| String::from_utf8_lossy(&b).into_owned());
+    #[cfg(not(target_os = "linux"))]
+    let list: Option<String> = None;
+    let list = list.or_else(|| arboard::Clipboard::new().ok()?.get_text().ok()).unwrap_or_default();
+    list.lines().filter_map(|l| l.trim().strip_prefix("file://")).map(unescape_uri).collect()
+}
+
+/// `%20` back to a space, and so on: a `file://` path as the file system has it.
+fn unescape_uri(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or("zz"), 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    // A host before the path (`file://localhost/home/…`) is the same file.
+    let p = String::from_utf8_lossy(&out).into_owned();
+    match p.find('/') {
+        Some(0) | None => p,
+        Some(k) => p[k..].to_owned(),
+    }
+}
+
+/// What the clipboard holds in the first of `kinds` it offers: `None` if it cannot
+/// be asked (no Wayland), `Some(None)` if it offers none of them.
+#[cfg(target_os = "linux")]
+fn wayland_clipboard_bytes(kinds: &[&str]) -> Option<Option<(String, Vec<u8>)>> {
+    use std::io::Read;
+    use wl_clipboard_rs::paste::{get_contents, get_mime_types_ordered, ClipboardType, MimeType, Seat};
+    std::env::var_os("WAYLAND_DISPLAY")?;
+    let types = match get_mime_types_ordered(ClipboardType::Regular, Seat::Unspecified) {
+        Ok(t) => t,
+        Err(wl_clipboard_rs::paste::Error::ClipboardEmpty | wl_clipboard_rs::paste::Error::NoMimeType) => return Some(None),
+        Err(_) => return None,
+    };
+    let Some(kind) = kinds.iter().find(|k| types.iter().any(|t| t == *k)) else { return Some(None) };
+    let (mut pipe, _) = get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Specific(kind)).ok()?;
+    let mut bytes = Vec::new();
+    pipe.read_to_end(&mut bytes).ok()?;
+    Some(Some((kind.to_string(), bytes)))
+}
+
 pub fn clipboard_write(text: &str) {
     // On Wayland whoever copies has to stay alive to serve what was copied: a
     // thread that holds on to it until someone else copies something else.
@@ -1620,5 +1707,15 @@ pub(crate) mod tests {
         assert!(say("bar", "emit x\nquit").is_err());
         assert!(say("bar", &format!("emit {}", "x".repeat(4096))).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    #[test]
+    fn a_copied_file_is_its_path() {
+        assert_eq!(super::unescape_uri("/home/abel/Mis%20capturas/a.png"), "/home/abel/Mis capturas/a.png");
+        assert_eq!(super::unescape_uri("localhost/tmp/x"), "/tmp/x");
+        assert_eq!(super::unescape_uri("/tmp/%zz"), "/tmp/%zz");
     }
 }
