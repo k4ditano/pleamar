@@ -1,0 +1,12 @@
+// expect: ok
+language 0.9
+// Colours that say how much of them shows: a hover, a border, a soft badge.
+scene Alpha {
+    surface { size: 300, 120 }
+    let veil = #ffffff14
+    box { at: 150, 30; size: 260, 40; corner: 10; color: veil }
+    text "soft" { at: 20, 80; size: 13; color: #f5f7f5b3 }
+    column { at: 150, 70; padding: 6; corner: 8; fill: #74b9ff2e; border: 1, #74b9ff66
+        text "badge" { size: 12; color: #74b9ff }
+    }
+}

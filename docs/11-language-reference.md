@@ -31,7 +31,7 @@ It is a **declarative language that always terminates**. No free loops, no recur
 | Name | letters, digits, `_` and `.`; starts with a letter or `_`. Dots are part of the name: `orb.x`, `note.0.title`. Inside a `repeat`, `$i` is replaced by the number of the turn: `hit.$i` |
 | Number | `40`, `0.5`, `-3`. With a unit: `40px` (= 40), `34%` (= 0.34), `138deg` (to radians) |
 | Duration | `320ms`, `14s`. Where a duration is expected, a number without a unit is not valid |
-| Color | `#151616` or `#fff` |
+| Color | `#151616` or `#fff`; with how much of it shows after it, `#1516161f` or `#fff2`: whatever is painted with it (a shape, a body, a text, a layout's `fill:` and `border:`, a component's colour) is that much more see-through. A named colour keeps it (`let veil = #ffffff14`) |
 | Text | `"in quotes"`. A quote inside it is `\"`, and a backslash before a quote or another backslash, `\\`; any other backslash is itself (`"C:\Users"`). With slots, see §11 |
 | Symbols | `{ } ( ) [ ] , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
 

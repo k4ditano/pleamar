@@ -11,7 +11,8 @@ pub enum TokenKind {
     Angle(f32),
     /// A duration, already in seconds: `320ms`, `14s`.
     Dur(f32),
-    Color([f32; 3]),
+    /// Red, green, blue and how much of it shows (1 if it says nothing).
+    Color([f32; 4]),
     Str(String),
     Sym(&'static str),
     Line,
@@ -70,13 +71,14 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
                 let hex: String = c[i + 1..].iter().take_while(|x| x.is_ascii_hexdigit()).collect();
                 // #151616, or the three-digit shortcut: #fff is #ffffff.
                 let length = hex.len();
+                // With how much of it shows after it: #ffffff1f, #fff2.
                 let hex: String = match length {
-                    6 => hex,
-                    3 => hex.chars().flat_map(|c| [c, c]).collect(),
-                    _ => return Err(CompileError::at(n + 1, col, "a colour is six hex digits (#151616) or three (#fff)")),
+                    6 | 8 => hex,
+                    3 | 4 => hex.chars().flat_map(|c| [c, c]).collect(),
+                    _ => return Err(CompileError::at(n + 1, col, "a colour is six hex digits (#151616) or three (#fff), with two (or one) more for how much of it shows (#1516161f, #fff2)")),
                 };
                 let v = |k: usize| u8::from_str_radix(&hex[k..k + 2], 16).unwrap() as f32 / 255.0;
-                push(TokenKind::Color([v(0), v(2), v(4)]));
+                push(TokenKind::Color([v(0), v(2), v(4), if hex.len() == 8 { v(6) } else { 1.0 }]));
                 i += length + 1;
             } else if ch.is_ascii_digit() || (ch == '.' && c.get(i + 1).is_some_and(|x| x.is_ascii_digit())) {
                 let mut j = i;
