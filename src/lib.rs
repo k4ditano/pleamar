@@ -80,7 +80,8 @@ const HELP: &str = "pleamar [options]
   --naive             the logic blocks the painting thread, as in QtQuick
   --demo              opens and closes by itself, with no mouse
   --mouse SCRIPT      fake mouse: «360,90@1000 click@2500 down@… up@… wheel+@… out@4000» (ms);
-                      and keys: «key:Escape@1200 keydown:Left@1500 keyup:Left@2500 type:hello@3000»;
+                      and keys: «key:Escape@1200 keydown:Left@1500 keyup:Left@2500 type:hello@3000»
+                      (`_` types a space; `type:@Chief@600` an @: the time is after the last one);
                       and events: «emit:toggle@500 emit:pick=3@900»
   --seconds N         exits by itself after N seconds
   --margin PX         top margin, instead of the scene\u{2019}s
@@ -572,7 +573,7 @@ pub fn run_with(options: Vec<String>) {
         std::thread::spawn(move || {
             let start = std::time::Instant::now();
             for step in steps.split_whitespace() {
-                let (what, when) = step.split_once('@').expect("--mouse: @ms is missing");
+                let (what, when) = step.rsplit_once('@').expect("--mouse: @ms is missing");
                 let when = Duration::from_millis(when.parse().expect("--mouse: ms"));
                 std::thread::sleep(when.saturating_sub(start.elapsed()));
                 // Each step is announced, to know what whatever comes after is responding to.
@@ -630,12 +631,21 @@ pub(crate) fn mouse_step(what: &str) -> Vec<ToRender> {
                     }
                 }
             }
-            vec![ToRender::Key(name.to_owned(), None, m, 0), ToRender::KeyReleased(name.to_owned(), 0)]
+            // A key that writes a letter writes it, as a keyboard's does: `key:space`, `key:at`, `key:a`.
+            let typed = match name {
+                "space" => Some(" ".to_owned()),
+                "at" => Some("@".to_owned()),
+                one if one.chars().count() == 1 => Some(one.to_owned()),
+                _ => None,
+            }
+            .filter(|_| !m.ctrl && !m.alt && !m.logo);
+            vec![ToRender::Key(name.to_owned(), typed, m, 0), ToRender::KeyReleased(name.to_owned(), 0)]
         }
         // `keydown:Left`, `keyup:Left`: a key held, and let go later.
         t if t.starts_with("keydown:") => vec![ToRender::Key(t[8..].to_owned(), None, Mods::default(), 0)],
         t if t.starts_with("keyup:") => vec![ToRender::KeyReleased(t[6..].to_owned(), 0)],
-        // `type:hello`: letter by letter, like a keyboard. A `_` is a space.
+        // `type:hello`: letter by letter, like a keyboard. A `_` is a space; an `@` is
+        // itself (the time goes after the last one: `type:@Chief@600`).
         t if t.starts_with("type:") => t[5..]
             .chars()
             .flat_map(|ch| {

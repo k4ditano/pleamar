@@ -66,7 +66,8 @@ static FILM: OnceLock<Mutex<Film>> = OnceLock::new();
 pub fn start(out: &str, fps: u32, script: Option<&str>, seconds: Option<f64>) -> Result<(), String> {
     let mut steps = Vec::new();
     for step in script.unwrap_or("").split_whitespace() {
-        let (what, when) = step.split_once('@').ok_or_else(|| format!("--mouse: «{step}» has no @ms"))?;
+        // The time is after the last `@`: a step can type one (`type:@Chief@600`).
+        let (what, when) = step.rsplit_once('@').ok_or_else(|| format!("--mouse: «{step}» has no @ms"))?;
         let ms: u64 = when.parse().map_err(|_| format!("--mouse: «{when}» is not milliseconds"))?;
         steps.push((Duration::from_millis(ms), what.to_owned()));
     }
