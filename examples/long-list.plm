@@ -48,8 +48,8 @@ scene LongList {
     }
 
     //  The scrollbar: what is seen, over what there is.
-    let bar_h = max(400 * 400 / max(list.total * step, 400), 24)
-    box { at: 410, 10 + list.scroll / max(list.total * step - 400, 1) * (400 - bar_h); size: 4, bar_h; corner: 2; color: mint; opacity: 45% }
+    //  (Written out, not in a `let`: the layout makes `list.total` while it is read, and a loose `let` is read before.)
+    box { at: 410, 10 + list.scroll / max(list.total * step - 400, 1) * (400 - max(400 * 400 / max(list.total * step, 400), 24)); size: 4, max(400 * 400 / max(list.total * step, 400), 24); corner: 2; color: mint; opacity: 45% }
 
     //  Below: where it is, and two jumps. The scroll is a property like any
     //  other, so a rule can take it wherever it wants.

@@ -2509,7 +2509,7 @@ pub fn run(
                                 let v = l.view.bounds();
                                 p.0 >= v[0] && p.0 < v[2] && p.1 >= v[1] && p.1 < v[3]
                             }) {
-                                l.window.begin_move(edges);
+                                l.begin_move(edges);
                             }
                             let _ = to_logic.send(Event::Press(scene.zones[k].id));
                             continue;

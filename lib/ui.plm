@@ -87,7 +87,7 @@ library Ui {
     //
     //      model rows max 20 { list cells max 6 { text: text; chip: number } }
     //      Table(480, rows.count, columns: 3, a: "Workstream", b: "Owner", c: "Status") {
-    //          repeat r in rows { TableRow(r, 480, columns: 3) }
+    //          for r in rows { TableRow(r, 480, columns: 3) }
     //      }
     component Table(w: number, rows: number, columns: number = 3, a: text = "", b: text = "", c: text = "", d: text = "", e: text = "", f: text = "", row: number = 34, head: number = 32, accent: color = #9ed6bd) {
         size: w, head + rows * row
@@ -205,7 +205,7 @@ library Ui {
         group {
             show: open > 0.02
             opacity: open
-            box { at: w / 2, 40 + count * 15 + 4; size: w, count * 30 + 8; corner: 10; color: #25282b; shadow: 0, 8, 24, 40% }
+            body { color: #25282b; shadow: 0, 8, 24, 40%; box { at: w / 2, 40 + count * 15 + 4; size: w, count * 30 + 8; corner: 10 } }
             repeat i in 0..6 {
                 group {
                     show: i < count
@@ -227,14 +227,14 @@ library Ui {
         group {
             opacity: seen
             move: 0, 4 - 4 * seen
-            box { at: w / 2, 14; size: w, 28; corner: 8; color: #101214; opacity: 92%; shadow: 0, 4, 12, 30% }
+            body { color: #101214; opacity: 92%; shadow: 0, 4, 12, 30%; box { at: w / 2, 14; size: w, 28; corner: 8 } }
             text label { at: w / 2, 14; anchor: center; size: 12; width: w - 16; lines: 1; align: center; color: #f5f7f5 }
         }
     }
 
     //  A row of a menu, for records with `label`, `separator`, `enabled`,
     //  `checked` (-1 none, 0 empty, 1 ticked) and `children` (more under it):
-    //  `chosen` carries its place. `repeat r in items { MenuRow(r, picked) }`.
+    //  `chosen` carries its place. `for r in items { MenuRow(r, picked) }`.
     component MenuRow(r: record, chosen: event, tone: color = #9ed6bd, width: number = 220) {
         size: width, 30 - r.separator * 21
         prop on = 0 ~quick
@@ -254,7 +254,7 @@ library Ui {
     //  A menu: its plate, and its rows (`MenuRow`) inside it, one under another.
     component Menu(w: number = 220, h: number = 200) {
         size: w, h
-        box { at: w / 2, h / 2; size: w, h; corner: 12; color: #25282b; shadow: 0, 10, 28, 40% }
+        body { color: #25282b; shadow: 0, 10, 28, 40%; box { at: w / 2, h / 2; size: w, h; corner: 12 } }
         column rows {
             at: 4, 4
             children
@@ -271,7 +271,7 @@ library Ui {
             opacity: seen
             move: 0, 16 - 16 * seen
             blur: 8 - 8 * seen
-            box { at: w / 2, 22; size: w, 44; corner: 14; color: #2c3033; shadow: 0, 10, 24, 40% }
+            body { color: #2c3033; shadow: 0, 10, 24, 40%; box { at: w / 2, 22; size: w, 44; corner: 14 } }
             text label { at: w / 2, 22; anchor: center; size: 13; width: w - 28; lines: 1; align: center; color: #f5f7f5 }
         }
     }

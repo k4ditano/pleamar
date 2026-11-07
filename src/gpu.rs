@@ -5919,6 +5919,11 @@ impl Sheet {
         self.window.update_blur_region(rects);
     }
 
+    /// The compositor carries or stretches its window (`handle: self`).
+    pub fn begin_move(&self, edges: u32) {
+        self.window.begin_move(edges);
+    }
+
     pub fn keyboard(&self, t: Keyboard) {
         self.window.keyboard(t);
     }

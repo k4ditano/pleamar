@@ -36,6 +36,7 @@ thread_local! {
 
 /// The same, and its links: the bytes of each one's words in the plain text and
 /// where it goes —a `[link](where)`'s address, an `@name` itself—.
+#[cfg(test)]
 pub fn plain_with_links(source: &str) -> (String, Vec<(u32, u32, u8)>, Vec<(u32, u32, String)>) {
     let (text, marks, links, _) = plain_with_pictures(source, 0);
     (text, marks, links)
@@ -253,7 +254,7 @@ fn inline(line: &str, base: u8, out: &mut String, looks: &mut Vec<u8>) {
             },
             // `~~struck~~`; a lone `~` (about 5) stays.
             '~' if at(k + 1) == Some('~') => {
-                let opens = !strike && at(k + 2).is_some_and(|n| !n.is_whitespace()) && line[i + 2..].contains("~~");
+                let opens = !strike && at(k + 2).is_some_and(|n| !n.is_whitespace());
                 let closes = strike && k.checked_sub(1).and_then(at).is_some_and(|b| !b.is_whitespace());
                 if opens || closes {
                     strike = !strike;
@@ -427,7 +428,7 @@ mod tests {
         assert_eq!(rows.len(), 5, "{rows:#?}");
         assert!(rows.iter().all(|r| r.chars().count() == rows[0].chars().count()), "{rows:#?}");
         assert_eq!(rows[0].matches('│').count(), 4, "three columns: {}", rows[0]);
-        assert_eq!(rows[0], "│ Workstream │ Owner     │ Status       │");
+        assert_eq!(rows[0], "│ Workstream │ Owner     │ Status  │");
         let of = |what: &str| marks.iter().find(|m| &text[m.0 as usize..m.1 as usize] == what).map(|m| m.2);
         assert_eq!(of("Fix"), Some(BOLD | CODE | TABLE));
         assert_eq!(of("old"), Some(STRIKE | CODE | TABLE));

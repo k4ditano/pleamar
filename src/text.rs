@@ -267,7 +267,7 @@ impl Shelves {
 /// Whoever shapes and paints. It lives on its own thread —the workshop—: reading the system
 /// fonts, shaping a paragraph or decoding a PNG can take a while, and
 /// none of that may cost the render a frame.
-struct Typesetter {
+pub(crate) struct Typesetter {
     fonts: FontSystem,
     swash: SwashCache,
     shelves: Shelves,

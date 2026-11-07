@@ -36,7 +36,7 @@ scene Gallery {
     }
     Menu(220, 130) {
         move: 280, 20
-        repeat r in items { MenuRow(r, picked) }
+        for r in items { MenuRow(r, picked) }
     }
     Select(choice, "Today", "This week", pick, c: "This month", count: 3, w: 200)
 }

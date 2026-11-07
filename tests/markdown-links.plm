@@ -4,7 +4,7 @@ language 0.9
 scene Links {
     surface { size: 420, 80 }
     event link
-    prop pressed = 0
+    fact pressed = 0
     text "See [the docs](https://example.org) and @plan.md" { at: 12, 12; width: 396; size: 14; color: #f5f7f5; markdown: true; link: #74b9ff }
     on link { pressed = pressed + 1 }
 }

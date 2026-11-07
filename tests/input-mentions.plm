@@ -3,6 +3,7 @@ language 0.9
 // A composer with mentions as chips: `@Chief`, `@launch-brief.md`, erased whole.
 scene Composer {
     surface { size: 520, 160 }
+    event send
     text draft = "Ask @Chief about @launch-brief.md"
     input draft {
         at: 16, 16; width: 488; lines: 4; send: enter
@@ -10,5 +11,5 @@ scene Composer {
     }
     on submit draft { emit send }
     // While an `@name` is being written: what to suggest.
-    text draft.mention { show: draft.mention != ""; at: 16, 120; size: 12; color: #9aa0a6 }
+    text draft.mention { at: 16, 120; size: 12; color: #9aa0a6 }
 }

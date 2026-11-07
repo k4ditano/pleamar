@@ -7,6 +7,6 @@ scene Tables {
     model rows max 8 { list cells max 6 { text: text; chip: number } }
     Table(480, 3, columns: 3, a: "Workstream", b: "Owner", c: "Status") {
         move: 20, 20
-        repeat r in rows { TableRow(r, 480, columns: 3) }
+        for r in rows { TableRow(r, 480, columns: 3) }
     }
 }
