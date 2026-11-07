@@ -3234,6 +3234,17 @@ impl DrawList {
                     let s = tip_scale;
                     let x0 = ((at.0.eval(c) - m.size.0 * anchor.0) * s).round() / s;
                     let y0 = ((at.1.eval(c) - m.size.1 * anchor.1) * s).round() / s;
+                    // And on whole pixels where it ends up, not only where it is written: a
+                    // layout's slot, a `move:` or a centring (`cx - w / 2` with an odd width)
+                    // put it at half a pixel, and it came out blurred and heavier (M22). Only
+                    // when nothing turns or skews it: a turned text has no pixel grid to sit on.
+                    let (x0, y0) = if affine.m[1] == 0.0 && affine.m[2] == 0.0 && affine.m[0] > 0.0 && affine.m[3] > 0.0 {
+                        let (ax, ay) = affine.apply(x0, y0);
+                        let (sx, sy) = ((ax * s).round() / s, (ay * s).round() / s);
+                        (x0 + (sx - ax) / affine.m[0], y0 + (sy - ay) / affine.m[3])
+                    } else {
+                        (x0, y0)
+                    };
                     if self.collect_texts {
                         let b = affine.bounds([x0, y0, x0 + m.size.0, y0 + m.size.1]);
                         let limit = clips.iter().map(|k| k.1).reduce(|a, b| [a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])]);
