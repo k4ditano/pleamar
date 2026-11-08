@@ -1057,8 +1057,9 @@ impl PlatformWindow for WaylandWindow {
     fn begin_move(&self, edges: u32) {
         use wayland_protocols::xdg::shell::client::xdg_toplevel::ResizeEdge;
         let (Some(top), Some(pp)) = (&self.toplevel, POPUPS.get()) else { return };
-        let seat = pp.seat.lock().unwrap();
-        let (Some(seat), Some((serial, when))) = (seat.as_ref(), *pp.last_press.lock().unwrap()) else { return };
+        let Some((serial, when, from)) = pp.last_press.lock().unwrap().clone() else { return };
+        let Some(seat) = from.or_else(|| pp.seat.lock().unwrap().clone()) else { return };
+        let seat = &seat;
         // Only from a press just made: the compositor refuses an old one anyway.
         if when.elapsed() > std::time::Duration::from_millis(1500) {
             return;
@@ -1658,7 +1659,10 @@ struct Popups {
     parent: Mutex<Option<Parent>>,
     seat: Mutex<Option<wl_seat::WlSeat>>,
     /// The last press: with it one can ask for a click outside to close it.
-    last_press: Mutex<Option<(u32, std::time::Instant)>>,
+    /// The last press (or key): its serial, when, and the seat it came from —an agent's
+    /// hands are a seat of their own—. A grab or a move asked with another seat's serial
+    /// is refused: clicking outside a popup an agent opened did not close it.
+    last_press: Mutex<Option<(u32, std::time::Instant, Option<wl_seat::WlSeat>)>>,
     open: Mutex<Vec<OpenPopup>>,
 }
 
@@ -2217,9 +2221,12 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
         // one that takes the keyboard (`keyboard: true`) grabs it whenever it can: the
         // compositor gives it the keyboard while it is open.
         let keyboard = super::KEYBOARD_POPUPS.lock().unwrap().contains(&k);
-        if let (Some(seat), Some((serial, when))) = (e.seat.lock().unwrap().as_ref(), *e.last_press.lock().unwrap()) {
-            if keyboard || when.elapsed() < std::time::Duration::from_millis(1500) {
-                popup.xdg_popup().grab(seat, serial);
+        // With the seat that press came from (an agent's hands are a seat of their own).
+        if let Some((serial, when, from)) = e.last_press.lock().unwrap().clone() {
+            if let Some(seat) = from.or_else(|| e.seat.lock().unwrap().clone()) {
+                if keyboard || when.elapsed() < std::time::Duration::from_millis(1500) {
+                    popup.xdg_popup().grab(&seat, serial);
+                }
             }
         }
         let id = next_surface_id();
@@ -2634,7 +2641,8 @@ impl PointerHandler for State {
                     }
                 }
                 if let PointerEventKind::Press { serial, .. } = e.kind {
-                    *pp.last_press.lock().unwrap() = Some((serial, std::time::Instant::now()));
+                    let seat = self.pointer_seats.iter().find(|(p, _)| p == pointer).map(|(_, s)| s.clone());
+                    *pp.last_press.lock().unwrap() = Some((serial, std::time::Instant::now(), seat));
                 }
             }
             // A drag out starts from the press that began it: the compositor asks for its serial.
@@ -2914,7 +2922,7 @@ impl KeyboardHandler for State {
         let typed = e.utf8.clone().filter(|t| !t.is_empty() && !t.chars().any(char::is_control));
         // A key is an input as a press is: a popup opened by it may grab with its serial.
         if let Some(pp) = POPUPS.get() {
-            *pp.last_press.lock().unwrap() = Some((serial, std::time::Instant::now()));
+            *pp.last_press.lock().unwrap() = Some((serial, std::time::Instant::now(), None));
         }
         let _ = self.to_render.send(ToRender::Key(key_name(&e), typed, self.mods, e.raw_code));
     }
