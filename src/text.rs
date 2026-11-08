@@ -636,7 +636,7 @@ impl Typesetter {
             self.upload(slot, rgba);
             return Some(slot);
         }
-        let path = if std::path::Path::new(name).is_absolute() { Some(std::path::PathBuf::from(name)) } else { crate::platform::icon(name) }?;
+        let path = if std::path::Path::new(name).is_absolute() { Some(std::path::PathBuf::from(name)) } else { scene_picture(name).or_else(|| crate::platform::icon(name)) }?;
         let (px, big) = self.image_px(Some(&path), size, LIVE_BUDGET);
         let px = if big { self.picture_px(&path, px) } else { px };
         let rgba = rasterize_image(&path, px, false)?;
@@ -1387,6 +1387,34 @@ fn fit_within((w, h): (u32, u32), edge: u32) -> (u32, u32) {
     (((w as f32 * k).round() as u32).clamp(1, edge), ((h as f32 * k).round() as u32).clamp(1, edge))
 }
 
+/// The scene's own pictures by name (`image chief = file "avatars/chief.png"`), and
+/// its folder: a live image —a model's `image` field— that says `chief`, or a path
+/// relative to the scene, is that picture (C7). It could only be an icon's name, an
+/// absolute path or `data:`, so a row with an agent's avatar drew all of them with `show:`.
+static SCENE_PICTURES: std::sync::Mutex<Option<(HashMap<String, std::path::PathBuf>, Option<std::path::PathBuf>)>> = std::sync::Mutex::new(None);
+
+/// The compiler's: a picture of the scene by its name (a file's, resolved).
+pub fn name_scene_picture(name: &str, path: std::path::PathBuf) {
+    SCENE_PICTURES.lock().unwrap().get_or_insert_with(Default::default).0.insert(name.to_owned(), path);
+}
+
+/// The compiler's: the scene's folder, which relative paths start from.
+pub fn set_scene_folder(dir: std::path::PathBuf) {
+    SCENE_PICTURES.lock().unwrap().get_or_insert_with(Default::default).1 = Some(dir);
+}
+
+/// What a live image's name is as a file: a picture of the scene's by its name, or a
+/// path relative to the scene's folder that is there; else None (an icon's name).
+fn scene_picture(name: &str) -> Option<std::path::PathBuf> {
+    let held = SCENE_PICTURES.lock().unwrap();
+    let (named, folder) = held.as_ref()?;
+    if let Some(p) = named.get(name) {
+        return Some(p.clone());
+    }
+    let relative = folder.as_ref()?.join(name);
+    (name.contains('/') || name.contains('.')).then_some(relative).filter(|p| p.is_file())
+}
+
 /// The pictures the logic hands over as bytes (`sys.call("image.data", name, bytes)`
 /// for an `image x = data "name"`), by name: painted from memory, never written to disk.
 static DATA_IMAGES: std::sync::Mutex<Option<HashMap<String, Arc<Vec<u8>>>>> = std::sync::Mutex::new(None);
@@ -1550,6 +1578,21 @@ mod tests {
         assert!(t.lay_out(&key).glyphs.is_empty());
         t.shelves = Shelves::new();
         assert_eq!(t.lay_out(&key).glyphs.len(), expected, "atlas exhaustion must not cache letters as nonexistent");
+    }
+
+    #[test]
+    fn a_live_image_can_name_the_scenes_picture() {
+        // `image chief = file "…"` in the scene, and a model's field that says `chief` (C7).
+        let dir = std::env::temp_dir().join(format!("pleamar-c7-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("avatars")).unwrap();
+        let file = dir.join("avatars/golio.png");
+        std::fs::write(&file, b"png").unwrap();
+        set_scene_folder(dir.clone());
+        name_scene_picture("chief", dir.join("avatars/chief.png"));
+        assert_eq!(scene_picture("chief"), Some(dir.join("avatars/chief.png")));
+        assert_eq!(scene_picture("avatars/golio.png"), Some(file), "relative to the scene's folder");
+        assert_eq!(scene_picture("firefox"), None, "an icon's name stays one");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -535,6 +535,10 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         return (Err(vec![CompileError::at(scene.line, scene.col, "this scene is missing its `{ … }` block")]), Vec::new());
     };
     o.top = body;
+    // Where the scene is: a live image's relative path starts there (C7).
+    if let Some(d) = o.dirs.first() {
+        crate::text::set_scene_folder(d.clone());
+    }
     o.declare_measures_early(body);
     // `time`: the seconds since the scene started, for whoever wants something
     // that never stops —a shader's aurora, a `noise(time)` wobble—. Only if the
@@ -2439,7 +2443,10 @@ impl<'a> Compiler<'a> {
                         // library carries its images with it.
                         let written = std::path::PathBuf::from(c.string()?);
                         let dir = self.dirs.get(n.line / super::PER_FILE);
-                        ImageSource::File(match dir { Some(k) if written.is_relative() => k.join(written), _ => written })
+                        let path = match dir { Some(k) if written.is_relative() => k.join(written), _ => written };
+                        // And by its name, for a live image that says it (a model's `image` field).
+                        crate::text::name_scene_picture(&name, std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone()));
+                        ImageSource::File(path)
                     } else if c.word("pixels") {
                         // The same, for pixel art: made bigger pixel by pixel.
                         let written = std::path::PathBuf::from(c.string()?);

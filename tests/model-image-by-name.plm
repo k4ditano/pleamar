@@ -1,0 +1,16 @@
+// expect: ok
+language 0.9
+// A row with its agent's avatar: the model's image field names a picture of the scene (C7).
+scene Agents {
+    surface { size: 260, 120 }
+    image chief = file "../examples/pieces/spin.gif", 24, 24
+    model agents max 6 { name: text; avatar: image 24, 24 }
+    column { at: 10, 10; gap: 6
+        for a in agents {
+            row { gap: 8; align: center
+                image a.avatar { size: 24, 24 }
+                text a.name { size: 13; color: #f5f7f5 }
+            }
+        }
+    }
+}
