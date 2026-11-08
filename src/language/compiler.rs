@@ -6436,10 +6436,16 @@ impl<'a> Compiler<'a> {
         // moves it as it scrolls; the logic hears it (`on("fact:feed.first", …)`) and sends
         // the slice from there; the copies go where their records are, and `content:` is the
         // whole list's.
-        let windowed = view.is_some() && given_content.is_none() && wrap.is_none() && n.body.as_deref().unwrap_or(&[]).iter().any(|e| match e {
-            Entry::Node(x) => matches!(x.head.first().map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "for") && !x.head.iter().any(|t| matches!(&t.kind, TokenKind::Id(w) if w == "from" || w == "key")),
-            _ => false,
-        });
+        // Only when that `for` is all it holds (besides declarations, rules and its `between`):
+        // with fixed children beside it, its length is theirs and the rows', as written (B10:
+        // a sidebar's groups and its agents measured only the agents, and had no scrollbar).
+        let is_window_for = |x: &Node| matches!(x.head.first().map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "for") && !x.head.iter().any(|t| matches!(&t.kind, TokenKind::Id(w) if w == "from" || w == "key"));
+        let nodes: Vec<&Node> = n.body.as_deref().unwrap_or(&[]).iter().filter_map(|e| if let Entry::Node(x) = e { Some(x) } else { None }).collect();
+        let windowed = view.is_some()
+            && given_content.is_none()
+            && wrap.is_none()
+            && nodes.iter().filter(|x| is_window_for(x)).count() == 1
+            && nodes.iter().all(|x| is_window_for(x) || is_declaration(x) || matches!(x.head.first().map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "between"));
         let outer_window = self.auto_window.take();
         if windowed {
             self.copies += 1;

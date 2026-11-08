@@ -1,0 +1,18 @@
+// expect: ok
+language 0.9
+// A sidebar: fixed groups and a list of agents in one scrolling column (B10).
+scene Sidebar {
+    surface { size: 260, 300 }
+    model agents max 20 { name: text }
+    column side { at: 0, 0; view: 260, 300; step: 30
+        text "Groups" { size: 12; color: #9aa0a6 }
+        group { size: 260, 30 }
+        group { size: 260, 30 }
+        text "Agents" { size: 12; color: #9aa0a6 }
+        for a in agents {
+            text a.name { size: 13; color: #f5f7f5 }
+        }
+    }
+    // Its length is the groups' and the agents', for a scrollbar.
+    box { at: 256, side.scroll / max(side.content - 300, 1) * 280 + 10; size: 3, 20; color: #ffffff; opacity: 30% }
+}
