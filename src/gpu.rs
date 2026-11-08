@@ -5199,7 +5199,12 @@ impl Gpu {
         // 20 MB more for a glass a few hundred pixels wide).
         let glass = !d.glass_marks.is_empty();
         let own_box = if glass { glass_reach_box(d, l.view.bounds(), l.scale, l.px) } else { None };
-        let over_own = glass && own_box.is_some() && !whole_screen && d.glass_over_own(v);
+        // Only where what it paints into can be read back: the lens's canvas, or the canvas a
+        // window keeps (`kept`). Painted straight onto the system's frame, the copy read a
+        // texture that cannot be read, and wgpu took the render down: a window's glass over
+        // its own text (Atalaya's search palette).
+        let readable = l.lens.is_some() || l.kept.as_ref().is_some_and(|k| k.0.usage().contains(wgpu::TextureUsages::TEXTURE_BINDING));
+        let over_own = glass && own_box.is_some() && !whole_screen && readable && d.glass_over_own(v);
         if let Some(b) = own_box.filter(|_| whole_screen || over_own) {
             l.idle_own_frames = 0;
             let need = (b[2] - b[0], b[3] - b[1]);
@@ -5294,7 +5299,8 @@ impl Gpu {
         if keeps_canvas && self.can_copy && damage.is_some() && l.open && !full_repaint {
             l.idle_kept_frames = 0;
             if l.kept.is_none() {
-                l.kept = Some(crate::lens::texture(&self.device, "kept", l.px, self.format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC));
+                // Readable too: a window's glass takes what it painted under it from here (`lens::Own`).
+                l.kept = Some(crate::lens::texture(&self.device, "kept", l.px, self.format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING));
                 l.painted_as.clear();
                 l.damage_log.clear();
                 kept_fresh = true;
