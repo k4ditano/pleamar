@@ -535,6 +535,10 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         return (Err(vec![CompileError::at(scene.line, scene.col, "this scene is missing its `{ … }` block")]), Vec::new());
     };
     o.top = body;
+    // Each reading starts from nothing: a reload is read on the same thread as the one before,
+    // and where its last token was must not say which file a name is declared in.
+    PEEKED.with(|m| m.set((0, 0)));
+    NAMED.with(|m| m.set((0, 0)));
     // Where the scene is: a live image's relative path starts there (C7).
     if let Some(d) = o.dirs.first() {
         crate::text::set_scene_folder(d.clone());
@@ -3206,6 +3210,11 @@ impl<'a> Compiler<'a> {
                 // `measure m` too: a component's `size:` is read before its
                 // body, and a row that is as tall as its text needs it there.
                 Some("measure") => if let Some(local) = word_at(1) {
+                    // Where it is written: `declare` tells a library's names by the file of the
+                    // last token read, and brought forward nothing of it has been read. It was the
+                    // last token of the reading before —a reload is read on the same thread—, in
+                    // `pleamar:ui`, and the second reload of Atalaya declared `Ui.space_name`.
+                    PEEKED.with(|m| m.set((n.line, n.col)));
                     let name = self.declare(local);
                     let part = self.interpolate_in(local);
                     if let Some(e) = self.scopes.last_mut().map(Rc::make_mut) {
