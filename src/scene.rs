@@ -1699,6 +1699,19 @@ impl Scene {
             let drawing = |k: &&usize| !self.zblocks[**k].range.is_empty();
             for (slot, drawn) in set.iter().filter(drawing).zip(sorted.iter().filter(drawing)) {
                 content[*slot] = *drawn;
+                // Its zones go where it is drawn, not where the first of its siblings
+                // was written: the one on top is drawn in the place of the last one, and
+                // what is written between them without `z:` —a list— is under it.
+                set_start[*drawn] = self.zblocks[*slot].range.start;
+            }
+            // One that draws nothing goes with the one below it that does.
+            let mut at = start;
+            for k in &sorted {
+                if drawing(&k) {
+                    at = set_start[*k];
+                } else {
+                    set_start[*k] = at;
+                }
             }
         }
         let mut order = Vec::with_capacity(n);
