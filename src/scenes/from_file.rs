@@ -302,6 +302,12 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
                     }
                     now = after;
                 }
+                // What it reads is what the files said at this moment: whatever is written while
+                // it reads (an install rewriting every file, one after another) is a change for
+                // the next turn. Taking the dates after reading took those writes as seen: a file
+                // read half written left the scene with an error that no reload came to mend.
+                let read_as = now.clone();
+                let watched_before = watched.clone();
                 let t0 = std::time::Instant::now();
                 match crate::language::read_file(&path) {
                     Ok((e, files)) => {
@@ -321,7 +327,9 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
                         let _ = to_render.send(ToRender::ReloadError(Some(m)));
                     }
                 }
-                last = date(&watched);
+                // The same files: what they said when read, so a later write is seen. Others now
+                // (it imports something new): their dates as they are.
+                last = if watched == watched_before { read_as } else { date(&watched) };
             }
         })
         .unwrap();
