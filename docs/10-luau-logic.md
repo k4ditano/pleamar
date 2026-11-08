@@ -40,7 +40,8 @@ run("sudo", { "-S", "-p", "", "-v" }, function(_, code) … end, { input = pw ..
 local id = spawn("wf-recorder", { "-f", file }, function(line) … end, function(_, code) … end)   -- one that does not end: a call per line, and one when it HAS ended
 spawn("pacman", args, on_line, on_exit, { input = "…", errors = true, env = { LC_ALL = "C" } })   -- how, too: a text on its input, its error output among the lines, and variables of its own (`env` and `errors` also for `run`: its error output after the rest; a variable that decides which code runs —`PATH`, `LD_PRELOAD`, `NODE_OPTIONS`…— only if `permissions { env: "…" }` names it, and a plugin's only `LANG`, `LC_*`, `TZ` and colours unless it names more)
 local id = spawn("node", { "worker.mjs" }, on_line, on_exit, { stdin = "open" })   -- its input left open:
-write(id, '{"type":"prompt"}\n')                       -- a line to it while it runs (true if it got there); write(id) closes it
+write(id, '{"type":"prompt"}\n')                       -- a line to it while it runs: handed to its own writer, never waiting for it to read (false if it is gone, or 8 MiB are still waiting); write(id) closes it, after what is waiting
+run("python3", { "tools/x.py" }, on_done, { cwd = "tools" })   -- programs run in the scene's folder (`cwd`: another one, relative to it or absolute); lines read from them are UTF-8 with what is not replaced, up to 16 MiB a line
 kill(id, "int")                                       -- asks it to stop (or "term"); kill(id) alone kills it and forgets it
 local id = spawn("pactl", { "subscribe" }, function(line) … end)   -- one that does NOT finish: one call per line
 kill(id)

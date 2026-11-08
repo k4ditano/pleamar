@@ -61,7 +61,7 @@ struct Shared {
     running: HashMap<u32, (Function, Arc<Mutex<Option<std::process::Child>>>)>,
     /// The input of those started with `{ stdin = "open" }`: `write(id, text)`
     /// talks to them while they run (an agent that is spoken to line by line).
-    inputs: HashMap<u32, std::process::ChildStdin>,
+    inputs: HashMap<u32, Writer>,
     watchers: HashMap<String, Vec<Function>>,
     next: u32,
     facts: HashMap<String, f64>,
@@ -349,6 +349,123 @@ fn environment(c: &Mutex<Shared>, how: Option<&mlua::Table>) -> mlua::Result<Vec
 /// Writes `text` on the child's input and closes it, so it knows nothing more is
 /// coming. On a thread of its own: a program that writes before reading could fill
 /// its output while this waited to hand it the input.
+/// The input of a program started with `{ stdin = "open" }`: what `write` hands
+/// over goes to a thread of its own, which writes it while the logic goes on.
+/// Written with the logic's lock held, a program that stopped reading filled
+/// its pipe (64 KiB) and froze the logic (M24).
+struct Writer {
+    queue: std::sync::mpsc::Sender<Vec<u8>>,
+    /// Bytes handed over and not yet written.
+    waiting: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// More than this waiting to be written, and `write` says false: the program is not reading.
+const MOST_WAITING: usize = 8 << 20;
+
+impl Writer {
+    fn new(mut stdin: std::process::ChildStdin) -> Writer {
+        let (queue, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let waiting = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let left = waiting.clone();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            // Until the logic drops its end (`write(id)`, `kill`, the program gone): then the
+            // input closes, after what was waiting, and the program reads its end.
+            for bytes in rx {
+                let n = bytes.len();
+                let ok = stdin.write_all(&bytes).and_then(|_| stdin.flush()).is_ok();
+                left.fetch_sub(n, std::sync::atomic::Ordering::Relaxed);
+                if !ok {
+                    break;
+                }
+            }
+        });
+        Writer { queue, waiting }
+    }
+
+    /// Hands it over; false if the program is gone or has too much waiting already.
+    fn write(&self, bytes: Vec<u8>) -> bool {
+        use std::sync::atomic::Ordering;
+        if self.waiting.load(Ordering::Relaxed) + bytes.len() > MOST_WAITING {
+            return false;
+        }
+        self.waiting.fetch_add(bytes.len(), Ordering::Relaxed);
+        self.queue.send(bytes).is_ok()
+    }
+}
+
+/// Where a program the logic starts runs: the scene's folder, or `{ cwd = "tools" }`
+/// (relative to it, or absolute).
+fn working_folder(scene: &std::path::Path, how: Option<&mlua::Table>) -> std::path::PathBuf {
+    match how.and_then(|t| t.get::<Option<String>>("cwd").ok().flatten()) {
+        Some(d) if std::path::Path::new(&d).is_absolute() => std::path::PathBuf::from(d),
+        Some(d) => scene.join(d),
+        None => scene.to_path_buf(),
+    }
+}
+
+/// The longest line read from a program: past it, the rest of the line is left out.
+const LONGEST_LINE: usize = 16 << 20;
+
+/// A program's output, line by line, to `each` (which says whether to go on): a byte
+/// that is not UTF-8 is a replacement character, not the end of the reading —it
+/// stopped there in silence, the program alive and nothing more arriving (M25)—, and
+/// a line longer than `LONGEST_LINE` keeps its beginning.
+fn each_line(from: impl std::io::Read, mut each: impl FnMut(String) -> bool) {
+    use std::io::BufRead;
+    let mut reader = std::io::BufReader::new(from);
+    let mut line: Vec<u8> = Vec::new();
+    let mut warned = false;
+    loop {
+        line.clear();
+        let mut cut = false;
+        // Read up to the line's end, keeping no more than the longest.
+        loop {
+            let (done, used) = {
+                let buf = match reader.fill_buf() {
+                    Ok(b) => b,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => return,
+                };
+                if buf.is_empty() {
+                    (true, 0)
+                } else {
+                    let (take, done) = match buf.iter().position(|b| *b == b'\n') {
+                        Some(k) => (k + 1, true),
+                        None => (buf.len(), false),
+                    };
+                    let room = LONGEST_LINE.saturating_sub(line.len());
+                    if room < take {
+                        cut = true;
+                    }
+                    line.extend_from_slice(&buf[..take.min(room)]);
+                    (done, take)
+                }
+            };
+            if used == 0 {
+                // The end of what it writes: its last line, if it had no line break.
+                if !line.is_empty() {
+                    each(String::from_utf8_lossy(&line).into_owned());
+                }
+                return;
+            }
+            reader.consume(used);
+            if done {
+                break;
+            }
+        }
+        if cut && !std::mem::replace(&mut warned, true) {
+            eprintln!("logic  · a program wrote a line longer than {} MiB: its rest is left out", LONGEST_LINE >> 20);
+        }
+        while matches!(line.last(), Some(b'\n' | b'\r')) {
+            line.pop();
+        }
+        if !each(String::from_utf8_lossy(&line).into_owned()) {
+            return;
+        }
+    }
+}
+
 fn give_input(child: &mut std::process::Child, text: Option<String>) {
     let (Some(text), Some(mut stdin)) = (text, child.stdin.take()) else { return };
     std::thread::spawn(move || {
@@ -1100,8 +1217,12 @@ impl LuauScript {
             Ok(())
         })?)?;
 
+        // The scene's folder: where its programs run (M23), and what a relative `cwd` starts from.
+        // They ran wherever pleamar was started from, so `python3 tools/x.py` worked only from there.
+        let folder: std::path::PathBuf = std::path::Path::new(&self.logic).parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
         // A system command: it runs on another thread and answers when it finishes.
         let (c, to_logic) = (self.c.clone(), self.to_logic.clone());
+        let run_folder = folder.clone();
         // With a fourth argument, how: `{ stdin = "/path" }` gives it that file as
         // its input —what in a terminal is `command < file`, which is how an image
         // is copied to the clipboard— and `{ output = false }` does not collect what
@@ -1119,6 +1240,7 @@ impl LuauScript {
             let vars = environment(&c, how.as_ref())?;
             let collect: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("output").ok().flatten()).unwrap_or(true);
             let errors: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("errors").ok().flatten()).unwrap_or(false);
+            let cwd = working_folder(&run_folder, how.as_ref());
             let id = {
                 let mut c = c.lock().unwrap();
                 c.next += 1;
@@ -1132,7 +1254,7 @@ impl LuauScript {
             std::thread::spawn(move || {
                 let mut launch = std::process::Command::new(&command);
                 crate::child_env(&mut launch);
-                launch.args(args.unwrap_or_default()).envs(vars);
+                launch.args(args.unwrap_or_default()).envs(vars).current_dir(&cwd);
                 crate::platform::apart(&mut launch);
                 // No input unless it is given one: it got the scene's, and in
                 // pleamar-wm's session that is its terminal. ffmpeg read it
@@ -1195,8 +1317,8 @@ impl LuauScript {
         // gives what it writes on its error output too, line by line with the rest:
         // a package manager says there what went wrong.
         let (c, to_logic) = (self.c.clone(), self.to_logic.clone());
+        let spawn_folder = folder.clone();
         g.set("spawn", lua.create_function(move |_, (command, args, f, on_exit, how): (String, Option<Vec<String>>, Function, Option<Function>, Option<mlua::Table>)| {
-            use std::io::BufRead;
             check_command_permission(&c, &command, args.as_deref().unwrap_or(&[]))?;
             let text: Option<String> = how.as_ref().and_then(|t| t.get("input").ok());
             let errors: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("errors").ok().flatten()).unwrap_or(false);
@@ -1204,7 +1326,7 @@ impl LuauScript {
             let vars = environment(&c, how.as_ref())?;
             let mut launch = std::process::Command::new(&command);
             crate::child_env(&mut launch);
-            launch.args(args.unwrap_or_default()).envs(vars).stdout(std::process::Stdio::piped());
+            launch.args(args.unwrap_or_default()).envs(vars).current_dir(working_folder(&spawn_folder, how.as_ref())).stdout(std::process::Stdio::piped());
             launch.stderr(if errors { std::process::Stdio::piped() } else { std::process::Stdio::null() });
             // No input unless it is given one, as with `run`.
             launch.stdin(std::process::Stdio::null());
@@ -1219,12 +1341,12 @@ impl LuauScript {
                 .map_err(|e| mlua::Error::runtime(format!("cannot run '{command}': {e}")))?;
             // Kept open: the first text goes now, the rest with `write`.
             let kept = if open {
-                let mut stdin = child.stdin.take();
-                if let (Some(t), Some(s)) = (&text, stdin.as_mut()) {
-                    use std::io::Write;
-                    let _ = s.write_all(t.as_bytes()).and_then(|_| s.flush());
+                // Its own writer: neither this first text nor any later one waits for it to read.
+                let writer = child.stdin.take().map(Writer::new);
+                if let (Some(t), Some(w)) = (&text, writer.as_ref()) {
+                    w.write(t.as_bytes().to_vec());
                 }
-                stdin
+                writer
             } else {
                 give_input(&mut child, text);
                 None
@@ -1238,8 +1360,8 @@ impl LuauScript {
                 c.next += 1;
                 let id = c.next;
                 c.running.insert(id, (f, child.clone()));
-                if let Some(stdin) = kept {
-                    c.inputs.insert(id, stdin);
+                if let Some(writer) = kept {
+                    c.inputs.insert(id, writer);
                 }
                 if let Some(end) = on_exit {
                     c.processes.insert(id, end);
@@ -1251,21 +1373,11 @@ impl LuauScript {
             // program that fills that pipe while the other is still open blocks.
             let complained = complaints.map(|s| {
                 let to_logic = to_logic.clone();
-                std::thread::spawn(move || {
-                    for line in std::io::BufReader::new(s).lines().map_while(Result::ok) {
-                        if to_logic.send(Event::Line(id, line)).is_err() {
-                            break;
-                        }
-                    }
-                })
+                std::thread::spawn(move || each_line(s, |line| to_logic.send(Event::Line(id, line)).is_ok()))
             });
             std::thread::spawn(move || {
                 if let Some(s) = output {
-                    for line in std::io::BufReader::new(s).lines().map_while(Result::ok) {
-                        if to_logic.send(Event::Line(id, line)).is_err() {
-                            break;
-                        }
-                    }
+                    each_line(s, |line| to_logic.send(Event::Line(id, line)).is_ok());
                 }
                 // Every line before the end.
                 if let Some(t) = complained {
@@ -1279,15 +1391,16 @@ impl LuauScript {
         // `write(id, "line\n")`: to the input of one started with `{ stdin = "open" }`.
         // `write(id)` closes it (the program reads its end). Whether it got there.
         let c = self.c.clone();
-        g.set("write", lua.create_function(move |_, (id, text): (u32, Option<String>)| {
-            use std::io::Write;
+        // It never waits for the program to read: what it says goes to the program's own
+        // writer (see `Writer`), and false is gone, or more than 8 MiB already waiting.
+        g.set("write", lua.create_function(move |_, (id, text): (u32, Option<mlua::String>)| {
             let mut c = c.lock().unwrap();
             let Some(text) = text else {
                 return Ok(c.inputs.remove(&id).is_some());
             };
-            let Some(stdin) = c.inputs.get_mut(&id) else { return Ok(false) };
-            let ok = stdin.write_all(text.as_bytes()).and_then(|_| stdin.flush()).is_ok();
-            if !ok {
+            let Some(writer) = c.inputs.get(&id) else { return Ok(false) };
+            let ok = writer.write(text.as_bytes().to_vec());
+            if !ok && writer.queue.send(Vec::new()).is_err() {
                 c.inputs.remove(&id);
             }
             Ok(ok)
