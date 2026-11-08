@@ -27,7 +27,7 @@ use smithay_client_toolkit::{
         xdg::{
             popup::{Popup, PopupConfigure, PopupHandler},
             window::{Window, WindowConfigure, WindowDecorations, WindowHandler},
-            XdgPositioner, XdgShell,
+            XdgPositioner, XdgShell, XdgSurface,
         },
         WaylandSurface,
     },
@@ -1663,8 +1663,31 @@ struct Popups {
 }
 
 #[derive(Clone)]
+/// What a popup hangs from: a layer (a panel) or a normal window (`kind: window`).
+#[derive(Clone)]
+enum ParentSurface {
+    Layer(LayerSurface),
+    Window(Window),
+}
+
+impl ParentSurface {
+    fn wl(&self) -> &wl_surface::WlSurface {
+        match self {
+            ParentSurface::Layer(l) => l.wl_surface(),
+            ParentSurface::Window(w) => w.wl_surface(),
+        }
+    }
+
+    fn of(role: &Role) -> ParentSurface {
+        match role {
+            Role::Layer(l) => ParentSurface::Layer(l.clone()),
+            Role::Window(w) => ParentSurface::Window(w.clone()),
+        }
+    }
+}
+
 struct Parent {
-    layer: LayerSurface,
+    surface: ParentSurface,
     /// Where it is: a popup is where its parent is, plus whatever the compositor says.
     backdrop: Option<Arc<BackdropTarget>>,
     scale: f32,
@@ -2148,7 +2171,7 @@ static POPUPS: std::sync::OnceLock<Popups> = std::sync::OnceLock::new();
 fn forget_parent(wl: &wl_surface::WlSurface) {
     if let Some(pp) = POPUPS.get() {
         let mut parent = pp.parent.lock().unwrap();
-        if parent.as_ref().is_some_and(|p| p.layer.wl_surface() == wl) {
+        if parent.as_ref().is_some_and(|p| p.surface.wl() == wl) {
             *parent = None;
         }
     }
@@ -2180,9 +2203,15 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
             positioner.set_constraint_adjustment(ConstraintAdjustment::SlideX | ConstraintAdjustment::SlideY);
         }
         let wl = e.compositor.create_surface(&e.qh);
-        let popup = Popup::from_surface(nested.as_ref().map(|n| &n.0), &positioner, &e.qh, wl, &e.xdg).ok()?;
-        if nested.is_none() {
-            parent.layer.get_popup(popup.xdg_popup());
+        // Out of a popup, that popup's surface; out of a window, the window's (an xdg
+        // popup's own parent); out of a layer, none, and the layer takes it.
+        let from_window = match &parent.surface {
+            ParentSurface::Window(w) if nested.is_none() => Some(w.xdg_surface().clone()),
+            _ => None,
+        };
+        let popup = Popup::from_surface(nested.as_ref().map(|n| &n.0).or(from_window.as_ref()), &positioner, &e.qh, wl, &e.xdg).ok()?;
+        if let (None, ParentSurface::Layer(layer)) = (&nested, &parent.surface) {
+            layer.get_popup(popup.xdg_popup());
         }
         // If it opens because of a click or a key a moment ago, let a click outside close it;
         // one that takes the keyboard (`keyboard: true`) grabs it whenever it can: the
@@ -2483,9 +2512,11 @@ impl State {
         }
         p.size = size;
         if let Some((surface, name, mhz)) = p.pending.take() {
-            if let (Some(pp), Some(layer)) = (POPUPS.get(), p.role.layer()) {
-                // While the mouse hasn't been seen on any, popups hang from the first one.
-                pp.parent.lock().unwrap().get_or_insert_with(|| Parent { layer: layer.clone(), backdrop: p.backdrop.clone(), scale: p.scale, name: name.clone(), mhz });
+            if let Some(pp) = POPUPS.get() {
+                // While the mouse hasn't been seen on any, popups hang from the first one:
+                // a layer, or a normal window (a scene that is only a window had none, and
+                // its popups never opened).
+                pp.parent.lock().unwrap().get_or_insert_with(|| Parent { surface: ParentSurface::of(&p.role), backdrop: p.backdrop.clone(), scale: p.scale, name: name.clone(), mhz });
             }
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: p.id,
@@ -2591,10 +2622,10 @@ impl PointerHandler for State {
                     // The mouse over a surface is in the piece of the plane it shows.
                     let origin = self.wanted[p.which].origin;
                     (x, y) = (x + origin.0, y + origin.1);
-                    // Popups hang from a layer: from a normal window, not yet.
-                    if let Some(layer) = p.role.layer() {
+                    // Popups hang from where the mouse was last seen: a layer or a normal window.
+                    {
                         *pp.parent.lock().unwrap() = Some(Parent {
-                            layer: layer.clone(),
+                            surface: ParentSurface::of(&p.role),
                             backdrop: p.backdrop.clone(),
                             scale: p.scale,
                             name: info.as_ref().and_then(|i| i.name.clone()).unwrap_or_default(),
