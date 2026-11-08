@@ -1662,7 +1662,6 @@ struct Popups {
     open: Mutex<Vec<OpenPopup>>,
 }
 
-#[derive(Clone)]
 /// What a popup hangs from: a layer (a panel) or a normal window (`kind: window`).
 #[derive(Clone)]
 enum ParentSurface {
@@ -1686,6 +1685,7 @@ impl ParentSurface {
     }
 }
 
+#[derive(Clone)]
 struct Parent {
     surface: ParentSurface,
     /// Where it is: a popup is where its parent is, plus whatever the compositor says.
