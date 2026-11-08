@@ -1957,6 +1957,35 @@ pub static REQUIRED: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mute
 mod tests {
     use super::*;
 
+    /// A program's output with a byte that is not UTF-8 goes on past it (M25), and a
+    /// last line without its break still arrives.
+    #[test]
+    fn a_bad_byte_does_not_end_the_reading() {
+        let bytes: &[u8] = b"one\ntw\xffo\r\nthree";
+        let mut got = Vec::new();
+        each_line(bytes, |l| {
+            got.push(l);
+            true
+        });
+        assert_eq!(got, vec!["one".to_owned(), "tw\u{fffd}o".to_owned(), "three".to_owned()]);
+    }
+
+    /// `write` to a program that does not read returns at once (M24): what does not fit
+    /// in its pipe waits in its writer, and past 8 MiB `write` says false.
+    #[cfg(unix)]
+    #[test]
+    fn writing_to_a_program_that_does_not_read_never_waits() {
+        let mut child = std::process::Command::new("sleep").arg("5").stdin(std::process::Stdio::piped()).spawn().unwrap();
+        let w = Writer::new(child.stdin.take().unwrap());
+        let t0 = std::time::Instant::now();
+        let chunk = vec![b'x'; 1 << 20];
+        let accepted = (0..12).filter(|_| w.write(chunk.clone())).count();
+        assert!(t0.elapsed() < std::time::Duration::from_secs(1), "it waited: {:?}", t0.elapsed());
+        assert!((7..=8).contains(&accepted), "8 MiB at most waiting: {accepted}");
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
     /// `for m in said key m.id`: taking the first of three away moves the other
     /// two up a place, each in the copy it already had, which is not written again.
     #[test]
