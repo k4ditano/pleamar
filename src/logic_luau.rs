@@ -1393,7 +1393,7 @@ impl LuauScript {
         let c = self.c.clone();
         // It never waits for the program to read: what it says goes to the program's own
         // writer (see `Writer`), and false is gone, or more than 8 MiB already waiting.
-        g.set("write", lua.create_function(move |_, (id, text): (u32, Option<mlua::String>)| {
+        g.set("write", lua.create_function(move |_, (id, text): (u32, Option<mlua::LuaString>)| {
             let mut c = c.lock().unwrap();
             let Some(text) = text else {
                 return Ok(c.inputs.remove(&id).is_some());
