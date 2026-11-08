@@ -320,6 +320,30 @@ impl Typesetter {
     }
 
     pub(crate) fn lay_out(&mut self, c: &LayoutKey) -> Layout {
+        let m = self.lay_out_once(c);
+        // `lines: n` counts the whole text's lines. cosmic-text cuts each paragraph at n on
+        // its own, so a text with line breaks showed all of its paragraphs and ran out of
+        // its card. Past the n-th line it is laid out again cut there, with its «…».
+        let Some(n) = c.max_lines.filter(|n| *n >= 1 && m.lines.len() > *n) else { return m };
+        let Some(end) = m.lines[n - 1].cursors.last().map(|k| k.0.min(c.text.len())) else { return m };
+        let mut cut = c.clone();
+        cut.text = format!("{}…", c.text[..end].trim_end());
+        cut.marks.retain(|k| (k.0 as usize) < end);
+        for k in &mut cut.marks {
+            k.1 = k.1.min(end as u32);
+        }
+        let mut m = self.lay_out_once(&cut);
+        // The «…» may have made its line wrap: never more than n.
+        if m.lines.len() > n {
+            let bottom = m.lines[n - 1].bottom;
+            m.lines.truncate(n);
+            m.glyphs.retain(|g| g.rect[1] + g.rect[3] * 0.5 < bottom);
+            m.size.1 = bottom;
+        }
+        m
+    }
+
+    fn lay_out_once(&mut self, c: &LayoutKey) -> Layout {
         let (px, line_height, width) = (f32::from_bits(c.px), f32::from_bits(c.line_height), c.width.map(|a| a as f32));
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(px, px * line_height));
         buffer.set_wrap(if width.is_some() { Wrap::WordOrGlyph } else { Wrap::None });
@@ -1613,6 +1637,18 @@ mod tests {
         assert!(v > 0);
         let rgba = rasterize_bytes(&data_image("test-dot").unwrap(), false, (2, 2), false).unwrap();
         assert_eq!(&rgba[..4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn lines_count_the_whole_text_not_each_paragraph() {
+        // A notification's body with line breaks and `lines: 2`: two lines, not two a paragraph.
+        let mut t = Typesetter::new();
+        let mut style = Style::new(14.0, crate::scene::color(1.0, 1.0, 1.0));
+        style.max_lines = Some(2);
+        let m = t.lay_out(&LayoutKey::new("text with multiple lines\ntext with multiple lines\ntext with multiple lines\ntext", &style, Some(300.0)));
+        assert_eq!(m.lines.len(), 2, "{} lines", m.lines.len());
+        let one = t.lay_out(&LayoutKey::new("one line", &style, Some(300.0)));
+        assert!((m.size.1 - one.size.1 * 2.0).abs() < 2.0, "two lines tall: {} vs {}", m.size.1, one.size.1);
     }
 
     #[test]
