@@ -432,6 +432,27 @@ mod tests {
     }
 
     #[test]
+    fn mixing_or_choosing_colours_mixes_or_chooses_how_much_of_them_shows() {
+        use crate::scene::{Instr, Paint};
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/color-alpha-mix.plm")).unwrap();
+        let on = scene.facts.iter().position(|f| f.0 == "on").unwrap();
+        let alphas = |v: f32| -> Vec<f32> {
+            let mut facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+            facts[on] = v;
+            let props = settled(&scene, &facts);
+            let c = Ctx { props: &props, facts: &facts, seen: None };
+            scene.instrs.iter().filter_map(|i| match i {
+                Instr::Fill { paint: Paint::Color(_), alpha, .. } | Instr::Solid { alpha, .. } | Instr::Text { alpha, .. } => Some((alpha.eval(c) * 255.0).round()),
+                _ => None,
+            }).collect()
+        };
+        // mix(#…10, #…10) 16 · if(on, #…40, #…80) 128 off, 64 on · the named `veil` (16 + 48) / 2 · two opaque ones mixed: all ·
+        // pick(1, …20, …60) 96 · a text a quarter of the way from 0 to 255 · the column's fill chosen 48 / 16 · its text all of it.
+        assert_eq!(alphas(0.0), vec![16.0, 128.0, 32.0, 255.0, 96.0, 64.0, 48.0, 255.0]);
+        assert_eq!(alphas(1.0), vec![16.0, 64.0, 32.0, 255.0, 96.0, 64.0, 16.0, 255.0]);
+    }
+
+    #[test]
     fn a_text_can_take_its_family_from_a_text() {
         use crate::scene::Instr;
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/family-from-a-text.plm")).unwrap();

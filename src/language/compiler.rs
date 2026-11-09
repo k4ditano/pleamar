@@ -249,8 +249,8 @@ struct Scope {
     /// From a `strict` library: in here only what is asked for, what is
     /// declared and what belongs to the library itself are valid.
     strict: bool,
-    /// Of its colours, how much of each shows, if not all (`#ffffff1f`).
-    color_alpha: HashMap<String, f32>,
+    /// Of its colours, how much of each shows, if not all (`#ffffff1f`, or a `mix` of such).
+    color_alpha: HashMap<String, Expr>,
     /// Its `let`s written outside any group, and on which line.
     loose: HashMap<String, usize>,
     /// The values of the scene's folds a `repeat` keeps (see `fold`): not a turn's own `let`s.
@@ -313,9 +313,10 @@ struct Compiler<'a> {
     hover_mentions: std::collections::HashSet<String>,
     /// How much of the last colour read shows (`#ffffff1f`, or a named one that
     /// was such): what reads a colour multiplies its opacity by it (C2).
-    last_alpha: std::cell::Cell<f32>,
+    /// It is a sum when the colour chooses or mixes (`mix(#ffffff10, #00000010, t)`).
+    last_alpha: std::cell::RefCell<Expr>,
     /// The same for the scene's named colours.
-    color_alpha: HashMap<String, f32>,
+    color_alpha: HashMap<String, Expr>,
     zone_springs: Vec<(String, PropId, PropId)>,
     /// `level: top, overlay while …`: read at the end, when every fact is known.
     pending_levels: Vec<(usize, Level, &'a [Token], (usize, usize))>,
@@ -504,7 +505,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         generated: &generated,
         translations: Vec::new(), untranslated: Default::default(),
         props: HashMap::new(), facts: HashMap::new(), signals: HashMap::new(), texts: HashMap::new(), images: HashMap::new(), figures: HashMap::new(), shaders: HashMap::new(), models: HashMap::new(),
-        measurements: HashMap::new(), gestures: HashMap::new(), zones: HashMap::new(), lets: HashMap::new(), let_lines: HashMap::new(), scene_let_lines: Default::default(), twice_noted: Default::default(), auto_window: None, last_alpha: std::cell::Cell::new(1.0), color_alpha: HashMap::new(), loose_lets: HashMap::new(), groups: Vec::new(), colors: HashMap::new(),
+        measurements: HashMap::new(), gestures: HashMap::new(), zones: HashMap::new(), lets: HashMap::new(), let_lines: HashMap::new(), scene_let_lines: Default::default(), twice_noted: Default::default(), auto_window: None, last_alpha: std::cell::RefCell::new(Expr::K(1.0)), color_alpha: HashMap::new(), loose_lets: HashMap::new(), groups: Vec::new(), colors: HashMap::new(),
         springs: vocab::SPRINGS.iter().map(|n| ((*n).to_owned(), match *n {
             "lively" => Spring::LIVELY,
             "calm" => Spring::CALM,
@@ -1879,13 +1880,29 @@ impl<'a> Compiler<'a> {
     /// A colour; how much of it shows, if it says (`#ffffff1f`), is left in `last_alpha`.
     fn color(&self, c: &mut Cur) -> R<Color> {
         let alpha = match c.peek() {
-            Some(TokenKind::Color(k)) => k[3],
-            Some(TokenKind::Id(n)) => self.scopes.iter().rev().find_map(|e| e.color_alpha.get(n)).or_else(|| self.color_alpha.get(n)).copied().unwrap_or(1.0),
-            _ => 1.0,
+            Some(TokenKind::Color(k)) => Some(Expr::K(k[3])),
+            Some(TokenKind::Id(n)) if !matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => {
+                Some(self.scopes.iter().rev().find_map(|e| e.color_alpha.get(n)).or_else(|| self.color_alpha.get(n)).cloned().unwrap_or(Expr::K(1.0)))
+            }
+            // `mix`, `if`, `pick`, `rgb`: it is worked out from theirs, inside.
+            _ => None,
         };
         let found = self.color_inner(c);
-        self.last_alpha.set(alpha);
+        if let Some(a) = alpha {
+            *self.last_alpha.borrow_mut() = a;
+        }
         found
+    }
+
+    /// How much of the last colour read shows, taken (what reads it next starts from all of it).
+    fn take_alpha(&self) -> Expr {
+        self.last_alpha.replace(Expr::K(1.0))
+    }
+
+    /// The same, after reading one of the colours a `mix`, an `if` or a `pick` is made of.
+    fn color_and_alpha(&self, c: &mut Cur) -> R<(Color, Expr)> {
+        let k = self.color(c)?;
+        Ok((k, self.take_alpha()))
     }
 
     fn color_inner(&self, c: &mut Cur) -> R<Color> {
@@ -1904,12 +1921,13 @@ impl<'a> Compiler<'a> {
             Some(TokenKind::Id(m)) if m == "mix" => {
                 c.i += 1;
                 c.expect_sym("(")?;
-                let a = self.color(c)?;
+                let (a, aa) = self.color_and_alpha(c)?;
                 c.expect_sym(",")?;
-                let b = self.color(c)?;
+                let (b, ba) = self.color_and_alpha(c)?;
                 c.expect_sym(",")?;
                 let t = self.expr(c)?;
                 c.expect_sym(")")?;
+                *self.last_alpha.borrow_mut() = alpha_between(aa, ba, t.clone());
                 let [a0, a1, a2] = a;
                 let [b0, b1, b2] = b;
                 Ok([a0.mix(b0, t.clone()), a1.mix(b1, t.clone()), a2.mix(b2, t)])
@@ -1926,6 +1944,7 @@ impl<'a> Compiler<'a> {
                 c.expect_sym(",")?;
                 let b = self.expr(c)?;
                 c.expect_sym(")")?;
+                *self.last_alpha.borrow_mut() = Expr::K(1.0);
                 Ok([r, g, b])
             }
             // `pick(i, #a, #b, #c)`: the one at place i, channel by channel.
@@ -1934,13 +1953,17 @@ impl<'a> Compiler<'a> {
                 c.expect_sym("(")?;
                 let i = self.expr(c)?;
                 let mut options = Vec::new();
+                let mut alphas = Vec::new();
                 while c.sym(",") {
-                    options.push(self.color(c)?);
+                    let (k, a) = self.color_and_alpha(c)?;
+                    options.push(k);
+                    alphas.push(a);
                 }
                 c.expect_sym(")")?;
                 if options.is_empty() {
                     return c.error("`pick` needs a place and colours to choose from: `pick(i, #a, #b)`");
                 }
+                *self.last_alpha.borrow_mut() = if alphas.iter().all(|a| a.constant() == Some(1.0)) { Expr::K(1.0) } else { Expr::Pick(Box::new(i.clone()), alphas).folded_pub() };
                 let channel = |k: usize| Expr::Pick(Box::new(i.clone()), options.iter().map(|o: &Color| o[k].clone()).collect()).folded_pub();
                 Ok([channel(0), channel(1), channel(2)])
             }
@@ -1950,10 +1973,11 @@ impl<'a> Compiler<'a> {
                 c.expect_sym("(")?;
                 let cond = self.expr(c)?;
                 c.expect_sym(",")?;
-                let a = self.color(c)?;
+                let (a, aa) = self.color_and_alpha(c)?;
                 c.expect_sym(",")?;
-                let b = self.color(c)?;
+                let (b, ba) = self.color_and_alpha(c)?;
                 c.expect_sym(")")?;
+                *self.last_alpha.borrow_mut() = alpha_between(ba, aa, cond.clone());
                 let [a0, a1, a2] = a;
                 let [b0, b1, b2] = b;
                 Ok([b0.mix(a0, cond.clone()), b1.mix(a1, cond.clone()), b2.mix(a2, cond)])
@@ -2050,8 +2074,8 @@ impl<'a> Compiler<'a> {
             None => None,
         };
         // A colour that says how much of it shows (`#ffffff1f`): that much more see-through.
-        let opacity = match self.last_alpha.replace(1.0) {
-            a if a < 1.0 && color.is_some() => Some(opacity.map_or(Expr::K(a), |o| o * a)),
+        let opacity = match self.take_alpha() {
+            a if !opaque(&a) && color.is_some() => Some(opacity.map_or(a.clone(), |o| o * a)),
             _ => opacity,
         };
         let (cursor, cursor_when) = match p.get_mut("cursor") {
@@ -2838,9 +2862,9 @@ impl<'a> Compiler<'a> {
                     };
                     if is_color {
                         let k = self.color(&mut c)?;
-                        let said = self.last_alpha.replace(1.0);
+                        let said = self.take_alpha();
                         c.expect_end()?;
-                        if said < 1.0 {
+                        if !opaque(&said) {
                             match self.scopes.last_mut().map(Rc::make_mut) {
                                 Some(e) => e.color_alpha.insert(name.clone(), said),
                                 None => self.color_alpha.insert(name.clone(), said),
@@ -3385,12 +3409,12 @@ impl<'a> Compiler<'a> {
         if shapes == 0 {
             return Err(CompileError::at(n.line, n.col, "a 'body' with no shapes paints nothing"));
         }
-        let mut body_alpha = 1.0f32;
+        let mut body_alpha = Expr::K(1.0);
         let paint = if let Some(c) = p.get_mut("gradient") {
             self.gradient(n, c)?
         } else if let Some(c) = p.get_mut("color") {
             let k = self.color(c)?;
-            body_alpha = self.last_alpha.replace(1.0);
+            body_alpha = self.take_alpha();
             Paint::Color(k)
         } else {
             return Err(CompileError::at(n.line, n.col, "this 'body' is missing 'color' or 'gradient'"));
@@ -3433,7 +3457,7 @@ impl<'a> Compiler<'a> {
             Some(c) => alpha * self.expr(c)?.clamp(0.0, 1.0),
             None => alpha,
         };
-        let alpha = if body_alpha < 1.0 { alpha * body_alpha } else { alpha };
+        let alpha = if opaque(&body_alpha) { alpha } else { alpha * body_alpha };
         self.e.paint(Instr::Fill { paint, alpha, rim, light, border, glass_spec });
         self.last_size = size;
         Ok(())
@@ -4033,10 +4057,10 @@ impl<'a> Compiler<'a> {
         if let Some(c) = p.get_mut("family") {
             (style.family, style.family_from) = self.family(c)?;
         }
-        let mut text_alpha = 1.0f32;
+        let mut text_alpha = Expr::K(1.0);
         if let Some(c) = p.get_mut("color") {
             style.color = self.color(c)?;
-            text_alpha = self.last_alpha.replace(1.0);
+            text_alpha = self.take_alpha();
         }
         // With `markdown:`, the colour of what it marks.
         for (k, name) in ["link", "code", "quote", "heading", "strike"].into_iter().enumerate() {
@@ -4150,7 +4174,7 @@ impl<'a> Compiler<'a> {
             Some(c) => alpha * self.expr(c)?.clamp(0.0, 1.0),
             None => alpha,
         };
-        let alpha = if text_alpha < 1.0 { alpha * text_alpha } else { alpha };
+        let alpha = if opaque(&text_alpha) { alpha } else { alpha * text_alpha };
         let measure = match p.get_mut("measure") {
             Some(c) => {
                 let name = self.global(&c.id("the name of a measure")?);
@@ -5626,21 +5650,25 @@ impl<'a> Compiler<'a> {
             Some(TokenKind::Color(_)) => {
                 env.colors.insert(p.clone(), self.color(c)?);
                 // `plate: #ffffff1f`: how much of it shows goes in with it.
-                let said = self.last_alpha.replace(1.0);
-                if said < 1.0 {
+                let said = self.take_alpha();
+                if !opaque(&said) {
                     env.color_alpha.insert(p.clone(), said);
                 }
             }
             Some(TokenKind::Id(x)) if x == "mix" && matches!(c.tokens.get(c.i + 2).map(|y| &y.kind), Some(TokenKind::Color(_))) => {
                 env.colors.insert(p.clone(), self.color(c)?);
+                let said = self.take_alpha();
+                if !opaque(&said) {
+                    env.color_alpha.insert(p.clone(), said);
+                }
             }
             Some(TokenKind::Id(x)) if x == "rgb" && matches!(c.tokens.get(c.i + 1).map(|y| &y.kind), Some(TokenKind::Sym("("))) => {
                 env.colors.insert(p.clone(), self.color(c)?);
             }
             Some(TokenKind::Id(x)) if alone && (self.colors.contains_key(x) || self.scopes.iter().any(|e| e.colors.contains_key(x))) => {
                 env.colors.insert(p.clone(), self.color(c)?);
-                let said = self.last_alpha.replace(1.0);
-                if said < 1.0 {
+                let said = self.take_alpha();
+                if !opaque(&said) {
                     env.color_alpha.insert(p.clone(), said);
                 }
             }
@@ -6304,10 +6332,10 @@ impl<'a> Compiler<'a> {
         let (fill, fill_alpha) = match p.get_mut("fill") {
             Some(c) => {
                 let col = self.color(c)?;
-                let said = self.last_alpha.replace(1.0);
+                let said = self.take_alpha();
                 let alpha = if c.at_end() { Expr::K(1.0) } else { self.expr(c)?.clamp(0.0, 1.0) };
                 c.expect_end()?;
-                (Some(col), if said < 1.0 { alpha * said } else { alpha })
+                (Some(col), if opaque(&said) { alpha } else { alpha * said })
             }
             None => (None, Expr::K(1.0)),
         };
@@ -6318,10 +6346,10 @@ impl<'a> Compiler<'a> {
                 let w = self.expr(c)?;
                 c.expect_sym(",")?;
                 let col = self.color(c)?;
-                let said = self.last_alpha.replace(1.0);
+                let said = self.take_alpha();
                 let alpha = if c.at_end() { Expr::K(1.0) } else { self.expr(c)?.clamp(0.0, 1.0) };
                 c.expect_end()?;
-                Some((w, col, if said < 1.0 { alpha * said } else { alpha }))
+                Some((w, col, if opaque(&said) { alpha } else { alpha * said }))
             }
             None => None,
         };
@@ -8822,4 +8850,19 @@ fn key_combo(written: &str) -> String {
     let mut out: String = order.iter().filter(|m| mods.contains(m)).map(|m| format!("{m}+")).collect();
     out.push_str(key);
     out
+}
+
+/// A colour's alpha that shows all of it: nothing to multiply by.
+fn opaque(a: &Expr) -> bool {
+    a.constant().is_some_and(|a| a >= 1.0)
+}
+
+/// The alpha of a colour mixed or chosen between two (`mix(#a, #b, t)`, `if(c, #b, #a)`):
+/// mixed as its channels are. Two that show all of it give all of it.
+fn alpha_between(a: Expr, b: Expr, t: Expr) -> Expr {
+    if opaque(&a) && opaque(&b) {
+        Expr::K(1.0)
+    } else {
+        a.mix(b, t)
+    }
 }

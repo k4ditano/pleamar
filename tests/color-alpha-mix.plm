@@ -1,0 +1,18 @@
+// expect: ok
+language 0.9
+// Colours that say how much of them shows, mixed and chosen: the alpha is mixed and
+// chosen with them (a light theme's veil, `mix(#ffffff10, #00000010, t)`, stayed opaque).
+scene AlphaMix {
+    surface { size: 300, 200 }
+    fact on = 0
+    let veil = mix(#ffffff10, #00000030, 0.5)
+    box { at: 10, 10; size: 20, 20; color: mix(#ffffff10, #00000010, 0.5) }
+    box { at: 40, 10; size: 20, 20; color: if(on, #ffffff40, #00000080) }
+    box { at: 70, 10; size: 20, 20; color: veil }
+    box { at: 100, 10; size: 20, 20; color: mix(#ffffff, #000000, 0.5) }
+    box { at: 130, 10; size: 20, 20; color: pick(1, #ff000020, #00ff0060) }
+    text "soft" { at: 10, 60; size: 13; color: mix(#ffffff00, #ffffffff, 0.25) }
+    column { at: 10, 100; padding: 6; fill: if(on, #ffffff10, #ffffff30)
+        text "in" { size: 12; color: #ffffff }
+    }
+}
