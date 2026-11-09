@@ -733,12 +733,26 @@ pub fn run(
     // slow frame says them, which an average of 300 does not.
     let mut sec = [0f64; 8];
     let mut sec_wait = 0f64;
+    // And what comes before the sections, at the top of a round: resting, the logic's
+    // answer to the frame, and taking what has arrived (how many messages). A slow frame
+    // whose sections add up to little lost its time here, or between rounds.
+    let mut sec_before = [0f64; 3];
+    let mut sec_messages: usize;
+    let mut round_top = crate::clock::now();
+    // The round before, as it was: a round that takes long is seen as a slow frame
+    // in the one after it (its frame is the one that comes late), so that one says it.
+    let mut before_sec = [0f64; 8];
+    let mut before_wait = 0f64;
+    let mut before_before = [0f64; 3];
     // Reduced motion: asked at the start (`--reduced-motion`), or said by the
     // system or from outside as the fact `motion.reduced` (where it is in the
     // scene, kept: looked for again only if the scene changes).
     let mut reduced_motion = op.reduced_motion;
     let mut reduced_at: Option<usize> = None;
     loop {
+        let top = crate::clock::now();
+        let rounds_apart = (top - round_top).as_secs_f64() * 1000.0;
+        round_top = top;
         // Filmed (`--film`): the frame made last round is written, the virtual
         // clock goes on one frame, and the script's steps that are due arrive.
         if crate::platform::film::on() && crate::platform::film::round(&op.to_self) {
@@ -834,6 +848,8 @@ pub fn run(
             last = crate::clock::now() - Duration::from_secs_f32(period_ms / 1000.0);
             woke = true;
         }
+        let rested_at = crate::clock::now();
+        sec_before[0] = (rested_at - top).as_secs_f64() * 1000.0;
         // A logic that plays hears every frame before it is made: how long since
         // the last one it was told of, and where the mouse is. It is given a
         // moment to answer, so that what it says goes into this very frame
@@ -870,7 +886,10 @@ pub fn run(
         if filming && !crate::text::workshop_idle(Duration::from_secs(10)) {
             eprintln!("film   · the workshop took more than 10 s: this frame goes without what it was making");
         }
+        let listened_at = crate::clock::now();
+        sec_before[1] = (listened_at - rested_at).as_secs_f64() * 1000.0;
         incoming.extend(rx.try_iter());
+        sec_messages = incoming.len();
         if let (Some(g), Some(send)) = (&gpu, &nest) {
             // The card is asked at most every 5 ms from here: its notices are set
             // by whoever asks, and each monitor already does, every frame.
@@ -2095,6 +2114,7 @@ pub fn run(
             }
         }
         profiling = timing || probe.is_some();
+        sec_before[2] = crate::clock::since(listened_at).as_secs_f64() * 1000.0;
         if profiling {
             prof_t = crate::clock::now();
             let c = thread_cpu_ms();
@@ -4420,6 +4440,13 @@ pub fn run(
                     eprintln!("check  · stretches copied from the frame before are not what putting it together gives: {diff}");
                 }
             }
+            let composed_at = crate::clock::now();
+            if timing {
+                let d = (composed_at - reading).as_secs_f64() * 1000.0;
+                if d > 20.0 {
+                    println!("timing · putting the drawing together took {d:.1} ms");
+                }
+            }
             if draw.collect_texts {
                 let gone = |at: usize| draw.hidden.get(at).copied().unwrap_or(false) || absent.iter().any(|r| r.contains(&at));
                 let sight = crate::agent::Sight {
@@ -4449,6 +4476,10 @@ pub fn run(
                 }
                 draw.collect_texts = false;
                 draw.texts_seen.clear();
+                let took = crate::clock::since(composed_at).as_secs_f64() * 1000.0;
+                if timing && took > 5.0 {
+                    println!("timing · telling an agent what the window shows took {took:.1} ms");
+                }
             }
             // Written over the last one: a round composed is not a round of allocations.
             let m = compose_memo.get_or_insert_with(|| ComposeMemo {
@@ -5776,8 +5807,9 @@ pub fn run(
         if ms - waited_ms > period_ms * 2.4 && !first_frame && cycle.dts.len() > 1 && !op.no_vsync && !op.naive {
             if profiling {
                 println!(
-                    "render · slow frame: {ms:.0} ms at {t_total:.2} s · input {:.1} · rules {:.1} · windows' frames {:.1} · compose {:.1} · regions {:.1} · waiting its turn {sec_wait:.1} · paint {:.1} · rest {:.1} ms",
-                    sec[0], sec[1] + sec[2], sec[7], sec[3], sec[4], sec[5], sec[6]
+                    "render · slow frame: {ms:.0} ms at {t_total:.2} s · input {:.1} · rules {:.1} · windows' frames {:.1} · compose {:.1} · regions {:.1} · waiting its turn {sec_wait:.1} · paint {:.1} · rest {:.1} ms · before it: resting {:.1} · the logic's answer {:.1} · what arrived {:.1} ({sec_messages} messages) · {rounds_apart:.1} ms since the round before, which took: before it {:.1} · input {:.1} · rules {:.1} · windows' frames {:.1} · compose {:.1} · regions {:.1} · waiting its turn {before_wait:.1} · paint {:.1} · rest {:.1} ms",
+                    sec[0], sec[1] + sec[2], sec[7], sec[3], sec[4], sec[5], sec[6], sec_before[0], sec_before[1], sec_before[2],
+                    before_before.iter().sum::<f64>(), before_sec[0], before_sec[1] + before_sec[2], before_sec[7], before_sec[3], before_sec[4], before_sec[5], before_sec[6]
                 );
             } else {
                 println!("render · slow frame: {ms:.0} ms at {t_total:.2} s");
@@ -5794,6 +5826,9 @@ pub fn run(
             s[8] = (sec_wait + sec_paced) as f32;
             p.round(!first_frame && !cycle.dts.is_empty() && !op.no_vsync, ms, pace, s, blocked);
         }
+        before_sec = sec;
+        before_wait = sec_wait;
+        before_before = sec_before;
         sec = [0.0; 8];
         sec_wait = 0.0;
         sec_paced = 0.0;
