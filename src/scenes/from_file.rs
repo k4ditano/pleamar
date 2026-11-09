@@ -318,6 +318,8 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
                         watched.extend(e.attachments.iter().cloned());
                         let _ = to_render.send(ToRender::ReloadError(None));
                         let _ = to_the_logic.send(Event::NewScene(e.facts.clone(), e.texts.clone(), e.permissions.clone(), e.models.clone(), e.types.clone(), e.plugins.clone(), e.signals.iter().map(|s| s.0).collect(), e.services.clone(), e.translations.clone()));
+                        // What the render would work out when it arrives, worked out here instead.
+                        crate::render::prepare_readers(&e);
                         if to_render.send(ToRender::Scene(e)).is_err() {
                             return;
                         }

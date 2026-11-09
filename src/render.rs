@@ -958,24 +958,27 @@ pub fn run(
                     }
                 }
                 ToRender::Scene(fresh) => {
+                    let swapping = crate::clock::now();
                     crate::platform::release_memory();
                     crate::platform::CURSOR_WANTED.store(fresh.wants_cursor, std::sync::atomic::Ordering::Relaxed);
-                    // The properties with the same name survive the change.
-                    let old: Vec<(&str, Animated)> =
+                    // The properties with the same name survive the change. Found by name in
+                    // a table: looked for along the old list, a scene of 57 000 properties
+                    // compared names three billion times, and its window stood still ten
+                    // seconds each time a plugin came or went.
+                    let old: std::collections::HashMap<&str, Animated> =
                         scene.props.iter().map(|p| p.0).zip(props.iter().copied()).collect();
                     props = fresh
                         .props
                         .iter()
-                        .map(|(name, initial, spring)| {
-                            old.iter().find(|(n, _)| n == name).map(|(_, a)| *a).unwrap_or(Animated::at(*initial, *spring))
-                        })
+                        .map(|(name, initial, spring)| old.get(name).copied().unwrap_or(Animated::at(*initial, *spring)))
                         .collect();
                     // What was true and what the texts said also survives: on a
                     // hot reload, the scene carries on where it was.
                     let hot = !scene.props.is_empty();
                     // Whoever follows names finds them again in the new one.
                     tails.iter_mut().for_each(crate::agent::Follow::lost);
-                    facts = fresh.facts.iter().map(|(n, initial)| scene.facts.iter().position(|h| h.0 == *n).map_or(*initial, |k| facts[k])).collect();
+                    let old_facts: std::collections::HashMap<&str, f32> = scene.facts.iter().map(|h| h.0).zip(facts.iter().copied()).collect();
+                    facts = fresh.facts.iter().map(|(n, initial)| old_facts.get(n).copied().unwrap_or(*initial)).collect();
                     inside = vec![false; fresh.zones.len()];
                     was_live = vec![false; fresh.zones.len()];
                     follows = Follows::default();
@@ -1022,7 +1025,8 @@ pub fn run(
                             if fresh.surface().height == 0 { size.1 } else { fresh.surface().height as f32 + hud },
                         );
                     }
-                    texts = fresh.texts.iter().map(|(n, initial)| scene.texts.iter().position(|t| t.0 == *n).map_or_else(|| initial.clone(), |k| texts[k].clone())).collect();
+                    let mut old_texts: std::collections::HashMap<&str, String> = scene.texts.iter().map(|t| t.0).zip(std::mem::take(&mut texts)).collect();
+                    texts = fresh.texts.iter().map(|(n, initial)| old_texts.remove(n).unwrap_or_else(|| initial.clone())).collect();
                     shown_locale = None;
                     atlas_stale = true;
                     // A surface saved at another size, edge, margin, room or level
@@ -1047,7 +1051,10 @@ pub fn run(
                         fresh.props.len(), fresh.instrs.len(), fresh.facts.len(), fresh.layers.len(),
                         fresh.gestures.len(), fresh.rules.len(), fresh.zones.len()
                     );
-                    scene = fresh;
+                    // The old one is let go on a thread of its own: freeing a big scene (Atalaya's 190 000
+                    // instructions with their sums) took a quarter of a second here, on the thread that paints.
+                    let gone = std::mem::replace(&mut scene, fresh);
+                    let _ = std::thread::Builder::new().name("old scene".into()).spawn(move || drop(gone));
                     z_memo = None;
                     window_instrs = None;
                     draw.hidden.clear();
@@ -1082,6 +1089,9 @@ pub fn run(
                         g.set_lens_image(scene.lens_image.as_deref());
                         g.set_shaders(&scene.shaders);
                         g.set_blur(scene.blur.as_ref());
+                    }
+                    if hot {
+                        println!("reload · the new scene put in place in {:.1} ms", crate::clock::since(swapping).as_secs_f64() * 1000.0);
                     }
                 }
                 ToRender::Sheet(n) => {
@@ -6919,6 +6929,23 @@ struct Seen3 {
     absent: Vec<std::ops::Range<usize>>,
 }
 
+/// Who reads each fact and each property, worked out for a scene before it reaches the render:
+/// for one of 29 000 behaviors it took 90–125 ms, on the thread that paints, at every reload.
+/// By the scene's behaviors (where they are, how many) and how many facts and properties it has.
+type PreparedReaders = ((usize, usize, usize), Vec<Vec<u32>>, Vec<Vec<u32>>);
+static PREPARED_READERS: std::sync::Mutex<Option<PreparedReaders>> = std::sync::Mutex::new(None);
+
+/// Works out, where the scene was read, what the render would work out when it arrives
+/// (`Readers::build`). The render takes it if it is for that scene, and makes its own if not.
+pub fn prepare_readers(scene: &crate::scene::Scene) {
+    let mut r = Readers::default();
+    r.build(&scene.behaviors, scene.facts.len(), scene.props.len());
+    let id = scene.behaviors.as_ptr() as usize ^ scene.behaviors.len();
+    if let Ok(mut p) = PREPARED_READERS.lock() {
+        *p = Some(((id, scene.facts.len(), scene.props.len()), r.facts, r.props));
+    }
+}
+
 impl Readers {
     fn build(&mut self, behaviors: &[Behavior], n_facts: usize, n_props: usize) {
         let bind_of: std::collections::HashMap<u32, usize> = behaviors
@@ -6992,7 +7019,12 @@ impl Readers {
     fn look(&mut self, pass: usize, behaviors: &[Behavior], facts: &[f32], props: &[Animated], absent: &[std::ops::Range<usize>]) {
         let id = behaviors.as_ptr() as usize ^ behaviors.len();
         if self.of != id || self.facts.len() != facts.len() || self.props.len() != props.len() {
-            self.build(behaviors, facts.len(), props.len());
+            // Made already on the thread that read the scene (see `prepare_readers`), or made here.
+            let made = PREPARED_READERS.lock().ok().and_then(|mut p| p.take()).filter(|p| p.0 == (id, facts.len(), props.len()));
+            match made {
+                Some((_, by_fact, by_prop)) => (self.facts, self.props) = (by_fact, by_prop),
+                None => self.build(behaviors, facts.len(), props.len()),
+            }
             self.of = id;
             self.seen = Default::default();
         }
