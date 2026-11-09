@@ -510,6 +510,11 @@ fn check_service_permission(c: &Mutex<Shared>, name: &str, commands: bool) -> ml
         if has(name) || has(&format!("{service}.*")) {
             return Ok(());
         }
+        // Saving the copied picture to a file is reading the clipboard, as
+        // `sys.ask("clipboard.image")` is: the same permission covers both.
+        if name == "clipboard.image.save" && has("clipboard") {
+            return Ok(());
+        }
         return Err(denied(c, &format!("ask the system for '{name}'"), &format!("services: \"{name}\"  (or \"{service}.*\" for everything of {service})")));
     }
     if has(service) || has(&format!("{service}.*")) {
@@ -2077,6 +2082,33 @@ mod tests {
         assert!(texts["refused"].contains("services: \"say:toasts\""), "{}", texts["refused"]);
         assert!(texts["absent"].contains("the scene 'bar' is not running (running: osd)"), "{}", texts["absent"]);
         crate::platform::tests::SOCKETS.with(|d| *d.borrow_mut() = None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn saving_the_copied_picture_asks_only_for_the_clipboard() {
+        use super::{LuauScript, Script};
+        use crate::scene::ToRender;
+        let dir = std::env::temp_dir().join(format!("pleamar-clip-save-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A wrong argument, so the clipboard itself is never read: the error says
+        // whether the call got past the permission.
+        let run = |services: &str| {
+            let (scene, logic) = (dir.join("paster.plm"), dir.join("paster.luau"));
+            std::fs::write(&scene, format!("scene Paster {{\n    surface {{ size: 10, 10 }}\n    permissions {{ services: \"{services}\" }}\n    text said = \"\"\n}}\n")).unwrap();
+            std::fs::write(&logic, "local ok, e = pcall(sys.call, \"clipboard.image.save\", 42)\ntext.said = tostring(ok) .. \" \" .. tostring(e)\n").unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (to_logic, _) = std::sync::mpsc::channel();
+            let blocked = std::sync::Arc::default();
+            let mut s = LuauScript::new(&scene.to_string_lossy(), &logic.to_string_lossy(), tx.clone(), to_logic, std::sync::Arc::clone(&blocked));
+            s.scene();
+            s.on_event(crate::scene::Event::ReloadLogic, &mut crate::logic::Context::for_plugin(tx, blocked));
+            rx.try_iter().find_map(|m| if let ToRender::Text(k, v) = m { (k == "said").then_some(v) } else { None }).unwrap()
+        };
+        let allowed = run("clipboard");
+        assert!(allowed.starts_with("false") && allowed.contains("takes the absolute path"), "{allowed}");
+        let refused = run("env");
+        assert!(refused.starts_with("false") && refused.contains("no permission"), "{refused}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

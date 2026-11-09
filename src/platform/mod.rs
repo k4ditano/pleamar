@@ -49,7 +49,8 @@ pub enum SysValue {
 ///  · `files:x.json` → the text of that file when it changes
 ///
 /// And two that can only be asked, with `sys.ask`: `env` (an environment variable) and
-/// `clipboard` (whatever has been copied); `clipboard.set` writes to it.
+/// `clipboard` (whatever has been copied); `clipboard.set` writes to it, and
+/// `clipboard.image.save` writes the picture copied to a PNG file.
 /// Who is told what a service says, and the last thing it said.
 struct Hub {
     listener: Box<dyn Fn(SysValue) + Send>,
@@ -194,6 +195,13 @@ pub fn command(from: &str, name: &str, args: &[SysValue]) -> Result<(), String> 
     if let ("clipboard.set", [SysValue::Text(t)]) = (name, args) {
         clipboard_write(t);
         return Ok(());
+    }
+    if name == "clipboard.image.save" {
+        let [SysValue::Text(path)] = args else {
+            return Err("`clipboard.image.save` takes the absolute path of the file: sys.call(\"clipboard.image.save\", \"/home/me/shot.png\")".into());
+        };
+        let png = clipboard_picture().ok_or("the clipboard has no picture")?;
+        return save_private_file(std::path::Path::new(path), &png);
     }
     #[cfg(target_os = "linux")]
     if let ("apps.launch", [SysValue::Text(o)]) = (name, args) {
@@ -1143,6 +1151,39 @@ pub fn clipboard_picture() -> Option<Vec<u8>> {
     Some(png)
 }
 
+/// Write `bytes` to `path` whole or not at all: a temporary file beside it
+/// (readable only by its owner, 0600: a screenshot may be private), then
+/// renamed over whatever was there. `path` must be absolute and its folder exist.
+pub fn save_private_file(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    if !path.is_absolute() {
+        return Err(format!("'{}' is not an absolute path", path.display()));
+    }
+    let (Some(dir), Some(file)) = (path.parent(), path.file_name()) else {
+        return Err(format!("'{}' does not name a file", path.display()));
+    };
+    if !dir.is_dir() {
+        return Err(format!("the folder '{}' does not exist", dir.display()));
+    }
+    let tmp = dir.join(format!(".{}.{}.tmp", file.to_string_lossy(), std::process::id()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let written = (|| {
+        let mut f = options.open(&tmp)?;
+        #[cfg(unix)]
+        f.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    written.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("could not write '{}': {e}", path.display())
+    })
+}
+
 /// The paths of the files copied (`text/uri-list`): `file://` addresses,
 /// unescaped; whatever is not a local file is left out.
 pub fn clipboard_paths() -> Vec<String> {
@@ -1741,5 +1782,30 @@ mod clipboard_tests {
         assert_eq!(super::unescape_uri("/home/abel/Mis%20capturas/a.png"), "/home/abel/Mis capturas/a.png");
         assert_eq!(super::unescape_uri("localhost/tmp/x"), "/tmp/x");
         assert_eq!(super::unescape_uri("/tmp/%zz"), "/tmp/%zz");
+    }
+
+    #[test]
+    fn a_saved_picture_is_a_private_png_written_whole() {
+        let dir = std::env::temp_dir().join(format!("pleamar-clip-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shot.png");
+        std::fs::write(&path, b"old and longer than the new one, to be replaced entirely ......").unwrap();
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(3, 2, image::Rgba([10, 20, 30, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        super::save_private_file(&path, &png).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), png);
+        let back = image::load_from_memory(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!((back.width(), back.height()), (3, 2));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        // Nothing left beside it.
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        assert!(super::save_private_file(std::path::Path::new("shot.png"), &png).is_err());
+        assert!(super::save_private_file(&dir.join("no-such-folder/shot.png"), &png).is_err());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
     }
 }

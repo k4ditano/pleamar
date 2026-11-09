@@ -416,6 +416,7 @@ The permissions are the scene's, and they are the same as `sys.watch`'s: `servic
 | `sys.ask("clipboard")` | whatever has been copied, as text |
 | `sys.ask("clipboard.image")` | a picture copied (a screenshot), kept in memory: what an image shows it by —`text.shot = sys.ask("clipboard.image")` with `image pic = from shot, 64, 64`—, or nil if there is none |
 | `sys.ask("clipboard.uris")` | the files copied in a file manager, as a list of their paths (empty if none) |
+| `sys.call("clipboard.image.save", path)` | write the picture copied to `path` as PNG (a JPEG, WebP or GIF is converted), replacing the file if there is one. `path` is absolute and its folder exists; the file is written whole (a temporary file beside it, then renamed) and readable only by you (0600). Its permission is `"clipboard"`, as for `clipboard.image`. With no picture, or if it cannot be written, an error: `local ok = pcall(sys.call, "clipboard.image.save", path)` |
 | `sys.call("clipboard.set", t)` | copy that. On Wayland, whoever copies has to stay alive: the platform takes care of that |
 
 A plugin has its own, under its name: what it saves the scene does not see, nor the other way round.
