@@ -511,8 +511,8 @@ struct Kept {
     entry: u64,
     starts: Lens,
     ends: Lens,
-    facts: Vec<u16>,
-    props: Vec<u16>,
+    facts: Vec<u32>,
+    props: Vec<u32>,
     fact_values: Vec<f32>,
     prop_values: Vec<(f32, f32)>,
     keys: Vec<crate::text::WorkingKey>,
@@ -666,7 +666,7 @@ struct Fx {
     mode: u8,
     affine: Affine,
     /// A shader of the scene's over what it holds: its number, its eight numbers, the time.
-    shader: Option<(u16, [f32; 8], f32)>,
+    shader: Option<(u32, [f32; 8], f32)>,
 }
 
 struct OpenBody {

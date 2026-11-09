@@ -1,0 +1,18 @@
+// expect: ok
+language 0.1
+// A property is named with 32 bits: a scene with more than 65 536 of them
+// (they were 16, and it was an error) loads, and the last ones move.
+scene ManyProperties {
+    surface { size: 200, 100 }
+    repeat i in 0..512 {
+        repeat j in 0..140 {
+            prop p.$i.$j = 0
+        }
+    }
+    fact ticks = 0
+    every 500ms { ticks = ticks + 1 }
+    prop last = 0
+    wave last = 1 at 1.6
+    box { from: 10 + 80 * last, 10; size: 20, 20; color: #f5f7f5 }
+    box { from: 10 + 10 * ticks, 60; size: 20, 20; color: #e0a040 }
+}

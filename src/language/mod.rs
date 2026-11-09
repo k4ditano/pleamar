@@ -557,7 +557,7 @@ mod tests {
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/zones-per-copy.plm")).unwrap();
         let zones: Vec<&str> = scene.zones.iter().map(|z| z.id).filter(|id| id.starts_with("opt.")).collect();
         assert_eq!(zones.len(), 6, "{zones:?}");
-        let mut pressed: Vec<u16> = scene.rules.iter().filter_map(|r| match r.when { crate::scene::Trigger::Press(z) => Some(z.0), _ => None }).collect();
+        let mut pressed: Vec<u32> = scene.rules.iter().filter_map(|r| match r.when { crate::scene::Trigger::Press(z) => Some(z.0), _ => None }).collect();
         assert_eq!(pressed.len(), 6, "a rule a zone");
         pressed.sort_unstable();
         pressed.dedup();

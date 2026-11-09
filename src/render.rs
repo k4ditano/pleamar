@@ -3643,7 +3643,7 @@ pub fn run(
                 }
             }
             for (s, from_logic, payload) in std::mem::take(&mut signals) {
-                let id = SignalId(s as u16);
+                let id = SignalId(s as u32);
                 if let Some(a) = &mut acting {
                     a.events.push(("event", scene.signals[s].0));
                 }
@@ -6559,7 +6559,7 @@ struct RuleIndex {
     /// Rules that fire only with some event, in order; and all but the signals', in order.
     with_events: Vec<u32>,
     /// What an `on change` / `on still` reads, when that is all it depends on.
-    inputs: Vec<Option<(Vec<u16>, Vec<u16>)>>,
+    inputs: Vec<Option<(Vec<u32>, Vec<u32>)>>,
     /// The round each one was last looked at (to know whether "unchanged since last round" holds).
     looked: Vec<u64>,
     round: u64,
@@ -6778,8 +6778,8 @@ struct Follows {
 }
 
 struct Remembered {
-    facts: Vec<u16>,
-    props: Vec<u16>,
+    facts: Vec<u32>,
+    props: Vec<u32>,
     seen: Vec<f32>,
     value: Option<f32>,
 }
@@ -6867,7 +6867,7 @@ struct Seen3 {
 
 impl Readers {
     fn build(&mut self, behaviors: &[Behavior], n_facts: usize, n_props: usize) {
-        let bind_of: std::collections::HashMap<u16, usize> = behaviors
+        let bind_of: std::collections::HashMap<u32, usize> = behaviors
             .iter()
             .enumerate()
             .flat_map(|(k, b)| match b {
@@ -6876,7 +6876,7 @@ impl Readers {
                 _ => Vec::new(),
             })
             .collect();
-        let direct: Vec<Option<(Vec<u16>, Vec<u16>)>> = behaviors
+        let direct: Vec<Option<(Vec<u32>, Vec<u32>)>> = behaviors
             .iter()
             .map(|b| match b {
                 Behavior::Follow { to, .. } | Behavior::Bind { to, .. } => {
@@ -6897,7 +6897,7 @@ impl Readers {
         // Through the binds: what each one reads in the end. A bind reads only
         // the ones declared before it (a `let` names what is above it); one
         // that names itself, or a later one, is taken as it is.
-        let mut deep: Vec<Option<(Vec<u16>, Vec<u16>)>> = vec![None; behaviors.len()];
+        let mut deep: Vec<Option<(Vec<u32>, Vec<u32>)>> = vec![None; behaviors.len()];
         for k in 0..behaviors.len() {
             let Some((f, p)) = &direct[k] else { continue };
             let (mut facts, mut props) = (f.clone(), p.clone());
@@ -6998,8 +6998,8 @@ impl Readers {
 struct ReadMemo {
     valid: bool,
     seen: crate::scene::Seen,
-    read_facts: Vec<u16>,
-    read_props: Vec<u16>,
+    read_facts: Vec<u32>,
+    read_props: Vec<u32>,
     facts: Vec<f32>,
     props: Vec<(f32, f32)>,
 }
@@ -7033,8 +7033,8 @@ impl ReadMemo {
 struct ZoneMemo {
     valid: bool,
     seen: crate::scene::Seen,
-    read_facts: Vec<u16>,
-    read_props: Vec<u16>,
+    read_facts: Vec<u32>,
+    read_props: Vec<u32>,
     facts: Vec<f32>,
     props: Vec<(f32, f32)>,
     hidden: Vec<bool>,

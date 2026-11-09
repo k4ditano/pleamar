@@ -193,7 +193,7 @@ struct Candidate {
     name: String,
     /// Where it was declared among the instructions, and in which group with `z:`.
     at: usize,
-    zblock: Option<u16>,
+    zblock: Option<u32>,
     shape: Shape,
     active: Option<Expr>,
     /// If what contains it is not there (`show:`, a record that does not exist), neither is it.
@@ -379,7 +379,7 @@ struct Compiler<'a> {
     /// The figures: an SVG read as geometry, by layers.
     figures: HashMap<String, super::figure::Figure>,
     /// The scene's own shaders, by name: their number in `Scene::shaders`.
-    shaders: HashMap<String, u16>,
+    shaders: HashMap<String, u32>,
     models: HashMap<String, usize>,
     measurements: HashMap<String, (PropId, PropId)>,
     gestures: HashMap<String, GestureId>,
@@ -405,7 +405,7 @@ struct Compiler<'a> {
     /// with `z:` being read (one inside another is not sorted).
     zparents: Vec<u32>,
     next_zparent: u32,
-    zblock: Option<u16>,
+    zblock: Option<u32>,
     /// The rules are left for the end: that way they can name shapes that are
     /// painted further down.
     rules: Vec<(&'a Node, Vec<Rc<Scope>>)>,
@@ -429,7 +429,7 @@ struct Compiler<'a> {
     /// The properties of the loose `let`s that are each monitor's copy's own:
     /// the one the scene reads, which has one more per copy. A `let` that
     /// reads one of these is each copy's own too.
-    copy_props: std::collections::HashSet<u16>,
+    copy_props: std::collections::HashSet<u32>,
     /// Reading a monitor's copy other than the first.
     later_copy: bool,
     /// How many groups with effects are open around what is being read.
@@ -874,13 +874,6 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     symbols.extend(o.used.take().into_iter().filter(|s| seen_places.insert((s.local.clone(), s.line, s.col))));
     crate::scene::settle_effects(&mut o.e.instrs);
     o.note_loose_clips(body);
-    // A property and a fact are named with sixteen bits: one more than fit
-    // would be taken for the first, and the scene would move what it should not.
-    for (what, n) in [("properties", o.e.props.len()), ("facts", o.e.facts.len())] {
-        if n > u16::MAX as usize + 1 {
-            o.errors.push(CompileError::at(1, 1, format!("this scene has {n} {what}, and no more than 65536 fit: the ones it declares and the ones made for it (a spring per zone that is hovered, a slot per child of a layout, a big `let`). Fewer copies in its `repeat`s and `for`s, or a list that lays out only its window (`view:`, `content:`, `for … from`)")));
-        }
-    }
     (if o.errors.is_empty() { Ok(o.e) } else { Err(o.errors) }, symbols)
 }
 
@@ -2561,7 +2554,7 @@ impl<'a> Compiler<'a> {
                     }
                     let shader = crate::shaders::load(&path, &shown, self.e.shaders.len()).map_err(|m| CompileError::at(n.line, n.col, m))?;
                     self.e.attachments.push(path);
-                    self.shaders.insert(name, self.e.shaders.len() as u16);
+                    self.shaders.insert(name, self.e.shaders.len() as u32);
                     self.e.shaders.push(shader);
                 }
                 // `blur = file "blur.wgsl" { passes: down 0.5 repeat 4, up 2 repeat 3; values: …; reach: 34 }`:
@@ -3004,7 +2997,7 @@ impl<'a> Compiler<'a> {
         let z_start = self.e.instrs.len();
         let parent = *self.zparents.last().unwrap_or(&0);
         if z.is_some() {
-            self.zblock = Some(self.e.zblocks.len() as u16);
+            self.zblock = Some(self.e.zblocks.len() as u32);
             self.e.zblocks.push(crate::scene::ZBlock { range: z_start..z_start, z: Expr::K(0.0), parent });
         }
         self.zparents.push(self.next_zparent);

@@ -216,23 +216,31 @@ impl Default for Surface {
 
 // ── properties and expressions ──────────────────────────────────
 
+// Every id below is 32 bits: a scene runs out of memory long before it runs out of ids.
+// (They were 16, and a scene with more than 65 536 properties could not be read.)
+
+/// The id of the last thing pushed onto a list of `len` things.
+fn last_id(len: usize) -> u32 {
+    u32::try_from(len - 1).expect("a scene with more than 4 294 967 296 of one kind of thing")
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PropId(pub u16);
+pub struct PropId(pub u32);
 /// Something the logic (or a rule) says is true. A number; yes and no are 1 and 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FactId(pub u16);
+pub struct FactId(pub u32);
 /// Something that happens at an instant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SignalId(pub u16);
+pub struct SignalId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ZoneId(pub u16);
+pub struct ZoneId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GestureId(pub u16);
+pub struct GestureId(pub u32);
 /// A text the logic can change: a fact, but made of letters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TextId(pub u16);
+pub struct TextId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ImageId(pub u16);
+pub struct ImageId(pub u32);
 
 /// What an expression is evaluated with: what moves and what is true.
 #[derive(Clone, Copy)]
@@ -329,10 +337,10 @@ impl Seen {
     }
     /// What was read, into those lists, and nothing read again: for whoever
     /// keeps one of these for many evaluations, one after another.
-    pub fn take(&self, facts: &mut Vec<u16>, props: &mut Vec<u16>) {
+    pub fn take(&self, facts: &mut Vec<u32>, props: &mut Vec<u32>) {
         // A word at a time, and only the words with something: a scene with
         // sixteen thousand properties has hundreds of them, nearly all empty.
-        fn drain(words: &[std::cell::Cell<u64>], out: &mut Vec<u16>) {
+        fn drain(words: &[std::cell::Cell<u64>], out: &mut Vec<u32>) {
             out.clear();
             for (w, bits) in words.iter().enumerate() {
                 let mut left = bits.get();
@@ -341,7 +349,7 @@ impl Seen {
                 }
                 bits.set(0);
                 while left != 0 {
-                    out.push((w * 64 + left.trailing_zeros() as usize) as u16);
+                    out.push((w * 64 + left.trailing_zeros() as usize) as u32);
                     left &= left - 1;
                 }
             }
@@ -443,7 +451,7 @@ impl Expr {
         }
     }
 
-    pub fn inputs(&self, props: &mut Vec<u16>, facts: &mut Vec<u16>) {
+    pub fn inputs(&self, props: &mut Vec<u32>, facts: &mut Vec<u32>) {
         match self {
             Expr::P(p) | Expr::Vel(p) => {
                 if !props.contains(&p.0) {
@@ -1023,7 +1031,7 @@ pub struct Effects {
 /// `shader: rain, 0.8, open`: which one, its numbers, and the time if it reads it.
 #[derive(Clone, Debug)]
 pub struct GroupShader {
-    pub shader: u16,
+    pub shader: u32,
     pub values: Vec<Expr>,
     pub time: Option<Expr>,
     /// `… while bending`: only while that holds. Otherwise the group is
@@ -1375,7 +1383,7 @@ pub enum Instr {
     /// numbers and `colors` up to two, which the shader reads as `s.a`, `s.b`,
     /// `s.color` and `s.color2`. `time` and `pointer` only if the shader reads
     /// them: otherwise nothing changes and it is not painted again.
-    Shader { shader: u16, target: (Expr, Expr, Expr, Expr), corner: Expr, alpha: Expr, values: Vec<Expr>, colors: Vec<Color>, time: Option<Expr>, pointer: Option<(Expr, Expr)>, behind: bool },
+    Shader { shader: u32, target: (Expr, Expr, Expr, Expr), corner: Expr, alpha: Expr, values: Vec<Expr>, colors: Vec<Color>, time: Option<Expr>, pointer: Option<(Expr, Expr)>, behind: bool },
     /// Text. `at` is the reference point and `anchor` which part of the text falls
     /// on it: (0, 0) the top left corner, (0.5, 0.5) the
     /// center. With `width` it is broken into lines; without it, it is a single one.
@@ -1578,7 +1586,7 @@ pub struct Zone {
     /// Where it was declared among the instructions, and the group with `z:`
     /// it is inside, if any: a zone is on top where what holds it is drawn.
     pub at: usize,
-    pub zblock: Option<u16>,
+    pub zblock: Option<u32>,
     /// Dragged out, what it gives another program: a file, a link, a text.
     pub carries: Option<Content>,
     /// While it is dragged out (`carries:`), the picture that goes under the pointer: the path of a PNG, as a text with holes (`carry_icon:`). Without it the drag has none.
@@ -2375,7 +2383,7 @@ impl Scene {
     }
     pub fn prop_with(&mut self, name: &'static str, initial: f32, spring: Spring) -> PropId {
         self.props.push((name, initial, spring));
-        PropId(self.props.len() as u16 - 1)
+        PropId(last_id(self.props.len()))
     }
     /// The spring a property was declared with. It is its own: a rule that
     /// sends it somewhere without saying which spring to use goes with this one, which is what
@@ -2404,32 +2412,32 @@ impl Scene {
     }
     pub fn live_text(&mut self, name: &'static str, initial: &str) -> TextId {
         self.texts.push((name, initial.to_owned()));
-        TextId(self.texts.len() as u16 - 1)
+        TextId(last_id(self.texts.len()))
     }
     pub fn image(&mut self, source: ImageSource, width: u32, height: u32) -> ImageId {
         self.images.push((source, (width, height)));
-        ImageId(self.images.len() as u16 - 1)
+        ImageId(last_id(self.images.len()))
     }
     pub fn fact(&mut self, name: &'static str, initial: f32) -> FactId {
         self.facts.push((name, initial));
-        FactId(self.facts.len() as u16 - 1)
+        FactId(last_id(self.facts.len()))
     }
     /// An internal signal: the layers and the rules hear it.
     pub fn signal(&mut self, name: &'static str) -> SignalId {
         self.signals.push((name, false));
-        SignalId(self.signals.len() as u16 - 1)
+        SignalId(last_id(self.signals.len()))
     }
     /// A signal that also goes out to the logic.
     pub fn outgoing_signal(&mut self, name: &'static str) -> SignalId {
         self.signals.push((name, true));
-        SignalId(self.signals.len() as u16 - 1)
+        SignalId(last_id(self.signals.len()))
     }
     pub fn zone(&mut self, id: &'static str, shape: Shape, active: impl Into<Expr>) -> ZoneId {
         self.zone_under(id, shape, active, vec![])
     }
     pub fn zone_under(&mut self, id: &'static str, shape: Shape, active: impl Into<Expr>, under: Vec<Transform>) -> ZoneId {
         self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, cursor_when: None, under, at: self.instrs.len(), zblock: None, carries: None, carry_icon: None, label: None, reach: Reach::Any, scrolls: None, within: None, told: None, handle: None, yields: None });
-        ZoneId(self.zones.len() as u16 - 1)
+        ZoneId(last_id(self.zones.len()))
     }
     /// Claims go from more to less priority; the last one should be
     /// `fallback`.
@@ -2439,7 +2447,7 @@ impl Scene {
             .map(|r| {
                 let n = intern(&format!("layer.{name}.{}", r.name));
                 self.props.push((n, 0.0, spring));
-                PropId(self.props.len() as u16 - 1)
+                PropId(last_id(self.props.len()))
             })
             .collect();
         self.layers.push(Layer { name, spring, claims, presences: presences.clone() });
@@ -2447,7 +2455,7 @@ impl Scene {
     }
     pub fn gesture(&mut self, name: &'static str, class: Class, keyframes: Vec<Keyframe>) -> GestureId {
         self.gestures.push(Gesture { name, class, keyframes });
-        GestureId(self.gestures.len() as u16 - 1)
+        GestureId(last_id(self.gestures.len()))
     }
     pub fn posture(&mut self, gesture: GestureId, during: impl Into<Expr>) {
         self.postures.push((gesture, during.into()));
@@ -3049,7 +3057,7 @@ mod tests {
         let (a, b) = (Expr::K(10.0), Expr::K(20.0));
         for p in 0..3 {
             let t = props[p].x;
-            assert_eq!(a.clone().mix(b.clone() + PropId(2), PropId(p as u16)).eval(c), 10.0 + 10.0 * t);
+            assert_eq!(a.clone().mix(b.clone() + PropId(2), PropId(p as u32)).eval(c), 10.0 + 10.0 * t);
         }
     }
 
