@@ -489,6 +489,8 @@ pub fn run(
     // What the drawing read the last time it was made.
     let mut compose_seen = crate::scene::Seen::default();
     let mut zone_memo = ZoneMemo::default();
+    // What an agent's look needs of the scene, made at the first look and kept until it changes.
+    let mut agent_index: Option<crate::agent::Index> = None;
     let mut rule_index = RuleIndex::default();
     let mut awake = AwakeBehaviors::default();
     // Stretches of the drawing copied and put together (see `gpu::Kept`), for the timing report.
@@ -1051,6 +1053,7 @@ pub fn run(
                     draw.hidden.clear();
                     draw.new_scene();
                     zone_memo = ZoneMemo::default();
+                    agent_index = None;
                     if let Some(n) = &scene.nest {
                         if nest.is_none() {
                             nest = crate::platform::start_nest(n.max, op.to_self.clone());
@@ -1955,6 +1958,8 @@ pub fn run(
                 texts_seen: &[],
                 gone: &gone,
                 rank: rank.as_ref().map(|r| r.as_slice()),
+                zones: None,
+                index: None,
             };
             let now = crate::clock::now();
             if acting.is_none()
@@ -4449,13 +4454,27 @@ pub fn run(
             }
             if draw.collect_texts {
                 let gone = |at: usize| draw.hidden.get(at).copied().unwrap_or(false) || absent.iter().any(|r| r.contains(&at));
+                // The zones as they are now (only what changed since the round's start is
+                // worked out again), and the scene's lookups: a scene of ten thousand zones
+                // took a quarter of a second here, on the thread that paints, at every look.
+                zone_memo.update(&scene, &facts, &props, &draw.hidden, &absent, check_shortcuts);
+                let index = agent_index.get_or_insert_with(|| crate::agent::Index::new(&scene));
                 let sight = crate::agent::Sight {
                     shown: sheets.iter().filter(|s| s.open).map(|s| crate::agent::Shown { surface: s.view.surface, popup: s.view.popup, bounds: s.view.bounds(), scale: s.scale }).collect(),
                     texts_seen: &draw.texts_seen,
                     gone: &gone,
                     rank: zone_rank.as_ref().map(|r| r.as_slice()),
+                    zones: Some((&zone_memo.live, &zone_memo.bounds)),
+                    index: Some(index),
                 };
                 let parts = crate::agent::describe(&scene, c, &texts, &sight);
+                if check_shortcuts {
+                    let alone = crate::agent::Sight { zones: None, index: None, shown: sight.shown.clone(), ..sight };
+                    let (a, b) = (crate::agent::to_json(&crate::agent::describe(&scene, c, &texts, &alone)), crate::agent::to_json(&parts));
+                    if a != b {
+                        eprintln!("check  · an agent's look with the render's zones is not the look worked out whole:\n{a}\n{b}");
+                    }
+                }
                 if std::env::var_os("PLEAMAR_DEBUG_DESCRIBE").is_some() {
                     let there = scene.zones.iter().filter(|z| !gone(z.at)).count();
                     let active = scene.zones.iter().filter(|z| !gone(z.at) && z.active.is_true(c)).count();

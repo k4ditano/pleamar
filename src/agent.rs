@@ -9,6 +9,7 @@ use std::fmt::Write;
 
 /// A piece of the scene that is on screen this frame: an open surface, or a
 /// popup, and the stretch of the scene's plane it shows.
+#[derive(Clone)]
 pub struct Shown {
     pub surface: usize,
     pub popup: Option<usize>,
@@ -25,6 +26,11 @@ pub struct Sight<'a> {
     pub gone: &'a dyn Fn(usize) -> bool,
     /// Which zone is on top of which, when groups with `z:` changed it.
     pub rank: Option<&'a [(usize, u8, usize)]>,
+    /// What the render already worked out this round: each zone alive (there and
+    /// active) and its box if it is. Without it, every zone is worked out again.
+    pub zones: Option<(&'a [bool], &'a [Option<[f32; 4]>])>,
+    /// The scene's lookups, kept between looks (see `Index`).
+    pub index: Option<&'a Index>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -97,7 +103,74 @@ pub struct Part {
 }
 
 /// What a zone is, from what it does: its rules, its cursor, its field.
-pub fn role_of(scene: &Scene, k: usize, z: &Zone) -> Role {
+/// The zone a rule's trigger is about, and how: 0 pressed, 1 dragged, 2 the wheel.
+fn trigger_zone(t: &Trigger) -> Option<(usize, u8)> {
+    match t {
+        Trigger::Press(id) | Trigger::PressWith(id, _) | Trigger::Release(id) | Trigger::Receive(id) | Trigger::Carry(id) => Some((id.0 as usize, 0)),
+        Trigger::Hold { zone, .. } => Some((zone.0 as usize, 0)),
+        Trigger::Drag(id) => Some((id.0 as usize, 1)),
+        Trigger::Wheel(id) => Some((id.0 as usize, 2)),
+        _ => None,
+    }
+}
+
+fn add_trigger(t: &mut (bool, bool, bool), how: u8) {
+    match how {
+        0 => t.0 = true,
+        1 => t.1 = true,
+        _ => t.2 = true,
+    }
+}
+
+/// What `describe` looks up for every zone, gathered once: a scene of ten
+/// thousand zones went through its 180 000 instructions and its 11 000 rules
+/// for each of them, a quarter of a second on the thread that paints, at every
+/// look of an agent.
+/// Made once for a scene and kept while it lasts.
+pub struct Index {
+    /// The first field of each zone name: the instruction where it is.
+    fields: std::collections::HashMap<&'static str, usize>,
+    triggers: Vec<(bool, bool, bool)>,
+    texts: std::collections::HashMap<&'static str, usize>,
+}
+
+impl Index {
+    pub fn new(scene: &Scene) -> Self {
+        let mut fields = std::collections::HashMap::new();
+        for (k, i) in scene.instrs.iter().enumerate() {
+            if let Instr::Field { zone, .. } = i {
+                fields.entry(*zone).or_insert(k);
+            }
+        }
+        let mut triggers = vec![(false, false, false); scene.zones.len()];
+        for r in &scene.rules {
+            if let Some((z, how)) = trigger_zone(&r.when)
+                && let Some(t) = triggers.get_mut(z)
+            {
+                add_trigger(t, how);
+            }
+        }
+        let mut texts = std::collections::HashMap::new();
+        for (k, t) in scene.texts.iter().enumerate() {
+            texts.entry(t.0).or_insert(k);
+        }
+        Index { fields, triggers, texts }
+    }
+
+    /// As `field_of`: the field drawn where the zone is first, any other with its name after.
+    fn field<'s>(&self, scene: &'s Scene, z: &Zone) -> Option<(usize, &'s crate::scene::Content, bool)> {
+        let at = match scene.instrs.get(z.at) {
+            Some(Instr::Field { zone, .. }) if *zone == z.id => z.at,
+            _ => *self.fields.get(z.id)?,
+        };
+        match scene.instrs.get(at) {
+            Some(Instr::Field { text, placeholder, secret, .. }) => Some((text.0 as usize, placeholder, *secret)),
+            _ => None,
+        }
+    }
+}
+
+fn role_with(scene: &Scene, z: &Zone, is_field: bool, (presses, drags, wheels): (bool, bool, bool)) -> Role {
     // Said by the scene (`role: toggle`), it is that.
     if let Some(r) = z.told.as_ref().and_then(|t| t.role) {
         return match r {
@@ -111,7 +184,7 @@ pub fn role_of(scene: &Scene, k: usize, z: &Zone) -> Role {
             _ => Role::Button,
         };
     }
-    if field_of(scene, z).is_some() {
+    if is_field {
         return Role::Field;
     }
     if matches!(scene.instrs.get(z.at), Some(Instr::Window { .. })) {
@@ -119,21 +192,6 @@ pub fn role_of(scene: &Scene, k: usize, z: &Zone) -> Role {
     }
     if z.scrolls.is_some() {
         return Role::List;
-    }
-    let mine = |t: &Trigger| match t {
-        Trigger::Press(id) | Trigger::PressWith(id, _) | Trigger::Release(id) | Trigger::Receive(id) | Trigger::Carry(id) => (id.0 as usize == k, false),
-        Trigger::Hold { zone, .. } => (zone.0 as usize == k, false),
-        Trigger::Drag(id) | Trigger::Wheel(id) => (id.0 as usize == k, true),
-        _ => (false, false),
-    };
-    let (mut presses, mut drags, mut wheels) = (false, false, false);
-    for r in &scene.rules {
-        match (mine(&r.when), &r.when) {
-            ((true, true), Trigger::Drag(_)) => drags = true,
-            ((true, true), _) => wheels = true,
-            ((true, false), _) => presses = true,
-            _ => {}
-        }
     }
     // Dragged, or only turned with the wheel: a volume bar, a dial. A press
     // that also listens to the wheel is still a button (mute, and the wheel for the volume).
@@ -179,22 +237,43 @@ fn inside(b: [f32; 4], x: f32, y: f32) -> bool {
 /// each one what can be read and touched.
 pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<Part> {
     // Which zones are there at all, and their box.
+    // (With the render's, only a zone there but inactive has its box worked out here:
+    // a greyed-out button still says its words.)
+    let n = scene.zones.len();
+    let known = sight.zones.filter(|(live, boxes)| live.len() == n && boxes.len() == n);
     let there: Vec<Option<[f32; 4]>> = scene
         .zones
         .iter()
-        .map(|z| if z.reach == Reach::Hidden || (sight.gone)(z.at) { None } else { z.bounds(c) })
+        .enumerate()
+        .map(|(k, z)| match known {
+            _ if z.reach == Reach::Hidden || (sight.gone)(z.at) => None,
+            Some((live, boxes)) if live[k] => boxes[k],
+            _ => z.bounds(c),
+        })
         .collect();
-    let active: Vec<bool> = scene.zones.iter().map(|z| z.active.is_true(c)).collect();
+    let active: Vec<bool> = match known {
+        // (Alive is there and active: for a zone there, the same.)
+        Some((live, _)) => live.to_vec(),
+        None => scene.zones.iter().map(|z| z.active.is_true(c)).collect(),
+    };
+    let made;
+    let index = match sight.index {
+        Some(i) if i.triggers.len() == n => i,
+        _ => {
+            made = Index::new(scene);
+            &made
+        }
+    };
     let rank = |k: usize| sight.rank.map_or((k, 0, 0), |r| r[k]);
+    // What a press can reach at all, with its box: only a point in that box asks the shape.
+    let pressable: Vec<(usize, [f32; 4])> = (0..scene.zones.len()).filter(|k| active[*k]).filter_map(|k| there[k].map(|b| (k, b))).collect();
     // The one on top at a point: what a press there would reach.
     let top_at = |x: f32, y: f32| {
-        scene
-            .zones
+        pressable
             .iter()
-            .enumerate()
-            .filter(|(k, z)| there[*k].is_some() && z.active.is_true(c) && z.contains(c, x, y))
-            .max_by_key(|(k, _)| (rank(*k), *k))
-            .map(|(k, _)| k)
+            .filter(|(k, b)| inside(*b, x, y) && scene.zones[*k].contains(c, x, y))
+            .map(|(k, _)| *k)
+            .max_by_key(|k| (rank(*k), *k))
     };
     let mut parts = Vec::new();
     for s in &sight.shown {
@@ -262,7 +341,8 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
             let z = &scene.zones[k];
             let zb = there[k].unwrap();
             let active = active[k];
-            let role = role_of(scene, k, z);
+            let field = index.field(scene, z);
+            let role = role_with(scene, z, field.is_some(), index.triggers[k]);
             let mut words: Vec<&SeenText> = said[k].clone();
             // In reading order: by line, then from the left.
             words.sort_by(|p, q| ((p.bounds[1] / 8.0).round(), p.bounds[0]).partial_cmp(&((q.bounds[1] / 8.0).round(), q.bounds[0])).unwrap_or(std::cmp::Ordering::Equal));
@@ -271,7 +351,6 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
             if !active && words.is_empty() {
                 continue;
             }
-            let field = field_of(scene, z);
             let label = match (&z.label, field) {
                 (Some(l), _) => content_text(l, c, texts).into_owned(),
                 (None, Some((text, placeholder, _))) if texts.get(text).is_none_or(|t| t.is_empty()) => content_text(placeholder, c, texts).into_owned(),
@@ -281,7 +360,7 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                     // Nothing drawn in it: what its own `.title` says, if the scene
                     // has one (another program's window, `win.3.title`).
                     let own = format!("{}.title", z.id.split('#').next().unwrap_or(z.id));
-                    match scene.texts.iter().position(|t| t.0 == own) {
+                    match index.texts.get(own.as_str()).copied() {
                         Some(k) if said.is_empty() => texts.get(k).cloned().unwrap_or_default(),
                         _ => said,
                     }
@@ -350,14 +429,18 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
         nodes.sort_by_key(|n| n.order);
         // What is inside a list hangs from it: the rows it scrolls, and
         // whatever else falls inside its window.
+        let node_of: std::collections::HashMap<usize, usize> = nodes.iter().enumerate().rev().map(|(j, n)| (n.zone, j)).collect();
+        let lists: Vec<usize> = (0..nodes.len()).filter(|j| nodes[*j].role == Role::List).collect();
         for i in 0..nodes.len() {
-            if let Some(j) = scene.zones.get(nodes[i].zone).and_then(|z| z.within).and_then(|l| nodes.iter().position(|n| n.zone == l.0 as usize)) {
+            if let Some(j) = scene.zones.get(nodes[i].zone).and_then(|z| z.within).and_then(|l| node_of.get(&(l.0 as usize)).copied()) {
                 nodes[i].inside = Some(j);
                 continue;
             }
             let (x, y) = (nodes[i].at[0] + nodes[i].at[2] * 0.5, nodes[i].at[1] + nodes[i].at[3] * 0.5);
-            nodes[i].inside = (0..nodes.len())
-                .filter(|j| *j != i && nodes[*j].role == Role::List)
+            nodes[i].inside = lists
+                .iter()
+                .copied()
+                .filter(|j| *j != i)
                 .filter(|j| {
                     let a = nodes[*j].at;
                     inside([a[0], a[1], a[0] + a[2], a[1] + a[3]], x, y)
@@ -1272,8 +1355,33 @@ mod tests {
             .map(|(k, s)| Shown { surface: k, popup: None, bounds: [s.origin.0, s.origin.1, s.origin.0 + s.width as f32, s.origin.1 + s.height as f32], scale: 1.0 })
             .collect();
         let never = |_: usize| false;
-        let sight = Sight { shown, texts_seen: seen, gone: &never, rank: None };
+        let sight = Sight { shown, texts_seen: seen, gone: &never, rank: None, zones: None, index: None };
         describe(&scene, Ctx { props: &props, facts: &facts, seen: None }, &texts, &sight)
+    }
+
+    /// The render's zones and a kept index say the same as working it all out here,
+    /// dirty or not (a zone that turns active or inactive).
+    #[test]
+    fn what_the_render_knows_says_the_same() {
+        let (scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/agent.plm")).unwrap();
+        let props: Vec<Animated> = scene.props.iter().map(|(_, v, s)| Animated { x: *v, v: 0.0, target: *v, spring: *s }).collect();
+        let texts: Vec<String> = scene.texts.iter().map(|t| t.1.clone()).collect();
+        let index = Index::new(&scene);
+        for dirty in [false, true] {
+            let mut facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+            if dirty {
+                facts[scene.facts.iter().position(|f| f.0 == "dirty").unwrap()] = 1.0;
+            }
+            let c = Ctx { props: &props, facts: &facts, seen: None };
+            let live: Vec<bool> = scene.zones.iter().map(|z| z.active.is_true(c)).collect();
+            let boxes: Vec<Option<[f32; 4]>> = scene.zones.iter().zip(&live).map(|(z, l)| if *l { z.bounds(c) } else { None }).collect();
+            let never = |_: usize| false;
+            let shown = || scene.surfaces.iter().enumerate().map(|(k, s)| Shown { surface: k, popup: None, bounds: [s.origin.0, s.origin.1, s.origin.0 + s.width as f32, s.origin.1 + s.height as f32], scale: 1.0 }).collect();
+            let alone = describe(&scene, c, &texts, &Sight { shown: shown(), texts_seen: &[], gone: &never, rank: None, zones: None, index: None });
+            let given = describe(&scene, c, &texts, &Sight { shown: shown(), texts_seen: &[], gone: &never, rank: None, zones: Some((&live, &boxes)), index: Some(&index) });
+            assert_eq!(to_text(&alone), to_text(&given));
+            assert_eq!(to_json(&alone), to_json(&given));
+        }
     }
 
     fn node<'p>(parts: &'p [Part], name: &str) -> Option<&'p Node> {
@@ -1343,7 +1451,7 @@ mod tests {
         let c = Ctx { props: &props, facts: &facts, seen: None };
         let shown = vec![Shown { surface: 0, popup: None, bounds: [0.0, 0.0, 400.0, 300.0], scale: 1.0 }];
         let never = |_: usize| false;
-        let sight = Sight { shown, texts_seen: &[], gone: &never, rank: None };
+        let sight = Sight { shown, texts_seen: &[], gone: &never, rank: None, zones: None, index: None };
         let at = |n: &str| reach_point(&scene, c, locate(&scene, c, n, &sight).unwrap(), &sight);
         assert_eq!(at("knob.1"), Ok(Some((100.0, 100.0))));
         assert!(at("delete").unwrap_err().contains("a person's hand"));
