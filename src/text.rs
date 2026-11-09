@@ -56,8 +56,22 @@ pub struct Layout {
     /// first line: it is what a field to type into needs.
     pub cursors: Vec<(usize, f32)>,
     /// The same for every line, with where the line is: what selecting a
-    /// text with the mouse needs.
+    /// text with the mouse needs. In byte order: a table's cells side by side
+    /// are one after another, each with its own lines.
     pub lines: Vec<TextLine>,
+    /// Its markdown tables, where they are, for their lines to be drawn.
+    pub tables: Vec<TableBox>,
+}
+
+/// Where a markdown table was laid out: the x of its left edge, of each line
+/// between columns and of its right edge, and the y of its top, of each line
+/// between rows and of its bottom; and whether its first row is its head (a
+/// row shown as a card of its own has none).
+#[derive(Clone, Debug, Default)]
+pub struct TableBox {
+    pub cols: Vec<f32>,
+    pub rows: Vec<f32>,
+    pub head: bool,
 }
 
 /// A line of a laid-out text: its top and bottom, and where the cursor falls
@@ -86,7 +100,13 @@ impl Layout {
         if y < first.top {
             return first.cursors.first().map_or(0, |c| c.0);
         }
-        let line = self.lines.iter().find(|l| y < l.bottom).unwrap_or_else(|| self.lines.last().unwrap());
+        // Of the lines at that height (a table's cells are side by side), the nearest across.
+        let away = |l: &TextLine| {
+            let (a, b) = (l.cursors.first().map_or(0.0, |c| c.1), l.cursors.last().map_or(0.0, |c| c.1));
+            if x < a { a - x } else if x > b { x - b } else { 0.0 }
+        };
+        let level = self.lines.iter().filter(|l| y >= l.top && y < l.bottom).min_by(|a, b| away(a).total_cmp(&away(b)));
+        let line = level.or_else(|| self.lines.iter().find(|l| y < l.bottom)).unwrap_or_else(|| self.lines.last().unwrap());
         if y >= line.bottom {
             return line.cursors.last().map_or(0, |c| c.0);
         }
@@ -146,6 +166,26 @@ impl Layout {
     }
 }
 
+/// The widest run of letters without a space in a laid-out piece of `text`.
+fn longest_word(text: &str, m: &Layout) -> f32 {
+    let mut most = 0f32;
+    for l in &m.lines {
+        let mut start: Option<f32> = None;
+        for &(b, x) in &l.cursors {
+            let space = text.get(b..).and_then(|t| t.chars().next()).is_none_or(char::is_whitespace);
+            match (start, space) {
+                (None, false) => start = Some(x),
+                (Some(s), true) => {
+                    most = most.max(x - s);
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+    }
+    most
+}
+
 /// A letter's colour: that of the last stretch (byte range) it falls in, or the text's.
 pub fn colour_of(g: &PlacedGlyph, paints: &[(u32, u32, [f32; 3])], text: [f32; 3]) -> [f32; 3] {
     paints.iter().rev().find(|p| g.at >= p.0 && g.at < p.1).map_or(text, |p| p.2)
@@ -170,13 +210,15 @@ pub struct LayoutKey {
     paragraph: Option<u32>,
     /// Stretches of it (byte ranges) bold, italic or code: `crate::markdown`.
     marks: Vec<(u32, u32, u8)>,
+    /// The points of its lists and its tables, placed by the layout itself.
+    blocks: Vec<crate::markdown::Block>,
 }
 
 impl LayoutKey {
     pub fn new(text: &str, e: &Style, width: Option<f32>) -> LayoutKey {
         LayoutKey {
             text: text.to_owned(), family: e.family, px: e.px.to_bits(), weight: e.weight, line_height: e.line_height.to_bits(),
-            width: width.map(|a| a.round().max(1.0) as u32), align: e.align, max_lines: e.max_lines, tight: e.tight, paragraph: None, marks: Vec::new(),
+            width: width.map(|a| a.round().max(1.0) as u32), align: e.align, max_lines: e.max_lines, tight: e.tight, paragraph: None, marks: Vec::new(), blocks: Vec::new(),
         }
     }
 
@@ -207,6 +249,12 @@ impl LayoutKey {
     /// The same, with another most of lines (`None`: as many as it has).
     pub fn lined(mut self, lines: Option<usize>) -> LayoutKey {
         self.max_lines = lines;
+        self
+    }
+
+    /// The same, with the points of its lists and its tables (`crate::markdown::Block`).
+    pub fn blocked(mut self, blocks: Vec<crate::markdown::Block>) -> LayoutKey {
+        self.blocks = blocks;
         self
     }
 
@@ -329,6 +377,7 @@ impl Typesetter {
         let mut cut = c.clone();
         cut.text = format!("{}…", c.text[..end].trim_end());
         cut.marks.retain(|k| (k.0 as usize) < end);
+        cut.blocks.retain(|b| (b.ends().1 as usize) <= end);
         for k in &mut cut.marks {
             k.1 = k.1.min(end as u32);
         }
@@ -344,6 +393,9 @@ impl Typesetter {
     }
 
     fn lay_out_once(&mut self, c: &LayoutKey) -> Layout {
+        if !c.blocks.is_empty() {
+            return self.compose(c);
+        }
         let (px, line_height, width) = (f32::from_bits(c.px), f32::from_bits(c.line_height), c.width.map(|a| a as f32));
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(px, px * line_height));
         buffer.set_wrap(if width.is_some() { Wrap::WordOrGlyph } else { Wrap::None });
@@ -463,7 +515,174 @@ impl Typesetter {
             Some(fixed) => fixed,
             None => w,
         };
-        Layout { glyphs, size: (across, h), cursors, lines }
+        Layout { glyphs, size: (across, h), cursors, lines, tables: Vec::new() }
+    }
+
+    /// The bytes from `a` to `b` of a text laid out on their own, `width` wide
+    /// (or as wide as they are), with their marks: a piece of a text with blocks.
+    fn piece(&mut self, c: &LayoutKey, a: usize, b: usize, width: Option<f32>) -> Layout {
+        let marks = c.marks.iter().filter(|m| (m.1 as usize) > a && (m.0 as usize) < b).map(|m| ((m.0 as usize).max(a) as u32 - a as u32, (m.1 as usize).min(b) as u32 - a as u32, m.2)).collect();
+        let key = LayoutKey { text: c.text[a..b].to_owned(), marks, width: width.map(|w| w.ceil().max(1.0) as u32), max_lines: None, tight: true, blocks: Vec::new(), ..c.clone() };
+        self.lay_out_once(&key)
+    }
+
+    /// A text with blocks (`crate::markdown::Block`): what is between them laid out
+    /// as text is, each point of a list with its words hanging past its mark, each
+    /// table its cells in columns; one under another.
+    fn compose(&mut self, c: &LayoutKey) -> Layout {
+        let width = c.width.map(|w| w as f32);
+        let px = f32::from_bits(c.px);
+        let s = self.scale;
+        let mut out = Layout { glyphs: Vec::new(), size: (0.0, 0.0), cursors: Vec::new(), lines: Vec::new(), tables: Vec::new() };
+        let (mut y, mut right) = (0f32, 0f32);
+        // A piece where it goes: its letters and lines moved there, its bytes counted from `from`.
+        let put = |out: &mut Layout, m: &Layout, dx: f32, dy: f32, from: usize, right: &mut f32| {
+            let (dx, dy) = ((dx * s).round() / s, (dy * s).round() / s);
+            out.glyphs.extend(m.glyphs.iter().map(|g| PlacedGlyph { rect: [g.rect[0] + dx, g.rect[1] + dy, g.rect[2], g.rect[3]], at: g.at + from as u32, ..*g }));
+            out.lines.extend(m.lines.iter().map(|l| TextLine { top: l.top + dy, bottom: l.bottom + dy, cursors: l.cursors.iter().map(|k| (k.0 + from, k.1 + dx)).collect() }));
+            *right = right.max(dx + m.size.0);
+        };
+        let text = c.text.as_str();
+        let mut blocks = c.blocks.clone();
+        blocks.sort_by_key(|b| b.ends().0);
+        let mut at = 0usize;
+        let mut after_block = false;
+        for b in &blocks {
+            let (from, to) = (b.ends().0 as usize, b.ends().1 as usize);
+            if from < at || to > text.len() || !text.is_char_boundary(from) || !text.is_char_boundary(to) {
+                continue;
+            }
+            if from > at {
+                // Up to the line break before the block.
+                let end = if text[..from].ends_with('\n') { from - 1 } else { from };
+                let m = self.piece(c, at, end, width);
+                put(&mut out, &m, 0.0, y, at, &mut right);
+                y += m.size.1;
+            }
+            match b {
+                crate::markdown::Block::Hang { body, .. } => {
+                    let body = (*body as usize).clamp(from, to);
+                    let mark = self.piece(c, from, body, None);
+                    let hang = mark.size.0;
+                    let words = self.piece(c, body, to, width.map(|w| (w - hang).max(px * 4.0)));
+                    let first = out.lines.len();
+                    put(&mut out, &words, hang, y, body, &mut right);
+                    // The mark goes on the first line of its words, before them.
+                    let dy = (y * s).round() / s;
+                    out.glyphs.extend(mark.glyphs.iter().map(|g| PlacedGlyph { rect: [g.rect[0], g.rect[1] + dy, g.rect[2], g.rect[3]], at: g.at + from as u32, ..*g }));
+                    if let (Some(l), Some(m)) = (out.lines.get_mut(first), mark.lines.first()) {
+                        let mut cursors: Vec<(usize, f32)> = m.cursors.iter().filter(|k| k.0 < body - from).map(|k| (k.0 + from, k.1)).collect();
+                        cursors.append(&mut l.cursors);
+                        l.cursors = cursors;
+                        l.bottom = l.bottom.max(m.bottom + dy);
+                    }
+                    y += words.size.1.max(mark.size.1);
+                }
+                crate::markdown::Block::Table { rows, .. } => self.table(c, rows, width, &mut y, &mut out, &mut right),
+            }
+            at = to;
+            after_block = true;
+            if text[at..].starts_with('\n') {
+                at += 1;
+                after_block = at == text.len();
+            }
+        }
+        if at < text.len() || after_block && at == text.len() && at > 0 && text.ends_with('\n') {
+            let m = self.piece(c, at, text.len(), width);
+            put(&mut out, &m, 0.0, y, at, &mut right);
+            y += m.size.1;
+        }
+        out.cursors = out.lines.first().map_or_else(|| vec![(0, 0.0)], |l| l.cursors.clone());
+        let across = match width {
+            Some(fixed) if c.tight && c.align == TextAlign::Left => right.min(fixed),
+            Some(fixed) => fixed.max(right),
+            None => right,
+        };
+        out.size = (across, y);
+        out
+    }
+
+    /// A markdown table. When not even its words fit across (a dozen columns in a
+    /// narrow text), each row is a card of its own instead: the head's cells down
+    /// one side, the row's beside them.
+    fn table(&mut self, c: &LayoutKey, rows: &[Vec<(u32, u32)>], width: Option<f32>, y: &mut f32, out: &mut Layout, right: &mut f32) {
+        let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+        if let (Some(w), true) = (width, rows.len() > 1 && columns > 2) {
+            let pad_x = (f32::from_bits(c.px) * 0.55).round();
+            let mut least = vec![0f32; columns];
+            for row in rows {
+                for (k, &(a, b)) in row.iter().enumerate() {
+                    let m = self.piece(c, a as usize, b as usize, None);
+                    least[k] = least[k].max(longest_word(&c.text[a as usize..b as usize], &m).ceil());
+                }
+            }
+            if least.iter().sum::<f32>() > w - columns as f32 * pad_x * 2.0 - 1.0 {
+                for row in &rows[1..] {
+                    let card: Vec<Vec<(u32, u32)>> = row.iter().enumerate().map(|(k, &cell)| vec![rows[0].get(k).copied().unwrap_or((cell.0, cell.0)), cell]).collect();
+                    self.grid(c, &card, width, y, out, right, false);
+                }
+                return;
+            }
+        }
+        self.grid(c, rows, width, y, out, right, true);
+    }
+
+    /// Cells in rows and columns: each column as wide as its cells ask, up to what
+    /// the text's width leaves (then its cells wrap, the widest giving most), each
+    /// cell laid out on its own in its place.
+    #[allow(clippy::too_many_arguments)]
+    fn grid(&mut self, c: &LayoutKey, rows: &[Vec<(u32, u32)>], width: Option<f32>, y: &mut f32, out: &mut Layout, right: &mut f32, head: bool) {
+        let px = f32::from_bits(c.px);
+        let s = self.scale;
+        let (pad_x, pad_y, margin) = ((px * 0.55).round(), (px * 0.4).round(), (px * 0.35).round());
+        let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+        if columns == 0 {
+            return;
+        }
+        // What each column takes on one line, and its longest word: as narrow as it can be.
+        let (mut most, mut least) = (vec![0f32; columns], vec![0f32; columns]);
+        for row in rows {
+            for (k, &(a, b)) in row.iter().enumerate() {
+                let m = self.piece(c, a as usize, b as usize, None);
+                most[k] = most[k].max(m.size.0.ceil());
+                least[k] = least[k].max(longest_word(&c.text[a as usize..b as usize], &m).ceil());
+            }
+        }
+        let room = width.map(|w| (w - columns as f32 * pad_x * 2.0 - 1.0).max(columns as f32));
+        let (sum_most, sum_least): (f32, f32) = (most.iter().sum(), least.iter().sum());
+        let widths: Vec<f32> = match room {
+            Some(r) if sum_most > r && sum_least <= r => {
+                // Each its longest word, and what is left shared out as each wants more.
+                let k = (r - sum_least) / (sum_most - sum_least).max(1.0);
+                most.iter().zip(&least).map(|(m, l)| (l + (m - l) * k).floor()).collect()
+            }
+            // Not even its words fit: each a share as its words ask, and they break.
+            Some(r) if sum_most > r => least.iter().map(|l| (r * l / sum_least.max(1.0)).floor().max(1.0)).collect(),
+            _ => most,
+        };
+        let mut cols = vec![0f32];
+        for w in &widths {
+            cols.push(cols.last().unwrap() + w + pad_x * 2.0);
+        }
+        let top = ((*y + margin) * s).round() / s;
+        let mut table_rows = vec![top];
+        let mut ry = top;
+        for row in rows {
+            let mut tallest = 0f32;
+            let laid: Vec<(usize, Layout)> = row.iter().enumerate().map(|(k, &(a, b))| (a as usize, self.piece(c, a as usize, b as usize, Some(widths[k])))).collect();
+            for (k, (a, m)) in laid.iter().enumerate() {
+                tallest = tallest.max(m.size.1);
+                let (dx, dy) = (((cols[k] + pad_x) * s).round() / s, ((ry + pad_y) * s).round() / s);
+                out.glyphs.extend(m.glyphs.iter().map(|g| PlacedGlyph { rect: [g.rect[0] + dx, g.rect[1] + dy, g.rect[2], g.rect[3]], at: g.at + *a as u32, ..*g }));
+                out.lines.extend(m.lines.iter().map(|l| TextLine { top: l.top + dy, bottom: l.bottom + dy, cursors: l.cursors.iter().map(|q| (q.0 + a, q.1 + dx)).collect() }));
+            }
+            ry += tallest + pad_y * 2.0;
+            ry = (ry * s).round() / s;
+            table_rows.push(ry);
+        }
+        *right = right.max(*cols.last().unwrap());
+        out.tables.push(TableBox { cols, rows: table_rows, head });
+        *y = ry + margin;
     }
 
     fn glyph(&mut self, key: CacheKey, full: &mut bool) -> Option<(AtlasSlot, i32, i32, bool)> {
@@ -1687,6 +1906,83 @@ mod tests {
         let spans = m.spans(2, second + 3);
         assert_eq!(spans.len(), 2);
         assert!(spans[0][1] < spans[1][1]);
+    }
+
+    /// A markdown text laid out as a scene lays it out.
+    fn markdown(t: &mut Typesetter, source: &str, width: f32) -> (String, Layout) {
+        let r = crate::markdown::read(source, crate::markdown::Options::default());
+        let laid: Vec<(u32, u32, u8)> = r.marks.iter().filter(|m| m.2 & crate::markdown::LOOKS != 0).map(|m| (m.0, m.1, m.2 & crate::markdown::LOOKS)).collect();
+        let key = LayoutKey::marked(r.text.clone(), laid, &Style::new(14.0, crate::scene::color(1.0, 1.0, 1.0)), Some(width)).blocked(r.blocks);
+        let m = t.lay_out(&key);
+        (r.text, m)
+    }
+
+    #[test]
+    fn a_wide_table_wraps_in_its_cells() {
+        let mut t = Typesetter::new();
+        let src = "Plan:\n\n| Who | What they do | When | Notes |\n|---|---|---|---|\n| Ana | Writes the brief for the launch and sends it round | Monday | **Ask** for the `metrics.csv` first |\n| Luis | Checks it | Tuesday | none |\n\nDone.";
+        let (text, m) = markdown(&mut t, src, 320.0);
+        assert_eq!(m.tables.len(), 1);
+        let tb = &m.tables[0];
+        assert_eq!((tb.cols.len(), tb.rows.len()), (5, 4), "four columns, a head and two rows: {tb:?}");
+        assert!(*tb.cols.last().unwrap() <= 320.0, "within its width: {tb:?}");
+        assert!(m.size.0 <= 320.0);
+        // Each cell's letters inside its column and its row, and the long ones wrap there.
+        let cell = |what: &str| {
+            let a = text.find(what).unwrap() as u32;
+            m.glyphs.iter().filter(|g| g.at >= a && g.at < a + what.len() as u32).map(|g| g.rect).collect::<Vec<_>>()
+        };
+        let brief = cell("Writes the brief for the launch and sends it round");
+        let (x0, x1) = (brief.iter().map(|r| r[0]).fold(f32::MAX, f32::min), brief.iter().map(|r| r[0] + r[2]).fold(0.0, f32::max));
+        assert!(x0 >= tb.cols[1] && x1 <= tb.cols[2] + 1.0, "{x0}..{x1} in {tb:?}");
+        let tops: std::collections::BTreeSet<i32> = brief.iter().map(|r| r[1] as i32 / 4).collect();
+        assert!(tops.len() >= 2, "it wraps in its cell");
+        let ana = cell("Ana");
+        assert!(ana.iter().all(|r| r[1] >= tb.rows[1] && r[1] < tb.rows[2]), "in the second row: {tb:?}");
+        // The text after it comes after the table.
+        assert!(cell("Done.").iter().all(|r| r[1] >= *tb.rows.last().unwrap()));
+        // A press on a cell falls on its words: the table's lines are side by side.
+        let at = text.find("Monday").unwrap();
+        let l = m.lines.iter().find(|l| l.cursors.first().is_some_and(|c| c.0 == at)).unwrap();
+        assert_eq!(m.byte_at(l.cursors[0].1 + 1.0, (l.top + l.bottom) / 2.0), at);
+        // Narrow enough, a table as wide as it is.
+        let (_, small) = markdown(&mut t, "| a | b |\n|---|---|\n| 1 | 2 |", 320.0);
+        assert!(*small.tables[0].cols.last().unwrap() < 120.0, "{:?}", small.tables[0]);
+        assert!(small.tables[0].head);
+        // So many columns that not even their words fit: each row a card, its head down the side.
+        let head: Vec<String> = (1..=12).map(|k| format!("Column{k}")).collect();
+        let src = format!("|{}|\n|{}|\n|{}|\n|{}|", head.join("|"), vec!["---"; 12].join("|"), vec!["uno"; 12].join("|"), vec!["dos"; 12].join("|"));
+        let (_, many) = markdown(&mut t, &src, 300.0);
+        assert_eq!(many.tables.len(), 2, "two rows, two cards");
+        assert!(many.tables.iter().all(|t| t.cols.len() == 3 && t.rows.len() == 13 && !t.head && *t.cols.last().unwrap() <= 300.0), "{:?}", many.tables[0]);
+    }
+
+    #[test]
+    fn a_point_hangs_past_its_mark() {
+        let mut t = Typesetter::new();
+        let src = "- a long point of a list that goes on and on and wraps at least once here\n1. **Estefanía**:\n   \"Buenos días,\n   un saludo\"\nafter";
+        let (text, m) = markdown(&mut t, src, 220.0);
+        let x_of = |what: &str| {
+            let a = text.find(what).unwrap() as u32;
+            m.glyphs.iter().find(|g| g.at == a).map(|g| g.rect[0]).unwrap()
+        };
+        let line_starts: Vec<f32> = m.lines.iter().map(|l| l.cursors.first().unwrap().1).collect();
+        // The bullet at the edge, its words past it, and the wrapped line under its words.
+        assert!(x_of("•") < 2.0);
+        let words = x_of("a long");
+        assert!(words > 4.0);
+        assert!(m.lines.len() >= 6, "{line_starts:?}");
+        assert!((line_starts[1] - words).abs() < 1.5, "the second line under the words: {line_starts:?} vs {words}");
+        // The lines under «1.» are under its words, and the text after at the edge.
+        let quote = x_of("\"Buenos");
+        assert!((quote - x_of("Estefanía")).abs() < 1.5 && quote > 4.0, "{quote}");
+        assert!((x_of("un saludo") - quote).abs() < 1.5);
+        assert!(x_of("after") < 2.0);
+        // Its lines go down in order, one each.
+        let tops: Vec<f32> = m.lines.iter().map(|l| l.top).collect();
+        assert!(tops.windows(2).all(|w| w[1] > w[0]), "{tops:?}");
+        // Selecting from the bullet to the end of the point covers its lines.
+        assert!(m.spans(0, text.find("\n1.").unwrap()).len() >= 2);
     }
 
     #[test]

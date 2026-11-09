@@ -3150,11 +3150,11 @@ impl DrawList {
                     // With `markdown:`, its marks go; everything from here on reads it without them.
                     // With `images:`, a picture alone on its line takes as many lines as it is tall.
                     let picture_lines = style.images.map_or(0, |h| (h / (style.px * style.line_height)).ceil().max(1.0) as u32);
-                    let (text, md_marks, md_links, md_pictures, md_code) = if style.markdown {
+                    let (text, md_marks, md_links, md_pictures, md_code, md_blocks) = if style.markdown {
                         let r = crate::markdown::read(&text, crate::markdown::Options { picture_lines, boxed: style.code_block.is_some(), paragraph: style.paragraph.is_some(), list_indent: style.list_indent });
-                        (std::borrow::Cow::Owned(r.text), r.marks, r.links, r.pictures, r.code)
+                        (std::borrow::Cow::Owned(r.text), r.marks, r.links, r.pictures, r.code, r.blocks)
                     } else {
-                        (text, Vec::new(), Vec::new(), Vec::new(), Vec::new())
+                        (text, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())
                     };
                     // `mark from..to, …`: its bytes as they are now, on whole letters.
                     let marks: Vec<(u32, u32, Option<[f32; 3]>, u8)> = style
@@ -3181,16 +3181,13 @@ impl DrawList {
                     } else {
                         LayoutKey::marked(text.to_string(), laid, style, width.as_ref().map(|w| w.eval(c)))
                     };
-                    let key = key.paragraphed(style.paragraph.filter(|_| style.markdown));
+                    let key = key.paragraphed(style.paragraph.filter(|_| style.markdown)).blocked(md_blocks);
                     // And what is in a colour of its own: what the markdown marks, in the
                     // colours the text gives it, then each mark; where they meet, the last.
                     let mut paints: Vec<(u32, u32, [f32; 3])> = Vec::new();
                     if style.markdown_colors[..4].iter().any(Option::is_some) {
-                        use crate::markdown::{CODE, HEADING, LINK, QUOTE, TABLE};
+                        use crate::markdown::{CODE, HEADING, LINK, QUOTE};
                         for &(a, b, l) in &md_marks {
-                            // A table is monospace to line up, not code: its cells keep the text's
-                            // colour (and their links', and its lines' the quote's).
-                            let l = if l & TABLE != 0 { l & !CODE } else { l };
                             let pick = [(CODE, 1), (LINK, 0), (HEADING, 3), (QUOTE, 2)].into_iter().find_map(|(bit, k)| (l & bit != 0).then_some(style.markdown_colors[k].as_ref()).flatten());
                             if let Some(col) = pick {
                                 paints.push((a, b, color(col)));
@@ -3302,6 +3299,30 @@ impl DrawList {
                                     e[2] = 1.0;
                                     e[3] = a * alpha;
                                     e[8..11].copy_from_slice(&rgb);
+                                });
+                            }
+                        }
+                    }
+                    // Its tables: a soft plate with a line round it, a line under the head and a
+                    // fainter one between rows (a row shown as a card, only those), in `quote:` (or the text's colour).
+                    if !m.tables.is_empty() {
+                        let ink = style.markdown_colors[2].as_ref().map_or(rgb, &color);
+                        for t in &m.tables {
+                            let (Some(&l), Some(&r), Some(&top), Some(&bottom)) = (t.cols.first(), t.cols.last(), t.rows.first(), t.rows.last()) else { continue };
+                            let plate = |stroke: f32| crate::shapes::FlatShape { kind: 1, cx: x0 + (l + r) * 0.5, cy: y0 + (top + bottom) * 0.5, mx: (r - l) * 0.5, my: (bottom - top) * 0.5, radius: 6.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke, affine };
+                            let rule = |at: f32| crate::shapes::FlatShape { kind: 1, cx: x0 + (l + r) * 0.5, cy: y0 + at, mx: (r - l) * 0.5 - 0.5, my: 0.5, radius: 0.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke: 0.0, affine };
+                            let mut shapes = vec![(plate(0.0), 0.05), (plate(1.0), 0.32)];
+                            for (k, at) in t.rows.iter().enumerate().skip(1).take(t.rows.len().saturating_sub(2)) {
+                                shapes.push((rule(*at), if k == 1 && t.head { 0.4 } else { 0.18 }));
+                            }
+                            for (shape, alpha) in shapes {
+                                let (kf, bb) = (self.push_shape(shape, 0.0), shape.bounds().unwrap_or([0.0; 4]));
+                                self.element(0.0, bb, &clips, |e| {
+                                    affine.encode(&mut e[44..52]);
+                                    e[1] = kf as f32;
+                                    e[2] = 1.0;
+                                    e[3] = a * alpha;
+                                    e[8..11].copy_from_slice(&ink);
                                 });
                             }
                         }

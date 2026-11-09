@@ -15,10 +15,32 @@ pub const QUOTE: u8 = 16;
 pub const HEADING: u8 = 32;
 /// `~~struck through~~`: a line across it (`strike:` on the text, its colour).
 pub const STRIKE: u8 = 64;
-/// A table's cell or rule (`| a | b |`), laid out in monospace.
+/// A table's cell (`| a | b |`): where it goes is a `Block::Table`.
 pub const TABLE: u8 = 128;
 /// The marks that change the layout; the others only colour it.
 pub const LOOKS: u8 = BOLD | ITALIC | CODE;
+
+/// What the layout places itself, not as lines that follow each other: byte
+/// ranges of the plain text.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum Block {
+    /// A point of a list, its lines below it included: from its start, past its
+    /// mark (`• `, `1. `, and the spaces before them) where its words start, to its
+    /// end. Its words wrap and go on under where they start, not under the mark.
+    Hang { from: u32, body: u32, to: u32 },
+    /// A table: its rows (the first its head), each its cells, each a byte range.
+    /// In the plain text a cell is followed by a tab and a row by a line break,
+    /// which is what is copied.
+    Table { from: u32, to: u32, rows: Vec<Vec<(u32, u32)>> },
+}
+
+impl Block {
+    pub fn ends(&self) -> (u32, u32) {
+        match self {
+            Block::Hang { from, to, .. } | Block::Table { from, to, .. } => (*from, *to),
+        }
+    }
+}
 
 /// The text without its marks, and the stretches of it (byte ranges) that
 /// are bold, italic or code. A mark still open at the end —a model halfway
@@ -68,6 +90,7 @@ thread_local! {
     /// How many lines a picture takes while a text is read (0: pictures are their words).
     static PICTURE_LINES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     static PICTURES: std::cell::RefCell<Vec<Picture>> = const { std::cell::RefCell::new(Vec::new()) };
+    static BLOCKS: std::cell::RefCell<Vec<Block>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The same, and with `lines` above 0, each picture alone on its line is room of
@@ -87,6 +110,8 @@ pub struct Read {
     pub links: Vec<(u32, u32, String)>,
     pub pictures: Vec<Picture>,
     pub code: Vec<CodeBlock>,
+    /// The points of its lists and its tables, for the layout to place.
+    pub blocks: Vec<Block>,
 }
 
 /// How a text with `markdown:` asks to be read.
@@ -108,11 +133,12 @@ pub fn read(source: &str, o: Options) -> Read {
     SHORT_BLANKS.with(|b| b.set(o.paragraph));
     LIST_INDENT.with(|b| b.set(o.list_indent));
     CODE_BLOCKS.with(|c| c.borrow_mut().clear());
+    BLOCKS.with(|c| c.borrow_mut().clear());
     let (text, marks, links, pictures) = plain_with_pictures_inner(source, o.picture_lines);
     BOXED.with(|b| b.set(false));
     SHORT_BLANKS.with(|b| b.set(false));
     LIST_INDENT.with(|b| b.set(0));
-    Read { text, marks, links, pictures, code: CODE_BLOCKS.with(|c| std::mem::take(&mut *c.borrow_mut())) }
+    Read { text, marks, links, pictures, code: CODE_BLOCKS.with(|c| std::mem::take(&mut *c.borrow_mut())), blocks: BLOCKS.with(|c| std::mem::take(&mut *c.borrow_mut())) }
 }
 
 fn plain_with_pictures_inner(source: &str, lines: u32) -> (String, Vec<(u32, u32, u8)>, Vec<(u32, u32, String)>, Vec<Picture>) {
@@ -232,6 +258,7 @@ fn blocks(source: &str) -> (String, Vec<(u32, u32, u8)>) {
         } else if is_rule(bare) {
             push(&mut out, &mut looks, "────────────────────────", QUOTE);
         } else if let Some(rest) = ["- ", "* ", "+ "].iter().find_map(|m| bare.strip_prefix(m)) {
+            let from = out.len() as u32;
             push(&mut out, &mut looks, &(" ".repeat(LIST_INDENT.with(|b| b.get())) + &"   ".repeat(depth)), 0);
             // `- [ ]` and `- [x]`: a box to tick, empty or ticked.
             let (mark, rest) = match rest.get(..4) {
@@ -240,11 +267,18 @@ fn blocks(source: &str) -> (String, Vec<(u32, u32, u8)>) {
                 _ => (["• ", "◦ ", "▪ "][depth.min(2)], rest),
             };
             push(&mut out, &mut looks, mark, 0);
+            let body = out.len() as u32;
             inline(rest, 0, &mut out, &mut looks);
+            n = point_goes_on(&lines, n, columns(indent), &mut out, &mut looks);
+            BLOCKS.with(|b| b.borrow_mut().push(Block::Hang { from, body, to: out.len() as u32 }));
         } else if digits > 0 && (bare[digits..].starts_with(". ") || bare[digits..].starts_with(") ")) {
+            let from = out.len() as u32;
             push(&mut out, &mut looks, &(" ".repeat(LIST_INDENT.with(|b| b.get())) + &"   ".repeat(depth)), 0);
             push(&mut out, &mut looks, &bare[..digits + 2], 0);
+            let body = out.len() as u32;
             inline(&bare[digits + 2..], 0, &mut out, &mut looks);
+            n = point_goes_on(&lines, n, columns(indent), &mut out, &mut looks);
+            BLOCKS.with(|b| b.borrow_mut().push(Block::Hang { from, body, to: out.len() as u32 }));
         } else if let Some(rest) = bare.strip_prefix("> ") {
             push(&mut out, &mut looks, indent, 0);
             inline(rest, ITALIC | QUOTE, &mut out, &mut looks);
@@ -256,6 +290,35 @@ fn blocks(source: &str) -> (String, Vec<(u32, u32, u8)>) {
         }
     }
     (out, stretches(&looks))
+}
+
+/// How wide an indent is, a tab as two spaces.
+fn columns(indent: &str) -> usize {
+    indent.chars().map(|c| if c == '\t' { 2 } else { 1 }).sum()
+}
+
+/// The lines under a point of a list that are still its own: indented past
+/// where its mark is (`1. **Estefanía**:` and under it, three spaces in, the
+/// letter), blank lines between them included, but not a point of its own.
+/// They are added to it, each a line, without their indent: the point's words
+/// start where they go on. The line it goes on from.
+fn point_goes_on(lines: &[&str], mut n: usize, mark_at: usize, out: &mut String, looks: &mut Vec<u8>) -> usize {
+    let goes_on = |l: &str| {
+        let bare = l.trim_start();
+        let digits = bare.bytes().take_while(u8::is_ascii_digit).count();
+        let point = ["- ", "* ", "+ "].iter().any(|m| bare.starts_with(m)) || (digits > 0 && (bare[digits..].starts_with(". ") || bare[digits..].starts_with(") ")));
+        !bare.is_empty() && columns(&l[..l.len() - bare.len()]) >= mark_at + 2 && !point && !bare.starts_with("```") && !bare.starts_with('|')
+    };
+    loop {
+        let blanks = lines[n.min(lines.len())..].iter().take_while(|l| l.trim().is_empty()).count();
+        let Some(next) = lines.get(n + blanks).filter(|l| goes_on(l)) else { return n };
+        for _ in 0..blanks {
+            push(out, looks, if SHORT_BLANKS.with(|b| b.get()) { "\n " } else { "\n" }, 0);
+        }
+        push(out, looks, "\n", 0);
+        inline(next.trim(), 0, out, looks);
+        n += blanks + 1;
+    }
 }
 
 /// `---`, `***` or `___` (spaces between them or not): a rule across.
@@ -280,48 +343,30 @@ fn cells(row: &str) -> Vec<&str> {
     t.split('|').map(str::trim).collect()
 }
 
-/// A table, in monospace so its columns line up: each cell with its own marks,
-/// padded to its column, the head in bold and a line under it.
+/// A table: each cell with its own marks (the head's in bold), a tab after
+/// each and a line break after each row; where they go is the layout's.
 fn table(rows: &[Vec<&str>], out: &mut String, looks: &mut Vec<u8>, first: &mut bool) {
-    // Each cell on its own, with the links it has (counted from its start).
-    let shown: Vec<Vec<(String, Vec<u8>, Vec<(u32, u32, String)>)>> = rows
-        .iter()
-        .enumerate()
-        .map(|(r, row)| {
-            row.iter()
-                .map(|cell| {
-                    let (mut o, mut l) = (String::new(), Vec::new());
-                    let before = LINKS.with(|k| k.borrow().len());
-                    inline(cell, CODE | TABLE | if r == 0 { BOLD } else { 0 }, &mut o, &mut l);
-                    let links = LINKS.with(|k| k.borrow_mut().split_off(before));
-                    (o, l, links)
-                })
-                .collect()
-        })
-        .collect();
-    let columns = shown.iter().map(Vec::len).max().unwrap_or(0);
-    let widths: Vec<usize> = (0..columns).map(|k| shown.iter().filter_map(|r| r.get(k)).map(|c| c.0.chars().count()).max().unwrap_or(0)).collect();
-    for (r, row) in shown.iter().enumerate() {
-        if !std::mem::take(first) {
-            push(out, looks, "\n", 0);
-        }
-        for (k, w) in widths.iter().enumerate() {
-            push(out, looks, if k == 0 { "│ " } else { " │ " }, CODE | TABLE | QUOTE);
-            let (text, marks, links) = row.get(k).map_or((String::new(), Vec::new(), Vec::new()), |c| (c.0.clone(), c.1.clone(), c.2.clone()));
-            let from = out.len();
-            LINKS.with(|l| l.borrow_mut().extend(links.into_iter().map(|(a, b, h)| (a + from as u32, b + from as u32, h))));
-            out.push_str(&text);
-            looks.extend(marks.iter().copied().chain(std::iter::repeat(CODE | TABLE)).take(text.len()));
-            debug_assert_eq!(looks.len(), from + text.len());
-            push(out, looks, &" ".repeat(w - text.chars().count()), CODE | TABLE);
-        }
-        push(out, looks, " │", CODE | TABLE | QUOTE);
-        if r == 0 {
-            push(out, looks, "\n", 0);
-            let line: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
-            push(out, looks, &format!("├{}┤", line.join("┼")), CODE | TABLE | QUOTE);
-        }
+    if !std::mem::take(first) {
+        push(out, looks, "\n", 0);
     }
+    let from = out.len() as u32;
+    let mut placed = Vec::with_capacity(rows.len());
+    for (r, row) in rows.iter().enumerate() {
+        if r > 0 {
+            push(out, looks, "\n", 0);
+        }
+        let mut cells = Vec::with_capacity(row.len());
+        for (k, cell) in row.iter().enumerate() {
+            if k > 0 {
+                push(out, looks, "\t", 0);
+            }
+            let a = out.len() as u32;
+            inline(cell, TABLE | if r == 0 { BOLD } else { 0 }, out, looks);
+            cells.push((a, out.len() as u32));
+        }
+        placed.push(cells);
+    }
+    BLOCKS.with(|b| b.borrow_mut().push(Block::Table { from, to: out.len() as u32, rows: placed }));
 }
 
 fn push(out: &mut String, looks: &mut Vec<u8>, s: &str, look: u8) {
@@ -525,25 +570,48 @@ mod tests {
 
     #[test]
     fn a_thread_message_with_a_table() {
-        let (text, marks) = plain(THREAD);
+        let r = read(THREAD, Options::default());
+        let (text, marks) = (&r.text, &r.marks);
         let lines: Vec<&str> = text.split('\n').collect();
-        // The table: its head, the line under it and three rows, all as wide, in monospace.
-        let rows: Vec<&str> = lines.iter().copied().filter(|l| l.starts_with('│') || l.starts_with('├')).collect();
-        assert_eq!(rows.len(), 5, "{rows:#?}");
-        assert!(rows.iter().all(|r| r.chars().count() == rows[0].chars().count()), "{rows:#?}");
-        assert_eq!(rows[0].matches('│').count(), 4, "three columns: {}", rows[0]);
-        assert_eq!(rows[0], "│ Workstream │ Owner     │ Status  │");
+        // The table: its head and three rows, a tab between cells, which is what is copied.
+        for row in ["Workstream\tOwner\tStatus", "Brief\t@Chief\tFix", "Metrics\t@Research\told new", "Copy\t@Launch\tdone"] {
+            assert!(lines.contains(&row), "missing {row:?} in {lines:#?}");
+        }
+        let Some(Block::Table { from, to, rows }) = r.blocks.iter().find(|b| matches!(b, Block::Table { .. })) else { panic!("no table: {:?}", r.blocks) };
+        assert_eq!(&text[*from as usize..*to as usize], "Workstream\tOwner\tStatus\nBrief\t@Chief\tFix\nMetrics\t@Research\told new\nCopy\t@Launch\tdone");
+        let cell = |r: usize, k: usize| &text[rows[r][k].0 as usize..rows[r][k].1 as usize];
+        assert_eq!((rows.len(), cell(0, 2), cell(2, 1), cell(3, 2)), (4, "Status", "@Research", "done"));
         let of = |what: &str| marks.iter().find(|m| &text[m.0 as usize..m.1 as usize] == what).map(|m| m.2);
-        assert_eq!(of("Fix"), Some(BOLD | CODE | TABLE));
-        assert_eq!(of("old"), Some(STRIKE | CODE | TABLE));
-        assert_eq!(of("@Chief"), Some(LINK | CODE | TABLE));
-        assert_eq!(of("Workstream"), Some(BOLD | CODE | TABLE));
+        assert_eq!(of("Fix"), Some(BOLD | TABLE));
+        assert_eq!(of("old"), Some(STRIKE | TABLE));
+        assert_eq!(of("@Chief"), Some(LINK | TABLE));
+        assert_eq!(of("Workstream\tOwner\tStatus"), None, "the tabs between head cells are not bold");
+        assert_eq!(of("Workstream"), Some(BOLD | TABLE));
         // The rest, block by block.
         for l in ["• Plan", "   ◦ draft", "      ▪ review", "☐ ship", "☑ test", "1. one", "────────────────────────", "shell", "npm run build"] {
             assert!(lines.contains(&l), "missing {l:?} in {lines:#?}");
         }
         assert_eq!(of("shell"), Some(QUOTE));
         assert_eq!(of("npm run build"), Some(CODE));
+    }
+
+    #[test]
+    fn a_point_goes_on_in_the_lines_indented_under_it() {
+        let src = "Borradores:\n\n1. **Estefanía**:\n   \"Buenos días Estefanía,\n   te escribo por lo de ayer.\n\n   Un saludo\"\n2. **Luis**: nada\n- a point\n  - nested\n    still nested\nafter";
+        let r = read(src, Options::default());
+        assert_eq!(r.text, "Borradores:\n\n1. Estefanía:\n\"Buenos días Estefanía,\nte escribo por lo de ayer.\n\nUn saludo\"\n2. Luis: nada\n• a point\n   ◦ nested\nstill nested\nafter");
+        let hangs: Vec<(&str, &str)> = r.blocks.iter().map(|b| match b {
+            Block::Hang { from, body, to } => (&r.text[*from as usize..*body as usize], &r.text[*body as usize..*to as usize]),
+            _ => panic!("{b:?}"),
+        }).collect();
+        assert_eq!(hangs, vec![
+            ("1. ", "Estefanía:\n\"Buenos días Estefanía,\nte escribo por lo de ayer.\n\nUn saludo\""),
+            ("2. ", "Luis: nada"),
+            ("• ", "a point"),
+            ("   ◦ ", "nested\nstill nested"),
+        ]);
+        // With `paragraph:`, the blank line in a point is short too.
+        assert!(read(src, Options { paragraph: true, ..Default::default() }).text.contains("ayer.\n \nUn saludo"));
     }
 
     #[test]
