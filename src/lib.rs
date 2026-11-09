@@ -53,7 +53,9 @@ const HELP: &str = "pleamar [options]
                       benches written in Rust also work: marea, island, face, showcase, swarm
   --check FILE        reads a scene, says whether it is fine, and exits
   --approve SCENE     shows what the plugins of a scene ask for, and asks whether to approve them
-                      (with --yes after it, it does not ask). Unapproved, a plugin runs touching nothing
+                      (with --yes after it, it does not ask). Unapproved, a plugin runs touching nothing.
+                      «--plugin NAME» only that one; «--json» asks nothing and writes, as JSON, what
+                      each asks for and whether it is approved (after approving them, with --yes)
   --grammar           the words the language accepts, exactly as the compiler consults them
   --luau-types [SCENE] a definitions file for luau-lsp: the globals a logic is given, typed, and with
                       a scene its own facts, texts, models and events, so an editor completes them
@@ -162,8 +164,14 @@ fn args(given: Vec<String>) -> Args {
             }
             "--approve" => {
                 let scene = value();
-                let yes_to_all = std::env::args().any(|a| a == "--yes");
-                std::process::exit(permissions::ask(&scene, yes_to_all));
+                let args: Vec<String> = std::env::args().collect();
+                let yes_to_all = args.iter().any(|a| a == "--yes");
+                let json = args.iter().any(|a| a == "--json");
+                let only = args.iter().position(|a| a == "--plugin").map(|k| args.get(k + 1).cloned().unwrap_or_else(|| {
+                    eprintln!("--plugin wants the name of one of the scene's plugins");
+                    std::process::exit(1)
+                }));
+                std::process::exit(permissions::ask(&scene, yes_to_all, only.as_deref(), json));
             }
             "--grammar" => {
                 print!("{}", language::vocabulary::to_text());
@@ -199,8 +207,24 @@ fn args(given: Vec<String>) -> Args {
                 let path = value();
                 std::process::exit(match scenes::from_file::read(&path) {
                     Ok(e) => {
-                        println!("{path}: ok · {} properties, {} instructions, {} layers, {} rules, {} zones, {} gestures", e.props.len(), e.instrs.len(), e.layers.len(), e.rules.len(), e.zones.len(), e.gestures.len());
-                        0
+                        // Its logic and its plugins', read too: their mistakes with their file and line.
+                        #[cfg(feature = "luau")]
+                        let (errors, warnings) = logic_luau::check_logic(&e, &path);
+                        #[cfg(not(feature = "luau"))]
+                        let (errors, warnings): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+                        for w in &warnings {
+                            eprintln!("{w}");
+                        }
+                        for m in &errors {
+                            eprintln!("{m}");
+                        }
+                        if errors.is_empty() {
+                            println!("{path}: ok · {} properties, {} instructions, {} layers, {} rules, {} zones, {} gestures{}", e.props.len(), e.instrs.len(), e.layers.len(), e.rules.len(), e.zones.len(), e.gestures.len(), if warnings.is_empty() { String::new() } else { format!(" · {} warnings", warnings.len()) });
+                            0
+                        } else {
+                            eprintln!("{}", if errors.len() == 1 { "one error".to_owned() } else { format!("{} errors", errors.len()) });
+                            1
+                        }
                     }
                     Err(m) => {
                         eprintln!("{m}");

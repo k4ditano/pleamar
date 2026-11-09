@@ -158,7 +158,9 @@ pub fn describe(p: &Permissions) -> String {
 
 /// `pleamar --approve scene.plm`: shows what each plugin of that scene asks for, and asks.
 /// With `yes_to_all`, it does not ask (for scripts; use it knowing what is being approved).
-pub fn ask(scene: &str, yes_to_all: bool) -> i32 {
+/// `only`: that plugin alone (`--plugin Name`). `json`: nothing is asked; what each plugin
+/// asks for and whether it is approved is written as JSON, after approving if `yes_to_all`.
+pub fn ask(scene: &str, yes_to_all: bool, only: Option<&str>, json: bool) -> i32 {
     let e = match crate::scenes::from_file::read(scene) {
         Ok(e) => e,
         Err(m) => {
@@ -166,12 +168,45 @@ pub fn ask(scene: &str, yes_to_all: bool) -> i32 {
             return 1;
         }
     };
-    let pending: Vec<&Plugin> = e.plugins.iter().filter(|p| !is_approved(p)).collect();
+    let plugins: Vec<&Plugin> = e.plugins.iter().filter(|p| only.is_none_or(|n| p.name == n)).collect();
+    if let Some(n) = only
+        && plugins.is_empty()
+    {
+        let names: Vec<&str> = e.plugins.iter().map(|p| p.name.as_str()).collect();
+        eprintln!("{scene} has no plugin called '{n}'{}", if names.is_empty() { ": it uses none".to_owned() } else { format!(": it has {}", names.join(", ")) });
+        return 1;
+    }
+    if json {
+        for p in plugins.iter().filter(|p| yes_to_all && !is_approved(p)) {
+            if let Err(m) = approve(p) {
+                eprintln!("could not save the approval of '{}': {m}", p.name);
+                return 1;
+            }
+        }
+        let list: Vec<serde_json::Value> = plugins
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "name": p.name,
+                    "logic": p.logic.display().to_string(),
+                    "approved": is_approved(p),
+                    "asks_nothing": p.permissions == Permissions::default(),
+                    "commands": p.permissions.commands,
+                    "services": p.permissions.services,
+                    "env": p.permissions.env,
+                    "summary": describe(&p.permissions),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "scene": scene, "plugins": list })).unwrap_or_default());
+        return 0;
+    }
+    let pending: Vec<&Plugin> = plugins.iter().copied().filter(|p| !is_approved(p)).collect();
     if e.plugins.is_empty() {
         println!("{scene} uses no plugins: there is nothing to approve.");
         return 0;
     }
-    for p in e.plugins.iter().filter(|p| is_approved(p)) {
+    for p in plugins.iter().filter(|p| is_approved(p)) {
         println!("✓ '{}' · {} · {}", p.name, p.logic.display(), if p.permissions == Permissions::default() { "asks for nothing".to_owned() } else { format!("already approved · {}", describe(&p.permissions)) });
     }
     let mut denied = 0;

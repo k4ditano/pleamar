@@ -69,6 +69,9 @@ struct Reader {
     unsaved: Vec<(PathBuf, String)>,
     /// The name each library was imported with, `as menu`, if any.
     surnames: Vec<(PathBuf, Option<String>)>,
+    /// The `import`s written in a part's file, before its `part`: the scene's, as if written
+    /// at its top, with their paths already from where they were written.
+    hoisted: Vec<tree::Entry>,
 }
 
 impl Reader {
@@ -94,8 +97,11 @@ impl Reader {
     /// own (`part Wifi { … }`), put where the line is —inside a group, if that
     /// is where it is written—, as if it had been written there: the same
     /// names, the same order, its lines still its own file's, for the errors and
-    /// for the paths of what it draws. A part can include others; it does not
-    /// import: libraries are the scene's business.
+    /// for the paths of what it draws. A part can include others. Inside it, it does
+    /// not import: libraries are the scene's business. But its file can have `import`s
+    /// before the `part` —a file written by a program that lists plugins and shows them,
+    /// `import "weather/weather.plm" as weather` and then `part Plugins { weather.Card() }`—:
+    /// they are the scene's, as if written at its top.
     fn resolve_includes(&mut self, path: &Path, entries: &mut Vec<tree::Entry>) -> Result<(), CompileError> {
         use tokens::TokenKind;
         let mut out = Vec::with_capacity(entries.len());
@@ -120,13 +126,25 @@ impl Reader {
                 return Err(CompileError::at(n.line, n.head[1].col, format!("'{which}' ends up including itself: {}", self.open_stack.iter().chain([&target]).map(|p| p.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(" → "))));
             }
             self.open_stack.push(target.clone());
-            let theirs = self.open(&target)?;
+            let mut theirs = self.open(&target)?;
+            // Its `import`s first, then its part.
+            let is_import = |e: &tree::Entry| matches!(e, tree::Entry::Node(x) if matches!(x.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "import"));
+            let imports = theirs.iter().take_while(|e| is_import(e)).count();
+            for mut i in theirs.drain(..imports) {
+                if let tree::Entry::Node(x) = &mut i
+                    && let Some(TokenKind::Str(which)) = x.head.get_mut(1).map(|f| &mut f.kind)
+                    && !which.starts_with("pleamar:")
+                {
+                    *which = target.parent().unwrap_or(Path::new(".")).join(&*which).to_string_lossy().into_owned();
+                }
+                self.hoisted.push(i);
+            }
             let part = match theirs.as_slice() {
                 [tree::Entry::Node(p)] if matches!(p.head.first().map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "part") => p,
                 [tree::Entry::Node(p)] if matches!(p.head.first().map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "library") => {
                     return Err(CompileError::at(n.line, n.head[1].col, format!("'{which}' is a library: a library is imported (`import \"{which}\"`), and a part, included")));
                 }
-                _ => return Err(CompileError::at(n.line, n.head[1].col, format!("'{which}' is not a part: what is included is `part Name {{ … }}`, a piece of a scene, and nothing else"))),
+                _ => return Err(CompileError::at(n.line, n.head[1].col, format!("'{which}' is not a part: what is included is `part Name {{ … }}`, a piece of a scene (with, before it, the `import`s it uses), and nothing else"))),
             };
             if !matches!((part.head.get(1).map(|f| &f.kind), part.head.len()), (Some(TokenKind::Id(_)), 2)) {
                 return Err(CompileError::at(part.line, part.col, "a part has a name, and only that: `part Wifi { … }`"));
@@ -369,6 +387,9 @@ fn read_with_symbols(path: &str, unsaved: Vec<(PathBuf, String)>) -> (Result<(Sc
         let mut entries = l.open(Path::new(path)).map_err(|f| vec![f])?;
         l.files[0].0 = main.clone();
         l.resolve_includes(&main, &mut entries).map_err(|f| vec![f])?;
+        // The `import`s of the parts' files: before the scene's, as if written at its top.
+        let hoisted = std::mem::take(&mut l.hoisted);
+        entries.splice(0..0, hoisted);
         let mut brought = Vec::new();
         let mut rest = l.resolve_imports(&main, entries, &mut brought).map_err(|f| vec![f])?;
         // What is imported goes before the scene's own, as if it were written there.

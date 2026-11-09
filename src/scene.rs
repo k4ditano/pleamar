@@ -2918,6 +2918,20 @@ pub enum Event {
     GestureRejected(&'static str),
     /// The mouseless mode: "do the next thing you would do".
     Demo,
+    /// What crosses a plugin's boundary between its logic and the scene's,
+    /// which owns it: to the scene's, what the plugin wrote or emitted; to the
+    /// plugin's, what the scene's wrote or emitted of the plugin's. Never passed on.
+    Boundary(Box<Crossing>),
+}
+
+/// A value of a plugin's boundary, by its full name (`Weather.out`).
+#[derive(Clone, Debug)]
+pub enum Crossing {
+    Text(String, String),
+    Fact(String, f64),
+    Model(String, crate::platform::SysValue),
+    /// An event, with what it brings (`Null` if nothing).
+    Signal(String, crate::platform::SysValue),
 }
 
 /// How many logics —the scene's, its plugins'— want to hear every frame. While

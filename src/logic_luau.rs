@@ -609,7 +609,34 @@ pub struct LuauScript {
     plugins: Vec<LivePlugin>,
     /// If it is a plugin: what the scene says about it (its logic, what it asks for).
     definition: Option<crate::scene::Plugin>,
+    frontier: Frontier,
 }
+
+/// Who hears what a logic writes on a plugin's boundary. A plugin's logic, the
+/// scene's (its owner); the scene's, the plugin whose name is in front.
+#[derive(Clone, Default)]
+struct Frontier {
+    owner: Option<Sender<Event>>,
+    plugins: Arc<Mutex<Vec<(String, Sender<Event>)>>>,
+}
+
+impl Frontier {
+    fn cross(&self, name: &str, what: impl FnOnce() -> crate::scene::Crossing) {
+        let to = match &self.owner {
+            Some(owner) => Some(owner.clone()),
+            None => {
+                let plugins = self.plugins.lock().unwrap();
+                name.split_once('.').and_then(|(p, _)| plugins.iter().find(|(n, _)| n == p).map(|(_, m)| m.clone()))
+            }
+        };
+        if let Some(to) = to {
+            let _ = to.send(Event::Boundary(Box::new(what())));
+        }
+    }
+}
+
+/// Where a logic keeps its models' lists, in its Luau registry.
+const MODELS: &str = "pleamar.models";
 
 /// A running plugin, seen from the scene's logic: how it is spoken to.
 /// Dropping the mailbox stops it: its thread ends, and with it whatever it left running.
@@ -651,14 +678,14 @@ fn qualified_listener(prefix: &Option<String>, what: &str) -> String {
 
 impl LuauScript {
     pub fn new(scene: &str, logic: &str, tx: Sender<ToRender>, to_logic: Sender<Event>, blocked: Arc<AtomicBool>) -> Self {
-        LuauScript { scene: scene.to_owned(), logic: logic.to_owned(), tx, to_logic, blocked, lua: None, c: Arc::default(), prefix: None, wants_frames: Arc::default(), plugins: Vec::new(), definition: None }
+        LuauScript { scene: scene.to_owned(), logic: logic.to_owned(), tx, to_logic, blocked, lua: None, c: Arc::default(), prefix: None, wants_frames: Arc::default(), plugins: Vec::new(), definition: None, frontier: Frontier::default() }
     }
 
     /// A plugin's logic. The number is so that its timers and processes are not
     /// named the same as another logic's: they all share the mailbox.
     fn for_plugin(&self, p: &crate::scene::Plugin, number: usize) -> Self {
         let c = Shared { next: (number as u32 + 1) * 1_000_000, plugin: Some(p.name.clone()), ..Default::default() };
-        LuauScript { scene: self.scene.clone(), logic: p.logic.to_string_lossy().into_owned(), tx: self.tx.clone(), to_logic: self.to_logic.clone(), blocked: self.blocked.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefix: Some(p.name.clone()), wants_frames: Arc::default(), plugins: Vec::new(), definition: Some(p.clone()) }
+        LuauScript { scene: self.scene.clone(), logic: p.logic.to_string_lossy().into_owned(), tx: self.tx.clone(), to_logic: self.to_logic.clone(), blocked: self.blocked.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefix: Some(p.name.clone()), wants_frames: Arc::default(), plugins: Vec::new(), definition: Some(p.clone()), frontier: Frontier { owner: Some(self.to_logic.clone()), plugins: Arc::default() } }
     }
 
     /// Sets a plugin running on its thread. From there it tends its mailbox and its timers.
@@ -951,6 +978,7 @@ impl LuauScript {
         // fact.open = true · fact.open
         let (tx, c) = (self.tx.clone(), self.c.clone());
         let pre = self.prefix.clone();
+        let frontier = self.frontier.clone();
         let set = lua.create_function(move |_, (_, k, v): (Table, String, Value)| {
             let k = qualified(&pre, &k);
             // A misspelled name is an error here, with its line, and not a warning lost in the render.
@@ -961,6 +989,7 @@ impl LuauScript {
             let n = to_number(&k, kind.as_ref(), &v)?;
             c.lock().unwrap().facts.insert(k.clone(), n);
             let _ = tx.send(ToRender::Fact(intern(&k), n as f32));
+            frontier.cross(&k, || crate::scene::Crossing::Fact(k.clone(), n));
             Ok(())
         })?;
         let c = self.c.clone();
@@ -978,12 +1007,14 @@ impl LuauScript {
         // text["notice.title"] = "…"
         let (tx, c) = (self.tx.clone(), self.c.clone());
         let pre = self.prefix.clone();
+        let frontier = self.frontier.clone();
         let set = lua.create_function(move |_, (_, k, v): (Table, String, String)| {
             let k = qualified(&pre, &k);
             if !c.lock().unwrap().texts.contains_key(&k) {
                 return Err(not_found(&pre, "no text", &k, c.lock().unwrap().texts.keys()));
             }
             c.lock().unwrap().texts.insert(k.clone(), v.clone());
+            frontier.cross(&k, || crate::scene::Crossing::Text(k.clone(), v.clone()));
             let _ = tx.send(ToRender::Text(intern(&k), v));
             Ok(())
         })?;
@@ -996,8 +1027,11 @@ impl LuauScript {
         // Each field of each record is on the inside a text or a fact; here they are spread out,
         // and only what has changed travels.
         let stored = lua.create_table()?;
+        // (Kept where a model that crosses a plugin's boundary is put: see `Event::Boundary`.)
+        lua.set_named_registry_value(MODELS, stored.clone())?;
         let (tx, c, store) = (self.tx.clone(), self.c.clone(), stored.clone());
         let pre = self.prefix.clone();
+        let frontier = self.frontier.clone();
         let set = lua.create_function(move |_, (_, k, list): (Table, String, Value)| {
             let k = qualified(&pre, &k);
             let Value::Table(list) = list else {
@@ -1008,6 +1042,8 @@ impl LuauScript {
                 return Err(not_found(&pre, "no model", &k, c.models.iter().map(|m| &m.name)));
             };
             spread_list(&mut c, &tx, &k, &m, &list)?;
+            drop(c);
+            frontier.cross(&k, || crate::scene::Crossing::Model(k.clone(), lua_to_value(&Value::Table(list.clone()), 0)));
             store.raw_set(k, list)
         })?;
         let pre = self.prefix.clone();
@@ -1016,13 +1052,17 @@ impl LuauScript {
 
         let tx = self.tx.clone();
         let (pre, c) = (self.prefix.clone(), self.c.clone());
-        g.set("emit", lua.create_function(move |_, n: String| {
+        let frontier = self.frontier.clone();
+        // emit("tapped") · emit("Weather.ask", data): what it brings reaches a logic
+        // across a plugin's boundary (the scene's rules hear the event, not the data).
+        g.set("emit", lua.create_function(move |_, (n, data): (String, Value)| {
             let n = qualified(&pre, &n);
             // An event that does not exist used to be a warning lost in the render: here it is an error, with its line.
             if !c.lock().unwrap().signals.contains(&n) {
                 let known: Vec<String> = c.lock().unwrap().signals.iter().cloned().collect();
                 return Err(not_found(&pre, "no event", &n, known.iter()));
             }
+            frontier.cross(&n, || crate::scene::Crossing::Signal(n.clone(), lua_to_value(&data, 0)));
             Ok(tx.send(ToRender::Signal(intern(&n))).is_ok())
         })?)?;
         // focus("query") puts the text cursor in a field; focus() removes it.
@@ -1613,6 +1653,11 @@ impl LuauScript {
         self.c.lock().unwrap().deadline = None;
     }
 
+    /// The scene's logic: which plugin hears what is written under its name.
+    fn tell_frontier(&self) {
+        *self.frontier.plugins.lock().unwrap() = self.plugins.iter().map(|p| (p.definition.name.clone(), p.mailbox.clone())).collect();
+    }
+
     fn dispatch_text(&self, what: &str, text: String) {
         let listeners: Vec<Function> = self.c.lock().unwrap().handlers.get(what).cloned().unwrap_or_default();
         for f in listeners {
@@ -1642,13 +1687,14 @@ impl Script for LuauScript {
             plugin.c.lock().unwrap().unapproved = !crate::permissions::is_approved(p);
             Self::start(plugin)
         }).collect();
+        self.tell_frontier();
         e
     }
 
     fn on_event(&mut self, e: Event, ctx: &mut Context) {
         // Every plugin receives the same, but only has handlers with its name in front:
         // it does not find out about what is not its own.
-        if !matches!(e, Event::NewScene(..)) {
+        if !matches!(e, Event::NewScene(..) | Event::Boundary(_)) {
             // A frame, only to the ones that listen to them: the rest would be
             // woken sixty times a second for nothing.
             let frame = matches!(e, Event::Frame(..));
@@ -1745,6 +1791,36 @@ impl Script for LuauScript {
                 }
             }
             Event::Demo => self.dispatch("demo", Value::Nil),
+            // From the other side of a plugin's boundary: as said by whoever said it,
+            // and heard as a change from outside (the side that wrote it does not hear itself).
+            Event::Boundary(b) => match *b {
+                crate::scene::Crossing::Text(n, v) => {
+                    self.c.lock().unwrap().texts.insert(n.clone(), v.clone());
+                    self.dispatch_text(&format!("text:{n}"), v);
+                }
+                crate::scene::Crossing::Fact(n, v) => {
+                    self.c.lock().unwrap().facts.insert(n.clone(), v);
+                    let kind = self.c.lock().unwrap().types.get(&n).cloned();
+                    let value = match &self.lua {
+                        Some(lua) => from_number(lua, kind.as_ref(), v).unwrap_or(Value::Number(v)),
+                        None => Value::Number(v),
+                    };
+                    self.dispatch(&format!("fact:{n}"), value);
+                }
+                crate::scene::Crossing::Model(n, v) => {
+                    let Some(lua) = &self.lua else { return };
+                    let Ok(list) = value_to_lua(lua, &v) else { return };
+                    if let Ok(stored) = lua.named_registry_value::<Table>(MODELS) {
+                        let _ = stored.raw_set(n.as_str(), list.clone());
+                    }
+                    self.dispatch(&format!("model:{n}"), list);
+                }
+                crate::scene::Crossing::Signal(n, v) => {
+                    let Some(lua) = &self.lua else { return };
+                    let value = value_to_lua(lua, &v).unwrap_or(Value::Nil);
+                    self.dispatch(&n, value);
+                }
+            },
             Event::Fact(n, v) => {
                 self.c.lock().unwrap().facts.insert(n.to_owned(), v as f64);
                 // Whoever listens gets it the way they read it: `true`, `"critical"`, or a number.
@@ -1796,6 +1872,7 @@ impl Script for LuauScript {
                         // Dropping its mailbox, its thread ends and stops what it left running.
                         println!("logic  · plugin '{}' is gone", gone.definition.name);
                     }
+                    self.tell_frontier();
                 }
                 let mut c = self.c.lock().unwrap();
                 c.services = services;
@@ -1958,6 +2035,125 @@ fn hit_table(lua: &Lua) -> mlua::Result<Table> {
 /// too, so saving one of them reloads the logic like saving the main file.
 pub static REQUIRED: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
 
+/// For `--check`: the scene's logic and each plugin's, read as Luau (a mistake of
+/// writing is an error, with its file and line) and searched for the names of the
+/// boundary they write as they are (`text.city`, `fact["Weather.degrees"]`,
+/// `on("text:out", …)`, `emit("ask")`): one that is not there is said with its line,
+/// as a warning (a name made up while running, `"rows." .. k`, is not looked at).
+/// What it says: (errors, warnings).
+pub fn check_logic(scene: &Scene, scene_path: &str) -> (Vec<String>, Vec<String>) {
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let own = std::path::Path::new(scene_path).with_extension("luau");
+    let mut files: Vec<(std::path::PathBuf, Option<&str>)> = Vec::new();
+    if own.is_file() {
+        files.push((own, None));
+    }
+    for p in &scene.plugins {
+        if p.logic.is_file() {
+            files.push((p.logic.clone(), Some(p.name.as_str())));
+        }
+    }
+    let names = |all: &mut dyn Iterator<Item = String>, prefix: Option<&str>| -> Vec<String> {
+        all.filter_map(|n| match prefix {
+            Some(p) => n.strip_prefix(&format!("{p}.")).map(str::to_owned),
+            None => Some(n),
+        })
+        .collect()
+    };
+    for (path, plugin) in files {
+        let shown = path.display().to_string();
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            errors.push(format!("{shown}: it cannot be read"));
+            continue;
+        };
+        if let Err(e) = Lua::new().load(&source).set_name(format!("@{shown}")).into_function() {
+            errors.push(e.to_string().trim_start_matches("syntax error: ").to_owned());
+            continue;
+        }
+        let texts = names(&mut scene.texts.iter().map(|t| t.0.to_owned()), plugin);
+        let facts = names(&mut scene.facts.iter().map(|f| f.0.to_owned()), plugin);
+        let models = names(&mut scene.models.iter().map(|m| m.name.clone()), plugin);
+        let signals = names(&mut scene.signals.iter().map(|x| x.0.to_owned()), plugin);
+        let whose = match plugin {
+            Some(p) => format!("the boundary of plugin '{p}'"),
+            None => "the scene".to_owned(),
+        };
+        for (line, col, kind, name) in boundary_names(&source) {
+            let (known, what) = match kind {
+                "text" => (&texts, "text"),
+                "fact" => (&facts, "fact"),
+                "model" => (&models, "model"),
+                _ => (&signals, "event"),
+            };
+            // A model's rows are read as facts and texts under its name (`rows.3.label`).
+            let in_model = (kind == "text" || kind == "fact") && models.iter().any(|m| name.starts_with(&format!("{m}.")));
+            if !known.contains(&name) && !in_model {
+                // The name is there, but as something else: `on("fact:title")` for a text never fires.
+                let other = [("text", &texts), ("fact", &facts), ("model", &models), ("event", &signals)].into_iter().find(|(k, l)| *k != what && l.contains(&name)).map(|(k, _)| k);
+                warnings.push(match other {
+                    Some(k) => format!("{shown}:{line}:{col}: warning: '{name}' is a {k} in {whose}, not a {what}"),
+                    None => format!("{shown}:{line}:{col}: warning: there is no {what} '{name}' in {whose}{}", did_you_mean(&name, known.iter())),
+                });
+            }
+        }
+    }
+    (errors, warnings)
+}
+
+/// The boundary's names a Luau source writes as they are: (line, column, text|fact|model|event, name).
+fn boundary_names(source: &str) -> Vec<(usize, usize, &'static str, String)> {
+    let mut found = Vec::new();
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let quoted = |rest: &str| -> Option<String> {
+        let q = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+        let end = rest[1..].find(q)?;
+        Some(rest[1..1 + end].to_owned())
+    };
+    for (k, full) in source.lines().enumerate() {
+        // Without its comment (a `--` inside a string cuts it short: then less is looked at).
+        let line = full.split("--").next().unwrap_or(full);
+        for (at, _) in line.char_indices() {
+            let rest = &line[at..];
+            let before = line[..at].chars().next_back();
+            if before.is_some_and(|c| ident(c) || c == '.' || c == ':') {
+                continue;
+            }
+            for kind in ["text", "fact", "model"] {
+                let Some(after) = rest.strip_prefix(kind) else { continue };
+                if let Some(name) = after.strip_prefix('.') {
+                    let name: String = name.chars().take_while(|c| ident(*c)).collect();
+                    // Calling a method of the table (`text.x(…)`) is not reading a name; nor is a
+                    // name followed by `.` (a table inside: not one of the boundary's).
+                    let next = after[1 + name.len()..].trim_start().chars().next();
+                    if !name.is_empty() && next != Some('(') {
+                        found.push((k + 1, at + 1, kind, name));
+                    }
+                } else if let Some(inner) = after.strip_prefix('[')
+                    && let Some(name) = quoted(inner.trim_start())
+                    && inner.trim_start()[name.len() + 2..].trim_start().starts_with(']')
+                {
+                    found.push((k + 1, at + 1, kind, name));
+                }
+            }
+            for (call, class) in [("on(", None), ("emit(", Some("event"))] {
+                let Some(after) = rest.strip_prefix(call) else { continue };
+                let Some(name) = quoted(after.trim_start()) else { continue };
+                // `on("fact:" .. k, …)`: made up while running, not looked at.
+                if after.trim_start()[name.len() + 2..].trim_start().starts_with("..") {
+                    continue;
+                }
+                match (class, name.split_once(':')) {
+                    (Some(_), _) => found.push((k + 1, at + 1, "event", name)),
+                    (None, Some((c @ ("text" | "fact" | "model"), n))) => found.push((k + 1, at + 1, if c == "text" { "text" } else if c == "fact" { "fact" } else { "model" }, n.to_owned())),
+                    _ => {}
+                }
+            }
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2084,6 +2280,65 @@ mod tests {
         crate::platform::tests::SOCKETS.with(|d| *d.borrow_mut() = None);
         let _ = std::fs::remove_dir_all(&dir);
     }
+    /// A plugin's boundary, between its logic and the scene's: what one writes or emits the
+    /// other hears and reads, with what an event brings; neither hears itself.
+    #[test]
+    fn the_scene_and_its_plugin_hear_each_other_across_the_boundary() {
+        use super::{LuauScript, Script};
+        use crate::scene::{Event, ToRender};
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("pleamar-boundary-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("lib/weather.plm"), "library Weather strict {\n    text out = \"\"\n    text got = \"\"\n    text heard = \"\"\n    fact degrees = 0\n    model hours max 3 { h: text }\n    event ask ->\n}\n").unwrap();
+        std::fs::write(dir.join("lib/weather.luau"), concat!(
+            "on(\"ask\", function(d) text.got = d.sky .. \" \" .. tostring(fact.degrees) .. \" \" .. #model.hours end)\n",
+            "on(\"text:out\", function(v) text.heard = \"itself: \" .. v end)\n",
+            "text.out = \"sunny\"\n",
+            "fact.degrees = 21\n",
+            "model.hours = { { h = \"10:00\" }, { h = \"11:00\" } }\n",
+        )).unwrap();
+        let (scene, logic) = (dir.join("owner.plm"), dir.join("owner.luau"));
+        std::fs::write(&scene, "import \"lib/weather.plm\"\nscene Owner {\n    surface { size: 10, 10 }\n    text seen = \"\"\n}\n").unwrap();
+        std::fs::write(&logic, concat!(
+            "local said = {}\n",
+            "local function tell() text.seen = table.concat(said, \" · \") end\n",
+            "on(\"text:Weather.out\", function(v) table.insert(said, \"text \" .. v .. \"=\" .. text[\"Weather.out\"]); tell() end)\n",
+            "on(\"fact:Weather.degrees\", function(v) table.insert(said, \"fact \" .. tostring(v)); tell() end)\n",
+            "on(\"model:Weather.hours\", function(l) table.insert(said, \"model \" .. #l .. \"=\" .. #model[\"Weather.hours\"]); tell() end)\n",
+            "fact[\"Weather.degrees\"] = 30\n",
+            "model[\"Weather.hours\"] = { { h = \"12:00\" } }\n",
+            "emit(\"Weather.ask\", { sky = \"clear\" })\n",
+        )).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (to_logic, letters) = std::sync::mpsc::channel();
+        let blocked = std::sync::Arc::default();
+        let mut s = LuauScript::new(&scene.to_string_lossy(), &logic.to_string_lossy(), tx.clone(), to_logic, std::sync::Arc::clone(&blocked));
+        s.scene();
+        let mut ctx = crate::logic::Context::for_plugin(tx, blocked);
+        s.on_event(Event::Alarm("start"), &mut ctx);
+        // What the plugin says reaches the scene's mailbox: given to it as its loop would.
+        let mut texts: std::collections::HashMap<&str, String> = Default::default();
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < until && !(texts.get("seen").is_some_and(|v| v.contains("model")) && texts.contains_key("Weather.got")) {
+            while let Ok(e) = letters.try_recv() {
+                s.on_event(e, &mut ctx);
+            }
+            for m in rx.try_iter() {
+                if let ToRender::Text(k, v) = m {
+                    texts.insert(k, v);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(texts.get("seen").map(String::as_str), Some("text sunny=sunny · fact 21 · model 2=2"), "{texts:?}");
+        // The scene set its degrees and its hours before emitting: the plugin had them when it heard.
+        assert_eq!(texts.get("Weather.got").map(String::as_str), Some("clear 30 1"), "{texts:?}");
+        assert!(!texts.contains_key("Weather.heard"), "the plugin heard its own write: {texts:?}");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn saving_the_copied_picture_asks_only_for_the_clipboard() {
         use super::{LuauScript, Script};

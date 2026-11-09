@@ -220,9 +220,23 @@ On exit, the program stops everything the logic left running; on reloading the l
 A library with a `.luau` next to it is a plugin (see [Language reference — version 0.1](11-language-reference.md), §5). Its logic is a script like any other, with four differences:
 
 - **It only sees its own.** `text.now` is the scene's `Clock.now`; `fact.secret`, if `secret` belongs to the scene, does not exist: `plugin 'Nosy' has no fact called 'secret'. A plugin only sees what its library declares`. The same with `model`, `emit` and what it listens to: `on("tapped", …)` is `Clock.tapped`, and `on("key", …)` hears nothing.
-- **Its permissions are approved by whoever uses it.** `pleamar --approve scene.plm` shows what each plugin asks for and asks about it; unapproved, it runs with none (`plugin 'Clock' wants to run 'date', but nobody has approved its permissions`), and if its code, what it asks for or a file of its folder that its commands name (`node tools/usage.js`) changes, it goes back to unapproved.
+- **Its permissions are approved by whoever uses it.** `pleamar --approve scene.plm` shows what each plugin asks for and asks about it (`--plugin Name --yes` approves that one without a terminal; `--json` says, for a program, what each asks for and whether it is approved); unapproved, it runs with none (`plugin 'Clock' wants to run 'date', but nobody has approved its permissions`), and if its code, what it asks for or a file of its folder that its commands name (`node tools/usage.js`) changes, it goes back to unapproved.
 - **Its permissions are the ones in its own `.plm`**, not those of the scene using it: `plugin 'Nosy' has no permission to run 'sh'. If it should be able to, declare it in its own .plm (the scene's do not count)`.
 - **It does not ask for gestures or move the typing caret**: that belongs to the scene. If it wants something to happen, it emits an event of its own, and the scene decides (`on Clock.tapped { play nod }`).
+
+**The scene's logic owns its plugins' boundary**, by its full name. What one of the two logics writes there the other reads and hears; neither hears its own writes, as always:
+
+| the scene's logic | the plugin's logic |
+| --- | --- |
+| `text["Weather.out"]`, `on("text:Weather.out", f)` | `text.out = "sunny"` |
+| `fact["Weather.degrees"] = 30` | `fact.degrees`, `on("fact:degrees", f)` |
+| `model["Weather.hours"] = { { h = "12:00" } }`, `on("model:Weather.hours", f)` | `model.hours`, `on("model:hours", f)`, and the other way round |
+| `emit("Weather.ask", { city = "Málaga" })` | `on("ask", function(d) … d.city … end)` |
+| `on("Weather.found", function(d) … end)` | `emit("found", { degrees = 23 })` |
+
+What an event brings —a number, a text, a table (six levels, without functions)— reaches the other logic; the scene's rules hear the event, without it. The plugin still names nothing outside its boundary.
+
+**`pleamar --check scene.plm` reads the logics too**, the scene's and each plugin's: a mistake of writing is an error with its file and line (`weather/weather.luau:4: Expected ')' (to close '(' at line 2), got 'end'`), and a name of the boundary written as it is that is not there is a warning with its line (`weather.luau:7:30: warning: there is no text 'cuidad' in the boundary of plugin 'Weather'. Did you mean 'ciudad'?`, or `'title' is a text in the scene, not a fact` for an `on("fact:title", …)` that would never fire). A name made up while running (`"rows." .. k`) is not looked at. The `.plm` of a plugin already said its errors with its own file and line.
 
 Each plugin has its own Luau state —its memory, its timers, its processes— **and its own thread**: one that gets stuck does not hold back the others or the scene's logic. The scene may have no logic at all.
 

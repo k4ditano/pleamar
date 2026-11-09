@@ -1,0 +1,8 @@
+// A part written by a program that lists the plugins it shows: the `import`s it uses
+// go first, and are the scene's, with their paths from here.
+import "../plugins/counter.plm" as counter
+part Plugins {
+    column { at: 10, 10
+        counter.Counter(tone: #9ed6bd)
+    }
+}

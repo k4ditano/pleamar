@@ -1,0 +1,8 @@
+// expect: ok
+language 0.1
+// A part's file can bring the `import`s of what it shows: a generated list of plugins.
+scene WithPlugins {
+    surface { size: 200, 120 }
+    include "parts/plugins.plm"
+    text "{Counter.count}" { at: 10, 100; size: 11; color: #fff }
+}
