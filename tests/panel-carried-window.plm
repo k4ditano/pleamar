@@ -1,0 +1,6 @@
+// expect: error «a `margin:` that changes is a panel's»
+language 0.9
+scene CarriedWindow {
+    surface { size: 200, 120; kind: window; title: "no"; margin: wy, 0, 0, 0 }
+    fact wy = 80
+}

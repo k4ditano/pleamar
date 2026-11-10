@@ -2,5 +2,5 @@
 // A slot that takes a plain number says so when something follows it, instead of reading 40 and dropping `* 2` (issue #55).
 language 0.4
 scene NumberSlot {
-    surface { size: full, 40; anchor: top; margin: 0, 0, 0, 40 * 2 }
+    surface { size: full, 40; anchor: top; reserve: 40 * 2 }
 }

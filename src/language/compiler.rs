@@ -322,6 +322,8 @@ struct Compiler<'a> {
     pending_levels: Vec<(usize, Level, &'a [Token], (usize, usize))>,
     /// `reserve: n while expr`: read at the end, like the levels.
     pending_reserves: Vec<(usize, &'a [Token], (usize, usize))>,
+    /// `margin: y, 0, 0, x` with something that changes in it: read at the end too.
+    pending_margins: Vec<(usize, &'a [Token], (usize, usize))>,
     /// Each surface's own `keyboard: … while` condition, read at the end.
     pending_keyboards: Vec<(usize, &'a [Token], (usize, usize))>,
     /// `rate: 60, 20 while …`: the surface, which step it is, the lower rate and
@@ -516,7 +518,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(), type_index: Default::default(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(), type_index: Default::default(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -525,7 +527,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     // `motion.reduced` (1: the system asks for less motion) and `color.scheme`
     // (0 no preference, 1 dark, 2 light): what the system says, or what is said
     // to the scene; the first, with `--reduced-motion`, settles every spring.
-    for n in ["screen.width", "screen.height", "screen.index", "pointer.x", "pointer.y", "cursor.x", "cursor.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "lock.held", "drag.over", "motion.reduced", "color.scheme"] {
+    for n in ["screen.width", "screen.height", "screen.index", "monitor.width", "monitor.height", "pointer.x", "pointer.y", "cursor.x", "cursor.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "lock.held", "drag.over", "motion.reduced", "color.scheme"] {
         let h = o.e.fact(n, 0.0);
         o.facts.insert(n.into(), h);
     }
@@ -750,6 +752,43 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
                 }
             }
             Err(f) => o.errors.push(f),
+        }
+    }
+    for (which, tokens, (l, col)) in std::mem::take(&mut o.pending_margins) {
+        o.scopes.clear();
+        let mut c = Cur::new(tokens, l, col);
+        let mut sides = [Expr::K(0.0), Expr::K(0.0), Expr::K(0.0), Expr::K(0.0)];
+        let mut read = || -> R<()> {
+            for k in 0..4 {
+                sides[k] = o.expr(&mut c)?;
+                if k < 3 && !c.sym(",") {
+                    break;
+                }
+            }
+            c.expect_end()
+        };
+        if let Err(f) = read() {
+            o.errors.push(f);
+            continue;
+        }
+        if o.e.surfaces[which].window.is_some() || o.e.surfaces[which].lock_screen {
+            o.push_error(CompileError::at(l, col, "a `margin:` that changes is a panel's: a window is placed by the compositor, and a lock covers the monitor"));
+            continue;
+        }
+        // What they are worth as the scene starts is where the surface is born.
+        let facts: Vec<f32> = o.e.facts.iter().map(|f| f.1).collect();
+        let props: Vec<crate::scene::Animated> = o.e.props.iter().map(|(_, x, s)| crate::scene::Animated::at(*x, *s)).collect();
+        let ctx = crate::scene::Ctx { props: &props, facts: &facts, seen: None };
+        let born = [0, 1, 2, 3].map(|k| sides[k].eval(ctx).round() as i32);
+        let changes = sides.iter().any(|e| {
+            let (mut p, mut f) = (Vec::new(), Vec::new());
+            e.inputs(&mut p, &mut f);
+            !p.is_empty() || !f.is_empty()
+        });
+        let owner = o.e.surfaces[which].name.clone();
+        for s in o.e.surfaces.iter_mut().filter(|s| s.name == owner) {
+            s.margin = born;
+            s.margin_from = changes.then(|| Box::new(sides.clone()));
         }
     }
     for (which, step, low, tokens, (l, col)) in std::mem::take(&mut o.pending_rates) {
@@ -5095,11 +5134,23 @@ impl<'a> Compiler<'a> {
             c.expect_end()?;
         }
         if let Some(c) = p.get_mut("margin") {
-            for k in 0..4 {
-                s.margin[k] = c.num()? as i32;
-                if k < 3 && !c.sym(",") {
-                    break;
+            let start = c.i;
+            let mut plain = || -> R<()> {
+                for k in 0..4 {
+                    s.margin[k] = c.num()? as i32;
+                    if k < 3 && !c.sym(",") {
+                        break;
+                    }
                 }
+                c.expect_end()
+            };
+            // Not plain numbers: facts and sums, worked out while it runs (read at the end,
+            // when every fact is known).
+            if plain().is_err() {
+                s.margin = [0; 4];
+                c.i = start;
+                self.pending_margins.push((which, &c.tokens[c.i..], c.pos()));
+                c.i = c.tokens.len();
             }
         }
         if let Some(c) = p.get_mut("level") {

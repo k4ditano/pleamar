@@ -529,6 +529,16 @@ pub fn reanchor(which: usize, anchor: crate::scene::SurfaceAnchor) {
     let _ = (which, anchor);
 }
 
+/// A panel's margins change while running (`margin:` with facts in it): the live layer goes
+/// there. A platform handed over (pleamar-wm's own scene) does not move its surfaces so.
+pub fn remargin(which: usize, margin: [i32; 4]) {
+    #[cfg(target_os = "linux")]
+    if LAYER_HOOKS.get().is_none() {
+        wayland::remargin(which, margin);
+    }
+    let _ = (which, margin);
+}
+
 /// What a platform handed over does when a surface changes level or edge
 /// while running (`level: top, overlay while …`, an anchor from a fact).
 pub struct LayerHooks {

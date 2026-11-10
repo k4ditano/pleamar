@@ -1,0 +1,18 @@
+// expect: ok
+language 0.9
+// A widget on the desktop: its margins are facts, so it goes where it is carried, kept
+// inside its monitor (`monitor.width`, `monitor.height`).
+scene Carried {
+    surface { size: 200, 120; anchor: top_left; level: bottom; margin: wy, 0, 0, wx; open: placed }
+    fact placed = true
+    fact wx = 60
+    fact wy = 80
+    fact ox = 0
+    fact oy = 0
+    box grip { from: 0, 0; size: 200, 120; corner: 16; color: #33405a }
+    on press grip { ox = wx; oy = wy }
+    on drag grip {
+        wx = clamp(ox + drag.dx, 0, max(monitor.width - 200, 0))
+        wy = clamp(oy + drag.dy, 0, max(monitor.height - 120, 0))
+    }
+}

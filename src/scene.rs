@@ -140,6 +140,10 @@ pub struct Surface {
     pub level_while: Option<(Level, Expr)>,
     /// Top, right, bottom, left.
     pub margin: [i32; 4],
+    /// `margin: y, 0, 0, x` with facts in it: worked out while running, and the live layer
+    /// moved to it —a widget on the desktop that is carried, and put back where it was left—.
+    /// `margin` is then what they are worth as the scene starts.
+    pub margin_from: Option<Box<[Expr; 4]>>,
     pub level: Level,
     /// If it is a normal window —the kind the compositor decorates and places— instead of
     /// a panel attached to the edge: what its title is. Without this, it is a panel.
@@ -210,7 +214,7 @@ pub enum Keyboard {
 impl Default for Surface {
     fn default() -> Self {
         // Neutral: full width, at the top, on all monitors. Whatever the scene asks for wins.
-        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, app_id: None, frameless: false, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, rate_said: false, rate_while: Vec::new(), screens: Screens::All, screens_from: None, keyboard: Keyboard::Never, keyboard_while: false, keyboard_said: false, keyboard_when: None, right_click_quits: true, hidden_from_captures: false, agent_hidden: false }
+        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, app_id: None, frameless: false, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], margin_from: None, level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, rate_said: false, rate_while: Vec::new(), screens: Screens::All, screens_from: None, keyboard: Keyboard::Never, keyboard_while: false, keyboard_said: false, keyboard_when: None, right_click_quits: true, hidden_from_captures: false, agent_hidden: false }
     }
 }
 
@@ -2563,6 +2567,12 @@ pub enum ToRender {
     /// A surface has changed size: a window someone is stretching.
     SheetSize(u32, (f32, f32)),
     Command(Command),
+    /// What the monitor of the scene's own surface measures (a panel's): `monitor.width`, `monitor.height`.
+    Monitor((f32, f32)),
+    /// The pointer on a surface whose margins move (`margin:` with facts): where it is on
+    /// it, and how far the surface is from where its margins start counting. With both said
+    /// at once `drag.dx` is how far the mouse went on the screen, whatever the surface did under it.
+    PointerOn((f32, f32), (f32, f32)),
     /// An input method wrote, or is composing, in the field being written in.
     Ime(crate::platform::ImeInput),
     /// The boundary: the logic tells what happens, and nothing more.

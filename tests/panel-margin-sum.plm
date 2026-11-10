@@ -1,0 +1,7 @@
+// expect: ok
+language 0.9
+// A margin worked out from numbers alone is still a plain one.
+scene Summed {
+    surface { size: 200, 120; anchor: top_right; margin: 40 * 2, 12 + 4, 0, 0 }
+    box { from: 0, 0; size: 200, 120; color: #33405a }
+}

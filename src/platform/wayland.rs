@@ -1521,13 +1521,17 @@ impl State {
             stretch.edges = edges;
             layer.set_anchor(edges);
             // The second one on the same monitor, below the first: it's for trying things out.
-            let m = p.margin;
+            let m = said.margin.unwrap_or(p.margin);
             let margin = [m[0] + k as i32 * (height as i32 + 12), m[1], m[2], m[3]];
             layer.set_margin(margin[0], margin[1], margin[2], margin[3]);
             let id = next_surface_id();
             let output_name = self.outputs.info(output).and_then(|i| i.name).unwrap_or_default();
             let backdrop = BackdropTarget::new(id, Some((output.clone(), output_name)), BackdropKind::Layer);
             backdrop.place(edges, margin);
+            // One whose margins move: the pointer on it is said with how far they have taken it, from its first press.
+            if p.margin_from.is_some() {
+                CARRIED.lock().unwrap().insert(which, carried_by(edges, margin));
+            }
             // Noted down, in case the scene moves it to another edge while running,
             // or a reload gives it another size, edge, margin, room or level.
             if let Some(c) = MOVABLE_LAYERS.get() {
@@ -2026,6 +2030,7 @@ struct Said {
     zone: Option<i32>,
     anchor: Option<SurfaceAnchor>,
     level: Option<Level>,
+    margin: Option<[i32; 4]>,
 }
 
 /// What the render last said of surface `which` (see `MovableLayers::said`).
@@ -2086,6 +2091,53 @@ pub fn relayer(which: usize, level: Level) {
     }
 }
 
+/// How far each surface whose margins move is from where they start counting, as the compositor
+/// has it now: what the pointer's place on it has to be read against (see `ToRender::PointerOn`).
+static CARRIED: std::sync::LazyLock<Mutex<std::collections::HashMap<usize, (f32, f32)>>> = std::sync::LazyLock::new(Default::default);
+
+/// Where its margins put a layer stuck to those edges, from where it would be without them.
+fn carried_by(edges: Anchor, m: [i32; 4]) -> (f32, f32) {
+    let along = |near: bool, far: bool, a: i32, b: i32| match (near, far) {
+        (true, true) => (a - b) as f32 / 2.0,
+        (true, false) => a as f32,
+        (false, true) => -b as f32,
+        (false, false) => 0.0,
+    };
+    (along(edges.contains(Anchor::LEFT), edges.contains(Anchor::RIGHT), m[3], m[1]), along(edges.contains(Anchor::TOP), edges.contains(Anchor::BOTTOM), m[0], m[2]))
+}
+
+/// A layer's margins while running: `margin:` with facts in it.
+pub fn remargin(which: usize, new: [i32; 4]) {
+    let Some(c) = MOVABLE_LAYERS.get() else { return };
+    c.said.lock().unwrap().entry(which).or_default().margin = Some(new);
+    let mut goes = None;
+    for (k, layer, margin, stretch, backdrop) in c.placed.lock().unwrap().iter_mut() {
+        if *k != which {
+            continue;
+        }
+        CARRIED.lock().unwrap().entry(which).or_insert_with(|| carried_by(stretch.edges, *margin));
+        *margin = new;
+        layer.set_margin(new[0], new[1], new[2], new[3]);
+        backdrop.place(stretch.edges, new);
+        layer.commit();
+        goes = Some(carried_by(stretch.edges, new));
+    }
+    if let Some(to) = goes {
+        // The pointer's events that come before this answer were still on the old place.
+        c.connection.display().sync(&c.qh, Remargined(which, to));
+        let _ = c.connection.flush();
+    }
+}
+
+struct Remargined(usize, (f32, f32));
+impl Dispatch2<wayland_client::protocol::wl_callback::WlCallback, State> for Remargined {
+    fn event(&self, _: &mut State, _: &wayland_client::protocol::wl_callback::WlCallback, ev: wayland_client::protocol::wl_callback::Event, _: &Connection, _: &QueueHandle<State>) {
+        if let wayland_client::protocol::wl_callback::Event::Done { .. } = ev {
+            CARRIED.lock().unwrap().insert(self.0, self.1);
+        }
+    }
+}
+
 pub fn rezone(which: usize, zone: i32) {
     let Some(c) = MOVABLE_LAYERS.get() else { return };
     c.said.lock().unwrap().entry(which).or_default().zone = Some(zone);
@@ -2137,6 +2189,7 @@ pub fn reshape(which: usize, p: &crate::scene::Surface) {
     if let Some(said) = c.said.lock().unwrap().get_mut(&which) {
         said.anchor = None;
         said.level = None;
+        said.margin = None;
     }
     let mut any = false;
     for (k, layer, margin, stretch, backdrop) in c.placed.lock().unwrap().iter_mut() {
@@ -2153,6 +2206,10 @@ pub fn reshape(which: usize, p: &crate::scene::Surface) {
         *margin = p.margin;
         layer.set_margin(margin[0], margin[1], margin[2], margin[3]);
         backdrop.place(edges, *margin);
+        match p.margin_from {
+            Some(_) => CARRIED.lock().unwrap().insert(which, carried_by(edges, *margin)),
+            None => CARRIED.lock().unwrap().remove(&which),
+        };
         layer.set_size(size.0, size.1);
         // With a condition, the render sets its room as it holds.
         if p.reserve_while.is_none() {
@@ -2511,6 +2568,10 @@ impl State {
             if let Some((w, h)) = self.outputs.info(&p.output).and_then(|i| i.logical_size) {
                 *d.monitor.lock().unwrap() = Some((w, h));
                 d.locate();
+                // `monitor.width`, `monitor.height`: what the scene's own surface has around it.
+                if p.which == 0 {
+                    let _ = self.to_render.send(ToRender::Monitor((w as f32, h as f32)));
+                }
             }
         }
         // It had already been handed over and has changed size: someone stretched the window.
@@ -2655,6 +2716,12 @@ impl PointerHandler for State {
                 let which = self.placed.iter().find(|p| p.role.wl() == &e.surface).map(|p| p.which);
                 eprintln!("pointer · {:?} on surface {which:?} at {:.0},{:.0}", e.kind, x, y);
             }
+            // On a surface its margins carry, the pointer is said with how far it has gone.
+            let carried = {
+                let m = CARRIED.lock().unwrap();
+                if m.is_empty() { None } else { self.placed.iter().find(|p| p.role.wl() == &e.surface).and_then(|p| m.get(&p.which).copied()) }
+            };
+            let pointer_at = |x: f32, y: f32| carried.map_or(ToRender::Pointer(Some((x, y))), |by| ToRender::PointerOn((x, y), by));
             match e.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                     if let PointerEventKind::Enter { serial } = e.kind {
@@ -2666,7 +2733,7 @@ impl PointerHandler for State {
                     }
                     // The mouse goes to the render, which is the one that knows what's underneath;
                     // it reaches the logic already with a name.
-                    let _ = self.to_render.send(ToRender::Pointer(Some((x, y))));
+                    let _ = self.to_render.send(pointer_at(x, y));
                 }
                 PointerEventKind::Leave { .. } => {
                     let _ = self.to_render.send(ToRender::Pointer(None));
@@ -2689,7 +2756,7 @@ impl PointerHandler for State {
                         self.quit = true;
                         continue;
                     }
-                    let _ = self.to_render.send(ToRender::Pointer(Some((x, y))));
+                    let _ = self.to_render.send(pointer_at(x, y));
                     let _ = self.to_render.send(if from_agent { ToRender::AgentButton(btn, down) } else { ToRender::Button(btn, down) });
                 }
                 PointerEventKind::Axis { vertical, horizontal, .. } => {
@@ -3050,6 +3117,9 @@ impl OutputHandler for State {
         self.note_turn(&output);
         self.place_on(&output, qh);
         let Some((w, h)) = self.outputs.info(&output).and_then(|i| i.logical_size) else { return };
+        if self.placed.iter().any(|p| p.which == 0 && p.output == output && matches!(p.role, Role::Layer(_))) {
+            let _ = self.to_render.send(ToRender::Monitor((w as f32, h as f32)));
+        }
         let Some(c) = MOVABLE_LAYERS.get() else { return };
         let mut any = false;
         for (_, layer, _, stretch, _) in c.placed.lock().unwrap().iter_mut() {

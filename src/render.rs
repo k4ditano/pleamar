@@ -655,6 +655,11 @@ pub fn run(
     // while its `while` holds. 0 is the monitor's.
     let mut rate_now: u32 = 0;
     let mut anchors_set: Vec<crate::scene::SurfaceAnchor> = Vec::new();
+    // The margins each surface has now, for those whose `margin:` changes while running.
+    let mut margins_set: Vec<[i32; 4]> = Vec::new();
+    // How far the surface under the pointer has been carried by its margins, and how far it had been when the drag began.
+    let mut carried = (0.0f32, 0.0f32);
+    let mut drag_carried: Option<(f32, f32)> = None;
     // Which monitor each surface whose `screens:` is a text fact was last sent to.
     let mut screens_set: Vec<Option<String>> = Vec::new();
     let mut layers_seen: u64 = 0;
@@ -925,7 +930,7 @@ pub fn run(
                 let kind = match m {
                     ToRender::Frame(_) => 0,
                     ToRender::Cursor(..) => 1,
-                    ToRender::Pointer(_) => 2,
+                    ToRender::Pointer(_) | ToRender::PointerOn(..) => 2,
                     ToRender::Fact(..) | ToRender::ExternalFact(..) => 3,
                     ToRender::Text(..) => 4,
                     ToRender::Command(_) => 5,
@@ -941,7 +946,7 @@ pub fn run(
             }
         }
         for m in incoming {
-            if pressed && matches!(m, ToRender::Pointer(_) | ToRender::Button(..) | ToRender::AgentButton(..)) {
+            if pressed && matches!(m, ToRender::Pointer(_) | ToRender::PointerOn(..) | ToRender::Button(..) | ToRender::AgentButton(..)) {
                 held_back.push(m);
                 continue;
             }
@@ -993,6 +998,7 @@ pub fn run(
                     warning = None;
                     with_warning.clear();
                     anchors_set = fresh.surfaces.iter().map(|s| s.anchor).collect();
+                    margins_set = fresh.surfaces.iter().map(|s| s.margin).collect();
                     blinks = fresh
                         .behaviors
                         .iter()
@@ -1318,6 +1324,15 @@ pub fn run(
                     Some(i) => facts[i] = v,
                     None => eprintln!("render · I don't know the fact '{name}'"),
                 },
+                ToRender::Monitor((w, h)) => {
+                    for (k, (name, _)) in scene.facts.iter().enumerate() {
+                        match *name {
+                            "monitor.width" => facts[k] = w,
+                            "monitor.height" => facts[k] = h,
+                            _ => {}
+                        }
+                    }
+                }
                 ToRender::LockScreen(held) => {
                     if !held {
                         // It has not granted it, or it has ended it: what was being painted is released
@@ -1464,9 +1479,19 @@ pub fn run(
                 // Gone in the same round something is let go: after it, so the
                 // zone it was let go on receives it.
                 ToRender::Pointer(None) if !drops.is_empty() => pointer_later = true,
+                // On a surface its margins carry: where it is on it, and how far the surface has gone.
+                ToRender::PointerOn(p, by) => {
+                    pointer = Some(p);
+                    real_pointer = Some(p);
+                    carried = by;
+                    last_activity = crate::clock::now();
+                }
                 ToRender::Pointer(p) => {
                     pointer = p;
                     real_pointer = p;
+                    if p.is_some() {
+                        carried = (0.0, 0.0);
+                    }
                     last_activity = crate::clock::now();
                     // Gone with the button down, its release goes elsewhere: a
                     // press that changed the input region under it (a panel that
@@ -2960,7 +2985,12 @@ pub fn run(
                 seen_cursor
             };
             let local = focus.and_then(|k| scene.zones.get(k)).map_or((px, py), |z| z.to_local(Ctx { props: &props, facts: &facts, seen: None }, px, py));
-            let (dx, dy) = drag.map_or((0.0, 0.0), |(_, o, _)| (px - o.0, py - o.1));
+            // How far the mouse went on the screen: a surface that moves under it (its `margin:`
+            // follows the drag) takes the pointer back to where it was pressed, and what it moved counts.
+            // (An agent's hand goes where it is told on the surface, wherever that is: nothing to add.)
+            let by = if acting.as_ref().is_some_and(|a| a.hand.is_some()) { (0.0, 0.0) } else { carried };
+            let from = if drag.is_some() { *drag_carried.get_or_insert(by) } else { drag_carried.take().unwrap_or(by) };
+            let (dx, dy) = drag.map_or((0.0, 0.0), |(_, o, _)| (px - o.0 + by.0 - from.0, py - o.1 + by.1 - from.1));
             for (k, (name, _)) in scene.facts.iter().enumerate() {
                 match *name {
                     "pointer.x" => facts[k] = px,
@@ -5105,6 +5135,7 @@ pub fn run(
         if placed_now != layers_seen {
             layers_seen = placed_now;
             anchors_set.clear();
+            margins_set.clear();
             levels_set.clear();
             reserves_set.clear();
         }
@@ -5164,6 +5195,19 @@ pub fn run(
             if let Some(a) = wants.filter(|a| anchors_set[k] != *a) {
                 anchors_set[k] = a;
                 crate::platform::reanchor(k, a);
+            }
+        }
+        // And its margins, when they are worked out from facts: a widget carried over the desktop.
+        if margins_set.len() != scene.surfaces.len() {
+            margins_set = scene.surfaces.iter().map(|s| s.margin).collect();
+        }
+        for (k, sup) in scene.surfaces.iter().enumerate() {
+            let Some(from) = &sup.margin_from else { continue };
+            let c = Ctx { props: &props, facts: &facts, seen: None };
+            let wants = [0, 1, 2, 3].map(|j| from[j].eval(c).round() as i32);
+            if margins_set[k] != wants {
+                margins_set[k] = wants;
+                crate::platform::remargin(k, wants);
             }
         }
 
