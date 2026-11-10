@@ -103,6 +103,7 @@ impl Script for FromFile {
             Event::Received(z, kind, d) => println!("logic  · something was dropped on '{z}', a {kind}: {d:?}"),
             Event::Signal(s, None) => println!("logic  · '{s}' happened"),
             Event::Signal(s, Some(v)) => println!("logic  · '{s}' happened, with {v:.2}"),
+            Event::SignalTable(s, values) => println!("logic  · '{s}' happened, with {values:?}"),
             _ => {}
         }
     }

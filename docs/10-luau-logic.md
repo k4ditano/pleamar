@@ -12,6 +12,7 @@ The logic **does not animate, does not paint and knows nothing about coordinates
 fact.open = true                          -- say what is true. It reads back as what it is: `true`, a number, or `"critical"`
 text["notice.title"] = "Meeting in 5 min" -- say what a live text says
 emit("confirmed")                         -- that something has happened
+-- and from the scene, `emit moved(x: local.x, y: local.y)` arrives as a table: on("moved", function(p) … p.x, p.y … end)
 play("joy")                               -- ask for a gesture (the scene will grant it or not, by its class)
 
 on("view_event", function(n) … end)       -- an event the scene lets out (`event x ->`), with its payload

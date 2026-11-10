@@ -1,0 +1,18 @@
+// expect: ok
+language 0.1
+// An `emit` with several values: by name, the logic gets `{x = …, y = …}`; by
+// place, `{…, …}`. A rule of the scene hears the first.
+scene Several {
+    surface { size: 200, 100 }
+    fact got.x = 0
+    fact got.y = 0
+    fact got.sum = 0
+    fact first = 0
+    event point ->
+    event pair ->
+    event local_pair
+    zone box pad { from: 0, 0; size: 200, 100 }
+    on press pad { emit point(x: local.x, y: local.y); emit pair(3, 4); emit local_pair(7, 8) }
+    on local_pair(v) { first = v }
+    text "{got.x, 0} {got.y, 0} {got.sum, 0} {first, 0}" { at: 10, 50; size: 16; color: #f5f7f5 }
+}

@@ -1718,6 +1718,22 @@ impl Script for LuauScript {
                 self.subscribe_services();
             }
             Event::Signal(n, payload) => self.dispatch(n, payload.map_or(Value::Nil, number)),
+            // `emit moved(x: a, y: b)`: a table, `{x = …, y = …}`; unnamed, `{…, …}` by place.
+            Event::SignalTable(n, values) => {
+                let Some(lua) = &self.lua else { return };
+                let Ok(t) = lua.create_table() else { return };
+                let mut place = 0;
+                for (name, v) in values {
+                    let _ = match name {
+                        Some(k) => t.set(k, number(v)),
+                        None => {
+                            place += 1;
+                            t.set(place, number(v))
+                        }
+                    };
+                }
+                self.dispatch(n, Value::Table(t));
+            }
             Event::Enter(z) => self.dispatch(&format!("enter:{z}"), Value::Nil),
             Event::Leave(z) => self.dispatch(&format!("leave:{z}"), Value::Nil),
             Event::Press(z) => self.dispatch(&format!("press:{z}"), Value::Nil),

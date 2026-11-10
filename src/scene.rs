@@ -2060,6 +2060,10 @@ pub enum Effect {
     Toggle(FactId),
     /// A signal, with a payload if wanted: `emit opened(i)`. It is evaluated when it fires.
     Signal(SignalId, Option<Expr>),
+    /// `emit moved(x, y)`, `emit moved(x: a, y: b)`: several values, by
+    /// their place or by their name. The logic gets them as a table; a rule
+    /// of the scene, `on moved(v)`, the first.
+    SignalWith(SignalId, Vec<(Option<&'static str>, Expr)>),
     /// A push to the spring's velocity. The amount is evaluated when it
     /// fires, so it can depend on what is going on: the bounce of
     /// a countdown decreases with the number that is left.
@@ -2148,6 +2152,7 @@ impl Effect {
             Effect::Fact(h, e) => Effect::Fact(*h, e.with_payload(v)),
             Effect::FactAt(hs, i, e) => Effect::FactAt(hs.clone(), i.with_payload(v), e.with_payload(v)),
             Effect::Signal(s, e) => Effect::Signal(*s, e.as_ref().map(|e| e.with_payload(v))),
+            Effect::SignalWith(s, values) => Effect::SignalWith(*s, values.iter().map(|(n, e)| (*n, e.with_payload(v))).collect()),
             Effect::Impulse(p, e) => Effect::Impulse(*p, e.with_payload(v)),
             Effect::Window(a, e) => Effect::Window(*a, e.with_payload(v)),
             Effect::WindowTo(w, to) => Effect::WindowTo(w.with_payload(v), to.with_payload(v)),
@@ -2957,6 +2962,8 @@ pub enum Event {
     Alarm(&'static str),
     /// A scene signal that goes out to the logic, with its payload if it brings one.
     Signal(&'static str, Option<f32>),
+    /// The same with several values (`emit moved(x: a, y: b)`): unnamed, by their place.
+    SignalTable(&'static str, Vec<(Option<&'static str>, f32)>),
     /// A rule has changed a fact: the logic keeps track of what is true.
     Fact(&'static str, f32),
     /// A command that was launched has finished: (which one, what it wrote, with what code).

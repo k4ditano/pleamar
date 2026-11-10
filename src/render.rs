@@ -810,6 +810,8 @@ pub fn run(
         }
         // (which one, whether it comes from the logic)
         let mut signals: Vec<(usize, bool, Option<f32>)> = late_signals.drain(..).map(|s| (s.0 as usize, false, None)).collect();
+        // Of those, the ones with several values (`emit moved(x, y)`): by their place in `signals`.
+        let mut signal_tables: Vec<(usize, Vec<(Option<&'static str>, f32)>)> = Vec::new();
         let mut gestures_asked: Vec<usize> = Vec::new();
         // What a `watch` is told of this frame besides what changed: events, and presses.
         let mut heard_events: Vec<(&str, &'static str)> = Vec::new();
@@ -3457,6 +3459,12 @@ pub fn run(
                         let v = payload.as_ref().map(|e| e.eval(Ctx { props: &props, facts: &facts, seen: None }));
                         signals.push((s.0 as usize, false, v));
                     }
+                    Effect::SignalWith(s, values) => {
+                        let c = Ctx { props: &props, facts: &facts, seen: None };
+                        let values: Vec<(Option<&'static str>, f32)> = values.iter().map(|(n, e)| (*n, e.eval(c))).collect();
+                        signal_tables.push((signals.len(), values.clone()));
+                        signals.push((s.0 as usize, false, values.first().map(|v| v.1)));
+                    }
                     Effect::Impulse(p, v) => {
                         let v = v.eval(Ctx { props: &props, facts: &facts, seen: None });
                         props[p.0 as usize].v += v;
@@ -3766,7 +3774,9 @@ pub fn run(
                     }
                 }
             }
-            for (s, from_logic, payload) in std::mem::take(&mut signals) {
+            let mut tables = std::mem::take(&mut signal_tables).into_iter().peekable();
+            for (place, (s, from_logic, payload)) in std::mem::take(&mut signals).into_iter().enumerate() {
+                let table = tables.next_if(|(k, _)| *k == place).map(|(_, t)| t);
                 let id = SignalId(s as u32);
                 if let Some(a) = &mut acting {
                     a.events.push(("event", scene.signals[s].0));
@@ -3812,7 +3822,10 @@ pub fn run(
                 }
                 let (name, goes_out) = scene.signals[s];
                 if goes_out && !from_logic {
-                    let _ = to_logic.send(Event::Signal(name, payload));
+                    let _ = to_logic.send(match table {
+                        Some(t) => Event::SignalTable(name, t),
+                        None => Event::Signal(name, payload),
+                    });
                 }
             }
             // Gestures: one only cuts off another of its class or lower.

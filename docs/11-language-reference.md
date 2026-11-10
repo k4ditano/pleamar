@@ -1810,7 +1810,7 @@ scene Told {
 | `prop: value ~spring after 70ms` | that property heads there. Without `~`, **with its own spring**: the one it was declared with |
 | `fact = expr` | evaluated on firing |
 | `toggle fact` | |
-| `emit event` · `emit event(expr)` | with a payload, which reaches the logic and the rules that read it with `on event(v)` |
+| `emit event` · `emit event(expr)` · `emit event(a, b)` · `emit event(x: a, y: b)` | with a payload, which reaches the logic and the rules that read it with `on event(v)`. With several values (up to 8), the logic gets a table —by name, `on("moved", function(p) … p.x … end)`; by place, `t[1]`, `t[2]`— and a rule of the scene, `on event(v)`, the first: `emit connect(node: n.index, branch: 1)` instead of `n.index * 2 + 1` |
 | `impulse prop -620` · `impulse pop left * 5` | a shove: it adds to the velocity of the spring. The amount is evaluated on firing, so it can depend on what is going on: a countdown's bounce shrinks with the number left |
 | `ripple zone` | a ring of light from the centre of that zone through the glass, without a press or a pointer move; nothing if the zone is hidden, inactive or off screen, or with reduced motion. A new ripple replaces the previous one. Naming a shape here makes it a zone, like any rule that names it: it stops the clicks under it |
 | `play gesture` | it asks for it; it will be granted or not, depending on its class |

@@ -8634,14 +8634,36 @@ impl<'a> Compiler<'a> {
                         // `emit opened` or, with a payload, `emit opened(i)`.
                         "emit" => {
                             let s = self.signal(&mut c)?;
-                            let payload = if c.sym("(") {
-                                let e = self.expr(&mut c)?;
-                                c.expect_sym(")")?;
-                                Some(e)
+                            if !c.sym("(") {
+                                Effect::Signal(s, None)
                             } else {
-                                None
-                            };
-                            Effect::Signal(s, payload)
+                                // `emit moved(x, y)` or `emit moved(x: local.x, y: local.y)`:
+                                // several values go to the logic as a table.
+                                let mut values: Vec<(Option<&'static str>, Expr)> = Vec::new();
+                                loop {
+                                    let named = matches!(c.peek(), Some(TokenKind::Id(_))) && matches!(c.tokens.get(c.i + 1).map(|t| &t.kind), Some(TokenKind::Sym(":")));
+                                    let name = if named {
+                                        let n = c.id("the name of the value")?;
+                                        c.expect_sym(":")?;
+                                        Some(interned(&n))
+                                    } else {
+                                        None
+                                    };
+                                    values.push((name, self.expr(&mut c)?));
+                                    if !c.sym(",") {
+                                        break;
+                                    }
+                                }
+                                c.expect_sym(")")?;
+                                if values.len() > 8 {
+                                    return c.error("an `emit` carries at most 8 values: for more, the logic can read facts");
+                                }
+                                if values.len() == 1 && values[0].0.is_none() {
+                                    Effect::Signal(s, values.pop().map(|v| v.1))
+                                } else {
+                                    Effect::SignalWith(s, values)
+                                }
+                            }
                         }
                         "impulse" => Effect::Impulse(self.prop(&mut c)?, self.expr(&mut c)?),
                         "play" => {
