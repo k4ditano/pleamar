@@ -1,0 +1,13 @@
+// expect: ok
+language 0.9
+// A chat as a chat is: rows of their own heights, by identity, stuck to the end, and what is
+// seen kept in place when what is above it changes (`keep: visible`).
+scene KeptFeed {
+    surface { size: 320, 320 }
+    model said max 60 { id: number; h: number }
+    column chat { at: 10, 10; view: 300, 300; stick: end; keep: visible; gap: 4
+        for m in said key m.id {
+            box { size: 300, m.h; corner: 8; color: #33405a }
+        }
+    }
+}

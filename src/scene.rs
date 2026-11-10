@@ -415,6 +415,24 @@ pub enum Expr {
     Payload,
 }
 
+/// `Behavior::Places`: each copy's start, in order of their places (ties by copy).
+pub fn run_places(places: &[Expr], lengths: &[Expr], start: &Expr, at: &[PropId], props: &mut [Animated], facts: &[f32], mut changed: impl FnMut(PropId)) {
+    let c = Ctx { props: &*props, facts, seen: None };
+    let keys: Vec<f32> = places.iter().map(|e| e.eval(c) + 0.0).collect();
+    let lengths: Vec<f32> = lengths.iter().map(|e| e.eval(c)).collect();
+    let mut running = start.eval(c);
+    let mut copies: Vec<usize> = (0..places.len()).collect();
+    copies.sort_by(|a, b| keys[*a].total_cmp(&keys[*b]).then(a.cmp(b)));
+    for k in copies {
+        let a = &mut props[at[k].0 as usize];
+        if a.x.to_bits() != running.to_bits() {
+            changed(at[k]);
+        }
+        a.set(running);
+        running += lengths[k];
+    }
+}
+
 /// Runs a `Sort`: each slot's keys, the slots in their order, and each
 /// property written. What changed is handed to `changed`.
 pub fn run_sort(keys: &[Vec<Expr>], ord: &[PropId], pos: &[PropId], props: &mut [Animated], facts: &[f32], mut changed: impl FnMut(PropId)) {
@@ -1459,6 +1477,15 @@ pub enum Behavior {
     /// place `p`, and `pos[i]`, the place of slot `i`. Worked out once, when a
     /// key's inputs change, for every reader.
     Sort { keys: Vec<Vec<Expr>>, ord: Vec<PropId>, pos: Vec<PropId> },
+    /// The copies of a `for … key` in a layout, each where its record goes: in
+    /// order of their places, each one after what the ones before it take
+    /// (`lengths`, with the gap, 0 when not there). `at[k]` is where copy `k` starts.
+    Places { places: Vec<Expr>, lengths: Vec<Expr>, start: Expr, at: Vec<PropId> },
+    /// `keep: visible` on a layout with `view:`: what is seen stays where it is when
+    /// what is above it grows or shrinks. Each child's start and length along the
+    /// layout (`starts`, `lengths`, 0 long when not there); the scroll moves by what the
+    /// first child seen moved. Not while `pinned` (a `stick: end` at its end) holds.
+    Keep { scroll: PropId, starts: Vec<Expr>, lengths: Vec<Expr>, until: Expr, pinned: Option<FactId> },
     /// prop += per_second · dt, endlessly: a hand that goes round and round.
     Advance { prop: PropId, per_second: Expr },
     /// Two properties that pull towards the pointer, with their own spring.
@@ -2144,6 +2171,9 @@ pub struct Scene {
     pub props: Vec<(&'static str, f32, Spring)>,
     pub instrs: Vec<Instr>,
     pub behaviors: Vec<Behavior>,
+    /// Other names of some properties, as the scene writes them (`chat.scroll` for the
+    /// property it keeps inside, `·scroll3`): for whoever asks by name (`--record`).
+    pub prop_aliases: Vec<(&'static str, PropId)>,
     pub zones: Vec<Zone>,
     /// The groups with `z:`, drawn over or under their siblings by it.
     pub zblocks: Vec<ZBlock>,
@@ -3112,6 +3142,27 @@ mod tests {
             e = e.mix(Expr::K(k as f32), PropId(0).e().gt(k as f32));
         }
         assert!(e.node_count() < 200, "{} nodes", e.node_count());
+    }
+}
+
+#[cfg(test)]
+mod places_tests {
+    use super::*;
+
+    /// Copies of a `for … key`: each goes after what the records before it take, each as long
+    /// as it is, in order of their places; ties by copy.
+    #[test]
+    fn each_copy_goes_after_the_records_before_it() {
+        let at: Vec<PropId> = (0..4).map(PropId).collect();
+        let mut props: Vec<Animated> = (0..4).map(|_| Animated::at(0.0, Spring::LIVELY)).collect();
+        // Copy 0 holds the third record (44 long with its gap), copy 1 the first (84), copy 2 the
+        // second (24), copy 3 is not there (0, its place says nothing).
+        let places = vec![Expr::K(2.0), Expr::K(0.0), Expr::K(1.0), Expr::K(0.0)];
+        let lengths = vec![Expr::K(44.0), Expr::K(84.0), Expr::K(24.0), Expr::K(0.0)];
+        run_places(&places, &lengths, &Expr::K(10.0), &at, &mut props, &[], |_| {});
+        let x: Vec<f32> = props.iter().map(|p| p.x).collect();
+        // In place order: copy 1 at 10, copy 3 (tied at place 0, after it) at 94 taking nothing, copy 2 at 94, copy 0 at 118.
+        assert_eq!(x, vec![118.0, 10.0, 94.0, 94.0]);
     }
 }
 

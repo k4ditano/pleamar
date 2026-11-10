@@ -1,0 +1,8 @@
+// expect: error «`keep: visible` is for a layout with `view:`»
+language 0.9
+scene KeepNoView {
+    surface { size: 100, 100 }
+    column { keep: visible
+        box { size: 10, 10; color: #fff }
+    }
+}

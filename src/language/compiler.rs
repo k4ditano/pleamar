@@ -6386,6 +6386,25 @@ impl<'a> Compiler<'a> {
             }
             None => false,
         };
+        // `keep: visible`: what is seen stays where it is when what is above it grows,
+        // shrinks, comes or goes (CSS's scroll anchoring). Not while a `stick: end` is at its end.
+        let keep_visible = match p.get_mut("keep") {
+            Some(c) => {
+                let w = c.id("visible")?;
+                c.expect_end()?;
+                if w != "visible" {
+                    return Err(CompileError::at(n.line, n.col, "`keep` says what a list with `view:` keeps in place: `keep: visible`"));
+                }
+                if view.is_none() {
+                    return Err(CompileError::at(n.line, n.col, "`keep: visible` is for a layout with `view:`: one that scrolls"));
+                }
+                if name.is_none() {
+                    return Err(CompileError::at(n.line, n.col, "`keep: visible` is for a list with a name, the one its scroll goes by: `column chat { view: 300, 400; keep: visible … }`"));
+                }
+                true
+            }
+            None => false,
+        };
         // `wrap: 5`: five per line and on to the next. A grid, with the cell the
         // size of the biggest child; what is not there leaves no gap.
         let wrap = match p.get_mut("wrap") {
@@ -6522,13 +6541,14 @@ impl<'a> Compiler<'a> {
             place: Option<Expr>,
             /// Its instructions, to be able to tell it its width when it is known.
             own_instrs: std::ops::Range<usize>,
-            /// A copy of a `for … key`: its place in the list, which is where it goes,
-            /// whatever copy it is (they are all as long as the first).
+            /// A copy of a `for … key`: its record's place in the list, which says where it
+            /// goes (after what the records before it take), whatever copy it is.
             keyed: Option<Expr>,
             /// A copy of a window the layout works out: where the window starts.
             windowed: Option<Expr>,
         }
         // What is seen is a window onto what there is: it is clipped, and what is inside goes shifted.
+        let mut scroll_transform = 0usize;
         let scroller = view.as_ref().map(|(vw, vh)| {
             self.copies += 1;
             let prop = self.e.prop_with(interned(&format!("·scroll{}", self.copies)), 0.0, spring.unwrap_or(Spring::QUICK));
@@ -6537,6 +6557,8 @@ impl<'a> Compiler<'a> {
             let scroll = Expr::K(0.0) - prop.e();
             let translate = if is_row { (scroll, Expr::K(0.0)) } else { (Expr::K(0.0), scroll) };
             let t = Transform { translate, ..Transform::at((0.0.into(), 0.0.into())) };
+            // (Where it is: once what is inside is measured, the shift is kept within it, see below.)
+            scroll_transform = self.e.instrs.len();
             self.e.paint(Instr::Transform(Some(t.clone())));
             self.under.push(t);
             prop
@@ -6799,14 +6821,35 @@ impl<'a> Compiler<'a> {
         };
         let cell_across = max_across.clone() + gap.clone();
         let mut running = padding.clone();
+        // The copies of a `for … key`: each one after what the records before it take, worked
+        // out in order of their places (`Behavior::Places`). They used to be as long as the first.
+        let mut keyed_places: Vec<Expr> = Vec::new();
+        let mut keyed_lengths: Vec<Expr> = Vec::new();
+        let mut keyed_at: Vec<Option<PropId>> = Vec::new();
+        for p in &placed_items {
+            keyed_at.push(p.keyed.as_ref().map(|place| {
+                self.copies += 1;
+                let at = self.e.prop_with(interned(&format!("·placed{}", self.copies)), 0.0, Spring::LIVELY);
+                keyed_places.push(place.clone());
+                keyed_lengths.push((length_of(p) + gap.clone()) * p.visible.clone());
+                at
+            }));
+        }
+        if !keyed_places.is_empty() {
+            let at: Vec<PropId> = keyed_at.iter().flatten().copied().collect();
+            self.e.behaviors.push(Behavior::Places { places: std::mem::take(&mut keyed_places), lengths: std::mem::take(&mut keyed_lengths), start: padding.clone(), at });
+        }
+        // Where each child starts along and how long it is (0 when not there), for `keep: visible`.
+        let mut kept_starts: Vec<Expr> = Vec::new();
+        let mut kept_lengths: Vec<Expr> = Vec::new();
         // How many of the earlier ones are there: what is not seen takes no cell.
         let mut placed_so_far = Expr::K(0.0);
         for (k, p) in placed_items.iter().enumerate() {
             // A separator does not open another gap: it goes in the middle of the one already between its neighbours.
             let mut along = if p.separator { running.clone() - gap.clone() * 0.5 } else { running.clone() };
             // A copy of a `for … key` goes to its record's place: what copy it is says nothing.
-            if let Some(place) = &p.keyed {
-                along = padding.clone() + place.clone().max(Expr::K(0.0)) * (length_of(p) + gap.clone());
+            if let Some(at) = keyed_at[k] {
+                along = at.e();
             }
             // A copy of a window the layout works out sits where its record is in the whole list.
             if let Some(first) = &p.windowed {
@@ -6840,6 +6883,10 @@ impl<'a> Compiler<'a> {
                 None if align_factor == 0.0 => padding.clone(),
                 None => padding.clone() + (max_across.clone() - breadth_of(p)) * align_factor,
             });
+            if keep_visible {
+                kept_starts.push(along.clone());
+                kept_lengths.push(length_of(p) * p.visible.clone());
+            }
             let translate = if is_row { (along, across) } else { (across, along) };
             if let Instr::Transform(Some(t)) = &mut self.e.instrs[p.instr] {
                 t.translate = translate.clone();
@@ -6879,6 +6926,27 @@ impl<'a> Compiler<'a> {
         // scrolling is over the whole list.
         if let Some(e) = &given_content {
             if is_row { content.0 = e.clone() } else { content.1 = e.clone() }
+        }
+        // What is inside is shifted by the scroll kept within it, `0` to `content - view`: when what
+        // is inside shrinks, its end stays at the window's end at once. Shifted by the scroll as it
+        // was, a row below that shrank left a gap under the end until the scroll's spring caught up
+        // (300 ms with `stick: end`).
+        if let (Some(prop), Some((vw, vh))) = (&scroller, &view) {
+            // (What is seen measures what the wheel's range does: the size given, or the window.)
+            let (vw, vh) = given_size.clone().unwrap_or_else(|| (vw.clone(), vh.clone()));
+            let seen = if is_row { vw } else { vh };
+            let along = if is_row { content.0.clone() } else { content.1.clone() };
+            let until = self.shared("scroll_until", (along - seen).max(Expr::K(0.0)));
+            let shift = Expr::K(0.0) - prop.e().max(Expr::K(0.0)).min(until);
+            let translate = if is_row { (shift, Expr::K(0.0)) } else { (Expr::K(0.0), shift) };
+            if let Instr::Transform(Some(t)) = &mut self.e.instrs[scroll_transform] {
+                t.translate = translate.clone();
+            }
+            for c in &mut self.candidates[base_candidates..] {
+                if let Some(u) = c.under.get_mut(level - 1) {
+                    u.translate = translate.clone();
+                }
+            }
         }
         // With `view:`, towards the outside it takes what is seen, not what it carries inside.
         // What it measures: what was given if it was given, what is seen if there is a window, and otherwise,
@@ -6968,6 +7036,9 @@ impl<'a> Compiler<'a> {
                     self.facts.insert(format!("{name}.pinned"), f);
                     f
                 });
+                if keep_visible {
+                    self.e.behaviors.push(Behavior::Keep { scroll: *prop, starts: std::mem::take(&mut kept_starts), lengths: std::mem::take(&mut kept_lengths), until: until.clone(), pinned });
+                }
                 self.scrolls.push((name.clone(), *prop, until, step.clone(), spring.unwrap_or(Spring::QUICK), grab, pinned));
             }
             let target = match self.scopes.last_mut().map(Rc::make_mut) {
@@ -6985,6 +7056,7 @@ impl<'a> Compiler<'a> {
                 // And as a real property: a rule can take it wherever it wants
                 // (`list.scroll: 0 ~calm`), not only the wheel.
                 self.props.insert(format!("{name}.scroll"), *prop);
+                self.e.prop_aliases.push((interned(&format!("{name}.scroll")), *prop));
             }
             // Whoever read it before this point read the property declared early: here it is filled in.
             let content_length = if is_row { content.0.clone() } else { content.1.clone() };

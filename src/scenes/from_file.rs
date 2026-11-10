@@ -480,6 +480,8 @@ mod tests {
                 props[prop.0 as usize].x = to.eval(crate::scene::Ctx { props: &props, facts: &facts, seen: None });
             } else if let crate::scene::Behavior::Sort { keys, ord, pos } = b {
                 crate::scene::run_sort(keys, ord, pos, &mut props, &facts, |_| {});
+            } else if let crate::scene::Behavior::Places { places, lengths, start, at } = b {
+                crate::scene::run_places(places, lengths, start, at, &mut props, &facts, |_| {});
             }
         }
         let mut out = std::collections::HashMap::new();

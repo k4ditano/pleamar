@@ -311,7 +311,7 @@ for m in menu { …  for it in m.items { text it.label { … } } }
 
 **A file that is written again under the same name** —a cover, a capture, a picture made for the moment— is asked for with a version: `"/tmp/cover.jpg?3"`, whatever follows the last `?` being a number. Each new number loads the file again **into the place the last one had** in the atlas, so changing it a thousand times costs the same as once; a new name, instead, takes new room. An image asked for bigger than a quarter of the atlas (2048² real pixels), or wider or taller than 2046, is not put in it: it is a texture of its own, with the file's own pixels —never made bigger on the way, only smaller where it is bigger than it is ever painted— up to what the card allows on a side (8192 at most). A wallpaper comes out as sharp as its file. Each is megabytes on the card, so a live one that goes unseen for 120 frames is let go and loaded again if it comes back.
 
-**Who each record is: `key`.** `for m in said key m.id` walks the model by identity: a record keeps the copy it got while it is in the list —its springs, its hover, what it has open stay with it— and a new one takes the first copy left free. In a `column` or a `row` each copy goes to its record's place (they are all taken as long as the first), so with the layout's spring (`column feed ~quick`) taking the first away moves the others up instead of changing what each one says. `m.index` is the record's place. The key is a field of the model's own records (a number or a text the logic keeps unique), and a model has one.
+**Who each record is: `key`.** `for m in said key m.id` walks the model by identity: a record keeps the copy it got while it is in the list —its springs, its hover, what it has open stay with it— and a new one takes the first copy left free. In a `column` or a `row` each copy goes to its record's place, after what the records before it take —each as long as it is—, so with the layout's spring (`column feed ~quick`) taking the first away moves the others up instead of changing what each one says. `m.index` is the record's place. The key is a field of the model's own records (a number or a text the logic keeps unique), and a model has one.
 
 An inner list is walked with `for it in m.items`, and it has its `m.items.count` and its `m.items.total`. **`list children max 6 depth 2`**, with no block, are records like the outer one, nested inside each other down to that depth (1 to 6): a tree, like the menu of an application. It is walked with as many `for` as levels are to be shown. Everything unfolds on load: 8 × 6 is 48 records, and the ceiling across all the lists of a model is 4096.
 
@@ -1257,6 +1257,10 @@ box { from: 276, 16 + list.scroll / max(list.content, 1) * 208
 
 **`stick: end`** is a chat's, a log's: the list starts at its end and **stays there while what is inside grows**, unless it was scrolled away from it to read; scrolled back to the end, it sticks again. It publishes **`list.pinned`** —1 at the end, 0 when it was moved away—, which is what is needed for a «↓ new» button: `on press down { list.scroll: list.content - list.height ~calm; list.pinned = 1 }`.
 
+What is inside is always shown **within `0` and `list.content - list.height`**: when it shrinks —a row below that folds, the last message cut short— its end stays at the window's end at once, while `list.scroll` itself catches up with its spring (it used to leave a gap under the end until it did, some 300 ms).
+
+**`keep: visible`** (on a list with a name) keeps what is seen where it is when what is above it changes length —rows that come or go above, one that grows—, as a browser's scroll anchoring does: the first child seen is noted, and if it moves, the scroll moves as much. Not while a `stick: end` is at its end (then the end rules). With a `for … key` it follows the record; without `key`, the copy (taking the first record away gives every copy the next one, which it cannot tell from scrolling).
+
 ```
 column chat { at: 16, 16;  view: 268, 360;  stick: end;  gap: 8
     for m in said {
@@ -1985,7 +1989,7 @@ properties.group: pivot rotate scale move opacity size show z grow span blur glo
 properties.popup: at size open keyboard parent
 properties.children: move
 properties.grid: at columns gap width row show opacity
-properties.layout: at anchor gap padding align fill border glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight corner show opacity cursor view step stick content wrap size grow place
+properties.layout: at anchor gap padding align fill border glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight corner show opacity cursor view step stick keep content wrap size grow place
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick rgb
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still

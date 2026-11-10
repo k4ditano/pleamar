@@ -91,7 +91,8 @@ const HELP: &str = "pleamar [options]
   --answer-as NAME    `--say NAME …` reaches it, instead of its scene's name
   --record NAMES      prints what those properties, facts or texts are worth on every
                       frame, as «ms<tab>value…», to check an animation against its
-                      contract: «--record lid,body.y --seconds 20 > log.tsv»
+                      contract: «--record lid,body.y --seconds 20 > log.tsv». A list's
+                      scroll by its name: «--record chat.scroll,chat.content»
   --no-vsync          paint without waiting for the screen, to measure what a frame costs
   --reduced-motion    springs settle at once and gestures show their still face
   --film OUT          films the scene with no screen, on a virtual clock: each frame is a 60th of a
@@ -343,8 +344,12 @@ pub fn run_with(options: Vec<String>) {
     let mut a = args(options);
     // No terminal to be stopped on, for the programs it starts.
     platform::leave_terminal();
-    // The agents' skill, written again if this pleamar is not the one it speaks of.
-    skill::refresh_quietly();
+    // The agents' skill, written again if this pleamar is not the one it speaks of. Not by a
+    // film (a rehearsal: an agent filming with its real HOME found its skills rewritten), nor
+    // with `PLEAMAR_NO_SKILL_REFRESH=1`. (`--check` and the other one-shot commands never get here.)
+    if a.film.is_none() && std::env::var_os("PLEAMAR_NO_SKILL_REFRESH").is_none_or(|v| v.is_empty() || v == "0") {
+        skill::refresh_quietly();
+    }
     let blocked = Arc::new(AtomicBool::new(false));
     let (to_render, from_render) = channel();
     terminal::set_waker(to_render.clone());

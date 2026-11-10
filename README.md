@@ -323,7 +323,9 @@ bar with the time, the volume and my workspaces»* and it knows the language,
 where the file goes, how to start it with your desktop, and how to check it
 (it compiles it, opens it without a screen and looks at the picture) before
 saying it is done. `pleamar --install-skill` does it by hand;
-`pleamar --docs` prints the documentation of the version you have.
+`pleamar --docs` prints the documentation of the version you have. A film
+(`--film`) never rewrites it, and `PLEAMAR_NO_SKILL_REFRESH=1` stops any run
+from doing so.
 
 **And it can use the desktop.** A second skill, `pleamar-desktop`, teaches it
 pleamar-wm's agent hands (`pleamar-update --agent`, or `agent on` in

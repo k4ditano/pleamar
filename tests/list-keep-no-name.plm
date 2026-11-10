@@ -1,0 +1,8 @@
+// expect: error «`keep: visible` is for a list with a name»
+language 0.9
+scene KeepNoName {
+    surface { size: 100, 100 }
+    column { view: 100, 100; keep: visible
+        box { size: 10, 10; color: #fff }
+    }
+}

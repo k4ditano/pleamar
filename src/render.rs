@@ -491,6 +491,9 @@ pub fn run(
     let mut zone_memo = ZoneMemo::default();
     // What an agent's look needs of the scene, made at the first look and kept until it changes.
     let mut agent_index: Option<crate::agent::Index> = None;
+    // The `keep: visible` behaviors, and for each the first child it saw and where that child started.
+    let mut keeps: Vec<usize> = Vec::new();
+    let mut kept: std::collections::HashMap<usize, (usize, f32)> = std::collections::HashMap::new();
     let mut rule_index = RuleIndex::default();
     let mut awake = AwakeBehaviors::default();
     // Stretches of the drawing copied and put together (see `gpu::Kept`), for the timing report.
@@ -1061,6 +1064,8 @@ pub fn run(
                     draw.new_scene();
                     zone_memo = ZoneMemo::default();
                     agent_index = None;
+                    keeps = scene.behaviors.iter().enumerate().filter(|(_, b)| matches!(b, Behavior::Keep { .. })).map(|(k, _)| k).collect();
+                    kept.clear();
                     if let Some(n) = &scene.nest {
                         if nest.is_none() {
                             nest = crate::platform::start_nest(n.max, op.to_self.clone());
@@ -3139,6 +3144,10 @@ pub fn run(
                     if readers.dirty[k] && !absent_behaviors.iter().any(|r| r.contains(&k)) {
                         run_sort(keys, ord, pos, &mut props, &facts, |p| readers.touch(p));
                     }
+                } else if let Behavior::Places { places, lengths, start, at } = behavior {
+                    if readers.dirty[k] && !absent_behaviors.iter().any(|r| r.contains(&k)) {
+                        crate::scene::run_places(places, lengths, start, at, &mut props, &facts, |p| readers.touch(p));
+                    }
                 }
             }
             facts_at_binds.clone_from(&facts);
@@ -3913,6 +3922,21 @@ pub fn run(
                         }
                     }
                 }
+                // Worked out at the end of the round, with everything laid out (see `keeps`).
+                Behavior::Keep { .. } => {}
+                Behavior::Places { places, lengths, start, at } => {
+                    if readers.dirty[k] {
+                        let mut moved = false;
+                        crate::scene::run_places(places, lengths, start, at, &mut props, &facts, |p| {
+                            readers.touch(p);
+                            moved = true;
+                        });
+                        alive |= moved;
+                        if timing && moved {
+                            alive_by.push("a keyed list whose places or lengths changed".to_owned());
+                        }
+                    }
+                }
                 Behavior::Follow { prop, to } => {
                     let v = follows.kept_or_value(readers.dirty[k], k, to, &props, &facts);
                     let t = &mut props[prop.0 as usize].target;
@@ -4095,9 +4119,58 @@ pub fn run(
                         }
                     }
                 }
+            } else if let Behavior::Places { places, lengths, start, at } = behavior {
+                if readers.dirty[k] && !absent_behaviors.iter().any(|r| r.contains(&k)) {
+                    let mut moved = false;
+                    crate::scene::run_places(places, lengths, start, at, &mut props, &facts, |p| {
+                        readers.touch(p);
+                        moved = true;
+                    });
+                    if moved {
+                        alive = true;
+                        if timing {
+                            alive_by.push("a keyed list whose places or lengths moved".to_owned());
+                        }
+                    }
+                }
             }
         }
         facts_at_binds.clone_from(&facts);
+        // `keep: visible`: with everything laid out for this frame, a list whose first child seen
+        // moved (what is above it grew, shrank, came or went) moves its scroll as much, and what is
+        // seen stays where it was. Then the first child seen is looked for again.
+        for &k in &keeps {
+            let Some(Behavior::Keep { scroll, starts, lengths, until, pinned }) = scene.behaviors.get(k) else { continue };
+            if pinned.is_some_and(|f| facts.get(f.0 as usize).is_some_and(|v| *v > 0.5)) {
+                kept.remove(&k);
+                continue;
+            }
+            let c = Ctx { props: &props, facts: &facts, seen: None };
+            let starts: Vec<f32> = starts.iter().map(|e| e.eval(c)).collect();
+            let lengths: Vec<f32> = lengths.iter().map(|e| e.eval(c)).collect();
+            if let Some(&(a, was)) = kept.get(&k)
+                && lengths.get(a).is_some_and(|l| *l > 0.0)
+            {
+                let moved = starts[a] - was;
+                if moved.abs() > 0.01 {
+                    let until = until.eval(c).max(0.0);
+                    let p = &mut props[scroll.0 as usize];
+                    p.x = (p.x + moved).clamp(0.0, until);
+                    p.target = (p.target + moved).clamp(0.0, until);
+                    readers.touch(*scroll);
+                    alive = true;
+                    if timing {
+                        alive_by.push("a list keeping what is seen".to_owned());
+                    }
+                }
+            }
+            let at = props[scroll.0 as usize].x;
+            let first_seen = (0..starts.len()).filter(|i| lengths[*i] > 0.0 && starts[*i] + lengths[*i] > at).min_by(|a, b| starts[*a].total_cmp(&starts[*b]));
+            match first_seen {
+                Some(a) => kept.insert(k, (a, starts[a])),
+                None => kept.remove(&k),
+            };
+        }
 
         // The popups: open while their fact is true, where and how their expressions
         // say. If they change place or size while open, they are remade.
@@ -5717,7 +5790,7 @@ pub fn run(
                 // mark (`px#Hat1`), and nobody could guess that.
                 for n in &op.trace {
                     let n = n.as_str();
-                    let exists = scene.props.iter().any(|p| p.0 == n) || scene.facts.iter().any(|h| h.0 == n) || scene.texts.iter().any(|t| t.0 == n);
+                    let exists = scene.props.iter().any(|p| p.0 == n) || scene.prop_aliases.iter().any(|a| a.0 == n) || scene.facts.iter().any(|h| h.0 == n) || scene.texts.iter().any(|t| t.0 == n);
                     if !exists {
                         let mut close: Vec<&str> = scene
                             .props
@@ -5741,7 +5814,7 @@ pub fn run(
                 .iter()
                 .map(|n| {
                     let n = n.as_str();
-                    if let Some(i) = scene.props.iter().position(|p| p.0 == n) {
+                    if let Some(i) = scene.props.iter().position(|p| p.0 == n).or_else(|| scene.prop_aliases.iter().find(|a| a.0 == n).map(|a| a.1.0 as usize)) {
                         format!("{:.4}", props[i].x)
                     } else if let Some(i) = scene.facts.iter().position(|h| h.0 == n) {
                         format!("{:.4}", facts[i])
@@ -6596,12 +6669,12 @@ impl AwakeBehaviors {
         self.all.clear();
         self.binds.clear();
         for (k, b) in behaviors.iter().enumerate() {
-            let owned = matches!(b, Behavior::Follow { .. } | Behavior::Bind { .. } | Behavior::Sort { .. });
+            let owned = matches!(b, Behavior::Follow { .. } | Behavior::Bind { .. } | Behavior::Sort { .. } | Behavior::Places { .. });
             if owned && absent.iter().any(|r| r.contains(&k)) {
                 continue;
             }
             self.all.push(k as u32);
-            if matches!(b, Behavior::Bind { .. } | Behavior::Sort { .. }) {
+            if matches!(b, Behavior::Bind { .. } | Behavior::Sort { .. } | Behavior::Places { .. }) {
                 self.binds.push(k as u32);
             }
         }
@@ -6954,6 +7027,7 @@ impl Readers {
             .flat_map(|(k, b)| match b {
                 Behavior::Bind { prop, .. } => vec![(prop.0, k)],
                 Behavior::Sort { ord, pos, .. } => ord.iter().chain(pos).map(|p| (p.0, k)).collect(),
+                Behavior::Places { at, .. } => at.iter().map(|p| (p.0, k)).collect(),
                 _ => Vec::new(),
             })
             .collect();
@@ -6968,6 +7042,13 @@ impl Readers {
                 Behavior::Sort { keys, .. } => {
                     let (mut props, mut facts) = (Vec::new(), Vec::new());
                     for e in keys.iter().flatten() {
+                        e.inputs(&mut props, &mut facts);
+                    }
+                    Some((facts, props))
+                }
+                Behavior::Places { places, lengths, start, .. } => {
+                    let (mut props, mut facts) = (Vec::new(), Vec::new());
+                    for e in places.iter().chain(lengths).chain([start]) {
                         e.inputs(&mut props, &mut facts);
                     }
                     Some((facts, props))
