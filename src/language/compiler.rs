@@ -322,6 +322,8 @@ struct Compiler<'a> {
     /// The same for the scene's named colours.
     color_alpha: HashMap<String, Expr>,
     zone_springs: Vec<(String, PropId, PropId)>,
+    /// Their names, to know at once whether one is there (a scene with thousands of zones).
+    zone_springs_named: HashSet<String>,
     /// `level: top, overlay while …`: read at the end, when every fact is known.
     pending_levels: Vec<(usize, Level, &'a [Token], (usize, usize))>,
     /// `reserve: n while expr`: read at the end, like the levels.
@@ -522,7 +524,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), declaring_zone: false, zone_springs: Vec::new(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(), type_index: Default::default(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), declaring_zone: false, zone_springs: Vec::new(), zone_springs_named: HashSet::new(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(), type_index: Default::default(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -1289,7 +1291,7 @@ impl<'a> Compiler<'a> {
             }
             made.push(p);
         }
-        if !self.zone_springs.iter().any(|z| z.0 == g) {
+        if self.zone_springs_named.insert(g.clone()) {
             self.zone_springs.push((g, made[0], made[1]));
         }
     }

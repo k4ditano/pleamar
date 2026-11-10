@@ -500,6 +500,8 @@ pub fn run(
     // without the spring.)
     let mut stuck: std::collections::HashMap<usize, (f32, bool, Option<std::time::Instant>)> = std::collections::HashMap::new();
     let mut rule_index = RuleIndex::default();
+    // Facts and texts by their name, for what the logic and the outside say.
+    let mut names = NameIndex::default();
     let mut awake = AwakeBehaviors::default();
     // Stretches of the drawing copied and put together (see `gpu::Kept`), for the timing report.
     let (mut stretches_copied, mut stretches_made) = (0u64, 0u64);
@@ -1315,7 +1317,7 @@ pub fn run(
                         nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                     }
                 }
-                ToRender::Text(name, value) => match scene.texts.iter().position(|t| t.0 == name) {
+                ToRender::Text(name, value) => match names.text(&scene, name) {
                     Some(i) => {
                         // The field being written in, written by the logic (a mention
                         // completed, a draft restored): its cursor goes to the end of what
@@ -1328,7 +1330,7 @@ pub fn run(
                     }
                     None => eprintln!("render · I don't know the text '{name}'"),
                 },
-                ToRender::Fact(name, v) => match scene.facts.iter().position(|h| h.0 == name) {
+                ToRender::Fact(name, v) => match names.fact(&scene, name) {
                     Some(i) if name == "drag.over" && v == 0.0 && !drops.is_empty() => over_later = Some(i),
                     Some(i) => facts[i] = v,
                     None => eprintln!("render · I don't know the fact '{name}'"),
@@ -1387,7 +1389,7 @@ pub fn run(
                         let _ = to_logic.send(Event::Fact(scene.facts[h].0, 0.0));
                     }
                 }
-                ToRender::ExternalFact(name, written) => match scene.facts.iter().position(|h| h.0 == name) {
+                ToRender::ExternalFact(name, written) => match names.fact(&scene, name) {
                     Some(i) => {
                         let kind = scene.types.iter().find(|(n, _)| n == name).map(|(_, t)| t);
                         let v = kind.and_then(|t| t.from_text(&written)).or_else(|| written.parse().ok()).or(match written.as_str() { "true" => Some(1.0), "false" => Some(0.0), _ => None });
@@ -3014,8 +3016,9 @@ pub fn run(
             let by = if acting.as_ref().is_some_and(|a| a.hand.is_some()) { (0.0, 0.0) } else { carried };
             let from = if drag.is_some() { *drag_carried.get_or_insert(by) } else { drag_carried.take().unwrap_or(by) };
             let (dx, dy) = drag.map_or((0.0, 0.0), |(_, o, _)| (px - o.0 + by.0 - from.0, py - o.1 + by.1 - from.1));
-            for (k, (name, _)) in scene.facts.iter().enumerate() {
-                match *name {
+            names.fresh(&scene);
+            for &(k, name) in &names.pointer {
+                match name {
                     "pointer.x" => facts[k] = px,
                     "pointer.y" => facts[k] = py,
                     "cursor.x" => facts[k] = seen_cursor.0,
@@ -6820,6 +6823,51 @@ impl AwakeBehaviors {
 /// manager's scene has 12 600 rules, 4 180 of them `on change`, and a round
 /// went through every one of them and evaluated every `on change` to find, most
 /// rounds, that nothing had happened.
+/// Where each fact and each text of the scene is, by its name: the logic
+/// says them by name, and a scene like Atalaya has 26 000 facts —a model of
+/// the logic's is a fact per field and row, said one by one—. Made again
+/// when the scene changes.
+#[derive(Default)]
+struct NameIndex {
+    of: (usize, usize, usize, usize),
+    facts: std::collections::HashMap<&'static str, usize>,
+    texts: std::collections::HashMap<&'static str, usize>,
+    /// The facts the render writes every round from the mouse and the keys
+    /// (`pointer.x`, `wheel`, `key.ctrl`…), where they are: not looked for
+    /// among all the others each round.
+    pointer: Vec<(usize, &'static str)>,
+}
+
+/// What the render writes every round from the pointer, the wheel and the keyboard.
+const POINTER_FACTS: &[&str] = &["pointer.x", "pointer.y", "cursor.x", "cursor.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "wheel.x", "wheel.y", "pinch.scale", "key.ctrl", "key.shift", "key.alt", "key.super"];
+
+impl NameIndex {
+    fn fresh(&mut self, scene: &Scene) {
+        let of = (scene.facts.as_ptr() as usize, scene.facts.len(), scene.texts.as_ptr() as usize, scene.texts.len());
+        if of != self.of {
+            self.of = of;
+            // The first of a name, as a search from the start would find.
+            self.facts.clear();
+            for (k, h) in scene.facts.iter().enumerate() {
+                self.facts.entry(h.0).or_insert(k);
+            }
+            self.pointer = scene.facts.iter().enumerate().filter(|(_, h)| POINTER_FACTS.contains(&h.0)).map(|(k, h)| (k, h.0)).collect();
+            self.texts.clear();
+            for (k, t) in scene.texts.iter().enumerate() {
+                self.texts.entry(t.0).or_insert(k);
+            }
+        }
+    }
+    fn fact(&mut self, scene: &Scene, name: &str) -> Option<usize> {
+        self.fresh(scene);
+        self.facts.get(name).copied()
+    }
+    fn text(&mut self, scene: &Scene, name: &str) -> Option<usize> {
+        self.fresh(scene);
+        self.texts.get(name).copied()
+    }
+}
+
 #[derive(Default)]
 struct RuleIndex {
     of: (usize, usize),

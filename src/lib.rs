@@ -220,6 +220,10 @@ fn args(given: Vec<String>) -> Args {
                         for m in &errors {
                             eprintln!("{m}");
                         }
+                        // The process ends right after: a scene of thousands of
+                        // properties is let go with it, not taken apart piece by piece
+                        // (a tenth of Atalaya's `--check`).
+                        let e = std::mem::ManuallyDrop::new(e);
                         if errors.is_empty() {
                             println!("{path}: ok · {} properties, {} instructions, {} layers, {} rules, {} zones, {} gestures{}", e.props.len(), e.instrs.len(), e.layers.len(), e.rules.len(), e.zones.len(), e.gestures.len(), if warnings.is_empty() { String::new() } else { format!(" · {} warnings", warnings.len()) });
                             0
