@@ -463,6 +463,51 @@ mod tests {
         assert_eq!(twins.len(), 1, "twins: {:?}", scene.twin_of);
     }
 
+    /// The copies of a `for … key` start after the children written before the `for`, not at
+    /// the layout's padding: a header above a chat's rows is not covered by them.
+    #[test]
+    fn keyed_copies_start_after_what_goes_before_them() {
+        let dir = std::env::temp_dir().join(format!("pleamar-keyed-after-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("headed.plm");
+        std::fs::write(&path, "language 0.9
+scene Headed {
+    surface { size: 320, 320 }
+    model said max 3 { id: number; h: number }
+    column chat { at: 10, 10; view: 300, 300; gap: 4; padding: 6
+        box head { size: 300, 40; color: #5a4033 }
+        for m in said key m.id {
+            box { size: 300, m.h; corner: 8; color: #33405a }
+        }
+    }
+}
+").unwrap();
+        let scene = super::read(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        let scene = scene.unwrap_or_else(|e| panic!("{e}"));
+        // Three records, the last one put first: copy 2 is at place 0.
+        let given = [
+            ("said.0.h", 30.0), ("said.1.h", 50.0), ("said.2.h", 20.0),
+            ("said.0.__there", 1.0), ("said.1.__there", 1.0), ("said.2.__there", 1.0),
+            ("said.0.__place", 1.0), ("said.1.__place", 2.0), ("said.2.__place", 0.0),
+        ];
+        for (g, _) in &given {
+            assert!(scene.facts.iter().any(|(n, _)| n == g), "no fact {g}");
+        }
+        let facts: Vec<f32> = scene.facts.iter().map(|(n, v)| given.iter().find(|(g, _)| g == n).map_or(*v, |g| g.1)).collect();
+        let mut props: Vec<crate::scene::Animated> = scene.props.iter().map(|(_, x, s)| crate::scene::Animated::at(*x, *s)).collect();
+        for b in &scene.behaviors {
+            if let crate::scene::Behavior::Bind { prop, to } = b {
+                props[prop.0 as usize].x = to.eval(crate::scene::Ctx { props: &props, facts: &facts, seen: None });
+            } else if let crate::scene::Behavior::Places { places, lengths, start, at } = b {
+                crate::scene::run_places(places, lengths, start, at, &mut props, &facts, |_| {});
+            }
+        }
+        let placed: Vec<f32> = scene.props.iter().zip(&props).filter(|((n, _, _), _)| n.starts_with("·placed")).map(|(_, a)| a.x).collect();
+        // Padding 6, the header's 40 and a gap of 4: 50 for the first place; then each after the one before and a gap.
+        assert_eq!(placed, vec![74.0, 108.0, 50.0]);
+    }
+
     /// What each fact a rule sets would be set to, with the facts as they
     /// start (or as given) and every big `let` computed once, in order.
     fn set_by_rules(source: &str, given: &[(&str, f32)]) -> std::collections::HashMap<String, Vec<f32>> {

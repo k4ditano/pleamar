@@ -1,0 +1,15 @@
+// expect: ok
+language 0.9
+// A `for … key` with something written before it: the rows start after the header, and what
+// is written after them goes after the last one.
+scene HeadedFeed {
+    surface { size: 320, 320 }
+    model said max 60 { id: number; h: number }
+    column chat { at: 10, 10; view: 300, 300; stick: end; keep: visible; gap: 4; padding: 6
+        box head { size: 300, 40; color: #5a4033 }
+        for m in said key m.id {
+            box { size: 300, m.h; corner: 8; color: #33405a }
+        }
+        box foot { size: 300, 20; color: #335a40 }
+    }
+}
