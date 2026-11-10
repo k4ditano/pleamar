@@ -1132,9 +1132,11 @@ fn wayland_clipboard_read() -> Option<Option<String>> {
 /// elsewhere (X11, macOS, Windows), what arboard reads.
 pub fn clipboard_picture() -> Option<Vec<u8>> {
     #[cfg(target_os = "linux")]
-    if let Some(read) = wayland_clipboard_bytes(&["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"]) {
-        let (kind, bytes) = read?;
-        if kind == "image/png" {
+    // Last, Qt's own name for a picture (Telegram, Qt apps): what it holds is
+    // told by its first bytes, not by its name.
+    if let Some(read) = wayland_clipboard_bytes(&["image/png", "image/x-png", "image/jpeg", "image/jpg", "image/pjpeg", "image/webp", "image/gif", "application/x-qt-image"]) {
+        let (_, bytes) = read?;
+        if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
             return Some(bytes);
         }
         let picture = image::load_from_memory(&bytes).ok()?;
@@ -1242,7 +1244,9 @@ fn wayland_clipboard_bytes(kinds: &[&str]) -> Option<Option<(String, Vec<u8>)>> 
             Err(_) => continue,
         };
         asked = true;
-        let Some(kind) = kinds.iter().find(|k| types.iter().any(|t| t == *k)) else { continue };
+        // As it is offered: `image/PNG` or `image/png;charset=…` is still a PNG.
+        let plain = |t: &str| t.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        let Some(kind) = kinds.iter().find_map(|k| types.iter().find(|t| t.as_str() == *k || plain(t) == *k)) else { continue };
         let Ok((mut pipe, _)) = get_contents(ClipboardType::Regular, seat, MimeType::Specific(kind)) else { continue };
         let mut bytes = Vec::new();
         if pipe.read_to_end(&mut bytes).is_ok() {
