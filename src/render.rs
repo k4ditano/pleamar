@@ -593,6 +593,8 @@ pub fn run(
     let mut cursor: Option<((f32, f32), Vec<(String, [i32; 4])>)> = None;
     // What is being dragged: which zone, and where the mouse was when pressed.
     let mut drag: Option<(usize, (f32, f32), Instant)> = None;
+    // Since the press, the pointer has gone `DRAG_SLOP` from it.
+    let mut drag_far = false;
     // A window asked to be carried or stretched from its own frame (slot, 1
     // carried or 2 stretched, edges; 0 let go), and the handle pressed for it.
     let mut handle_asked: Option<(usize, u32, u32)> = None;
@@ -2840,6 +2842,13 @@ pub fn run(
             (Some((k, _, _)), Some(p)) if last_pointer != Some(p) => Some(k),
             _ => None,
         };
+        // Whether the pointer has gone far enough from where it was pressed for a
+        // drag to reach the zones underneath the one pressed (a list under its
+        // row): a click moves the mouse a pixel or two, and that moved the list.
+        match (drag, pointer) {
+            (Some((_, o, _)), Some(p)) => drag_far |= (p.0 - o.0).hypot(p.1 - o.1) >= DRAG_SLOP,
+            _ => drag_far = false,
+        }
         last_pointer = pointer;
         // The wheel is not only for the topmost zone: it works for any zone it has
         // underneath, because a whole pill wants the wheel even if there is a button inside.
@@ -3331,6 +3340,14 @@ pub fn run(
                                 // The zone pressed keeps it until the button goes up, even
                                 // if it has moved away from that point (a title bar that
                                 // carries its window with it); others, while they hold it.
+                                (Some(zone), Some((k, o, _))) => zone.active.is_true(c) && (k == z.0 as usize || (drag_far && zone.contains(c, o.0, o.1))),
+                                _ => false,
+                            }
+                    }
+                    // Pressed over it, on it or on one of its children: what a drag reaches.
+                    Trigger::Grab(z) => {
+                        pressed.is_some()
+                            && match (scene.zones.get(z.0 as usize), drag) {
                                 (Some(zone), Some((k, o, _))) => zone.active.is_true(c) && (k == z.0 as usize || zone.contains(c, o.0, o.1)),
                                 _ => false,
                             }
@@ -6845,6 +6862,10 @@ impl AwakeBehaviors {
 /// manager's scene has 12 600 rules, 4 180 of them `on change`, and a round
 /// went through every one of them and evaluated every `on change` to find, most
 /// rounds, that nothing had happened.
+/// How far the pointer goes from where it was pressed before a drag reaches the
+/// zones underneath the one pressed: a click moves the mouse a pixel or two.
+const DRAG_SLOP: f32 = 4.0;
+
 /// Where each fact and each text of the scene is, by its name: the logic
 /// says them by name, and a scene like Atalaya has 26 000 facts —a model of
 /// the logic's is a fact per field and row, said one by one—. Made again

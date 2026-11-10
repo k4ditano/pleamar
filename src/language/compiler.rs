@@ -8429,7 +8429,10 @@ impl<'a> Compiler<'a> {
             // Dragging it: on press, where it was is noted, and while it moves it goes from there.
             // The stack's zone is under those of its children, and the drag reaches it all the same.
             let amount = if self.row_scrolls.contains(&name) { dx.clone() } else { dy.clone() };
-            self.e.rule(Trigger::Press(zone), vec![Effect::Fact(grab, prop.e())]);
+            // On any press over it, not only on its own zone: a press on a row went to
+            // the row, where it was was not noted, and a drag of two pixels while
+            // clicking went from an old value —0: the chat flew to its top—.
+            self.e.rule(Trigger::Grab(zone), vec![Effect::Fact(grab, prop.e())]);
             let a = (grab.e() - amount).max(Expr::K(0.0)).min(until.clone());
             let mut on_drag = vec![Effect::Animate(Transition { prop, to: a.clone(), spring: Spring::QUICK, delay: Duration::ZERO })];
             if let Some(f) = pinned {

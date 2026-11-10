@@ -106,7 +106,7 @@ pub struct Part {
 /// The zone a rule's trigger is about, and how: 0 pressed, 1 dragged, 2 the wheel.
 fn trigger_zone(t: &Trigger) -> Option<(usize, u8)> {
     match t {
-        Trigger::Press(id) | Trigger::PressWith(id, _) | Trigger::Release(id) | Trigger::Receive(id) | Trigger::Carry(id) => Some((id.0 as usize, 0)),
+        Trigger::Press(id) | Trigger::Grab(id) | Trigger::PressWith(id, _) | Trigger::Release(id) | Trigger::Receive(id) | Trigger::Carry(id) => Some((id.0 as usize, 0)),
         Trigger::Hold { zone, .. } => Some((zone.0 as usize, 0)),
         Trigger::Drag(id) => Some((id.0 as usize, 1)),
         Trigger::Wheel(id) => Some((id.0 as usize, 2)),

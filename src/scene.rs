@@ -2000,6 +2000,10 @@ pub enum Trigger {
     Leave(ZoneId),
     /// The left button.
     Press(ZoneId),
+    /// The left button pressed anywhere over it, on one of its children's zones too:
+    /// a stack that scrolls notes where it was, so a drag that starts on one of its
+    /// rows goes from there (see `Drag`, which reaches it the same way).
+    Grab(ZoneId),
     /// Another button: 1 is the right one and 2 the middle one.
     PressWith(ZoneId, u8),
     /// What was pressed here is released, wherever the mouse is by now.
