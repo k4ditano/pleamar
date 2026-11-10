@@ -1,0 +1,21 @@
+// expect: ok
+language 0.1
+// `hover … for` of a zone covered by another one does not fire: the button under
+// a page laid over it opens no tooltip while the pointer is on the page. A
+// zone drawn inside it (the button in its panel) does not cover it.
+scene Covered {
+    surface { size: 300, 200 }
+    fact tip = 0
+    fact panel_tip = 0
+    zone box send { from: 200, 150; size: 80, 40 }
+    on hover send for 300ms { tip = 1 }
+    on away send for 100ms { tip = 0 }
+    zone box panel { from: 10, 10; size: 120, 120 }
+    zone box inner { from: 30, 30; size: 40, 40 }
+    on press inner { panel_tip = 2 }
+    on hover panel for 300ms { panel_tip = 1 }
+    // Laid over the right half, from the middle down: it covers `send` while it is open.
+    fact open = 1
+    zone box page { from: 150, 100; size: 150, 100; active: open }
+    on press page { open = 0 }
+}

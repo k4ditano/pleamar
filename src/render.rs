@@ -3226,6 +3226,16 @@ pub fn run(
         rule_index.look(&facts, &props);
         let asleep_rules: Vec<std::ops::Range<usize>> = asleep.iter().map(|t| t.rules.clone()).collect();
         rule_index.wake(&asleep_rules, &scene.rules);
+        // Under the pointer and not covered, for `hover … for` and `away`: the
+        // topmost zone there is this one, or one drawn inside it (a button in
+        // its panel). A page laid over it —another part of the scene, a
+        // toolbar— covers it, and a tooltip under it does not open.
+        let seen_over = |k: usize| {
+            inside[k]
+                && hovered.is_none_or(|h| {
+                    h == k || matches!((zone_memo.bounds[h], zone_memo.bounds[k]), (Some(a), Some(b)) if a[0] >= b[0] - 1.0 && a[1] >= b[1] - 1.0 && a[2] <= b[2] + 1.0 && a[3] <= b[3] + 1.0)
+                })
+        };
         let some_event = !edges.is_empty()
             || pressed.is_some()
             || pressed_with.is_some()
@@ -3345,11 +3355,11 @@ pub fn run(
                     Trigger::Receive(z) => !drops.is_empty() && inside[z.0 as usize],
                     Trigger::Carry(z) => carried_now == Some(z.0 as usize),
                     Trigger::Above { zone, also, duration } => {
-                        let over = inside[zone.0 as usize] || also.iter().any(|z| inside[z.0 as usize]);
+                        let over = seen_over(zone.0 as usize) || also.iter().any(|z| seen_over(z.0 as usize));
                         e.sustained(over, *duration, now, &mut appointments)
                     }
                     Trigger::Away { zone, also, duration } => {
-                        let is_inside = inside[zone.0 as usize] || also.iter().any(|z| inside[z.0 as usize]);
+                        let is_inside = seen_over(zone.0 as usize) || also.iter().any(|z| seen_over(z.0 as usize));
                         e.armed |= is_inside;
                         let done = e.sustained(e.armed && !is_inside, *duration, now, &mut appointments);
                         if done {
