@@ -531,7 +531,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     // `motion.reduced` (1: the system asks for less motion) and `color.scheme`
     // (0 no preference, 1 dark, 2 light): what the system says, or what is said
     // to the scene; the first, with `--reduced-motion`, settles every spring.
-    for n in ["screen.width", "screen.height", "screen.index", "monitor.width", "monitor.height", "pointer.x", "pointer.y", "cursor.x", "cursor.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "lock.held", "drag.over", "motion.reduced", "color.scheme"] {
+    for n in ["screen.width", "screen.height", "screen.index", "monitor.width", "monitor.height", "pointer.x", "pointer.y", "cursor.x", "cursor.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "wheel.x", "wheel.y", "pinch.scale", "key.ctrl", "key.shift", "key.alt", "key.super", "lock.held", "drag.over", "motion.reduced", "color.scheme"] {
         let h = o.e.fact(n, 0.0);
         o.facts.insert(n.into(), h);
     }
@@ -1200,7 +1200,7 @@ impl<'a> Compiler<'a> {
         if self.scopes.iter().any(|e| e.exprs.contains_key(name) || e.colors.contains_key(name) || e.strings.contains_key(name) || e.springs.contains_key(name)) {
             return;
         }
-        let builtin = ["screen.", "pointer.", "local.", "drag."].iter().any(|p| name.starts_with(p)) || name == "wheel";
+        let builtin = ["screen.", "pointer.", "local.", "drag.", "wheel.", "key.", "pinch."].iter().any(|p| name.starts_with(p)) || name == "wheel";
         // What the copy itself declared carries its suffix; what did not, is from outside.
         let own = self.scopes.iter().any(|e| !e.suffix.is_empty() && name.ends_with(&e.suffix));
         if !builtin && !own {
@@ -8645,7 +8645,7 @@ impl<'a> Compiler<'a> {
             let b = if c.sym("..") { c.dur()?.as_secs_f32() } else { a };
             Trigger::Every { between: (a, b), during: while_cond(self, c)? }
         } else {
-            let what = c.id("what has to happen: press, release, scroll, drag, hold, key, submit, focus, blur, drop, enter, leave, hover, away, idle, or an event")?;
+            let what = c.id("what has to happen: press, release, scroll, pinch, drag, hold, key, keyup, submit, focus, blur, drop, enter, leave, hover, away, idle, or an event")?;
             // Only what the vocabulary says is a trigger; anything else is the name of a signal.
             match if vocab::TRIGGERS.contains(&what.as_str()) { what.as_str() } else { "" } {
                 // `on press orb`, or with another button: `on press right orb`.
@@ -8668,6 +8668,7 @@ impl<'a> Compiler<'a> {
                 }
                 "release" => Trigger::Release(self.zone(c)?),
                 "scroll" => Trigger::Wheel(self.zone(c)?),
+                "pinch" => Trigger::Pinch(self.zone(c)?),
                 "drag" => Trigger::Drag(self.zone(c)?),
                 "hold" => {
                     let zone = self.zone(c)?;
@@ -8681,6 +8682,11 @@ impl<'a> Compiler<'a> {
                         name = format!("{name}+{}", c.id("the key")?);
                     }
                     Trigger::Key(key_combo(&name))
+                }
+                // `on keyup space`: that key let go, whatever it was pressed with.
+                "keyup" => {
+                    let name = c.id("the name of a key: space, Escape, a, Control_L…")?;
+                    Trigger::KeyUp(plain_key_name(&name))
                 }
                 "submit" => {
                     let n = self.global(&c.id("the name of the input")?);
@@ -9018,6 +9024,15 @@ fn twins(rules: &[crate::scene::Rule], spans: &[crate::scene::Span]) -> Vec<usiz
 
 /// A key as the render names it: the modifiers always in the same order
 /// —`Ctrl+Alt+Super+Shift+`— whatever order the scene wrote them in.
+/// A key let go is named alone, and a letter in lower case: as the render says it.
+fn plain_key_name(written: &str) -> String {
+    let mut letters = written.chars();
+    match (letters.next(), letters.next()) {
+        (Some(c), None) => c.to_lowercase().collect(),
+        _ => written.to_owned(),
+    }
+}
+
 fn key_combo(written: &str) -> String {
     let parts: Vec<&str> = written.split('+').collect();
     let (key, mods) = parts.split_last().expect("split always gives one");

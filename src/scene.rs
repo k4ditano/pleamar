@@ -2006,6 +2006,8 @@ pub enum Trigger {
     Release(ZoneId),
     /// The wheel, over it. How much, in `wheel`: +1 per notch upwards.
     Wheel(ZoneId),
+    /// Two fingers closing or opening over it. By how much, in `pinch.scale`.
+    Pinch(ZoneId),
     /// The mouse moves with the button held since it was pressed here. Where, in
     /// `local.x` and `local.y`; how much since it was pressed, in `drag.dx` and `drag.dy`.
     Drag(ZoneId),
@@ -2013,6 +2015,8 @@ pub enum Trigger {
     Hold { zone: ZoneId, duration: Duration },
     /// A key, by its name: `Escape`, `Return`, `a`, `Ctrl+k`.
     Key(String),
+    /// A key let go, by its name alone: `space`, `Control_L`.
+    KeyUp(String),
     /// Enter has been pressed in a field.
     Submit(TextId),
     /// The surface gains or loses the keyboard: losing it means someone clicked outside.
@@ -2594,6 +2598,15 @@ pub enum ToRender {
     AgentButton(u8, bool),
     /// Wheel notches: positive, upwards.
     Wheel(f32),
+    /// The part of the wheel that goes sideways (a tilting wheel, two fingers
+    /// across a touchpad): positive, to the left —as upwards is—. It counts in
+    /// `wheel` too, and alone in `wheel.x`.
+    WheelX(f32),
+    /// Two fingers closing or opening on a touchpad: by how much what is under
+    /// them grows since the last one said (1.02: a fiftieth bigger).
+    Pinch(f32),
+    /// Which of Ctrl, Alt, Shift and Super are held, when that changes.
+    Mods(Mods),
     /// Fingers moving what is under the pointer (a touchpad's two, one on a
     /// phone's glass): `x`, `y`, how far it goes, in units, for a window
     /// (down and to the right, positive: as Wayland says it), and the

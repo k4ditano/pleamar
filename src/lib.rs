@@ -81,7 +81,8 @@ const HELP: &str = "pleamar [options]
   --stall MS          how long the logic blocks after every decision (600)
   --naive             the logic blocks the painting thread, as in QtQuick
   --demo              opens and closes by itself, with no mouse
-  --mouse SCRIPT      fake mouse: «360,90@1000 click@2500 down@… up@… wheel+@… out@4000» (ms);
+  --mouse SCRIPT      fake mouse: «360,90@1000 click@2500 down@… up@… wheel+@… out@4000» (ms;
+                      also «wheel<@…» sideways, «pinch:1.1@…» two fingers, «mods:ctrl+shift@…» held);
                       and keys: «key:Escape@1200 keydown:Left@1500 keyup:Left@2500 type:hello@3000»
                       (`_` types a space; `type:@Chief@600` an @: the time is after the last one);
                       and events: «emit:toggle@500 emit:pick=3@900»
@@ -698,6 +699,16 @@ pub(crate) fn mouse_step(what: &str) -> Vec<ToRender> {
         t if t.starts_with("drop:") => vec![ToRender::Dropped("text/plain".into(), t[5..].to_owned())],
         "wheel+" => vec![ToRender::Wheel(1.0)],
         "wheel-" => vec![ToRender::Wheel(-1.0)],
+        // Sideways: `wheel<` a notch to the left, `wheel>` to the right.
+        "wheel<" => vec![ToRender::WheelX(1.0)],
+        "wheel>" => vec![ToRender::WheelX(-1.0)],
+        // `pinch:1.1`: two fingers opening a tenth; `pinch:0.9`, closing.
+        t if t.starts_with("pinch:") => t[6..].parse::<f32>().map_or_else(|_| Vec::new(), |by| vec![ToRender::Pinch(by)]),
+        // `mods:ctrl+shift`: those held from now on; `mods:`, none.
+        t if t.starts_with("mods:") => {
+            let has = |m: &str| t[5..].split('+').any(|x| x.eq_ignore_ascii_case(m));
+            vec![ToRender::Mods(Mods { ctrl: has("ctrl"), alt: has("alt"), shift: has("shift"), logo: has("super") })]
+        }
         "out" => vec![ToRender::Pointer(None)],
         xy => {
             let (x, y) = xy.split_once(',').expect("--mouse: x,y");

@@ -45,6 +45,7 @@ use smithay_client_toolkit::reexports::protocols::wp::fractional_scale::v1::clie
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
 use wayland_protocols::wp::presentation_time::client::{wp_presentation::{self, WpPresentation}, wp_presentation_feedback::{self, WpPresentationFeedback}};
 use wayland_protocols::xdg::foreign::zv2::client::{zxdg_exporter_v2::ZxdgExporterV2, zxdg_exported_v2::{self, ZxdgExportedV2}};
+use wayland_protocols::wp::pointer_gestures::zv1::client::{zwp_pointer_gesture_pinch_v1::{self, ZwpPointerGesturePinchV1}, zwp_pointer_gestures_v1::ZwpPointerGesturesV1};
 use wayland_protocols::wp::text_input::zv3::client::{zwp_text_input_manager_v3::ZwpTextInputManagerV3, zwp_text_input_v3::{self, ZwpTextInputV3}};
 use wayland_protocols::ext::background_effect::v1::client::{ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1, ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1};
 
@@ -1208,6 +1209,11 @@ struct State {
     pointer_seats: Vec<(wl_pointer::WlPointer, wl_seat::WlSeat)>,
     keyboard: Option<wayland_client::protocol::wl_keyboard::WlKeyboard>,
     cursor_shapes: Option<CursorShapeManager>,
+    /// Touchpad gestures (zwp_pointer_gestures_v1): the pinch of your pointer,
+    /// and how far it has opened since it began.
+    pointer_gestures: Option<ZwpPointerGesturesV1>,
+    pinch: Option<ZwpPointerGesturePinchV1>,
+    pinch_scale: f64,
     cursors: Arc<Mutex<Option<WpCursorShapeDeviceV1>>>,
     serial: Arc<AtomicU32>,
     mods: Mods,
@@ -1398,6 +1404,25 @@ impl Dispatch2<ZxdgExportedV2, State> for ExportFor {
             let mut all = super::EXPORTED_WINDOWS.lock().unwrap();
             all.retain(|(id, _)| *id != self.0);
             all.push((self.0, handle));
+        }
+    }
+}
+
+/// A pinch on the touchpad: what it says is how far it has opened since it
+/// began; the render is told by how much since the last time.
+struct PinchFor;
+impl Dispatch2<ZwpPointerGesturePinchV1, State> for PinchFor {
+    fn event(&self, state: &mut State, _: &ZwpPointerGesturePinchV1, event: zwp_pointer_gesture_pinch_v1::Event, _: &Connection, _: &QueueHandle<State>) {
+        match event {
+            zwp_pointer_gesture_pinch_v1::Event::Begin { .. } => state.pinch_scale = 1.0,
+            zwp_pointer_gesture_pinch_v1::Event::Update { scale, .. } if scale > 0.0 => {
+                let by = scale / state.pinch_scale;
+                state.pinch_scale = scale;
+                if by != 1.0 {
+                    let _ = state.to_render.send(ToRender::Pinch(by as f32));
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -2455,6 +2480,9 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
         pointer_seats: Vec::new(),
         keyboard: None,
         cursor_shapes: CursorShapeManager::bind(&globals, &qh).ok(),
+        pointer_gestures: globals.bind::<ZwpPointerGesturesV1, _, _>(&qh, 1..=1, Silent).ok(),
+        pinch: None,
+        pinch_scale: 1.0,
         cursors: Arc::default(),
         serial: Arc::default(),
         mods: Mods::default(),
@@ -2765,9 +2793,14 @@ impl PointerHandler for State {
                     let notches = |a: &smithay_client_toolkit::seat::pointer::AxisScroll| {
                         if a.value120 != 0 { a.value120 as f32 / 120.0 } else if a.discrete != 0 { a.discrete as f32 } else { a.absolute as f32 / 15.0 }
                     };
-                    let d = -(notches(&vertical) + notches(&horizontal));
-                    if d != 0.0 {
-                        let _ = self.to_render.send(ToRender::Wheel(d));
+                    // Up and to the left, positive; each on its own, so a
+                    // scene can tell them apart (`wheel.x`, `wheel.y`).
+                    let (dy, dx) = (-notches(&vertical), -notches(&horizontal));
+                    if dy != 0.0 {
+                        let _ = self.to_render.send(ToRender::Wheel(dy));
+                    }
+                    if dx != 0.0 {
+                        let _ = self.to_render.send(ToRender::WheelX(dx));
                     }
                 }
             }
@@ -3015,6 +3048,7 @@ impl KeyboardHandler for State {
     }
     fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, m: Modifiers, _: RawModifiers, _: u32) {
         self.mods = Mods { ctrl: m.ctrl, alt: m.alt, shift: m.shift, logo: m.logo };
+        let _ = self.to_render.send(ToRender::Mods(self.mods));
     }
 }
 
@@ -3047,6 +3081,10 @@ impl SeatHandler for State {
             }
             if let Some(p) = &self.pointer {
                 self.pointer_seats.push((p.clone(), seat.clone()));
+                // Two fingers on a touchpad, where the compositor tells of them.
+                if let Some(m) = &self.pointer_gestures {
+                    self.pinch = Some(m.get_pinch_gesture(p, qh, PinchFor));
+                }
             }
         } else if c == Capability::Pointer {
             // Another seat's pointer: an agent's, which has hands of its own. It

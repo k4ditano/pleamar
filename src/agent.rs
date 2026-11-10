@@ -679,7 +679,7 @@ fn scrolled(scene: &Scene, c: Ctx) -> Vec<f32> {
 
 fn quiet_fact(n: &str) -> bool {
     n.contains('·')
-        || ["pointer.", "local.", "drag.", "screen.", "cursor.", "lock.", "wheel", "time"].iter().any(|p| n.starts_with(p))
+        || ["pointer.", "local.", "drag.", "screen.", "cursor.", "lock.", "wheel", "pinch.", "key.", "time"].iter().any(|p| n.starts_with(p))
         || n.ends_with(".grab")
         || n.ends_with(".hover")
         || n.ends_with(".pressed")

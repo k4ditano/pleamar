@@ -1,0 +1,24 @@
+// expect: ok
+language 0.1
+// A canvas's hands: two fingers pinching grow it (`on pinch`, `pinch.scale`),
+// the wheel sideways moves it across (`wheel.x`, apart from `wheel.y`), Ctrl held
+// with the wheel zooms instead (`key.ctrl`), and a key let go ends a mode (`on keyup`).
+scene Canvas {
+    surface { size: 300, 200 }
+    let ink = #f5f7f5
+    fact zoom = 1
+    fact across = 0
+    fact panning = 0
+    zone box board { from: 0, 0; size: 300, 200 }
+    group {
+        size: 300, 200
+        text number(zoom, 2) { at: 10, 20; size: 14; color: ink }
+        text number(across, 0) { at: 10, 50; size: 14; color: ink }
+        text number(panning, 0) { at: 10, 80; size: 14; color: ink }
+    }
+    on pinch board { zoom = zoom * pinch.scale }
+    on scroll board while key.ctrl > 0 { zoom = zoom + wheel.y * 0.1 }
+    on scroll board while key.ctrl == 0 { across = across + wheel.x }
+    on key space { panning = 1 }
+    on keyup space { panning = 0 }
+}

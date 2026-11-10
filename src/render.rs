@@ -626,6 +626,8 @@ pub fn run(
     // name a key has can change with Shift between going down and coming up—,
     // which buttons of the mouse, and how long since the last frame it heard of.
     let mut keys_held: Vec<(u32, String)> = Vec::new();
+    // Ctrl, Alt, Shift, Super as the keyboard has them now: `key.ctrl`…
+    let mut mods_held = Mods::default();
     let mut mouse_buttons = 0u8;
     let mut frame_told = crate::clock::now();
     let mut last_key = crate::clock::now();
@@ -780,6 +782,11 @@ pub fn run(
         // Which of them come from an agent's own seat.
         let mut buttons_agent: Vec<bool> = Vec::new();
         let mut wheel = 0.0f32;
+        // Of it, what went sideways; and how much two fingers opened (1: nothing).
+        let mut wheel_x = 0.0f32;
+        let mut pinch = 1.0f32;
+        // The keys let go this round, by their names alone.
+        let mut keys_up: Vec<String> = Vec::new();
         // What fingers moved (not a wheel): for a window as it is, already
         // counted in `wheel` as notches for the zones.
         let mut fingers = (0.0f32, 0.0f32, 0.0f32);
@@ -1532,6 +1539,18 @@ pub fn run(
                     wheel += d;
                     last_activity = crate::clock::now();
                 }
+                ToRender::WheelX(d) => {
+                    wheel += d;
+                    wheel_x += d;
+                    last_activity = crate::clock::now();
+                }
+                ToRender::Pinch(by) => {
+                    if by.is_finite() && by > 0.0 {
+                        pinch *= by;
+                    }
+                    last_activity = crate::clock::now();
+                }
+                ToRender::Mods(m) => mods_held = m,
                 ToRender::Scroll { x, y, notches } => {
                     wheel += notches;
                     fingers = (fingers.0 + x, fingers.1 + y, fingers.2 + notches);
@@ -2323,6 +2342,7 @@ pub fn run(
             if let Some(k) = keys_held.iter().position(|(c, n)| if code != 0 && *c != 0 { *c == code } else { *n == plain }) {
                 let _ = to_logic.send(Event::KeyUp(keys_held.remove(k).1));
             }
+            keys_up.push(plain);
             if let (Some(send), Some(k)) = (&nest, nest_keys.iter().position(|c| *c == code)) {
                 nest_keys.remove(k);
                 send(ToNest::Key { code, down: false });
@@ -2333,6 +2353,7 @@ pub fn run(
             crate::terminal::with(|r| r.window_keys = *gained);
             // Without the keyboard nothing is held: its coming up will not be heard.
             if !*gained {
+                mods_held = Mods::default();
                 for (_, name) in keys_held.drain(..) {
                     let _ = to_logic.send(Event::KeyUp(name));
                 }
@@ -3002,6 +3023,13 @@ pub fn run(
                     "drag.dx" => facts[k] = dx,
                     "drag.dy" => facts[k] = dy,
                     "wheel" => facts[k] = wheel,
+                    "wheel.x" => facts[k] = wheel_x,
+                    "wheel.y" => facts[k] = wheel - wheel_x,
+                    "pinch.scale" => facts[k] = pinch,
+                    "key.ctrl" => facts[k] = mods_held.ctrl as u8 as f32,
+                    "key.shift" => facts[k] = mods_held.shift as u8 as f32,
+                    "key.alt" => facts[k] = mods_held.alt as u8 as f32,
+                    "key.super" => facts[k] = mods_held.logo as u8 as f32,
                     _ => {}
                 }
             }
@@ -3206,6 +3234,8 @@ pub fn run(
             || !submitted.is_empty()
             || !focus_changes.is_empty()
             || wheel != 0.0
+            || pinch != 1.0
+            || !keys_up.is_empty()
             || dragged.is_some()
             || !drops.is_empty()
             || carried_now.is_some();
@@ -3257,6 +3287,8 @@ pub fn run(
                     Trigger::PressWith(z, b) => pressed_with == Some((z.0 as usize, *b)),
                     Trigger::Release(z) => released == Some(z.0 as usize),
                     Trigger::Wheel(z) => wheel != 0.0 && inside[z.0 as usize],
+                    // Like the wheel, for any zone under the fingers.
+                    Trigger::Pinch(z) => pinch != 1.0 && inside[z.0 as usize],
                     // Dragging is not only for the topmost zone, like the wheel: it works
                     // for any zone that was underneath when it was pressed. That way a list
                     // can be dragged by grabbing one of its rows.
@@ -3306,6 +3338,7 @@ pub fn run(
                         }
                     }
                     Trigger::Key(t) => keys.iter().any(|x| x == t),
+                    Trigger::KeyUp(t) => keys_up.iter().any(|x| x == t),
                     Trigger::Submit(t) => submitted.contains(&(t.0 as usize)),
                     Trigger::FocusGained => focus_changes.contains(&true),
                     Trigger::FocusLost => focus_changes.contains(&false),
