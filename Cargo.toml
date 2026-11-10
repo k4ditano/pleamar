@@ -11,6 +11,9 @@ arboard = { version = "3.6.1", default-features = false, features = ["wayland-da
 bytemuck = { version = "1.25.2", features = ["derive"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 cosmic-text = { version = "0.19.0", default-features = false, features = ["std", "swash"] }
+# The rasterizer cosmic-text uses, reached directly to hint letters vertically
+# as FreeType's «slight» does (text.rs, `hinted_mask`).
+swash = { version = "0.2.10", default-features = false, features = ["render", "scale"] }
 # The scenes' own shaders are read and checked with the same compiler wgpu
 # uses, already in the tree: a mistake is reported with its line, never a crash.
 naga = { version = "30", features = ["wgsl-in"] }

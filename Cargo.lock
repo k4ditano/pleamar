@@ -1623,6 +1623,7 @@ dependencies = [
  "resvg",
  "serde_json",
  "smithay-client-toolkit",
+ "swash",
  "typed-arena",
  "wayland-client",
  "wayland-protocols",

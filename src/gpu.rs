@@ -2701,6 +2701,7 @@ impl DrawList {
                         _ => (shape.flatten_into(c, &mut self.points), blend.eval(c).max(0.0)),
                     };
                     p.affine = affine;
+                    let p = crisp_stroke(p, tip_scale);
                     let bounds = p.bounds();
                     self.push_shape(p, k);
                     if let Some(g) = &mut body {
@@ -2801,7 +2802,7 @@ impl DrawList {
                     if a <= 0.001 {
                         continue; // what is invisible does not take up even a quad
                     }
-                    let p = flatten(shape, &transforms, &mut self.points);
+                    let p = crisp_stroke(flatten(shape, &transforms, &mut self.points), tip_scale);
                     let Some(b) = p.bounds() else { continue };
                     let v = glass_spec.as_ref().map_or(0.0, |v| v.amount.eval(c).clamp(0.0, 1.0));
                     let lens = glass_spec.as_ref().is_some_and(|v| v.lens.is_true(c));
@@ -6248,5 +6249,94 @@ mod card_full {
             device.create_buffer(&wgpu::BufferDescriptor { label: None, size: 4, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::MAP_WRITE, mapped_at_creation: false });
         }));
         assert!(r.is_err(), "a real mistake still panics");
+    }
+}
+
+/// A stroke a whole number of pixels wide, drawn on whole pixels. A stroke is
+/// centred on its shape's edge, so a box at `from: 10` with `stroke: 1` spread
+/// its border over two pixels at half strength, and a `line` at x = 30 too: on
+/// a light theme, every 1 px border and rule came out blurred. A box's edges go
+/// inwards to where its stroke covers whole pixels (inside the box, as a CSS
+/// border); a line across or down, to the nearest such place. Only when nothing
+/// turns or skews it and the stroke is whole pixels at this scale; at most half
+/// a pixel moves.
+fn crisp_stroke(mut p: crate::shapes::FlatShape, s: f32) -> crate::shapes::FlatShape {
+    let a = p.affine;
+    if p.stroke <= 0.0 || p.rotation != 0.0 || a.m[1] != 0.0 || a.m[2] != 0.0 || a.m[0] <= 0.0 || a.m[3] <= 0.0 || (a.m[0] - a.m[3]).abs() > 1e-4 || s <= 0.0 {
+        return p;
+    }
+    let w = p.stroke * a.m[0] * s;
+    if w < 0.5 || (w - w.round()).abs() > 0.02 {
+        return p;
+    }
+    // Where the stroke's middle has to be: at half a pixel for an odd width, on one for an even.
+    let half = (w.round() * 0.5).fract();
+    let dev_x = |x: f32| (a.m[0] * x + a.t[0]) * s;
+    let dev_y = |y: f32| (a.m[3] * y + a.t[1]) * s;
+    let local_x = |d: f32| (d / s - a.t[0]) / a.m[0];
+    let local_y = |d: f32| (d / s - a.t[1]) / a.m[3];
+    // The nearest such place; halfway between two, the one towards `inward`.
+    let snap = |v: f32, inward: f32| {
+        let lo = (v - half).floor() + half;
+        let hi = lo + 1.0;
+        let (dl, dh) = (v - lo, hi - v);
+        if (dl - dh).abs() < 1e-3 {
+            if inward < 0.0 { lo } else { hi }
+        } else if dl < dh {
+            lo
+        } else {
+            hi
+        }
+    };
+    match p.kind {
+        // A box: each edge inwards.
+        1 => {
+            let (l, r) = (snap(dev_x(p.cx - p.mx), 1.0), snap(dev_x(p.cx + p.mx), -1.0));
+            let (t, b) = (snap(dev_y(p.cy - p.my), 1.0), snap(dev_y(p.cy + p.my), -1.0));
+            if r <= l || b <= t {
+                return p;
+            }
+            let (l, r, t, b) = (local_x(l), local_x(r), local_y(t), local_y(b));
+            (p.cx, p.mx, p.cy, p.my) = ((l + r) * 0.5, (r - l) * 0.5, (t + b) * 0.5, (b - t) * 0.5);
+            p.radius = p.radius.min(p.mx).min(p.my);
+        }
+        // A line straight down or across: `cx, cy` is where it starts, `mx, my` how far it goes.
+        3 if p.mx == 0.0 => p.cx = local_x(snap(dev_x(p.cx), 1.0)),
+        3 if p.my == 0.0 => p.cy = local_y(snap(dev_y(p.cy), 1.0)),
+        _ => {}
+    }
+    p
+}
+
+#[cfg(test)]
+mod crisp_tests {
+    use super::crisp_stroke;
+    use crate::shapes::{Affine, FlatShape};
+
+    fn shape(kind: u8, cx: f32, cy: f32, mx: f32, my: f32, stroke: f32) -> FlatShape {
+        FlatShape { kind, cx, cy, mx, my, radius: 0.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke, affine: Affine::IDENTITY }
+    }
+
+    /// A 1 px border of a box at whole pixels goes half a pixel in, onto one
+    /// column of pixels; a 1 px line at x = 30 onto the pixel at 30.
+    #[test]
+    fn a_whole_pixel_stroke_lands_on_whole_pixels() {
+        // A box from 10, 10 to 90, 50.
+        let p = crisp_stroke(shape(1, 50.0, 30.0, 40.0, 20.0, 1.0), 1.0);
+        assert_eq!((p.cx - p.mx, p.cx + p.mx, p.cy - p.my, p.cy + p.my), (10.5, 89.5, 10.5, 49.5));
+        // Already on half pixels: as it was.
+        let p = crisp_stroke(shape(1, 150.5, 30.5, 40.0, 20.0, 1.0), 1.0);
+        assert_eq!((p.cx - p.mx, p.cx + p.mx), (110.5, 190.5));
+        // A line straight down.
+        assert_eq!(crisp_stroke(shape(3, 30.0, 60.0, 0.0, 50.0, 1.0), 1.0).cx, 30.5);
+        // Two pixels wide: on whole pixels already.
+        assert_eq!(crisp_stroke(shape(3, 50.0, 60.0, 0.0, 50.0, 2.0), 1.0).cx, 50.0);
+        // At scale 2, a stroke of 1 is two pixels: nothing to move.
+        assert_eq!(crisp_stroke(shape(3, 30.0, 60.0, 0.0, 50.0, 1.0), 2.0).cx, 30.0);
+        // A stroke of 1.5 or a turned shape is left alone.
+        assert_eq!(crisp_stroke(shape(3, 30.0, 60.0, 0.0, 50.0, 1.5), 1.0).cx, 30.0);
+        let mut turned = shape(1, 50.0, 30.0, 40.0, 20.0, 1.0);
+        turned.rotation = 0.3;
+        assert_eq!(crisp_stroke(turned, 1.0).cx - crisp_stroke(turned, 1.0).mx, 10.0);
     }
 }

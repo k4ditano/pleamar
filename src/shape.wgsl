@@ -285,6 +285,12 @@ fn rounded_rect(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
     return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
+// How much a letter's coverage is firmed up, by how light the letter is:
+// nothing for dark text, all of it (1) for white. See the text's arm in `fs`.
+fn text_contrast(lum: f32) -> f32 {
+    return smoothstep(0.35, 1.0, lum);
+}
+
 // A path: the distance to the nearest segment, signed if it is closed (the
 // winding number says whether the point is inside). It is the SDF of a polygon.
 fn path_distance(p: vec2<f32>, first: u32, n: u32, closed: bool) -> f32 {
@@ -537,16 +543,19 @@ fn shade(e: VertexOut) -> vec4<f32> {
         // Tinted: the piece is a mask —a letter (2), a symbolic icon (1)— and the element provides the colour.
         // A letter (2) gets its edges firmed up. Blended as they are, in sRGB,
         // a stem that falls across two pixels —most of them: the letters are
-        // placed at quarters of a pixel and the font is only hinted
-        // vertically— comes out as two greys, and light text on a dark
+        // placed on whole pixels only when hinted, and hinting is
+        // vertical— comes out as two greys, and light text on a dark
         // background reads thin and washed out. This is the contrast curve
         // DirectWrite and Skia apply to their coverage: stronger the lighter
         // the letter, because dark text on light already gains body from the
         // sRGB blend. Measured on an «I» in #f6f6f5 over #1b1b1c: #bc + #67
         // became #d4 + #8a —the same width, but a letter and not a smudge.
+        // Dark text is left as the font gives it, as GTK and Chrome leave
+        // it: firmed up too, its greys went darker and each stem read two
+        // pixels wide, heavier and softer than beside a GTK window.
         if (el.header.z > 1.5) {
             let lum = dot(el.color0.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
-            let k = mix(0.3, 1.0, lum);
+            let k = text_contrast(lum);
             let a = t.a * (k + 1.0) / (t.a * k + 1.0);
             return vec4<f32>(el.color0.rgb * a, a) * alpha;
         }
@@ -1099,7 +1108,7 @@ fn glyph_at(el: Element, q: vec2<f32>) -> f32 {
 fn text_with_effects(el: Element, q: vec2<f32>, alpha: f32) -> vec4<f32> {
     // The letter, firmed up like any other (see the contrast curve above).
     let lum = dot(el.color0.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
-    let k = mix(0.3, 1.0, lum);
+    let k = text_contrast(lum);
     let raw = glyph_at(el, q);
     let fill = raw * (k + 1.0) / (raw * k + 1.0);
     var c = vec4<f32>(0.0);

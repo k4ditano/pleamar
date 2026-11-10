@@ -327,6 +327,8 @@ impl Shelves {
 pub(crate) struct Typesetter {
     fonts: FontSystem,
     swash: SwashCache,
+    /// For the letters hinted here (`hinted_mask`).
+    scale_context: swash::scale::ScaleContext,
     shelves: Shelves,
     glyphs: HashMap<CacheKey, Option<(AtlasSlot, i32, i32, bool)>>,
     /// What has been painted since the last delivery: where and what (premultiplied RGBA).
@@ -352,7 +354,7 @@ impl Typesetter {
         let t0 = std::time::Instant::now();
         let fonts = FontSystem::new();
         println!("text   · {} system fonts in {} ms", fonts.db().len(), t0.elapsed().as_millis());
-        Typesetter { fonts, swash: SwashCache::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), pending_fit: Vec::new(), pending_pictures: Vec::new(), last_picture: 0, scale: 1.0, exhausted: false, frames: HashMap::new(), fonts_read: HashSet::new() }
+        Typesetter { fonts, swash: SwashCache::new(), scale_context: swash::scale::ScaleContext::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), pending_fit: Vec::new(), pending_pictures: Vec::new(), last_picture: 0, scale: 1.0, exhausted: false, frames: HashMap::new(), fonts_read: HashSet::new() }
     }
 
     /// When the scale changes, everything painted stops being valid.
@@ -398,6 +400,13 @@ impl Typesetter {
         }
         let (px, line_height, width) = (f32::from_bits(c.px), f32::from_bits(c.line_height), c.width.map(|a| a as f32));
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(px, px * line_height));
+        // Hinted (as fontconfig says, see `Hinting`): each letter starts on a
+        // whole pixel and advances by whole pixels, as Pango does with hinted
+        // metrics; its stems then fall on one column, not across two. (It
+        // rounds the scene's units: only at a whole scale are they whole pixels.)
+        if hinting() != Hinting::None && self.scale.fract() == 0.0 {
+            buffer.set_hinting(cosmic_text::Hinting::Enabled);
+        }
         buffer.set_wrap(if width.is_some() { Wrap::WordOrGlyph } else { Wrap::None });
         if let Some(n) = c.max_lines {
             buffer.set_ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(n)));
@@ -690,7 +699,11 @@ impl Typesetter {
             return *g;
         }
         let mut no_space = false;
-        let painted = self.swash.get_image_uncached(&mut self.fonts, key).and_then(|img| {
+        let image = match self.hinted_mask(key) {
+            Some(img) => Some(img),
+            None => self.swash.get_image_uncached(&mut self.fonts, key),
+        };
+        let painted = image.and_then(|img| {
             let (w, h) = (img.placement.width, img.placement.height);
             if w == 0 || h == 0 {
                 return None;
@@ -718,6 +731,62 @@ impl Typesetter {
             self.glyphs.insert(key, painted);
         }
         painted
+    }
+
+    /// A letter as a mask, hinted as fontconfig asks (see `Hinting`): its
+    /// baseline, its x-height and its capitals land on whole pixels, the rest
+    /// of it stretched between them, and what overshoots them by less than
+    /// half a pixel (the round of an «o») flat on the same line. It is what
+    /// FreeType's light hinting does —GTK's and Chrome's with `hintstyle
+    /// slight`—, and what a font without instructions of its own (Inter
+    /// Variable) never had here: its tops and bottoms fell across two rows,
+    /// a grey row above and below every letter. Across, nothing moves: the
+    /// letters keep their shapes and their places at quarters of a pixel.
+    /// None: not hinted here (hinting off, a colour or pixel font), and
+    /// cosmic-text's own rasterizer paints it.
+    fn hinted_mask(&mut self, key: CacheKey) -> Option<cosmic_text::SwashImage> {
+        use cosmic_text::CacheKeyFlags;
+        use swash::zeno::{Format, Mask, Origin, Transform, Angle, Vector};
+        let hinting = hinting();
+        if hinting == Hinting::None || key.flags.contains(CacheKeyFlags::PIXEL_FONT) {
+            return None;
+        }
+        let font = self.fonts.get_font(key.font_id, key.font_weight)?;
+        let face = font.as_swash();
+        let size = f32::from_bits(key.font_size_bits);
+        // The weight of a variable font, as cosmic-text sets it.
+        let coords: Vec<swash::NormalizedCoord> = match face.variations().find_by_tag(swash::Tag::from_be_bytes(*b"wght")) {
+            Some(v) => face.variations().normalized_coords([(swash::Tag::from_be_bytes(*b"wght"), f32::from(key.font_weight.0).clamp(v.min_value(), v.max_value()))]).collect(),
+            None => Vec::new(),
+        };
+        let metrics = face.metrics(&coords).scale(size);
+        let mut scaler = self.scale_context.builder(face).size(size).hint(hinting == Hinting::Full).normalized_coords(coords.iter()).build();
+        if scaler.has_color_outlines() || scaler.has_color_bitmaps() || !scaler.has_outlines() {
+            return None;
+        }
+        let mut outline = scaler.scale_outline(key.glyph_id)?;
+        let lines = BlueLines::new(metrics.x_height, metrics.cap_height, size);
+        for p in outline.points_mut() {
+            p.y = lines.snap(p.y);
+        }
+        if key.flags.contains(CacheKeyFlags::FAKE_ITALIC) {
+            outline.transform(&Transform::skew(Angle::from_degrees(14.0), Angle::from_degrees(0.0)));
+        }
+        let offset = Vector::new(key.x_bin.as_float(), key.y_bin.as_float());
+        // (As swash does it: `inspect` works the size out before the placement,
+        // which `render()` alone gets wrong with the origin at the bottom.)
+        let mut img = cosmic_text::SwashImage::new();
+        let mut data = Vec::new();
+        img.placement = Mask::new(outline.path())
+            .format(Format::Alpha)
+            .origin(Origin::BottomLeft)
+            .offset(offset)
+            .render_offset(offset)
+            .inspect(|fmt, w, h| data.resize(fmt.buffer_size(w, h), 0))
+            .render_into(&mut data[..], None);
+        img.data = data;
+        img.content = cosmic_text::SwashContent::Mask;
+        Some(img)
     }
 
     fn reserve(&mut self, width: u32, height: u32) -> Option<AtlasSlot> {
@@ -2243,5 +2312,135 @@ mod tests {
         let (images, animations) = t.load_images(&sources);
         assert_eq!(images.len(), sources.len());
         assert_eq!(animations.len(), sources.len());
+    }
+}
+
+/// How letters are hinted: what fontconfig says for the system's sans-serif
+/// (`hintstyle`, `hinting`), as GTK and Chrome read it; `PLEAMAR_FONT_HINTING`
+/// (`none`, `slight`, `full`) says it over that. `slight` and `medium` are
+/// FreeType's light hinting —the lines a letter sits on, on whole pixels—;
+/// `full` also runs the font's own instructions, where it has them. Without
+/// fontconfig (Windows, macOS, or no `fc-match`), slight on Linux and none
+/// elsewhere, as those systems draw their letters.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Hinting {
+    None,
+    Slight,
+    Full,
+}
+
+pub fn hinting() -> Hinting {
+    static IT: std::sync::OnceLock<Hinting> = std::sync::OnceLock::new();
+    *IT.get_or_init(|| {
+        let said = std::env::var("PLEAMAR_FONT_HINTING").ok().and_then(|v| parse_hinting(&v));
+        let h = said.or_else(fontconfig_hinting).unwrap_or(if cfg!(target_os = "linux") { Hinting::Slight } else { Hinting::None });
+        if std::env::var_os("PLEAMAR_DEBUG_TEXT").is_some() {
+            eprintln!("text   · letters hinted: {h:?}");
+        }
+        h
+    })
+}
+
+fn parse_hinting(v: &str) -> Option<Hinting> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "none" | "0" | "off" | "false" | "hintnone" => Some(Hinting::None),
+        "slight" | "1" | "light" | "medium" | "2" | "hintslight" | "hintmedium" => Some(Hinting::Slight),
+        "full" | "3" | "hintfull" => Some(Hinting::Full),
+        _ => None,
+    }
+}
+
+/// `fc-match -f '%{hinting}|%{hintstyle}' sans-serif`: «True|1» is slight.
+fn fontconfig_hinting() -> Option<Hinting> {
+    let out = std::process::Command::new("fc-match").args(["-f", "%{hinting}|%{hintstyle}", "sans-serif"]).stderr(std::process::Stdio::null()).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let said = String::from_utf8_lossy(&out.stdout).into_owned();
+    let (on, style) = said.split_once('|')?;
+    if on.trim().eq_ignore_ascii_case("false") {
+        return Some(Hinting::None);
+    }
+    // No hintstyle said, with hinting on: fontconfig's own default is slight.
+    parse_hinting(style).or(Some(Hinting::Slight))
+}
+
+/// The lines a letter sits on, at the size it is drawn (y upwards, in pixels):
+/// the baseline, the x-height and the capitals, each on a whole pixel.
+struct BlueLines {
+    /// (where the font has it, where it goes)
+    lines: [(f32, f32); 3],
+    /// How far past a line a curve still belongs to it (its overshoot).
+    band: f32,
+}
+
+impl BlueLines {
+    fn new(x_height: f32, cap_height: f32, size: f32) -> BlueLines {
+        // A font that does not say them (an icon font): the baseline alone.
+        let x = if x_height > 0.5 { x_height } else { 0.0 };
+        let cap = if cap_height > x + 0.5 { cap_height } else { x };
+        // The x-height is rounded with a lean upwards, as FreeType does: a
+        // smaller one reads worse than a taller one. The capitals, as they come.
+        let up = |v: f32, lean: f32| if v <= 0.0 { 0.0 } else { (v + lean).round().max(1.0) };
+        BlueLines { lines: [(0.0, 0.0), (x, up(x, 0.1)), (cap, up(cap, 0.0))], band: (size * 0.04).clamp(0.25, 0.5) }
+    }
+
+    fn snap(&self, y: f32) -> f32 {
+        let [(b, _), (x, xs), (c, cs)] = self.lines;
+        // On a line, or past it by its overshoot: on it.
+        if y <= b && y >= b - self.band {
+            return 0.0;
+        }
+        if x > 0.0 && y >= x && y <= x + self.band {
+            return xs;
+        }
+        if c > x && y >= c && y <= c + self.band {
+            return cs;
+        }
+        // Between them, stretched; outside them, moved as the nearest one moved.
+        if y < b {
+            y
+        } else if x > 0.0 && y < x {
+            y * xs / x
+        } else if c > x && y < c {
+            xs + (y - x) * (cs - xs) / (c - x)
+        } else if c > 0.0 {
+            y + (cs - c)
+        } else {
+            y
+        }
+    }
+}
+
+#[cfg(test)]
+mod hinting_tests {
+    use super::{parse_hinting, BlueLines, Hinting};
+
+    /// The lines a letter sits on land on whole pixels, and what overshoots
+    /// them by a little (the round of an «o») lands on them too.
+    #[test]
+    fn the_x_height_and_the_baseline_fall_on_whole_pixels() {
+        // Inter at 13 px: x-height 7.08, capitals 9.45.
+        let b = BlueLines::new(7.08, 9.45, 13.0);
+        assert_eq!(b.snap(0.0), 0.0);
+        assert_eq!(b.snap(-0.15), 0.0, "an overshoot below the baseline sits on it");
+        assert_eq!(b.snap(7.08), 7.0);
+        assert_eq!(b.snap(7.25), 7.0, "an overshoot above the x-height sits on it");
+        assert_eq!(b.snap(9.45), 9.0);
+        // Halfway up, stretched in proportion.
+        assert!((b.snap(3.54) - 3.5).abs() < 1e-4);
+        // A descender keeps its depth; an ascender moves as the capitals did.
+        assert_eq!(b.snap(-3.0), -3.0);
+        assert!((b.snap(10.0) - (10.0 - 0.45)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn fontconfig_words_for_hinting() {
+        assert_eq!(parse_hinting("1"), Some(Hinting::Slight));
+        assert_eq!(parse_hinting("hintslight"), Some(Hinting::Slight));
+        assert_eq!(parse_hinting("medium"), Some(Hinting::Slight));
+        assert_eq!(parse_hinting("0"), Some(Hinting::None));
+        assert_eq!(parse_hinting("full"), Some(Hinting::Full));
+        assert_eq!(parse_hinting("what"), None);
     }
 }
