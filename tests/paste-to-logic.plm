@@ -1,0 +1,17 @@
+// expect: ok
+language 0.1
+// A paste in a field: the logic hears it (`on("paste:draft", function(p) … end)`,
+// with `p.text`, `p.image`, `p.uris`), and with `paste: logic` the field writes
+// nothing of it. With nothing to write (a picture alone), the key goes on to
+// the scene's rules, as `on key Ctrl+v`.
+scene Paste {
+    surface { size: 300, 120; keyboard: on_demand }
+    text draft = "hi"
+    text note = ""
+    fact asked = 0
+    fact heard = 0
+    text "{heard, 0} {asked, 0}" { at: 10, 100; size: 12; color: #f5f7f5 }
+    input draft { at: 10, 10; width: 280; size: 14; color: #f5f7f5; paste: logic }
+    input note { at: 10, 60; width: 280; size: 14; color: #f5f7f5 }
+    on key Ctrl+v { asked = asked + 1 }
+}

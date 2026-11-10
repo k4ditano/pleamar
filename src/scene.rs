@@ -1423,7 +1423,7 @@ pub enum Instr {
     /// for a file's, `@brief.md`), and it is written and erased whole.
     /// `send:` on several lines: whether Enter sends (Shift+Enter writes the line
     /// break) or writes it (Ctrl+Enter sends); worked out every frame, not 0 is Enter.
-    Field { text: TextId, zone: &'static str, at: Point, width: Expr, style: Style, alpha: Expr, placeholder: Content, selection: Color, secret: bool, passive: bool, lines: u8, height: Option<Expr>, send: Expr, mentions: Option<(Color, Option<Color>)> },
+    Field { text: TextId, zone: &'static str, at: Point, width: Expr, style: Style, alpha: Expr, placeholder: Content, selection: Color, secret: bool, passive: bool, lines: u8, height: Option<Expr>, send: Expr, mentions: Option<(Color, Option<Color>)>, paste_to_logic: bool },
     /// An image or an icon. With `tint`, its shape is painted in that color: what
     /// a symbolic icon wants.
     /// `cell`: the image is a sheet of pictures in a grid, and only one is
@@ -2952,6 +2952,8 @@ pub enum Event {
     Text(&'static str, String),
     /// Enter in a field.
     Submit(&'static str, String),
+    /// A paste in a field (Ctrl+V, Shift+Insert): what the clipboard holds.
+    Paste(&'static str, crate::platform::Pasted),
     /// A link of a text was pressed: where it goes (`[words](where)`, or the `@name`).
     Link(String),
     /// A code block's «Copy» was pressed (`code_block:`): the code, already on the clipboard.

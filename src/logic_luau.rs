@@ -1746,6 +1746,21 @@ impl Script for LuauScript {
                 self.dispatch_text(&format!("text:{n}"), value);
             }
             Event::Submit(n, value) => self.dispatch_text(&format!("submit:{n}"), value),
+            // `on("paste:draft", function(p) … end)`: `p.text` (nil if it holds no
+            // text), `p.image` (true with a picture), `p.uris` (the files or
+            // addresses copied, a list, maybe empty).
+            Event::Paste(n, pasted) => {
+                let Some(lua) = &self.lua else { return };
+                let Ok(t) = lua.create_table() else { return };
+                if let Some(text) = &pasted.text {
+                    let _ = t.set("text", text.as_str());
+                }
+                let _ = t.set("image", pasted.image);
+                if let Ok(uris) = lua.create_sequence_from(pasted.uris.iter().map(String::as_str)) {
+                    let _ = t.set("uris", uris);
+                }
+                self.dispatch(&format!("paste:{n}"), Value::Table(t));
+            }
             Event::Link(href) => self.dispatch_text("link", href),
             Event::Copied(code) => self.dispatch_text("copy", code),
             Event::Focus(yes) => self.dispatch(if yes { "focus" } else { "blur" }, Value::Nil),

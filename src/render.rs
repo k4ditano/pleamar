@@ -2285,6 +2285,21 @@ pub fn run(
                 // On several lines, what it laid out says where the line above and below are.
                 let lines = placed.filter(|f| f.multi).map(|f| Multi { layout: f.layout.as_deref(), enter_sends: f.enter_sends });
                 ed.mentions = placed.is_some_and(|f| f.mentions);
+                // A paste: the logic hears what the clipboard holds now —its text,
+                // whether there is a picture, the files copied— (not a secret
+                // field's), read once, so the field writes what the logic heard.
+                let is_paste = (mods.ctrl && !mods.alt && !mods.logo && name.eq_ignore_ascii_case("v")) || (name == "Insert" && mods.shift && !mods.ctrl);
+                if is_paste && !secret {
+                    let pasted = crate::platform::clipboard_pasted();
+                    ed.pending_paste = Some(pasted.text.clone());
+                    let _ = to_logic.send(Event::Paste(scene.texts[k].0, pasted));
+                    // `paste: logic`: the field writes nothing; the logic decides.
+                    if placed.is_some_and(|f| f.paste_to_logic) {
+                        ed.pending_paste = None;
+                        last_key = crate::clock::now();
+                        continue;
+                    }
+                }
                 match ed.handle_key(&mut texts[k], &name, typed.as_deref(), mods, secret, lines) {
                     KeyOutcome::Changed => {
                         last_key = crate::clock::now();
@@ -6441,6 +6456,9 @@ struct Editing {
     preedit: Option<(String, Option<(usize, usize)>)>,
     /// Its `@name`s are one piece each (`mentions:`): erased whole, gone over at once.
     mentions: bool,
+    /// What a paste about to be done writes: the clipboard as it was read for
+    /// the logic's `paste:` (None inside: no text, nothing is written).
+    pending_paste: Option<Option<String>>,
 }
 
 /// What a field can undo and redo. Letters typed in a row are one step per word,
@@ -6488,7 +6506,7 @@ enum KeyOutcome {
 
 impl Editing {
     fn at(field: usize, cursor: usize, anchor: usize) -> Self {
-        Editing { field, cursor, anchor, history: History::default(), preedit: None, mentions: false }
+        Editing { field, cursor, anchor, history: History::default(), preedit: None, mentions: false, pending_paste: None }
     }
 
     /// The cursor put somewhere by hand (a click): the step that was open closes.
@@ -6663,7 +6681,11 @@ impl Editing {
             "v" if m.ctrl => {
                 // Nothing to write (a picture copied): the key goes on to the
                 // scene's rules and logic, which may take the picture.
-                let Some(pasted) = crate::platform::clipboard_read().filter(|p| !p.is_empty()) else { return KeyOutcome::Unhandled };
+                let pasted = match self.pending_paste.take() {
+                    Some(read) => read,
+                    None => crate::platform::clipboard_read(),
+                };
+                let Some(pasted) = pasted.filter(|p| !p.is_empty()) else { return KeyOutcome::Unhandled };
                 // A field of one line: whatever comes with line breaks, without them; of
                 // several, with them (as `\n`, whatever the system's were).
                 let pasted: String = if lines.is_some() { pasted.replace("\r\n", "\n").chars().filter(|c| *c == '\n' || !c.is_control()).collect() } else { pasted.chars().filter(|c| !c.is_control()).collect() };

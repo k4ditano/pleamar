@@ -100,6 +100,7 @@ impl Script for FromFile {
             Event::Layer(_, _) => c.work(),
             Event::Text(n, v) => println!("logic  · '{n}' now says: {v:?}"),
             Event::Submit(n, v) => println!("logic  · enter in '{n}': {v:?}"),
+            Event::Paste(n, p) => println!("logic  · paste in '{n}': {p:?}"),
             Event::Received(z, kind, d) => println!("logic  · something was dropped on '{z}', a {kind}: {d:?}"),
             Event::Signal(s, None) => println!("logic  · '{s}' happened"),
             Event::Signal(s, Some(v)) => println!("logic  · '{s}' happened, with {v:.2}"),

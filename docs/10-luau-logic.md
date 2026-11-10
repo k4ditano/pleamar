@@ -18,6 +18,7 @@ play("joy")                               -- ask for a gesture (the scene will g
 on("view_event", function(n) … end)       -- an event the scene lets out (`event x ->`), with its payload
 on("press:view", …)  on("release:view", …)  on("enter:orb", …)  on("leave:orb", …)
 on("scroll:sound", function(notches) … end)   on("key", function(name, text) … end)
+on("paste:draft", function(p) … end)      -- a paste in that field: p.text (nil without text), p.image, p.uris
 on("text:query", function(value) … end)   -- someone typed in the `query` field; `text.query` already holds it
 on("submit:query", function(value) … end) -- Enter in the field
 on("focus", …)  on("blur", …)             -- the surface gains or loses the keyboard

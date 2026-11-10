@@ -385,6 +385,8 @@ pub struct PlacedField {
     pub secret: bool,
     /// Takes no keys: see `passive` in the language.
     pub passive: bool,
+    /// `paste: logic`: a paste writes nothing; only the logic hears it.
+    pub paste_to_logic: bool,
     /// The field being written in: where its cursor is drawn (x, y, width,
     /// height, on the surface), for an input method to open beside it.
     pub caret: Option<[f32; 4]>,
@@ -2961,7 +2963,7 @@ impl DrawList {
                         self.timed |= time.is_some();
                     }
                 }
-                Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret, passive, lines, height, send, mentions } => {
+                Instr::Field { text, zone, at, width, style, alpha, placeholder, selection, secret, passive, lines, height, send, mentions, paste_to_logic } => {
                     // Several lines (`lines:`, `height:`): it wraps at its width and scrolls down.
                     let multi = *lines > 1 || height.is_some();
                     let k = text.0 as usize;
@@ -3028,7 +3030,7 @@ impl DrawList {
                         let b = affine.bounds([x0 - scroll + cx, y0 - scroll_y + top, x0 - scroll + cx + 1.0, y0 - scroll_y + bottom]);
                         [b[0], b[1], (b[2] - b[0]).max(1.0), b[3] - b[1]]
                     });
-                    self.fields.push(PlacedField { text: k, zone, layout: if empty { None } else { m.clone() }, x0, scroll, y0, scroll_y, multi, enter_sends: send.eval(c) != 0.0, mentions: mentions.is_some(), secret: *secret, passive: *passive, caret });
+                    self.fields.push(PlacedField { text: k, zone, layout: if empty { None } else { m.clone() }, x0, scroll, y0, scroll_y, multi, enter_sends: send.eval(c) != 0.0, mentions: mentions.is_some(), secret: *secret, passive: *passive, paste_to_logic: *paste_to_logic, caret });
                     let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
                     if a <= 0.001 {
                         continue;

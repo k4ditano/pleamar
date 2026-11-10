@@ -1231,7 +1231,7 @@ fn wayland_clipboard_bytes(kinds: &[&str]) -> Option<Option<(String, Vec<u8>)>> 
     use std::io::Read;
     use wl_clipboard_rs::paste::{get_contents, get_mime_types_ordered, ClipboardType, Error, MimeType, Seat};
     std::env::var_os("WAYLAND_DISPLAY")?;
-    let names = wayland_seat_names();
+    let names = person_seats(wayland_seat_names());
     let seats: Vec<Seat> = if names.is_empty() { vec![Seat::Unspecified] } else { names.iter().map(|n| Seat::Specific(n)).collect() };
     let mut asked = false;
     for seat in seats {
@@ -1244,16 +1244,81 @@ fn wayland_clipboard_bytes(kinds: &[&str]) -> Option<Option<(String, Vec<u8>)>> 
             Err(_) => continue,
         };
         asked = true;
+        if types.is_empty() {
+            continue;
+        }
+        // The first seat with something copied says what there is: a picture
+        // alone there is no text to paste, and another seat's old copy is not
+        // what the person copied.
         // As it is offered: `image/PNG` or `image/png;charset=…` is still a PNG.
         let plain = |t: &str| t.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
-        let Some(kind) = kinds.iter().find_map(|k| types.iter().find(|t| t.as_str() == *k || plain(t) == *k)) else { continue };
-        let Ok((mut pipe, _)) = get_contents(ClipboardType::Regular, seat, MimeType::Specific(kind)) else { continue };
+        let Some(kind) = kinds.iter().find_map(|k| types.iter().find(|t| t.as_str() == *k || plain(t) == *k)) else { return Some(None) };
+        let Ok((mut pipe, _)) = get_contents(ClipboardType::Regular, seat, MimeType::Specific(kind)) else { return Some(None) };
         let mut bytes = Vec::new();
-        if pipe.read_to_end(&mut bytes).is_ok() {
-            return Some(Some((kind.to_string(), bytes)));
-        }
+        return Some(pipe.read_to_end(&mut bytes).ok().map(|_| (kind.to_string(), bytes)));
     }
     asked.then_some(None)
+}
+
+/// Of the session's seats, the person's: pleamar-wm gives each agent a seat of
+/// its own (`cua-agent`, `cua-agent-2`…), whose clipboard is not what the
+/// person copied —a field's Ctrl+V pasted text copied there long before—.
+/// The agents' only when there is no other.
+#[cfg(target_os = "linux")]
+fn person_seats(names: Vec<String>) -> Vec<String> {
+    let agent = |n: &String| n.starts_with("cua-agent");
+    if names.iter().all(agent) {
+        return names;
+    }
+    names.into_iter().filter(|n| !agent(n)).collect()
+}
+
+/// What the clipboard holds now, for a paste: its text (if it offers any),
+/// whether it holds a picture, and the files or addresses copied. Read from
+/// the person's seat once, so the three agree.
+#[derive(Debug, Default, Clone)]
+pub struct Pasted {
+    pub text: Option<String>,
+    pub image: bool,
+    pub uris: Vec<String>,
+}
+
+pub fn clipboard_pasted() -> Pasted {
+    #[cfg(target_os = "linux")]
+    if let Some(types) = wayland_clipboard_types() {
+        let has = |k: &str| types.iter().any(|t| t.split(';').next().unwrap_or("").trim().eq_ignore_ascii_case(k));
+        let image = ["image/png", "image/x-png", "image/jpeg", "image/jpg", "image/pjpeg", "image/webp", "image/gif", "application/x-qt-image"].iter().any(|k| has(k));
+        let uris = if has("text/uri-list") || has("x-special/gnome-copied-files") {
+            wayland_clipboard_bytes(&["text/uri-list", "x-special/gnome-copied-files"])
+                .flatten()
+                .map(|(_, b)| String::from_utf8_lossy(&b).lines().map(str::trim).filter(|l| l.contains("://")).map(str::to_owned).collect())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        return Pasted { text: clipboard_read().filter(|t| !t.is_empty()), image, uris };
+    }
+    let text = clipboard_read().filter(|t| !t.is_empty());
+    let image = text.is_none() && arboard::Clipboard::new().ok().and_then(|mut c| c.get_image().ok()).is_some();
+    Pasted { text, image, uris: Vec::new() }
+}
+
+/// The kinds the person's clipboard offers now; None if it cannot be asked.
+#[cfg(target_os = "linux")]
+fn wayland_clipboard_types() -> Option<Vec<String>> {
+    use wl_clipboard_rs::paste::{get_mime_types_ordered, ClipboardType, Error, Seat};
+    std::env::var_os("WAYLAND_DISPLAY")?;
+    let names = person_seats(wayland_seat_names());
+    let seats: Vec<Seat> = if names.is_empty() { vec![Seat::Unspecified] } else { names.iter().map(|n| Seat::Specific(n)).collect() };
+    let mut asked = false;
+    for seat in seats {
+        match get_mime_types_ordered(ClipboardType::Regular, seat) {
+            Ok(t) if !t.is_empty() => return Some(t),
+            Ok(_) | Err(Error::ClipboardEmpty | Error::NoMimeType | Error::NoSeats | Error::SeatNotFound) => asked = true,
+            Err(_) => {}
+        }
+    }
+    asked.then(Vec::new)
 }
 
 /// The names of the session's seats, in the order the compositor lists them
@@ -1865,5 +1930,25 @@ mod clipboard_tests {
         assert!(super::save_private_file(&dir.join("no-such-folder/shot.png"), &png).is_err());
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir(&dir).unwrap();
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod seat_tests {
+    use super::person_seats;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// The person's seat is read, never an agent's: an agent's held an old copy
+    /// that a field's Ctrl+V pasted when the person had copied only a picture.
+    #[test]
+    fn a_paste_reads_the_persons_seat_not_an_agents() {
+        assert_eq!(person_seats(names(&["cua-agent", "seat0", "cua-agent-2"])), names(&["seat0"]));
+        assert_eq!(person_seats(names(&["pleamar", "cua-agent"])), names(&["pleamar"]));
+        // Only agents' seats: those, rather than nothing.
+        assert_eq!(person_seats(names(&["cua-agent"])), names(&["cua-agent"]));
+        assert!(person_seats(Vec::new()).is_empty());
     }
 }

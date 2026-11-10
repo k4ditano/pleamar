@@ -4480,6 +4480,21 @@ impl<'a> Compiler<'a> {
         // `passive: true`: a field that is only there to have the keyboard lent to the surface it is on
         // (`focus` it), and takes nothing of what is typed: every key goes on to the rules and the logic,
         // the arrows included. The loan goes to the copy the field is on and to no other.
+        // `paste: logic`: a paste (Ctrl+V, Shift+Insert) writes nothing in the
+        // field; the logic hears it (`on("paste:draft", …)`, as it always does)
+        // and decides —a picture to attach, files, or the text it inserts itself—.
+        let paste_to_logic = match p.get_mut("paste") {
+            Some(c) => {
+                let v = c.id("insert or logic")?;
+                c.expect_end()?;
+                match v.as_str() {
+                    "insert" => false,
+                    "logic" => true,
+                    _ => return c.error("`paste` is insert (the field writes the text, the default) or logic (only the logic hears it)"),
+                }
+            }
+            None => false,
+        };
         let passive = match p.get_mut("passive") {
             Some(c) => {
                 let v = c.id("true or false")?;
@@ -4609,7 +4624,7 @@ impl<'a> Compiler<'a> {
             active: None, visible: shown, under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None, yields: None,
         });
         self.last_size = Some((width.clone(), height));
-        self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret, passive, lines, height: height_of, send, mentions });
+        self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret, passive, lines, height: height_of, send, mentions, paste_to_logic });
         Ok(())
     }
 
