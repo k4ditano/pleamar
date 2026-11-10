@@ -496,7 +496,9 @@ pub fn run(
     let mut kept: std::collections::HashMap<usize, (usize, f32)> = std::collections::HashMap::new();
     // The `stick: end` behaviors, and for each what its end was and whether it was shown last frame.
     let mut sticks: Vec<usize> = Vec::new();
-    let mut stuck: std::collections::HashMap<usize, (f32, bool)> = std::collections::HashMap::new();
+    // (And until when it settles: its texts are measured over a few frames after it appears, and meanwhile it follows its end
+    // without the spring.)
+    let mut stuck: std::collections::HashMap<usize, (f32, bool, Option<std::time::Instant>)> = std::collections::HashMap::new();
     let mut rule_index = RuleIndex::default();
     let mut awake = AwakeBehaviors::default();
     // Stretches of the drawing copied and put together (see `gpu::Kept`), for the timing report.
@@ -4142,15 +4144,19 @@ pub fn run(
         }
         facts_at_binds.clone_from(&facts);
         // `stick: end` starts at its end: the first frame it is seen, when it is shown again, or
-        // when it goes from nothing to scroll to something, the scroll is put there without travelling.
+        // when it goes from nothing to scroll to something, the scroll is put there without travelling,
+        // and for half a second after it keeps to it so: what is inside is still being measured (the
+        // heights of its texts come in over a few frames), and the spring would travel all that way.
         for &k in &sticks {
             let Some(Behavior::Stick { scroll, until, pinned, shown }) = scene.behaviors.get(k) else { continue };
             let c = Ctx { props: &props, facts: &facts, seen: None };
             let (u, is_shown) = (until.eval(c).max(0.0), shown.eval(c) > 0.01);
-            let (was_until, was_shown) = stuck.get(&k).copied().unwrap_or((0.0, false));
-            stuck.insert(k, (u, is_shown));
+            let (was_until, was_shown, settling) = stuck.get(&k).copied().unwrap_or((0.0, false, None));
             let is_pinned = facts.get(pinned.0 as usize).is_some_and(|v| *v > 0.5);
-            if is_pinned && is_shown && u > 0.5 && (!was_shown || was_until <= 0.5) {
+            let starts = is_pinned && is_shown && u > 0.5 && (!was_shown || was_until <= 0.5);
+            let settling = if starts { Some(seen + Duration::from_millis(500)) } else { settling.filter(|t| seen < *t && is_pinned && is_shown) };
+            stuck.insert(k, (u, is_shown, settling));
+            if settling.is_some() && u > 0.5 {
                 let p = &mut props[scroll.0 as usize];
                 if p.x != u || p.target != u {
                     p.set(u);

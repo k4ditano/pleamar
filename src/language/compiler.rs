@@ -6835,10 +6835,8 @@ impl<'a> Compiler<'a> {
                 at
             }));
         }
-        if !keyed_places.is_empty() {
-            let at: Vec<PropId> = keyed_at.iter().flatten().copied().collect();
-            self.e.behaviors.push(Behavior::Places { places: std::mem::take(&mut keyed_places), lengths: std::mem::take(&mut keyed_lengths), start: padding.clone(), at });
-        }
+        // (They start where the layout is when it gets to the first of them: after what goes before the `for`.)
+        let mut keyed_start: Option<Expr> = None;
         // Where each child starts along and how long it is (0 when not there), for `keep: visible`.
         let mut kept_starts: Vec<Expr> = Vec::new();
         let mut kept_lengths: Vec<Expr> = Vec::new();
@@ -6849,6 +6847,7 @@ impl<'a> Compiler<'a> {
             let mut along = if p.separator { running.clone() - gap.clone() * 0.5 } else { running.clone() };
             // A copy of a `for … key` goes to its record's place: what copy it is says nothing.
             if let Some(at) = keyed_at[k] {
+                keyed_start.get_or_insert_with(|| along.clone());
                 along = at.e();
             }
             // A copy of a window the layout works out sits where its record is in the whole list.
@@ -6896,6 +6895,10 @@ impl<'a> Compiler<'a> {
             }
             let last = k + 1 == placed_items.len();
             running = self.shared("along", running + (length_of(p) + if last || p.separator { Expr::K(0.0) } else { gap.clone() }) * p.visible.clone());
+        }
+        if let Some(start) = keyed_start {
+            let at: Vec<PropId> = keyed_at.iter().flatten().copied().collect();
+            self.e.behaviors.push(Behavior::Places { places: std::mem::take(&mut keyed_places), lengths: std::mem::take(&mut keyed_lengths), start, at });
         }
         let (total_along, total_across) = match wrap {
             // A grid measures what its lines do: the last one carries no gap after it.
