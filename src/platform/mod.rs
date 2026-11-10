@@ -1121,22 +1121,10 @@ pub fn clipboard_read() -> Option<String> {
 /// it—.
 #[cfg(target_os = "linux")]
 fn wayland_clipboard_read() -> Option<Option<String>> {
-    use std::io::Read;
-    use wl_clipboard_rs::paste::{get_contents, get_mime_types_ordered, ClipboardType, MimeType, Seat};
-    std::env::var_os("WAYLAND_DISPLAY")?;
-    let types = match get_mime_types_ordered(ClipboardType::Regular, Seat::Unspecified) {
-        Ok(t) => t,
-        Err(wl_clipboard_rs::paste::Error::ClipboardEmpty | wl_clipboard_rs::paste::Error::NoMimeType) => return Some(None),
-        Err(_) => return None,
-    };
     let plain = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "STRING", "TEXT"];
     // No plain text: a picture (with its HTML), or something else that is
     // not words to write.
-    let Some(kind) = plain.iter().find(|p| types.iter().any(|t| t == *p)) else { return Some(None) };
-    let (mut pipe, _) = get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Specific(kind)).ok()?;
-    let mut text = String::new();
-    pipe.read_to_string(&mut text).ok()?;
-    Some(Some(text))
+    Some(wayland_clipboard_bytes(&plain)?.map(|(_, bytes)| String::from_utf8_lossy(&bytes).into_owned()))
 }
 
 /// A picture on the clipboard, as PNG bytes: on Wayland as the one who copied
@@ -1144,7 +1132,7 @@ fn wayland_clipboard_read() -> Option<Option<String>> {
 /// elsewhere (X11, macOS, Windows), what arboard reads.
 pub fn clipboard_picture() -> Option<Vec<u8>> {
     #[cfg(target_os = "linux")]
-    if let Some(read) = wayland_clipboard_bytes(&["image/png", "image/jpeg", "image/webp", "image/gif"]) {
+    if let Some(read) = wayland_clipboard_bytes(&["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"]) {
         let (kind, bytes) = read?;
         if kind == "image/png" {
             return Some(bytes);
@@ -1231,21 +1219,77 @@ pub(crate) fn unescape_uri(s: &str) -> String {
 
 /// What the clipboard holds in the first of `kinds` it offers: `None` if it cannot
 /// be asked (no Wayland), `Some(None)` if it offers none of them.
+///
+/// Seat by seat, by name: a session may have more than one (pleamar-wm gives
+/// each agent a seat of its own, with nothing copied), and wl-clipboard-rs left
+/// to choose takes any of them —a different one each time it is asked—, so a
+/// picture that was there a moment ago was gone at the next question.
 #[cfg(target_os = "linux")]
 fn wayland_clipboard_bytes(kinds: &[&str]) -> Option<Option<(String, Vec<u8>)>> {
     use std::io::Read;
-    use wl_clipboard_rs::paste::{get_contents, get_mime_types_ordered, ClipboardType, MimeType, Seat};
+    use wl_clipboard_rs::paste::{get_contents, get_mime_types_ordered, ClipboardType, Error, MimeType, Seat};
     std::env::var_os("WAYLAND_DISPLAY")?;
-    let types = match get_mime_types_ordered(ClipboardType::Regular, Seat::Unspecified) {
-        Ok(t) => t,
-        Err(wl_clipboard_rs::paste::Error::ClipboardEmpty | wl_clipboard_rs::paste::Error::NoMimeType) => return Some(None),
-        Err(_) => return None,
-    };
-    let Some(kind) = kinds.iter().find(|k| types.iter().any(|t| t == *k)) else { return Some(None) };
-    let (mut pipe, _) = get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Specific(kind)).ok()?;
-    let mut bytes = Vec::new();
-    pipe.read_to_end(&mut bytes).ok()?;
-    Some(Some((kind.to_string(), bytes)))
+    let names = wayland_seat_names();
+    let seats: Vec<Seat> = if names.is_empty() { vec![Seat::Unspecified] } else { names.iter().map(|n| Seat::Specific(n)).collect() };
+    let mut asked = false;
+    for seat in seats {
+        let types = match get_mime_types_ordered(ClipboardType::Regular, seat) {
+            Ok(t) => t,
+            Err(Error::ClipboardEmpty | Error::NoMimeType | Error::NoSeats | Error::SeatNotFound) => {
+                asked = true;
+                continue;
+            }
+            Err(_) => continue,
+        };
+        asked = true;
+        let Some(kind) = kinds.iter().find(|k| types.iter().any(|t| t == *k)) else { continue };
+        let Ok((mut pipe, _)) = get_contents(ClipboardType::Regular, seat, MimeType::Specific(kind)) else { continue };
+        let mut bytes = Vec::new();
+        if pipe.read_to_end(&mut bytes).is_ok() {
+            return Some(Some((kind.to_string(), bytes)));
+        }
+    }
+    asked.then_some(None)
+}
+
+/// The names of the session's seats, in the order the compositor lists them
+/// (the person's own first). Empty if they cannot be asked for, or have no name.
+#[cfg(target_os = "linux")]
+fn wayland_seat_names() -> Vec<String> {
+    use wayland_client::protocol::{wl_registry, wl_seat};
+    use wayland_client::{Connection, Dispatch, QueueHandle};
+    #[derive(Default)]
+    struct Seats(Vec<(u32, Option<String>)>);
+    impl Dispatch<wl_registry::WlRegistry, ()> for Seats {
+        fn event(s: &mut Self, registry: &wl_registry::WlRegistry, event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
+            if let wl_registry::Event::Global { name, interface, version } = event {
+                // A seat says its name from version 2 on.
+                if interface == "wl_seat" && version >= 2 {
+                    registry.bind::<wl_seat::WlSeat, _, _>(name, 2, qh, name);
+                    s.0.push((name, None));
+                }
+            }
+        }
+    }
+    impl Dispatch<wl_seat::WlSeat, u32> for Seats {
+        fn event(s: &mut Self, _: &wl_seat::WlSeat, event: wl_seat::Event, global: &u32, _: &Connection, _: &QueueHandle<Self>) {
+            if let wl_seat::Event::Name { name } = event {
+                if let Some(seat) = s.0.iter_mut().find(|(g, _)| g == global) {
+                    seat.1 = Some(name);
+                }
+            }
+        }
+    }
+    let Ok(connection) = Connection::connect_to_env() else { return Vec::new() };
+    let mut queue = connection.new_event_queue();
+    let mut seats = Seats::default();
+    connection.display().get_registry(&queue.handle(), ());
+    // Once for the globals, once more for what each seat says of itself.
+    if queue.roundtrip(&mut seats).is_err() || queue.roundtrip(&mut seats).is_err() {
+        return Vec::new();
+    }
+    seats.0.sort_by_key(|(global, _)| *global);
+    seats.0.into_iter().filter_map(|(_, name)| name).collect()
 }
 
 pub fn clipboard_write(text: &str) {
