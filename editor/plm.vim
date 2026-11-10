@@ -8,7 +8,7 @@ syn keyword plmFunction min max abs floor ceil sin cos clamp smooth mix if vel s
 syn keyword plmFunction upper lower
 syn keyword plmTrigger press release scroll pinch drag hold enter leave hover away idle key keyup submit focus blur drop carry change still
 syn keyword plmEffect toggle emit impulse ripple play focus blur close promote fullscreen minimize restore float tile launch send swap workspace pick dock accept quit
-syn keyword plmStep move line curve close
+syn keyword plmStep move line curve close for repeat
 syn keyword plmConstant true false lively calm quick slow gentle pose linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier text number bool image
 syn match plmProperty "\<\w\+\ze\s*:"
 syn match plmNumber "\<\d\+\(\.\d\+\)\?\(px\|%\|deg\|ms\|s\)\?\>"

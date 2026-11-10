@@ -1,0 +1,24 @@
+// expect: ok
+language 0.1
+// A path whose points are a list's records: `for` inside it walks the list,
+// as many steps as its records, and without a `move` it starts at the first.
+// A `repeat` does the same over facts numbered by hand.
+scene Strokes {
+    surface { size: 320, 200 }
+    let ink = #f5f7f5
+    model strokes max 3 { list pts max 8 { x: number; y: number } }
+    fact live.n = 0
+    repeat k in 0..6 { fact live.x.$k = 0; fact live.y.$k = 0 }
+    for s in strokes {
+        path {
+            stroke: 3; color: ink
+            for q in s.pts { line q.x, q.y }
+        }
+    }
+    path {
+        at: 0, 120; stroke: 2; color: #9ed6bd
+        move 10, 0
+        repeat k in 0..6 { curve live.x.$k, live.y.$k via live.x.$k - 10, live.y.$k + 20 }
+        close
+    }
+}

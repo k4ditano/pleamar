@@ -1943,6 +1943,88 @@ impl<'a> Compiler<'a> {
         })
     }
 
+    /// The steps of a `path`, and those of a `for` or a `repeat` inside it: one
+    /// step per record the model can hold, which counts only while that record
+    /// is there (`when`). Its points read the record as a copy of a `for` does.
+    fn path_steps(&mut self, body: &[Entry], base: &Point, when: Option<&Expr>, p: &mut PathParts) -> R<()> {
+        for e in body {
+            let Entry::Node(x) = e else { continue };
+            let mut c = Cur::new(&x.head, x.line, x.col);
+            let word = c.one_of(vocab::PATH_COMMANDS, "a step of a path")?;
+            let offset_point = |o: &Self, c: &mut Cur| -> R<Point> {
+                let q = o.point(c)?;
+                Ok((base.0.clone() + q.0, base.1.clone() + q.1))
+            };
+            let only = |step: PathStep| match when {
+                Some(w) => PathStep::Only { when: w.clone(), step: Box::new(step) },
+                None => step,
+            };
+            match word.as_str() {
+                "move" => {
+                    if p.origin.is_some() || !p.steps.is_empty() || when.is_some() {
+                        return Err(CompileError::at(x.line, x.col, "a path starts at one place: `move` goes first, and only once, outside any `for`. For several strokes, several `path`; with no `move` and a `for` first, it starts at the first record"));
+                    }
+                    p.origin = Some(offset_point(self, &mut c)?);
+                }
+                "line" => {
+                    let a = offset_point(self, &mut c)?;
+                    p.steps.push(only(PathStep::Line(a)));
+                }
+                "curve" => {
+                    let a = offset_point(self, &mut c)?;
+                    c.expect_word("via")?;
+                    let via = offset_point(self, &mut c)?;
+                    p.steps.push(only(PathStep::Curve { via, to: a }));
+                }
+                "close" => {
+                    if when.is_some() {
+                        return Err(CompileError::at(x.line, x.col, "`close` goes after the `for`, not inside it: a path closes once"));
+                    }
+                    p.closed = true;
+                }
+                // `for q in s.pts { line q.x, q.y }`: as many steps as the list can hold.
+                "for" => {
+                    if p.origin.is_none() && p.steps.is_empty() {
+                        p.looped_first = true;
+                    }
+                    let (var, model, capacity, from, keyed) = self.for_head(&mut c)?;
+                    if keyed {
+                        return Err(CompileError::at(x.line, x.col, "a path walks its model in order: a model walked with `key` cannot be its points"));
+                    }
+                    for k in 0..capacity {
+                        let env = self.for_iteration(&var, &model, k, &from, keyed);
+                        let there = env.visible.clone().expect("a for's copy says whether it is there");
+                        let there = match when {
+                            Some(w) => w.clone() * there,
+                            None => there,
+                        };
+                        self.scopes.push(Rc::new(env));
+                        let r = self.path_steps(x.body.as_deref().unwrap_or(&[]), base, Some(&there), p);
+                        self.scopes.pop();
+                        r?;
+                    }
+                    continue;
+                }
+                // `repeat k in 0..120 { line pt.x.$k, pt.y.$k }`: every turn, always there.
+                _ => {
+                    if p.origin.is_none() && p.steps.is_empty() {
+                        p.looped_first = true;
+                    }
+                    let (var, from, until) = self.repeat_head(&mut c)?;
+                    for v in from..until {
+                        self.open_iteration(&var, v);
+                        let r = self.path_steps(x.body.as_deref().unwrap_or(&[]), base, when, p);
+                        self.scopes.pop();
+                        r?;
+                    }
+                    continue;
+                }
+            }
+            c.expect_end()?;
+        }
+        Ok(())
+    }
+
     fn point(&self, c: &mut Cur) -> R<Point> {
         let x = self.expr(c)?;
         c.expect_sym(",")?;
@@ -2276,39 +2358,18 @@ impl<'a> Compiler<'a> {
             // `path { move 0, 0; line 20, 10; curve 40, 0 via 32, 10; close }`
             "path" => {
                 let base = at.unwrap_or((Expr::K(0.0), Expr::K(0.0)));
-                let offset_point = |o: &Compiler, c: &mut Cur| -> R<Point> {
-                    let p = o.point(c)?;
-                    Ok((base.0.clone() + p.0, base.1.clone() + p.1))
-                };
-                let (mut origin, mut steps, mut closed) = (None, Vec::new(), false);
-                for e in n.body.as_deref().unwrap_or(&[]) {
-                    let Entry::Node(x) = e else { continue };
-                    let mut c = Cur::new(&x.head, x.line, x.col);
-                    match c.one_of(vocab::PATH_COMMANDS, "a step of a path")?.as_str() {
-                        "move" => {
-                            if origin.is_some() || !steps.is_empty() {
-                                return Err(CompileError::at(x.line, x.col, "a path starts at one place: `move` goes first, and only once. For several strokes, several `path`"));
-                            }
-                            origin = Some(offset_point(self, &mut c)?);
-                        }
-                        "line" => steps.push(PathStep::Line(offset_point(self, &mut c)?)),
-                        "curve" => {
-                            let a = offset_point(self, &mut c)?;
-                            c.expect_word("via")?;
-                            steps.push(PathStep::Curve { via: offset_point(self, &mut c)?, to: a });
-                        }
-                        _ => closed = true,
-                    }
-                    c.expect_end()?;
-                }
-                if steps.is_empty() {
+                let mut p = PathParts::default();
+                self.path_steps(n.body.as_deref().unwrap_or(&[]), &base, None, &mut p)?;
+                if p.steps.is_empty() {
                     return Err(CompileError::at(n.line, n.col, "a path goes somewhere: it needs at least one `line` or one `curve`"));
                 }
-                if steps.len() + 1 > crate::shapes::MAX_POINTS {
-                    return Err(CompileError::at(n.line, n.col, format!("a path has at most {} steps", crate::shapes::MAX_POINTS - 1)));
+                if p.steps.len() + 1 > crate::shapes::MAX_POINTS {
+                    return Err(CompileError::at(n.line, n.col, format!("a path has at most {} steps (a `for` inside one counts every record its model can hold)", crate::shapes::MAX_POINTS - 1)));
                 }
                 extent = size;
-                Shape::Path { origin: origin.unwrap_or(base), steps, closed }
+                // With no `move` and a `for` first, it starts where the first record there is says.
+                let starts_on_first = p.origin.is_none() && p.looped_first;
+                Shape::Path { origin: p.origin.unwrap_or(base), steps: p.steps, closed: p.closed, starts_on_first }
             }
             "arc" => Shape::Arc { center: at.ok_or_else(|| missing("at"))?, radius: radius.ok_or_else(|| missing("radius"))?, opening: span.ok_or_else(|| missing("span"))? * 0.5, thickness: width.ok_or_else(|| missing("width"))? },
             _ => Shape::Segment { from: from.ok_or_else(|| missing("from"))?, to: to.ok_or_else(|| missing("to"))?, thickness: width.ok_or_else(|| missing("width"))? },
@@ -9058,4 +9119,14 @@ fn alpha_between(a: Expr, b: Expr, t: Expr) -> Expr {
     } else {
         a.mix(b, t)
     }
+}
+
+/// What a `path` has gathered so far, as its steps are read.
+#[derive(Default)]
+struct PathParts {
+    origin: Option<Point>,
+    steps: Vec<PathStep>,
+    closed: bool,
+    /// Its first step came from a `for` or a `repeat`, with no `move` before.
+    looped_first: bool,
 }

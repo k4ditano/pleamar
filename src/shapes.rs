@@ -98,7 +98,9 @@ pub enum Shape {
     /// a line with thickness. The points are flattened here and the shader
     /// measures against them, so it comes out with the same signed distance as
     /// the others: it blends, it has shadow, edge and light.
-    Path { origin: Point, steps: Vec<PathStep>, closed: bool },
+    /// `starts_on_first`: there is no `move`, and it starts where the first step
+    /// that counts says (a path whose points are a list's records).
+    Path { origin: Point, steps: Vec<PathStep>, closed: bool, starts_on_first: bool },
 }
 
 /// Where a path goes through. The first one is its `move`; the rest, this.
@@ -107,6 +109,9 @@ pub enum PathStep {
     Line(Point),
     /// A quadratic Bézier: the point it pulls towards and where it arrives.
     Curve { via: Point, to: Point },
+    /// A step that counts only while that holds: a record of a `for` inside a
+    /// path, which is not there when the list is shorter than its model.
+    Only { when: Expr, step: Box<PathStep> },
 }
 
 /// How many points an already flattened path can have. Every pixel of its box
@@ -137,12 +142,31 @@ impl Shape {
     /// to leave them stays as its box, which is what is enough for the mouse.
     pub fn flatten_into(&self, c: Ctx, pts: &mut Vec<f32>) -> FlatShape {
         match self {
-            Shape::Path { origin, steps, closed } => {
+            Shape::Path { origin, steps, closed, starts_on_first } => {
                 let mut ps: Vec<(f32, f32)> = Vec::with_capacity(steps.len() + 1);
                 let mut d = (origin.0.eval(c), origin.1.eval(c));
-                ps.push(d);
+                let mut started = !*starts_on_first;
+                if started {
+                    ps.push(d);
+                }
                 for step in steps {
+                    let step = match step {
+                        PathStep::Only { when, step } if when.eval(c) > 0.5 => &**step,
+                        PathStep::Only { .. } => continue,
+                        s => s,
+                    };
+                    if !started {
+                        // The first that counts is where it starts: moved to, not drawn to.
+                        started = true;
+                        d = match step {
+                            PathStep::Line(a) | PathStep::Curve { to: a, .. } => (a.0.eval(c), a.1.eval(c)),
+                            PathStep::Only { .. } => unreachable!("an `Only` holds a step of its own"),
+                        };
+                        ps.push(d);
+                        continue;
+                    }
                     match step {
+                        PathStep::Only { .. } => unreachable!("an `Only` holds a step of its own"),
                         PathStep::Line(a) => {
                             d = (a.0.eval(c), a.1.eval(c));
                             ps.push(d);
@@ -169,6 +193,10 @@ impl Shape {
                 let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
                 for (x, y) in &ps {
                     (x0, y0, x1, y1) = (x0.min(*x), y0.min(*y), x1.max(*x), y1.max(*y));
+                }
+                // A list with nothing in it: no points, and a box of nothing where it would start.
+                if ps.is_empty() {
+                    (x0, y0, x1, y1) = (d.0, d.1, d.0, d.1);
                 }
                 let (cx, cy) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
                 let first = pts.len() / 2;

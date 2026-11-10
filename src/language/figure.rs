@@ -60,6 +60,7 @@ fn point_count(origin: &Point, steps: &[PathStep]) -> usize {
                 d = (val(&a.0), val(&a.1));
                 n += 1;
             }
+            PathStep::Only { .. } => n += 1,
             PathStep::Curve { via, to } => {
                 let v = (val(&via.0), val(&via.1));
                 let f = (val(&to.0), val(&to.1));
@@ -100,7 +101,7 @@ fn paths(data: &resvg::tiny_skia::Path, center: (f32, f32)) -> Vec<Shape> {
     let mut here = (0.0f32, 0.0f32);
     let close = |origin: &mut Option<Point>, steps: &mut Vec<PathStep>, closed: &mut bool, out: &mut Vec<Shape>| {
         if let (Some(o), false) = (origin.take(), steps.is_empty()) {
-            out.push(Shape::Path { origin: o, steps: std::mem::take(steps), closed: *closed });
+            out.push(Shape::Path { origin: o, steps: std::mem::take(steps), closed: *closed, starts_on_first: false });
         }
         steps.clear();
         *closed = false;

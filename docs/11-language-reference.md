@@ -817,7 +817,7 @@ path {
 }
 ```
 
-A path carries **a single stroke** (one `move`, the first) and up to 192 already flattened points; for several, several `path`. In a layout it has to be told what it takes up with `size:`, because its box is not known until it is evaluated.
+A path carries **a single stroke** (one `move`, the first) and up to 192 already flattened points; for several, several `path`. **Its points from a list:** a `for` inside it walks a model —or a list in a record, `for q in s.pts`— and its steps are written once for every record: `path { stroke: 2; for q in s.pts { line q.x, q.y } }`. It unfolds as many steps as the model can hold, and only those of the records there are count: a list of three is three points, and an empty one draws nothing. With no `move` and a `for` first, the path starts at the first record (it is moved to, not drawn to from `at`). A `repeat` does the same over what is numbered by hand —`repeat k in 0..120 { line pt.x.$k, pt.y.$k }`—, every turn always there. `close` goes after them, outside; and the steps of all the turns count towards the 191 a path can have. In a layout it has to be told what it takes up with `size:`, because its box is not known until it is evaluated.
 
 **Lists longer than what is unfolded.** A model unfolds its `max` records on load, and that is the ceiling (1024). For a list of thousands the model is only the **window** —what is seen and a little more—, and **the layout works it out itself**: a `column` or `row` with `view:` whose only child is a `for` (no `from`, no `key`, no `content:` of its own; with fixed children beside it, it measures them all as written) makes `name.first`, the record the window starts at —two before what is seen—, and moves it as the list moves; the logic hears it, `on("fact:list.first", function(first) … end)`, and hands over the slice from there (`model.rows = …`), and says how long the whole list is in `name.total` (`fact["list.total"] = 5000`; 0, the model's own). Copy 0 is record `first`, `r.index` the number that belongs to it, each copy sits where its record is, and the length to scroll over is the whole list's. `examples/long-list.plm` is five thousand rows in sixteen copies so. The same by hand, for a layout that wants it otherwise:
 
@@ -2022,7 +2022,7 @@ classes: ambient reflex asked state
 field_types: text number bool image
 fact_types: number bool
 model: list
-path: move line curve close
+path: move line curve close for repeat
 documented: translations surface permissions model service spring prop pose fact event text image figure font particles shader blur lens measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window terminal pages column space between layer on every blink wave spin follow look ripple gesture posture import scene library include part language
 services: clock clock.seconds audio audio.level battery brightness network bluetooth media window thumbnails workspaces apps tray notifications notification_history polkit
 services.clock: hour minute second day month year weekday time date

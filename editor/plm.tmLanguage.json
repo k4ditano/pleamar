@@ -57,7 +57,7 @@
       "name": "keyword.operator.plm"
     },
     {
-      "match": "\\b(move|line|curve|close)\\b",
+      "match": "\\b(move|line|curve|close|for|repeat)\\b",
       "name": "storage.type.plm"
     },
     {

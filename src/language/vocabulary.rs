@@ -153,7 +153,7 @@ pub const SERVICES: &[(&str, &[&str])] = &[
 pub const LIST_FIELDS: &[&str] = &["networks", "devices", "outputs", "inputs", "apps", "players", "list"];
 
 /// The steps of a path: where it goes through. `curve … via …` is a quadratic Bézier.
-pub const PATH_COMMANDS: &[&str] = &["move", "line", "curve", "close"];
+pub const PATH_COMMANDS: &[&str] = &["move", "line", "curve", "close", "for", "repeat"];
 
 /// What a model can carry inside besides fields: another list of records.
 pub const MODEL_TYPES: &[&str] = &["list"];
