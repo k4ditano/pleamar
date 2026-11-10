@@ -494,6 +494,9 @@ pub fn run(
     // The `keep: visible` behaviors, and for each the first child it saw and where that child started.
     let mut keeps: Vec<usize> = Vec::new();
     let mut kept: std::collections::HashMap<usize, (usize, f32)> = std::collections::HashMap::new();
+    // The `stick: end` behaviors, and for each what its end was and whether it was shown last frame.
+    let mut sticks: Vec<usize> = Vec::new();
+    let mut stuck: std::collections::HashMap<usize, (f32, bool)> = std::collections::HashMap::new();
     let mut rule_index = RuleIndex::default();
     let mut awake = AwakeBehaviors::default();
     // Stretches of the drawing copied and put together (see `gpu::Kept`), for the timing report.
@@ -1066,6 +1069,8 @@ pub fn run(
                     agent_index = None;
                     keeps = scene.behaviors.iter().enumerate().filter(|(_, b)| matches!(b, Behavior::Keep { .. })).map(|(k, _)| k).collect();
                     kept.clear();
+                    sticks = scene.behaviors.iter().enumerate().filter(|(_, b)| matches!(b, Behavior::Stick { .. })).map(|(k, _)| k).collect();
+                    stuck.clear();
                     if let Some(n) = &scene.nest {
                         if nest.is_none() {
                             nest = crate::platform::start_nest(n.max, op.to_self.clone());
@@ -3923,7 +3928,7 @@ pub fn run(
                     }
                 }
                 // Worked out at the end of the round, with everything laid out (see `keeps`).
-                Behavior::Keep { .. } => {}
+                Behavior::Keep { .. } | Behavior::Stick { .. } => {}
                 Behavior::Places { places, lengths, start, at } => {
                     if readers.dirty[k] {
                         let mut moved = false;
@@ -4136,6 +4141,27 @@ pub fn run(
             }
         }
         facts_at_binds.clone_from(&facts);
+        // `stick: end` starts at its end: the first frame it is seen, when it is shown again, or
+        // when it goes from nothing to scroll to something, the scroll is put there without travelling.
+        for &k in &sticks {
+            let Some(Behavior::Stick { scroll, until, pinned, shown }) = scene.behaviors.get(k) else { continue };
+            let c = Ctx { props: &props, facts: &facts, seen: None };
+            let (u, is_shown) = (until.eval(c).max(0.0), shown.eval(c) > 0.01);
+            let (was_until, was_shown) = stuck.get(&k).copied().unwrap_or((0.0, false));
+            stuck.insert(k, (u, is_shown));
+            let is_pinned = facts.get(pinned.0 as usize).is_some_and(|v| *v > 0.5);
+            if is_pinned && is_shown && u > 0.5 && (!was_shown || was_until <= 0.5) {
+                let p = &mut props[scroll.0 as usize];
+                if p.x != u || p.target != u {
+                    p.set(u);
+                    readers.touch(*scroll);
+                    alive = true;
+                    if timing {
+                        alive_by.push("a list that starts at its end".to_owned());
+                    }
+                }
+            }
+        }
         // `keep: visible`: with everything laid out for this frame, a list whose first child seen
         // moved (what is above it grew, shrank, came or went) moves its scroll as much, and what is
         // seen stays where it was. Then the first child seen is looked for again.

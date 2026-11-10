@@ -501,6 +501,27 @@ mod tests {
         out
     }
 
+    /// A column measures its children and the gaps between them: with the last ones not there,
+    /// no gap is left after the last one that is (it was, under a list's end).
+    #[test]
+    fn no_gap_after_the_last_child_there() {
+        let source = "scene Gaps {
+    surface { size: 200, 200 }
+    fact k = 2
+    column col { at: 0, 0; gap: 5
+        repeat i in 0..4 {
+            box { size: 10, 10; show: i < k; color: #fff }
+        }
+    }
+    on demo { h = col.height }
+    fact h = 0
+}
+";
+        for (k, h) in [(0.0, 0.0), (1.0, 10.0), (2.0, 25.0), (4.0, 55.0)] {
+            assert_eq!(set_by_rules(source, &[("k", k)])["h"][0], h, "{k} there");
+        }
+    }
+
     #[test]
     fn an_array_is_read_by_a_place_known_or_not() {
         let set = set_by_rules("scene Arrays {

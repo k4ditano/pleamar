@@ -6908,7 +6908,21 @@ impl<'a> Compiler<'a> {
                     (lines * cell_across - gap.clone()).max(Expr::K(0.0)) + padding.clone() * 2.0,
                 )
             }
-            None => (running + padding.clone(), max_across + padding.clone() * 2.0),
+            // Each child there but the last carries the gap after it; when the last children are not
+            // there (a `for` with fewer records than copies), the one that is last carries one too
+            // much: it does not count (it left a gap under a list's end).
+            None => {
+                let mut along = running + padding.clone();
+                if let Some(last) = placed_items.last()
+                    && !matches!(gap, Expr::K(g) if g == 0.0)
+                    && !matches!(last.visible, Expr::K(v) if v == 1.0)
+                {
+                    let before = placed_items[..placed_items.len() - 1].iter().filter(|p| !p.separator).fold(Expr::K(0.0), |a, p| a + p.visible.clone());
+                    let before = self.shared("before_last", before).min(Expr::K(1.0));
+                    along = along - gap.clone() * (Expr::K(1.0) - last.visible.clone()) * before;
+                }
+                (along, max_across + padding.clone() * 2.0)
+            }
         };
         let mut content = if is_row { (total_along, total_across) } else { (total_across, total_along) };
         // A window it works out itself: the whole list's length, and the rule that moves the window.
@@ -8257,6 +8271,10 @@ impl<'a> Compiler<'a> {
             }
             self.e.rule(Trigger::Drag(zone), on_drag);
             if let Some(f) = pinned {
+                // It starts at its end, without travelling: when it is first seen, when it is shown
+                // again, and when it goes from nothing to scroll to something (a model filled at once).
+                let shown = self.e.zones[zone.0 as usize].active.clone();
+                self.e.behaviors.push(Behavior::Stick { scroll: prop, until: until.clone(), pinned: f, shown });
                 // What is inside grows (or the window shrinks): there it goes, if it was at the end.
                 self.e.rules.push(Rule { when: Trigger::Change(until.clone()), guard: Some(f.e().gt(Expr::K(0.5))), effects: vec![Effect::Animate(Transition { prop, to: until.clone(), spring, delay: Duration::ZERO })] });
             }

@@ -1255,7 +1255,7 @@ box { from: 276, 16 + list.scroll / max(list.content, 1) * 208
       size: 4, 208 * 208 / max(list.content, 208);  corner: 2;  color: ink;  opacity: 35% }
 ```
 
-**`stick: end`** is a chat's, a log's: the list starts at its end and **stays there while what is inside grows**, unless it was scrolled away from it to read; scrolled back to the end, it sticks again. It publishes **`list.pinned`** —1 at the end, 0 when it was moved away—, which is what is needed for a «↓ new» button: `on press down { list.scroll: list.content - list.height ~calm; list.pinned = 1 }`.
+**`stick: end`** is a chat's, a log's: the list starts at its end and **stays there while what is inside grows**, unless it was scrolled away from it to read; scrolled back to the end, it sticks again. It is put at its end **without travelling** the first frame it is seen, when it is shown again, and when it goes from nothing to scroll to something (a conversation loaded at once); after that, its spring follows what grows. It publishes **`list.pinned`** —1 at the end, 0 when it was moved away—, which is what is needed for a «↓ new» button: `on press down { list.scroll: list.content - list.height ~calm; list.pinned = 1 }`.
 
 What is inside is always shown **within `0` and `list.content - list.height`**: when it shrinks —a row below that folds, the last message cut short— its end stays at the window's end at once, while `list.scroll` itself catches up with its spring (it used to leave a gap under the end until it did, some 300 ms).
 

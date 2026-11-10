@@ -1486,6 +1486,10 @@ pub enum Behavior {
     /// layout (`starts`, `lengths`, 0 long when not there); the scroll moves by what the
     /// first child seen moved. Not while `pinned` (a `stick: end` at its end) holds.
     Keep { scroll: PropId, starts: Vec<Expr>, lengths: Vec<Expr>, until: Expr, pinned: Option<FactId> },
+    /// `stick: end`: while `pinned`, the scroll is put at its end (`until`) at once, without
+    /// its spring, the first frame it is `shown`, when it is shown again, and when `until`
+    /// goes from 0 (nothing to scroll) to more. The rest of the following is the rule's.
+    Stick { scroll: PropId, until: Expr, pinned: FactId, shown: Expr },
     /// prop += per_second · dt, endlessly: a hand that goes round and round.
     Advance { prop: PropId, per_second: Expr },
     /// Two properties that pull towards the pointer, with their own spring.
