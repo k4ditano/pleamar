@@ -453,6 +453,20 @@ mod tests {
     }
 
     #[test]
+    fn a_zone_named_in_a_repeat_inside_a_for_is_each_rows_own() {
+        use crate::scene::Trigger;
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/zone-in-repeat-in-for.plm")).unwrap();
+        // Four rows of three ports: twelve zones, and a rule on each (one name
+        // for all the rows left twelve rules on the last row's three).
+        let pressed: std::collections::HashSet<u32> = scene.rules.iter().filter_map(|r| match &r.when { Trigger::Press(z) => Some(z.0), _ => None }).collect();
+        assert_eq!(pressed.len(), 12);
+        // …and the row's own rule on `port.0` is on that row's first port.
+        let right: std::collections::HashSet<u32> = scene.rules.iter().filter_map(|r| match &r.when { Trigger::PressWith(z, 1) => Some(z.0), _ => None }).collect();
+        assert_eq!(right.len(), 4);
+        assert!(right.is_subset(&pressed));
+    }
+
+    #[test]
     fn mixing_or_choosing_colours_mixes_or_chooses_how_much_of_them_shows() {
         use crate::scene::{Instr, Paint};
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/color-alpha-mix.plm")).unwrap();

@@ -1,0 +1,21 @@
+// expect: ok
+language 0.9
+// A zone named in a `repeat` inside a `for` (`port.$j`) is each row's own: its
+// rules are heard in every row, and the rest of the row names it by its number.
+scene Ports {
+    surface { size: 400, 200 }
+    model rows max 4 { label: text }
+    fact hit = 0
+    fact first = 0
+    for r in rows {
+        group { move: 0, r.index * 50
+            repeat j in 0..3 {
+                box { from: 10 + j * 60, 5; size: 50, 40; color: #446688; opacity: 0.5 + 0.5 * port.$j.hover }
+                zone box port.$j { from: 10 + j * 60, 5; size: 50, 40 }
+                on press port.$j { hit = r.index * 10 + j + 1 }
+            }
+            box mark { from: 300, 5; size: 50, 40; color: #886644; opacity: 0.5 + 0.5 * port.0.hover }
+            on press right port.0 { first = r.index + 1 }
+        }
+    }
+}

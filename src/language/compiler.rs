@@ -237,6 +237,8 @@ struct Scope {
     suffix: String,
     /// Inside a `for`: this iteration only exists if its record exists.
     visible: Option<Expr>,
+    /// It is a `for`'s row (a `repeat`'s turn is not).
+    row: bool,
     /// If it is the copy of a component: which one, and on which line it was placed.
     instance: Option<(String, usize)>,
     /// The springs that arrived as a parameter: `~bounce`.
@@ -311,6 +313,8 @@ struct Compiler<'a> {
     /// The zones the scene names with `.hover` or `.pressed`, as written
     /// (`tile.$t`), and the springs made for them, to tie to their zones at the end.
     hover_mentions: std::collections::HashSet<String>,
+    /// While a zone's name is being declared (`declare_zone`).
+    declaring_zone: bool,
     /// How much of the last colour read shows (`#ffffff1f`, or a named one that
     /// was such): what reads a colour multiplies its opacity by it (C2).
     /// It is a sum when the colour chooses or mixes (`mix(#ffffff10, #00000010, t)`).
@@ -518,7 +522,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(), type_index: Default::default(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), declaring_zone: false, zone_springs: Vec::new(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(), type_index: Default::default(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -1223,7 +1227,9 @@ impl<'a> Compiler<'a> {
     /// `hit#k1` in its second turn) takes it too: every copy's second turn
     /// made a `hit#k1`, and its rules were heard on none of them.
     fn declare_zone(&mut self, local: &str) -> String {
+        self.declaring_zone = true;
         let g = self.declare(local);
+        self.declaring_zone = false;
         match self.screen_mark() {
             Some(mark) if !g.contains(&mark) => format!("{g}{mark}"),
             _ => g,
@@ -1252,7 +1258,8 @@ impl<'a> Compiler<'a> {
         let suffix = self.copy_suffix();
         // The same name `declare` gives the zone: inside a component's copy a `$` name is
         // the copy's too (B12, as M20: every copy's `tabs.$i` was one zone and one rule).
-        let in_component = self.scopes.iter().any(|e| e.instance.is_some());
+        // …and inside a `for`'s row: a `port.$j` of a `repeat` in it is that row's zone.
+        let in_component = self.scopes.iter().any(|e| e.instance.is_some()) || self.in_row();
         let mut g = if !suffix.is_empty() && (!local.contains('$') || in_component) { format!("{interpolated}{suffix}") } else { interpolated.clone() };
         if let Some(mark) = self.screen_mark().filter(|m| !g.contains(m.as_str())) {
             g = format!("{g}{mark}");
@@ -1271,7 +1278,13 @@ impl<'a> Compiler<'a> {
             };
             if g != interpolated {
                 if let Some(e) = self.scopes.last_mut().map(Rc::make_mut) {
-                    e.alias.insert(format!("{interpolated}.{part}"), name);
+                    e.alias.insert(format!("{interpolated}.{part}"), name.clone());
+                }
+                // By its number from the rest of the row too: `port.0.hover`.
+                if local.contains('$') {
+                    if let Some(e) = self.row_scope().map(Rc::make_mut) {
+                        e.alias.insert(format!("{interpolated}.{part}"), name);
+                    }
                 }
             }
             made.push(p);
@@ -1279,6 +1292,16 @@ impl<'a> Compiler<'a> {
         if !self.zone_springs.iter().any(|z| z.0 == g) {
             self.zone_springs.push((g, made[0], made[1]));
         }
+    }
+
+    /// Inside a `for`'s row (and not just in a `repeat`, whose turns a `$` tells apart).
+    fn in_row(&self) -> bool {
+        self.scopes.iter().any(|e| e.row)
+    }
+
+    /// The scope of the `for`'s row being read, the innermost one.
+    fn row_scope(&mut self) -> Option<&mut Rc<Scope>> {
+        self.scopes.iter_mut().rev().find(|e| e.row)
     }
 
     /// The mark of the screen copy being read, if any: `#screen1`.
@@ -1314,7 +1337,18 @@ impl<'a> Compiler<'a> {
         // `cell.3`; but inside a component's copy it is that copy's, as its other
         // names are: two `TableRow`s measured their cells in one `cell.0`, and every
         // chip of a column was as long as the last row's word (M20).
-        let in_component = self.scopes.iter().any(|e| e.instance.is_some());
+        // A zone made in a `repeat` inside a `for` (`port.$j`) is its row's
+        // as well: named the same in every row, the map kept one zone for all
+        // of them —the last row's—, and `on press port.$j` was heard in no other.
+        let in_row = self.declaring_zone && local.contains('$') && self.in_row();
+        let in_component = self.scopes.iter().any(|e| e.instance.is_some()) || in_row;
+        if in_row && !from_scene && !suffix.is_empty() {
+            // The rest of the row names it by its number: `on press port.0`.
+            let g = format!("{interpolated}{suffix}");
+            if let Some(e) = self.row_scope().map(Rc::make_mut) {
+                e.alias.insert(interpolated.clone(), g);
+            }
+        }
         match self.scopes.last_mut().map(Rc::make_mut) {
             Some(e) if !e.suffix.is_empty() && (!local.contains('$') || in_component) && !from_scene => {
                 let g = format!("{interpolated}{suffix}");
@@ -8203,7 +8237,7 @@ impl<'a> Compiler<'a> {
     /// `k` shows the record the logic keeps in it: there if it has one, and its
     /// index the place of that record (`·place`, for the layout to put it there).
     fn for_iteration(&self, var: &str, model: &str, k: usize, from: &Expr, keyed: bool) -> Scope {
-        let mut env = Scope { suffix: format!("#{var}{k}"), ..Default::default() };
+        let mut env = Scope { suffix: format!("#{var}{k}"), row: true, ..Default::default() };
         env.alias.insert(var.to_owned(), format!("{model}.{k}"));
         env.with_parts.insert(var.to_owned());
         if keyed {
