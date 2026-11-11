@@ -1,0 +1,2 @@
+// Brought into brought-uses-other-file.plm as Bar, where osd.plm says Bar is bar.plm.
+scene Odd { surface { size: 10, 10 } }

@@ -1,5 +1,7 @@
+// expect: note «Bar is not brought in here»
 // Brought into brought-scenes.plm as Osd, beside Bar: it reads Bar's volume, hears
-// Bar's `rang` and tells Bar `ping`. Opened alone it fails: there is no Bar.
+// Bar's `rang` and tells Bar `ping`. Opened alone it still opens: Bar is only used.
+uses scene "bar.plm" as Bar
 scene Osd {
     surface { size: 100, 100 }
     fact volume = 0

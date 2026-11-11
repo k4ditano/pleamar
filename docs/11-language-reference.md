@@ -42,7 +42,7 @@ Words of the language (they cannot be used as a name of one's own without confus
 In EBNF: `[ x ]` is optional, `{ x }` zero or more times, `|` alternatives, `"x"` literally. `end` is a newline or `;`.
 
 ```
-file         = [ "language" number end ] { "import" [ "scene" ] text [ "as" name ] end } ( scene | library ) ;
+file         = [ "language" number end ] { ( "import" [ "scene" ] text [ "as" name ] | "uses" "scene" text "as" name ) end } ( scene | library ) ;
 scene        = "scene" name "{" { statement } "}" ;
 library      = "library" name [ "strict" ] "{" { let | spring | component | boundary | inner | translations } "}" ;
 boundary     = permissions | fact | event | live_text | model | image_decl ;    (* lives under the library's name: `Clock.now` *)
@@ -461,8 +461,15 @@ scene Shell { }
   (`size: Bar.volume * 10, 4`), hears their events (`on Bar.rang { … }`) and
   emits them (`emit Bar.landed(id: 3, x: local.x)`). All of it is checked when
   loading, at both ends: an event the other does not declare, or that carries
-  something else (`event landed(id, x)`), is an error. Something that names
-  another scene does not open alone: that scene is not there.
+  something else (`event landed(id, x)`), is an error.
+- A scene that talks to another says so, to still **open alone**:
+  `uses scene "bar.plm" as Bar`. It does not bring Bar in: brought in beside
+  it (by the same name, the same file), it is that one; alone, Bar is
+  **absent**, and the log says so once (`scenes · Bar is not brought in here`).
+  Then its names are still checked against `bar.plm`, but its facts keep their
+  first values, its events never come, and what is emitted to it goes nowhere.
+  Nor is it written: a scene writes only its own. Without `uses`, a scene that
+  names another only loads brought in beside it.
 - It **writes only its own**: setting another's fact, text or property is an
   error that says to tell its owner with an event. A value that two of them
   write is a `shared fact` with an owner, still to come (issue 75, C).

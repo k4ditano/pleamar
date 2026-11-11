@@ -1,0 +1,4 @@
+// expect: error «'Bar' is uses-other-file.plm here, and this says bar.plm»
+import scene "brought/uses-other-file.plm" as Bar
+import scene "brought/osd.plm" as Osd
+scene Shell { surface { size: 10, 10 } }

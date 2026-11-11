@@ -285,6 +285,8 @@ pub struct BroughtScene {
     pub name: String,
     pub files: Vec<usize>,
     pub logic: Option<std::path::PathBuf>,
+    /// Named with `uses scene` and not brought in: only its declarations, nothing of it runs.
+    pub absent: bool,
 }
 
 /// What a scene brought in draws loose, which goes into its own surface: the drawing
@@ -919,7 +921,13 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         }
     }
     // A scene brought in answers `--say` by its file's name (G22).
-    o.e.brought = brought_scenes.iter().map(|b| (b.name.clone(), files.get(b.files[0]).map_or(b.name.clone(), |f| f.trim_end_matches(".plm").to_owned()))).collect();
+    o.e.brought = brought_scenes.iter().filter(|b| !b.absent).map(|b| (b.name.clone(), files.get(b.files[0]).map_or(b.name.clone(), |f| f.trim_end_matches(".plm").to_owned()))).collect();
+    // A scene used and not here: said, once, where it is read.
+    if o.errors.is_empty() {
+        for b in brought_scenes.iter().filter(|b| b.absent) {
+            eprintln!("scenes · {} is not brought in here: its facts keep their first values and its events do not come", b.name);
+        }
+    }
     // A scene brought in with a `.luau` next to it: its logic, with its own permissions, under its name (G22).
     for b in brought_scenes {
         let permissions = o.permissions_of.get(&b.files[0]).cloned().unwrap_or_default();
@@ -8951,7 +8959,18 @@ impl<'a> Compiler<'a> {
     fn writes_only_its_own(&self, line: usize, col: usize, effect: &Effect) -> R<()> {
         let file = line / super::PER_FILE;
         let Some(b) = (file > 0).then(|| self.brought_scenes.iter().find(|b| b.files.contains(&file))).flatten() else {
-            return Ok(());
+            // The scene opened writes what it likes, but not a scene that is only used: it is not here.
+            let absent = |n: &str| self.brought_scenes.iter().find(|o| o.absent && n.starts_with(&format!("{}.", o.name)));
+            let name = match effect {
+                Effect::Fact(h, _) | Effect::Toggle(h) => Some(self.e.facts[h.0 as usize].0),
+                Effect::FactAt(all, _, _) => all.first().map(|h| self.e.facts[h.0 as usize].0),
+                Effect::Text(t, _) => Some(self.e.texts[t.0 as usize].0),
+                _ => None,
+            };
+            return match name.and_then(|n| absent(n).map(|o| (n, o))) {
+                Some((n, o)) => Err(CompileError::at(line, col, format!("'{n}' is {}'s, which this scene only uses: it reads it, and tells {} with an event to change it", o.name, o.name))),
+                None => Ok(()),
+            };
         };
         let own = format!("{}.", b.name);
         let another = |n: &str| self.brought_scenes.iter().any(|o| o.name != b.name && n.starts_with(&format!("{}.", o.name)));

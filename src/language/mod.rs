@@ -76,6 +76,9 @@ struct Reader {
     /// write, already under their own surface: it goes into the scene's body at the end.
     brought_scenes: Vec<compiler::BroughtScene>,
     piece_entries: Vec<tree::Entry>,
+    /// `uses scene "bar.plm" as Bar`, as they were read: the name, the file, which file
+    /// says it and where. Settled once every scene brought in is known (`settle_uses`).
+    uses: Vec<(String, PathBuf, PathBuf, usize, usize)>,
 }
 
 impl Reader {
@@ -172,6 +175,22 @@ impl Reader {
         let mut rest = Vec::new();
         for e in entries {
             let tree::Entry::Node(n) = &e else { rest.push(e); continue };
+            // `uses scene "bar.plm" as Bar`: a scene this one talks to, without bringing it in.
+            if matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "uses") {
+                let usage = "a scene says which one it talks to as `uses scene \"bar.plm\" as Bar`";
+                let (Some(TokenKind::Id(w)), Some(TokenKind::Str(which)), Some(TokenKind::Id(a)), Some(TokenKind::Id(name)), 5, None) =
+                    (n.head.get(1).map(|f| &f.kind), n.head.get(2).map(|f| &f.kind), n.head.get(3).map(|f| &f.kind), n.head.get(4).map(|f| &f.kind), n.head.len(), &n.body)
+                else {
+                    return Err(CompileError::at(n.line, n.col, usage));
+                };
+                if w != "scene" || a != "as" || name.contains('.') || name.contains('$') {
+                    return Err(CompileError::at(n.line, n.col, usage));
+                }
+                let target = path.parent().unwrap_or(Path::new(".")).join(which);
+                let target = target.canonicalize().map_err(|e| CompileError::at(n.line, n.head[2].col, format!("cannot find '{which}' (looking in {}): {e}", target.display())))?;
+                self.uses.push((name.clone(), target, path.to_owned(), n.line, n.head[2].col));
+                continue;
+            }
             if !matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "import") {
                 rest.push(e);
                 continue;
@@ -360,8 +379,56 @@ impl Reader {
             kept.push(tree::Entry::Node(tree::Node { head: vec![word, named], body: Some(own), line: n.line, col: n.col }));
         }
         let logic = target.with_extension("luau");
-        self.brought_scenes.push(compiler::BroughtScene { name: name.clone(), files, logic: logic.is_file().then_some(logic) });
+        self.brought_scenes.push(compiler::BroughtScene { name: name.clone(), files, logic: logic.is_file().then_some(logic), absent: false });
         self.piece_entries.extend(kept);
+        Ok(())
+    }
+}
+
+impl Reader {
+    /// The scenes named with `uses scene`, once every one brought in is known: one brought
+    /// in under that name has to be that file; one that is not is **absent**. An absent one
+    /// brings only what it declares (`fact`, `text … =`, `model`, `event`), under its name, for
+    /// the names to be checked: its facts keep their first values, its events never come, and
+    /// nothing of it runs. So a scene that talks to another still opens alone.
+    fn settle_uses(&mut self) -> Result<(), CompileError> {
+        use tokens::TokenKind;
+        for (name, target, from, line, col) in std::mem::take(&mut self.uses) {
+            let file_of = |r: &Reader, k: usize| r.files.get(k).map(|(p, _)| p.clone());
+            if let Some(b) = self.brought_scenes.iter().find(|b| b.name == name) {
+                if file_of(self, b.files[0]).as_ref() != Some(&target) {
+                    let said = file_of(self, b.files[0]).map_or(String::new(), |p| p.file_name().unwrap_or_default().to_string_lossy().into_owned());
+                    return Err(CompileError::at(line, col, format!("'{name}' is {said} here, and this says {}: a name is one scene", target.file_name().unwrap_or_default().to_string_lossy())));
+                }
+                continue;
+            }
+            if self.files.first().is_some_and(|(p, _)| *p == target) || from == target {
+                return Err(CompileError::at(line, col, "a scene does not use itself: its own names are already its"));
+            }
+            self.open_stack.push(target.clone());
+            let first = self.files.len();
+            let mut theirs = self.open(&target)?;
+            let hoisted = std::mem::take(&mut self.hoisted);
+            self.resolve_includes(&target, &mut theirs)?;
+            // What it imports is not needed for its declarations.
+            self.hoisted = hoisted;
+            self.open_stack.pop();
+            let is = |e: &tree::Entry, w: &str| matches!(e, tree::Entry::Node(x) if matches!(x.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == w));
+            let Some(tree::Entry::Node(scene)) = theirs.iter().find(|e| is(e, "scene")) else {
+                return Err(CompileError::at(line, col, format!("'{}' is not a scene: what `uses scene` names is `scene Name {{ … }}`", target.file_name().unwrap_or_default().to_string_lossy())));
+            };
+            let declares = |e: &tree::Entry| match e {
+                tree::Entry::Node(x) => match x.head.first().map(|f| &f.kind) {
+                    Some(TokenKind::Id(w)) => matches!(w.as_str(), "fact" | "model" | "event") || (w == "text" && matches!(x.head.get(2).map(|f| &f.kind), Some(TokenKind::Sym("=")))),
+                    _ => false,
+                },
+                _ => false,
+            };
+            let kept: Vec<tree::Entry> = scene.body.clone().unwrap_or_default().into_iter().filter(declares).collect();
+            let files = (first..self.files.len()).collect();
+            self.brought_scenes.push(compiler::BroughtScene { name, files, logic: None, absent: true });
+            self.piece_entries.extend(kept);
+        }
         Ok(())
     }
 }
@@ -472,6 +539,7 @@ fn read_with_symbols(path: &str, unsaved: Vec<(PathBuf, String)>) -> (Result<(Sc
         entries.splice(0..0, hoisted);
         let mut brought = Vec::new();
         let mut rest = l.resolve_imports(&main, entries, &mut brought).map_err(|f| vec![f])?;
+        l.settle_uses().map_err(|f| vec![f])?;
         // What is imported goes before the scene's own, as if it were written there.
         // And the scenes it brings in, after its own (each on surfaces of its own).
         if let [tree::Entry::Node(scene)] = rest.as_mut_slice() {

@@ -1,0 +1,7 @@
+// expect: error «'Bar.volume' is Bar's, which this scene only uses»
+uses scene "brought/bar.plm" as Bar
+scene Writer {
+    surface { size: 10, 10 }
+    box hit { from: 0, 0; size: 5, 5 }
+    on press hit { Bar.volume = 1 }
+}
