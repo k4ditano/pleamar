@@ -614,6 +614,8 @@ pub struct LuauScript {
     /// If it is a plugin: what the scene says about it (its logic, what it asks for).
     definition: Option<crate::scene::Plugin>,
     frontier: Frontier,
+    /// A scene brought in's own mailbox (G22): what its services report comes straight to it.
+    mailbox: Option<Sender<Event>>,
 }
 
 /// Who hears what a logic writes on a plugin's boundary. A plugin's logic, the
@@ -703,19 +705,21 @@ fn qualified_listener(prefix: &Option<String>, what: &str) -> String {
 
 impl LuauScript {
     pub fn new(scene: &str, logic: &str, tx: Sender<ToRender>, to_logic: Sender<Event>, blocked: Arc<AtomicBool>) -> Self {
-        LuauScript { scene: scene.to_owned(), logic: logic.to_owned(), tx, to_logic, blocked, lua: None, c: Arc::default(), prefix: None, wants_frames: Arc::default(), plugins: Vec::new(), definition: None, frontier: Frontier::default() }
+        LuauScript { scene: scene.to_owned(), logic: logic.to_owned(), tx, to_logic, blocked, lua: None, c: Arc::default(), prefix: None, wants_frames: Arc::default(), plugins: Vec::new(), definition: None, frontier: Frontier::default(), mailbox: None }
     }
 
     /// A plugin's logic. The number is so that its timers and processes are not
     /// named the same as another logic's: they all share the mailbox.
     fn for_plugin(&self, p: &crate::scene::Plugin, number: usize) -> Self {
-        let c = Shared { next: (number as u32 + 1) * 1_000_000, plugin: Some(p.name.clone()), ..Default::default() };
-        LuauScript { scene: self.scene.clone(), logic: p.logic.to_string_lossy().into_owned(), tx: self.tx.clone(), to_logic: self.to_logic.clone(), blocked: self.blocked.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefix: Some(p.name.clone()), wants_frames: Arc::default(), plugins: Vec::new(), definition: Some(p.clone()), frontier: Frontier { owner: Some(self.to_logic.clone()), plugins: Arc::default() } }
+        // A scene brought in is a scene, not a library's plugin: its permissions are a scene's.
+        let c = Shared { next: (number as u32 + 1) * 1_000_000, plugin: (!p.brought).then(|| p.name.clone()), ..Default::default() };
+        LuauScript { scene: self.scene.clone(), logic: p.logic.to_string_lossy().into_owned(), tx: self.tx.clone(), to_logic: self.to_logic.clone(), blocked: self.blocked.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefix: Some(p.name.clone()), wants_frames: Arc::default(), plugins: Vec::new(), definition: Some(p.clone()), frontier: Frontier { owner: Some(self.to_logic.clone()), plugins: Arc::default() }, mailbox: None }
     }
 
     /// Sets a plugin running on its thread. From there it tends its mailbox and its timers.
     fn start(mut plugin: LuauScript) -> LivePlugin {
         let (mailbox, letters) = std::sync::mpsc::channel::<Event>();
+        plugin.mailbox = Some(mailbox.clone()).filter(|_| plugin.brought());
         let definition = plugin.definition.clone().expect("only a plugin's logic is started");
         let name = format!("plugin {}", definition.name);
         let wants_frames = plugin.wants_frames.clone();
@@ -765,11 +769,18 @@ impl LuauScript {
     /// Whose the files are: the scene's, by the name of its `.plm`; or the plugin's, by its own.
     fn owner(&self) -> String {
         match &self.prefix {
+            // A scene brought in keeps the folder it has alone, its file's (`calima`).
+            Some(_) if self.brought() => std::path::Path::new(&self.logic).file_stem().map_or_else(|| "scene".to_owned(), |n| n.to_string_lossy().into_owned()),
             Some(p) => p.clone(),
             None => std::path::Path::new(&self.scene)
                 .file_stem()
                 .map_or_else(|| "scene".to_owned(), |n| n.to_string_lossy().into_owned()),
         }
+    }
+
+    /// The logic of a scene brought into the one opened (G22), not a library's plugin.
+    fn brought(&self) -> bool {
+        self.definition.as_ref().is_some_and(|d| d.brought)
     }
 
     fn learn(&self, e: &Scene, permissions: crate::scene::Permissions) {
@@ -791,7 +802,7 @@ impl LuauScript {
     /// Whether this scene is asked what a Bluetooth pairing asks. Read again
     /// with each scene, so one that stops declaring it stops being asked.
     fn offer_pairing(&self) {
-        if self.prefix.is_some() {
+        if self.prefix.is_some() && !self.brought() {
             return;
         }
         let who = self.owner();
@@ -823,14 +834,20 @@ impl LuauScript {
     fn subscribe_services(&mut self) {
         // A plugin does not set up the scene's services: whatever it declares goes with the rest,
         // and asking for them is up to whoever owns the frontier.
-        if self.prefix.is_some() {
+        // A scene brought in (G22) sets up its own, with its permissions and its name: the
+        // scene that brings it in, the rest.
+        if self.prefix.is_some() && !self.brought() {
             return;
         }
         let who = self.owner();
         self.offer_pairing();
+        let mine = |alias: &str| match &self.prefix {
+            Some(p) => alias.starts_with(&format!("{p}.")),
+            None => !self.plugins.iter().any(|b| b.definition.brought && alias.starts_with(&format!("{}.", b.definition.name))),
+        };
         let pending: Vec<crate::scene::Service> = {
             let c = self.c.lock().unwrap();
-            c.services.iter().filter(|s| !c.subscribed.contains(&s.alias)).cloned().collect()
+            c.services.iter().filter(|s| !c.subscribed.contains(&s.alias) && mine(&s.alias)).cloned().collect()
         };
         for s in pending {
             let root = s.name.split(['.', ':']).next().unwrap_or(&s.name).to_owned();
@@ -843,7 +860,8 @@ impl LuauScript {
                 continue;
             }
             self.c.lock().unwrap().subscribed.insert(s.alias.clone());
-            let (to_logic, alias) = (Mutex::new(self.to_logic.clone()), s.alias.clone());
+            // What it reports goes to whoever asked: a scene brought in hears it in its own mailbox.
+            let (to_logic, alias) = (Mutex::new(self.mailbox.clone().unwrap_or_else(|| self.to_logic.clone())), s.alias.clone());
             if !crate::platform::service(&who, &s.name, &format!("service:{}", s.alias), Box::new(move |v| {
                 let _ = to_logic.lock().unwrap().send(Event::Data(format!("service:{alias}"), v));
             })) {
@@ -1107,15 +1125,21 @@ impl LuauScript {
         // focus("query") puts the text cursor in a field; focus() removes it.
         let tx = self.tx.clone();
         let pre = self.prefix.clone();
+        let brought = self.brought();
         g.set("focus", lua.create_function(move |_, n: Option<String>| {
-            if pre.is_some() {
+            if pre.is_some() && !brought {
                 return Err(mlua::Error::runtime("a plugin does not move the text cursor: that belongs to the scene"));
             }
-            Ok(tx.send(ToRender::FocusField(n.map(|n| intern(&n)))).is_ok())
+            // A scene brought in names its own fields: `focus("query")` is `Calima.query`.
+            Ok(tx.send(ToRender::FocusField(n.map(|n| intern(&qualified(&pre, &n))))).is_ok())
         })?)?;
         let tx = self.tx.clone();
         let pre = self.prefix.clone();
+        let brought = self.brought();
         g.set("play", lua.create_function(move |_, n: String| {
+            if brought {
+                return Ok(tx.send(ToRender::Gesture(intern(&qualified(&pre, &n)))).is_ok());
+            }
             if pre.is_some() {
                 return Err(mlua::Error::runtime("a plugin does not ask for gestures: gestures belong to the scene. Let it emit an event of its own, and the scene will decide"));
             }
@@ -1125,12 +1149,15 @@ impl LuauScript {
         let c = self.c.clone();
         let pre = self.prefix.clone();
         let (tx, wants_frames) = (self.tx.clone(), self.wants_frames.clone());
+        let brought = self.brought();
         g.set("on", lua.create_function(move |_, (what, f): (String, Function)| {
             let frame = what == "frame";
             let mut c = c.lock().unwrap();
             // Another scene's are heard whole: `on("Bar.rang", …)`, `on("fact:Bar.volume", …)`.
             let theirs = what.split_once(':').map_or(what.as_str(), |(_, n)| n);
-            let what = if neighbor_of(&c, theirs).is_some() { what.clone() } else { qualified_listener(&pre, &what) };
+            // A scene brought in hears the keyboard and the rest as it would alone: they are nobody's.
+            let input = brought && matches!(what.as_str(), "key" | "key_down" | "key_up" | "focus" | "blur" | "link" | "copy" | "demo");
+            let what = if input || neighbor_of(&c, theirs).is_some() { what.clone() } else { qualified_listener(&pre, &what) };
             c.handlers.entry(what).or_default().push(f);
             // Listening to every frame is what keeps them coming: the render
             // is told, and woken if it was at rest.
@@ -1830,7 +1857,7 @@ impl Script for LuauScript {
                     listeners.iter().for_each(|f| self.call_handler(f, (n.clone(), typed.clone())));
                 }
             }
-            Event::KeyDown(name) | Event::KeyUp(name) if self.prefix.is_none() => {
+            Event::KeyDown(name) | Event::KeyUp(name) if self.prefix.is_none() || self.brought() => {
                 let down = matches!(e_kind, 1);
                 {
                     let mut c = self.c.lock().unwrap();

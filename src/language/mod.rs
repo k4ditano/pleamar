@@ -368,6 +368,11 @@ impl Reader {
         for e in scene.body.clone().unwrap_or_default() {
             match e {
                 tree::Entry::Node(x) if x.head.len() == 1 && matches!(x.head[0].kind, TokenKind::Id(ref w) if w == "surface") => own.extend(x.body.unwrap_or_default()),
+                e if compiler::is_loose_repeat(&e) => {
+                    let (declared, drawn) = compiler::split_repeat(&e);
+                    kept.extend(declared);
+                    own.extend(drawn);
+                }
                 e if compiler::draws_loose(&e) => own.push(e),
                 e => kept.push(e),
             }

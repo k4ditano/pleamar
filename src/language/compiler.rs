@@ -278,6 +278,9 @@ pub struct Library {
     pub logic: Option<std::path::PathBuf>,
 }
 
+/// The facts every scene has, which the render sets.
+const ALWAYS: [&str; 25] = ["screen.width", "screen.height", "screen.index", "monitor.width", "monitor.height", "pointer.x", "pointer.y", "cursor.x", "cursor.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "wheel.x", "wheel.y", "pinch.scale", "key.ctrl", "key.shift", "key.alt", "key.super", "lock.held", "drag.over", "motion.reduced", "color.scheme"];
+
 /// A scene brought into the one opened (`import scene "bar.plm" as Bar`, G22): its name,
 /// the files it is written in (its own and its parts', not its libraries'), and its logic
 /// if it has any.
@@ -290,9 +293,54 @@ pub struct BroughtScene {
 }
 
 /// What a scene brought in draws loose, which goes into its own surface: the drawing
-/// and the rules, and a `repeat` (which defines and draws).
+/// and the rules. (A `repeat` is split first: see `split_repeat`.)
 pub(super) fn draws_loose(e: &Entry) -> bool {
     !is_surface(e) && (pass_of(e) == 2 || hoists(e))
+}
+
+pub(super) fn is_loose_repeat(e: &Entry) -> bool {
+    is_repeat(e)
+}
+
+/// A `repeat` written loose in a scene brought in, in two: what it declares and defines
+/// (its `text x.$i = …`, `a[i] = …`, the `let`s they read), which stays at the scene's level
+/// to be read before anything uses it, as a scene opened alone reads it; and what it draws,
+/// without its definitions, for its surface. Either may be nothing.
+pub(super) fn split_repeat(e: &Entry) -> (Option<Entry>, Option<Entry>) {
+    let Entry::Node(n) = e else { return (None, Some(e.clone())) };
+    if !is_repeat(e) {
+        return (None, Some(e.clone()));
+    }
+    let (mut top, mut drawn, mut declares) = (Vec::new(), Vec::new(), false);
+    for child in n.body.as_deref().unwrap_or(&[]) {
+        match child {
+            _ if is_repeat(child) => {
+                let (t, d) = split_repeat(child);
+                if let Some(t) = t {
+                    declares = true;
+                    top.push(t);
+                }
+                drawn.extend(d);
+            }
+            Entry::Node(x) if is_definition(x) || is_fold(x) => {
+                declares = true;
+                top.push(child.clone());
+            }
+            Entry::Node(x) if matches!(x.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "let") => {
+                top.push(child.clone());
+                drawn.push(child.clone());
+            }
+            _ if pass_of(child) == 0 => {
+                declares = true;
+                top.push(child.clone());
+                drawn.push(child.clone());
+            }
+            _ => drawn.push(child.clone()),
+        }
+    }
+    let with = |body: Vec<Entry>| Entry::Node(Node { head: n.head.clone(), body: Some(body), line: n.line, col: n.col });
+    let draws = drawn.iter().any(|c| !matches!(c, Entry::Node(x) if matches!(x.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "let")));
+    (declares.then(|| with(top)), draws.then(|| with(drawn)))
 }
 
 /// What a copy brings for the slots of its component, and the scope of whoever wrote it.
@@ -558,7 +606,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     // `motion.reduced` (1: the system asks for less motion) and `color.scheme`
     // (0 no preference, 1 dark, 2 light): what the system says, or what is said
     // to the scene; the first, with `--reduced-motion`, settles every spring.
-    for n in ["screen.width", "screen.height", "screen.index", "monitor.width", "monitor.height", "pointer.x", "pointer.y", "cursor.x", "cursor.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "wheel.x", "wheel.y", "pinch.scale", "key.ctrl", "key.shift", "key.alt", "key.super", "lock.held", "drag.over", "motion.reduced", "color.scheme"] {
+    for n in ALWAYS {
         let h = o.e.fact(n, 0.0);
         o.facts.insert(n.into(), h);
     }
@@ -1209,26 +1257,11 @@ impl<'a> Compiler<'a> {
             }
         }
         // Written in a scene brought in (G22): its own names are under its name, and what
-        // the monitor measures is what its own surface measures. Not inside a library's
-        // component, which reads with its library's names.
-        if let Some(b) = self.brought_at_peek().filter(|_| self.scopes.iter().all(|e| e.library.is_none())) {
-            if let Some(own) = self.boundary_of.get(&b.files[0]) {
-                let mut until = n.len();
-                loop {
-                    if let Some(g) = own.get(&n[..until]) {
-                        return format!("{g}{}", &n[until..]);
-                    }
-                    match n[..until].rfind('.') {
-                        Some(p) => until = p,
-                        None => break,
-                    }
-                }
-            }
-            if let Some(part) = n.strip_prefix("screen.").filter(|p| *p == "width" || *p == "height") {
-                if self.props.contains_key(&format!("{}.{part}", b.name)) {
-                    return format!("{}.{part}", b.name);
-                }
-            }
+        // the monitor measures is what its own surface measures. (By the file the name is
+        // written in: a library's own are never a scene's, and what a scene passes to a
+        // library's component, `show: remote.on`, is written in the scene.)
+        if let Some(g) = self.brought_at_peek().and_then(|b| self.in_brought(b, &n)) {
+            return g;
         }
         // Inside a component of a library, `now` is the `Clock.now` of its boundary.
         // (Or at the library's own level: a gesture of its own that moves a pose of its own.)
@@ -1248,8 +1281,38 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
+        // A component of a library that is not `strict` reads the names of whoever uses it:
+        // used in a scene brought in, that scene's (`cv[k].color` is `Calima.cv.0.color`).
+        // (Not a `strict` one's: what it reads unasked is reported below, as always.)
+        let strict = self.scopes.iter().rev().find(|e| e.instance.is_some()).is_some_and(|e| e.strict);
+        let user = self.scopes.iter().rev().filter(|_| !strict).filter_map(|e| e.instance.as_ref()).find_map(|(_, line)| {
+            let file = line / super::PER_FILE;
+            self.brought_scenes.iter().find(|b| file > 0 && b.files.contains(&file))
+        });
+        if let Some(g) = user.and_then(|b| self.in_brought(b, &n)) {
+            return g;
+        }
         self.watch(&n);
         n
+    }
+
+    /// A name as the scene brought in `b` calls it, if it is one of its own: `volume` is
+    /// `Bar.volume`; `screen.width` is what its surface measures.
+    fn in_brought(&self, b: &BroughtScene, n: &str) -> Option<String> {
+        if let Some(own) = self.boundary_of.get(&b.files[0]) {
+            let mut until = n.len();
+            loop {
+                if let Some(g) = own.get(&n[..until]) {
+                    return Some(format!("{g}{}", &n[until..]));
+                }
+                match n[..until].rfind('.') {
+                    Some(p) => until = p,
+                    None => break,
+                }
+            }
+        }
+        let part = n.strip_prefix("screen.").filter(|p| *p == "width" || *p == "height")?;
+        self.props.contains_key(&format!("{}.{part}", b.name)).then(|| format!("{}.{part}", b.name))
     }
 
     /// Inside a component of a `strict` library, a name that is not its own, nor its
@@ -1328,7 +1391,7 @@ impl<'a> Compiler<'a> {
         // …and inside a `for`'s row: a `port.$j` of a `repeat` in it is that row's zone.
         let in_component = self.scopes.iter().any(|e| e.instance.is_some()) || self.in_row();
         // In a scene brought in, under its name, as its zone is (G22).
-        let own = self.brought_at_peek().map_or(String::new(), |b| format!("{}.", b.name));
+        let own = self.brought_at_peek().filter(|_| !ALWAYS.contains(&interpolated.as_str())).map_or(String::new(), |b| format!("{}.", b.name));
         let mut g = if !suffix.is_empty() && (!local.contains('$') || in_component) { format!("{own}{interpolated}{suffix}") } else { format!("{own}{interpolated}") };
         if let Some(mark) = self.screen_mark().filter(|m| !g.contains(m.as_str())) {
             g = format!("{g}{mark}");
@@ -1410,7 +1473,8 @@ impl<'a> Compiler<'a> {
         // everything that comes after it would look for a text that does not exist.
         // In a scene brought in (G22) everything it declares is under its name: `Bar.hit`,
         // and a copy's `Bar.hit#screen1`, so that it never meets the scene's own `hit`.
-        let own = self.brought_at_peek().map_or(String::new(), |b| format!("{}.", b.name));
+        // (Not a name every scene has, `wheel`: a zone called so is read as it is alone.)
+        let own = self.brought_at_peek().filter(|_| !ALWAYS.contains(&interpolated.as_str())).map_or(String::new(), |b| format!("{}.", b.name));
         let scenes = format!("{own}{interpolated}");
         let from_scene = self.scopes.last().is_some_and(|e| e.suffix.starts_with("#screen"))
             && (self.texts.contains_key(&scenes) || self.facts.contains_key(&scenes) || self.props.contains_key(&scenes) || self.lets.contains_key(&scenes));
