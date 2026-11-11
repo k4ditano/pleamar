@@ -734,13 +734,13 @@ follow a fact, a spring or the pointer:
 | `dispersion: 100%` | how far red, green and blue come apart where it bends: the rainbow on the edge (an Abbe number of 10 at `100%`, of 5 at `200%`). `0` is none |
 | `dome: 0%` | the middle as a magnifying glass: what is behind looks bigger in the middle and a little smaller near the rim, and stays put at the edge (negative, the other way round). Each box or ellipse is its own lens, as deep as its short side: a card is a round dome, a long bar a glass rod. At `100%` (the most) the middle is twice as big |
 | `ripple: 100%` | pressing the glass sends a ring of light through it that spreads and fades, flexing it as it goes by. `0` is none; with reduced motion there is none either |
-| `frost: 100%` | how frosted it is inside its bevel. `0` is clear glass: what is behind seen as it is, bent only at the edge. `auto` is frosted only where what is behind is busy —words, a window— and clear over a wallpaper, so the words behind never fight the ones on it |
+| `frost: 100%` | how frosted it is inside its bevel; from the bevel inwards it grows as one blur, not as a sharp and a frosted picture laid one over the other, and a fine grain keeps a dark gradient behind it from banding. `0` is clear glass: what is behind seen as it is, bent only at the edge. `auto` is frosted only where what is behind is busy —words, a window— and clear over a wallpaper, so the words behind never fight the ones on it |
 | `smoke: 0%` | smoked glass: what is seen through it is taken down, the brighter the more —a white page to about 40 %, a dark one barely—, its colour kept, so light words on it read over anything |
 | `milk: 0%` | milky glass: what is seen through it is lifted towards white, the darker the more, so dark words on it read over anything. Both are numbers, so a light and a dark look can go from one to the other: `smoke: dk; milk: 1 - dk` |
 | `tint: 22%` | how much of its own `color` is laid over what is seen through it, and (scaled with it) the extra over something bright or busy that keeps words on it readable. `0` shows what is behind as the blur left it |
 | `vivid: 118%` | the saturation of what is seen through it: `100%` as it is |
 | `mirror: 100%` | how much its rim mirrors what is around the glass (Fresnel). `0` none |
-| `highlight: 100%` | how bright the light caught on its rim is (`shine:` says where it comes from). `0` none |
+| `highlight: 100%` | how bright the light caught on its rim is (`shine:` says where it comes from). With a lens it also gives the glass its thickness: the rim takes a bright shade of what is seen through it rather than white, a soft second light (the meniscus) sits just inside the bevel, the lit side glows a little further in and the edge away from the light is a touch darker. `0` none of it |
 
 `frost`, `smoke` and `milk` belong to the glass that bends (`lens`): where
 the compositor blurs instead, `frost` has no say in how much, and smoke and

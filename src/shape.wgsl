@@ -111,6 +111,52 @@ const DOME_STRENGTH: f32 = 0.5;
 // Over how many px one shape's lens gives way to the next one's.
 const DOME_HANDOVER: f32 = 6.0;
 const LENS_F0: f32 = 0.04;
+// How far the sharp background is softened before the frosted one takes over (px): the
+// frosting grows from the bevel inwards as one blur, not as two pictures cross-faded.
+const SOFT_REACH: f32 = 6.0;
+// Fine grain over frosted glass, about a level and a half of eight bits: dark gradients
+// behind a frost band otherwise.
+const GLASS_GRAIN: f32 = 0.006;
+
+// Interleaved gradient noise: a turn per pixel, so what is left between a blur's taps
+// is a fine grain rather than ghost copies in lines.
+fn ign(p: vec2<f32>) -> f32 {
+    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
+}
+
+fn hash12(p: vec2<f32>) -> f32 {
+    var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+// The sharp background softened over a disc of `r` real pixels: eight taps on a golden
+// spiral turned per pixel, Gaussian weights. Red, green and blue each from their own
+// bent point (`qr`, `q`, `qb`), and what is unknown (alpha 0, under a text) weighs nothing.
+fn soft_behind(qr: vec2<f32>, q: vec2<f32>, qb: vec2<f32>, r: f32, pixel: vec2<f32>, split: bool) -> vec4<f32> {
+    let turn = ign(pixel) * 6.2831853;
+    var rgb = vec3<f32>(0.0);
+    var a = vec3<f32>(0.0);
+    var weights = 0.0;
+    for (var i = 0; i < 8; i++) {
+        let fi = f32(i) + 0.5;
+        let rr = sqrt(fi / 8.0);
+        let ang = fi * 2.39996323 + turn;
+        let o = vec2<f32>(cos(ang), sin(ang)) * rr * r;
+        let w = exp(-2.2 * rr * rr);
+        let g = textureSampleLevel(backdrop_sharp, backdrop_sampler, behind_at(q + o), 0.0);
+        var red = g;
+        var blue = g;
+        if (split) {
+            red = textureSampleLevel(backdrop_sharp, backdrop_sampler, behind_at(qr + o), 0.0);
+            blue = textureSampleLevel(backdrop_sharp, backdrop_sampler, behind_at(qb + o), 0.0);
+        }
+        rgb += vec3<f32>(red.r, g.g, blue.b) * w;
+        a += vec3<f32>(red.a, g.a, blue.a) * w;
+        weights += w;
+    }
+    return vec4<f32>(rgb / max(a, vec3<f32>(0.001)), min(a.x, min(a.y, a.z)) / weights);
+}
 
 // The height of the bevel across it, t from 0 at the edge to 1 where the flat
 // top begins: (1 − (1 − t)³)^⅓, vertical at the edge and easing into the top
@@ -762,7 +808,16 @@ fn shade(e: VertexOut) -> vec4<f32> {
         // (`refraction:`): a flat glass is frosted to its edge, not ringed
         // with a band of what is behind as it is.
         let bent = clamp(el.uv.w, 0.0, 1.0);
-        var background = mix(frosted, sharp, max(smoothstep(0.0, 0.6, in_bevel) * 0.85 * bent, 1.0 - frost) * known);
+        // How frosted it is here, 0 to 1. The first half is the sharp background softened over a
+        // growing disc (`soft_behind`); the second, that giving way to the frosted one. Before,
+        // the two were cross-faded, and halfway both showed: a doubled edge in the bevel.
+        let frosting = 1.0 - max(smoothstep(0.0, 0.6, in_bevel) * 0.85 * bent, 1.0 - frost) * known;
+        var softened = sharp;
+        if (frosting > 0.02 && frosting < 0.98 && known > 0.5) {
+            let r = min(frosting * 2.0, 1.0) * SOFT_REACH * u.header.w;
+            softened = soft_behind(qr, q, qb, r, e.pos.xy, el.glass3.x > 0.0 && slope > 0.01).rgb;
+        }
+        var background = mix(softened, frosted, smoothstep(0.45, 1.0, frosting));
         // `smoke:` and `milk:` (after True Glass for Omarchy's dark and light
         // glass): smoked, what is seen through is taken down, the brighter the
         // more —a white backdrop to about 40 %, a dark one barely—, keeping
@@ -837,10 +892,28 @@ fn shade(e: VertexOut) -> vec4<f32> {
                 glass_color = mix(glass_color, glass_tone(env * 0.25, el.dest.z, el.dest.w, frost), fw);
             }
         }
-        // The light it catches on its rim (`highlight:`, 100 %).
+        // The light it catches on its rim (`highlight:`, 100 %), and with it what makes it read
+        // as a thick piece of glass (all of it off at `highlight: 0`):
         if (el.glass4.w > 0.0) {
-            glass_color = mix(glass_color, vec3<f32>(1.0), clamp((shine + finger_light) * el.glass4.w, 0.0, 1.0));
+            let hl = el.glass4.w;
+            let lit = clamp(dot(light_normal, to_light), 0.0, 1.0);
+            let unlit = clamp(-dot(light_normal, to_light), 0.0, 1.0);
+            // Depth: thick glass takes some light near its edge, the side away from the light
+            // a little more; and the lit side glows softly further in.
+            glass_color *= 1.0 - (0.08 * exp(-lens_inside / (bevel * 0.45)) + 0.08 * unlit * exp(-lens_inside / 6.0)) * hl;
+            glass_color += vec3<f32>(0.035 * lit * exp(-lens_inside / (bevel * 1.5)) * hl);
+            // Its rim is a bright shade of what is seen through it, not a white one: over a
+            // blue wallpaper the edge catches blue light.
+            let rim_color = mix(vec3<f32>(1.0), clamp(vivid * 1.5 + vec3<f32>(0.12), vec3<f32>(0.0), vec3<f32>(1.0)), 0.4);
+            // The meniscus: a soft second light just inside the bevel, as surface tension
+            // draws a liquid's edge.
+            let mx = (lens_inside - bevel * 0.5) / (bevel * 0.2 + 1.0);
+            let meniscus = exp(-mx * mx) * 0.06 * (0.35 + facing) * hl;
+            glass_color = mix(glass_color, rim_color, clamp((shine + finger_light) * hl + meniscus, 0.0, 1.0));
         }
+        // A fine grain over the frosting: no banding in a dark gradient behind it.
+        let grain = (hash12(e.pos.xy) + hash12(e.pos.xy * 1.7 + 17.0) - 1.0) * GLASS_GRAIN * frost;
+        glass_color += vec3<f32>(grain);
         // Partly glass, partly its fill: as without a lens, where less glass
         // is more tint. It covers as much as its opacity says whatever the
         // glass: weighed by it too, `glass: 0.5` let two thirds of the sharp
