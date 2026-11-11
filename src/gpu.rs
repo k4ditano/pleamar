@@ -3723,6 +3723,8 @@ pub struct Gpu {
     _gl_instance: Option<wgpu::Instance>,
     /// What unmixes and frosts what is behind the glass.
     lens: crate::lens::Pipelines,
+    /// The card refused the effects (`Gpu::new`): groups are painted unblurred, and glass as a tint.
+    effects_off: bool,
     /// The scene's blur (`blur.rs`), built, and the numbers it is given this frame.
     blur: crate::blur::Built,
     pub blur_sampler: wgpu::Sampler,
@@ -3869,6 +3871,80 @@ pub fn compositor_card(dev: u64) {
     }
 }
 
+/// The limits asked of a card: wgpu's usual ones, with the card's own sizes and alignments;
+/// and if the card does not reach them (an old one, OpenGL ES, a software one), the ones every
+/// card has (`downlevel`), rather than no device at all. What pleamar paints fits in those:
+/// four stores per shader, as `shape.wgsl` binds.
+fn limits_for(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    let has = adapter.limits();
+    // (A card that cannot do even that —stores read by the vertex shader— is not tried:
+    // see `can_paint`.)
+    let usual = wgpu::Limits::default().using_resolution(has.clone()).using_alignment(has.clone());
+    if usual.check_limits(&has) {
+        return usual;
+    }
+    println!("render · {} does not reach the usual limits: the ones every card has", adapter.get_info().name);
+    wgpu::Limits::downlevel_defaults().using_resolution(has.clone()).using_alignment(has)
+}
+
+/// Whether a card can paint what pleamar paints at all: its shapes are read from stores by
+/// the vertex shader (four of them). An old OpenGL (NVIDIA's, when there is no Vulkan) has
+/// none there: a device made on it failed on its first pipeline and took the render down;
+/// now the card is said and the next one tried.
+fn can_paint(adapter: &wgpu::Adapter) -> Result<(), String> {
+    let flags = adapter.get_downlevel_capabilities().flags;
+    if !flags.contains(wgpu::DownlevelFlags::VERTEX_STORAGE) {
+        return Err("its vertex shaders cannot read stores".into());
+    }
+    if adapter.limits().max_storage_buffers_per_shader_stage < 4 {
+        return Err(format!("it binds {} stores per shader, and pleamar needs 4", adapter.limits().max_storage_buffers_per_shader_stage));
+    }
+    Ok(())
+}
+
+/// Whether a device made on a card can build pleamar's own shader: what a card says it can
+/// do is not always what its driver translates (NVIDIA's OpenGL claims stores in vertex
+/// shaders and then refuses the GLSL for them). Built in error scopes, the internal errors
+/// too (a translation that fails is one), so it is only said, and the next card tried.
+fn builds_shapes(device: &wgpu::Device) -> Result<(), String> {
+    let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape, tried"), source: wgpu::ShaderSource::Wgsl(format!("{}{}", include_str!("shape.wgsl"), crate::shaders::generate(&[])).into()) });
+    let _ = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("elements, tried"),
+        layout: None,
+        vertex: wgpu::VertexState { module: &module, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState { format: wgpu::TextureFormat::Bgra8Unorm, blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    let v = pollster::block_on(validation.pop());
+    let i = pollster::block_on(internal.pop());
+    match v.or(i) {
+        None => Ok(()),
+        Some(e) => Err(format!("it cannot build pleamar's shader: {}", e.to_string().lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("").trim())),
+    }
+}
+
+/// The order cards are tried in after the one chosen: the frugal first, software last.
+fn card_rank(t: wgpu::DeviceType) -> u8 {
+    match t {
+        wgpu::DeviceType::IntegratedGpu => 0,
+        wgpu::DeviceType::DiscreteGpu => 1,
+        wgpu::DeviceType::VirtualGpu => 2,
+        wgpu::DeviceType::Other => 3,
+        wgpu::DeviceType::Cpu => 4,
+    }
+}
+
 impl Gpu {
     /// Whether the compositor paints on another card than ours: `None` while
     /// it has not said which it paints on (a compositor without linux-dmabuf 4).
@@ -3918,7 +3994,9 @@ impl Gpu {
         // OpenGL first, if it is wanted; and if its device cannot be made (a
         // driver that gives an OpenGL without compute shaders, as NVIDIA's
         // does here), the card as it is, rather than nothing at all.
-        let device_of = |adapter: &wgpu::Adapter| {
+        let device_of = |adapter: &wgpu::Adapter| -> Result<(wgpu::Device, wgpu::Queue), String> {
+            can_paint(adapter)?;
+            let required_limits = limits_for(adapter);
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 // By default, wgpu reserves blocks of 128 MB on the card and 64 in
                 // system memory, thinking of a game. A whole scene fits in less
@@ -3930,8 +4008,11 @@ impl Gpu {
                 // card (the scene's `windows`), where the card can.
                 // Video frames as decoders hand them over (NV12), if the card reads them.
                 required_features: adapter.features() & (wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF | wgpu::Features::TEXTURE_FORMAT_NV12),
+                required_limits,
                 ..Default::default()
             }))
+            .map_err(|e| e.to_string())
+            .and_then(|(device, queue)| builds_shapes(&device).map(|()| (device, queue)))
         };
         let on_gl = gl_adapter.and_then(|a| match device_of(&a) {
             Ok(dq) => {
@@ -3943,12 +4024,46 @@ impl Gpu {
                 None
             }
         });
+        // The card chosen first; if its driver makes no device (a broken integrated card on
+        // a laptop with two), the others that can show on the surface, the frugal ones first
+        // and software last; and, if no Vulkan card makes one, OpenGL.
+        let mut gl_instance = gl_instance;
         let (adapter, (device, queue)) = match on_gl {
             Some(x) => x,
             None => {
-                let adapter = primary.expect("no graphics driver can paint here, neither Vulkan nor OpenGL: install your card's Vulkan driver and the Vulkan loader (vulkan-icd-loader); `vulkaninfo --summary` says what there is");
-                let dq = device_of(&adapter).expect("there is no device");
-                (adapter, dq)
+                let first_info = primary.as_ref().map(|a| a.get_info());
+                let mut others: Vec<wgpu::Adapter> = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::PRIMARY))
+                    .into_iter()
+                    .filter(|a| {
+                        let i = a.get_info();
+                        first_info.as_ref().is_none_or(|f| f.name != i.name || f.backend != i.backend || f.device_pci_bus_id != i.device_pci_bus_id)
+                            && first.is_none_or(|s| a.is_surface_supported(s))
+                    })
+                    .collect();
+                others.sort_by_key(|a| card_rank(a.get_info().device_type));
+                let mut made = None;
+                for adapter in primary.into_iter().chain(others) {
+                    match device_of(&adapter) {
+                        Ok(dq) => {
+                            made = Some((adapter, dq));
+                            break;
+                        }
+                        Err(e) => println!("render · {} ({:?}) made no device ({e}): trying the next card", adapter.get_info().name, adapter.get_info().backend),
+                    }
+                }
+                if made.is_none() && backend != "vulkan" {
+                    let i = gl_instance.get_or_insert_with(|| wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::GL, ..wgpu::InstanceDescriptor::new_without_display_handle() }));
+                    if let Some(a) = pollster::block_on(i.request_adapter(&wgpu::RequestAdapterOptions { compatible_surface: first, power_preference, ..Default::default() })).ok() {
+                        match device_of(&a) {
+                            Ok(dq) => {
+                                println!("render · {}: no Vulkan card made a device; on OpenGL", a.get_info().name);
+                                made = Some((a, dq));
+                            }
+                            Err(e) => println!("render · {}: OpenGL made no device either ({e})", a.get_info().name),
+                        }
+                    }
+                }
+                made.expect("no graphics card made a device here, neither on Vulkan nor on OpenGL: install your card's Vulkan driver and the Vulkan loader (vulkan-icd-loader); `vulkaninfo --summary` says what there is")
             }
         };
         // The card out of memory —a texture too big for what it has free— is
@@ -3963,6 +4078,17 @@ impl Gpu {
         // out of memory, an error about something invalid is said too, not
         // panicked over: it is what the lack of memory left behind.
         device.on_uncaptured_error(std::sync::Arc::new(card_error));
+        // The card lost (a driver that hung and was reset, a card taken out, a laptop's GPU
+        // switched off): nothing made on it is any good, and the next frame would wait or
+        // panic without saying why. It is said, and the process leaves the way a render that
+        // panicked does (70), so whatever keeps it running (Calima's supervisor, a session)
+        // starts it again on a card that works. Not when the device is only dropped at the end.
+        device.set_device_lost_callback(|reason, message| {
+            if reason != wgpu::DeviceLostReason::Destroyed {
+                eprintln!("render · the graphics card was lost ({message}): leaving, so that it can be started again");
+                std::process::exit(70);
+            }
+        });
         let (format, alpha, non_blocking) = match first {
             Some(first) => {
                 let caps = first.get_capabilities(&adapter);
@@ -4037,9 +4163,25 @@ impl Gpu {
         let limit = device.limits().max_storage_buffer_binding_size as usize / 4;
         let no_layers_group = Self::make_layers(&device, &pipeline, format, 1, 1, 1).1;
         let erase = Self::erase_pipeline(&device, format);
+        // The effects —a group's blur, the glass and its frosting— are made inside a scope of
+        // their own: a card that refuses one (an old OpenGL, a format it cannot paint into) gets
+        // the scene without them, said once, instead of a render that falls on its first frame.
+        let effects = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let soften = crate::soften::Soften::new(&device, format);
         let lens = crate::lens::Pipelines::new(&device);
-        let blur = crate::blur::Built::new(&device, crate::blur::default_plan(), 1).expect("the default blur builds");
+        let (blur, blur_refused) = crate::blur::Built::made(&device, crate::blur::default_plan(), 1);
+        // (`PLEAMAR_NO_EFFECTS=1` does as such a card would: to see a scene as it paints there.)
+        let effects_off = match (pollster::block_on(effects.pop()), blur_refused) {
+            (None, None) if std::env::var_os("PLEAMAR_NO_EFFECTS").is_some() => {
+                println!("render · no blur and no glass, as PLEAMAR_NO_EFFECTS asks");
+                true
+            }
+            (None, None) => false,
+            (e, b) => {
+                println!("render · {}: no blur and no glass here (the card refused them: {}); everything else is painted", adapter.get_info().name, e.map(|e| e.to_string()).or(b).unwrap_or_default().lines().next().unwrap_or(""));
+                true
+            }
+        };
         let blur_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
@@ -4060,7 +4202,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { _gl_instance: gl_instance, lens, blur, blur_sampler, blur_values: crate::blur::DEFAULT_VALUES, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, veil: [veil_cut, veil_add], erase, soften, pipeline_layout, user_code: base, lens_image: Default::default(), built_for_image: false, lens_epoch: 0, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, backdrop_sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group, no_picture_view, pictures: Default::default() };
+        let mut g = Gpu { _gl_instance: gl_instance, effects_off, lens, blur, blur_sampler, blur_values: crate::blur::DEFAULT_VALUES, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, veil: [veil_cut, veil_add], erase, soften, pipeline_layout, user_code: base, lens_image: Default::default(), built_for_image: false, lens_epoch: 0, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, backdrop_sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group, no_picture_view, pictures: Default::default() };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -5195,7 +5337,7 @@ impl Gpu {
             l.damage_log.clear();
         }
         let whole_screen = matches!(&l.target, Target::Frames(f) if f.whole_screen());
-        if !l.wants_lens || !self.can_copy || whole_screen {
+        if !l.wants_lens || !self.can_copy || whole_screen || self.effects_off {
             l.lens = None;
         } else if l.lens.as_ref().is_none_or(|x| x.blur_generation() != self.blur.generation) {
             l.lens = Some(crate::lens::Lens::new(&self.device, self.format, l.px, &self.blur));
@@ -5221,7 +5363,7 @@ impl Gpu {
         // What it keeps of that is only the box round the glass, as far as
         // its frosting reads: not the whole surface (a 1080p one was some
         // 20 MB more for a glass a few hundred pixels wide).
-        let glass = !d.glass_marks.is_empty();
+        let glass = !d.glass_marks.is_empty() && !self.effects_off;
         let own_box = if glass { glass_reach_box(d, l.view.bounds(), l.scale, l.px) } else { None };
         // Only where what it paints into can be read back: the lens's canvas, or the canvas a
         // window keeps (`kept`). Painted straight onto the system's frame, the copy read a
@@ -5678,7 +5820,9 @@ impl Gpu {
                                 if let Some([x, y, w, h]) = cut {
                                     area = [area[0].max(x as i32), area[1].max(y as i32), area[2].min((x + w) as i32), area[3].min((y + h) as i32)];
                                 }
-                                self.soften.run(&self.device, &self.queue, &mut encoder, &l.soft, view, area, e[20] * l.scale * 0.5);
+                                if !self.effects_off {
+                                    self.soften.run(&self.device, &self.queue, &mut encoder, &l.soft, view, area, e[20] * l.scale * 0.5);
+                                }
                             }
                         }
                     }

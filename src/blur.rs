@@ -300,6 +300,15 @@ pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 impl Built {
     pub fn new(d: &wgpu::Device, plan: Plan, generation: u64) -> Result<Built, String> {
+        match Self::made(d, plan, generation) {
+            (b, None) => Ok(b),
+            (_, Some(e)) => Err(e),
+        }
+    }
+
+    /// The same, and what the card said if it refused it: the blur is there to hold, but
+    /// not to be used (`Gpu::effects_off`).
+    pub fn made(d: &wgpu::Device, plan: Plan, generation: u64) -> (Built, Option<String>) {
         let texture = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -329,10 +338,8 @@ impl Built {
             });
             pipelines.insert(entry, p);
         }
-        if let Some(e) = pollster::block_on(scope.pop()) {
-            return Err(e.to_string());
-        }
-        Ok(Built { plan, generation, pipelines, layout })
+        let refused = pollster::block_on(scope.pop()).map(|e| e.to_string());
+        (Built { plan, generation, pipelines, layout }, refused)
     }
 
     pub fn pipeline(&self, entry: &str) -> &wgpu::RenderPipeline {
