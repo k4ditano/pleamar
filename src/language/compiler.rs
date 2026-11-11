@@ -1318,7 +1318,9 @@ impl<'a> Compiler<'a> {
         // the copy's too (B12, as M20: every copy's `tabs.$i` was one zone and one rule).
         // …and inside a `for`'s row: a `port.$j` of a `repeat` in it is that row's zone.
         let in_component = self.scopes.iter().any(|e| e.instance.is_some()) || self.in_row();
-        let mut g = if !suffix.is_empty() && (!local.contains('$') || in_component) { format!("{interpolated}{suffix}") } else { interpolated.clone() };
+        // In a scene brought in, under its name, as its zone is (G22).
+        let own = self.brought_at_peek().map_or(String::new(), |b| format!("{}.", b.name));
+        let mut g = if !suffix.is_empty() && (!local.contains('$') || in_component) { format!("{own}{interpolated}{suffix}") } else { format!("{own}{interpolated}") };
         if let Some(mark) = self.screen_mark().filter(|m| !g.contains(m.as_str())) {
             g = format!("{g}{mark}");
         }
@@ -7629,8 +7631,12 @@ impl<'a> Compiler<'a> {
             Some(TokenKind::Id(w)) if w == "window" => 1,
             _ => return,
         };
-        if let Some(TokenKind::Id(local)) = n.head.get(at).map(|t| &t.kind) {
+        if let Some(t) = n.head.get(at)
+            && let TokenKind::Id(local) = &t.kind
+        {
             if self.hover_mentions.contains(local.as_str()) {
+                // Where it is written: in a scene brought in, the springs are under its name (G22).
+                PEEKED.with(|m| m.set((t.line, t.col)));
                 let local = local.clone();
                 self.zone_springs_for(&local);
             }

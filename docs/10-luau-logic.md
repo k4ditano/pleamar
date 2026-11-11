@@ -244,6 +244,12 @@ Each plugin has its own Luau state —its memory, its timers, its processes— *
 
 `require("lib/format")` loads `lib/format.luau` from that logic's folder (the scene's, or the plugin's), once; whatever it returns is the module. No `..`, no whole paths: it does not leave its folder. Saving a module reloads the logic, like saving the main file. A module shares the logic's globals (`on`, `fact`, `sys`…), not its `local`s: what it needs from the main file goes to it as an argument, `require("pages/wifi")(shared)`.
 
+A **scene brought into another** (`import scene "bar.plm" as Bar`, see the
+reference) keeps its logic: `bar.luau` runs as a plugin's does, in its own
+Luau state, where `fact.volume` is `Bar.volume` and `on("rang", …)` hears
+`emit("Bar.rang")`. Its permissions are its own `permissions { … }` and need
+no `--approve`: opening the scene that brings it in is already deciding.
+
 ## Permissions
 
 The sandbox closes off `io` and `os`; what stays open to the system is `run`, `spawn` and the services, and **each scene declares which ones it uses**, in its `.plm`:

@@ -42,7 +42,7 @@ Words of the language (they cannot be used as a name of one's own without confus
 In EBNF: `[ x ]` is optional, `{ x }` zero or more times, `|` alternatives, `"x"` literally. `end` is a newline or `;`.
 
 ```
-file         = [ "language" number end ] { "import" text [ "as" name ] end } ( scene | library ) ;
+file         = [ "language" number end ] { "import" [ "scene" ] text [ "as" name ] end } ( scene | library ) ;
 scene        = "scene" name "{" { statement } "}" ;
 library      = "library" name [ "strict" ] "{" { let | spring | component | boundary | inner | translations } "}" ;
 boundary     = permissions | fact | event | live_text | model | image_decl ;    (* lives under the library's name: `Clock.now` *)
@@ -65,7 +65,7 @@ enum         = name "|" name { "|" name } ;
 spring       = "spring" name "=" number "," number ;
 property     = ( "prop" | "pose" ) name "=" number [ "~" spring_ref ] ;
 fact         = "fact" name [ ":" ( "number" | "bool" | enum ) ] "=" ( number | "true" | "false" | name ) ;
-event        = "event" name [ "->" ] ;
+event        = "event" name [ "(" [ name { "," name } ] ")" ] [ "->" ] ;
 live_text    = "text" name "=" text ;
 image_decl   = "image" name "=" ( "icon" text | "file" text | "pixels" text | "from" name ) "," number "," number ;
 figure_decl  = "figure" name "=" "file" text ;                                  (* an svg, by its layers *)
@@ -251,7 +251,7 @@ scene Watching {
 | `prop orb.x = 360 ~lively` | An animated property: a spring. Without `~`, `lively` |
 | `pose eyes = 14` | A property of the pose: the kind a gesture leads by the hand |
 | `fact open = false` · `fact tries: number = 3` · `fact mode: low \| normal \| critical = normal` | Something that is true for a while. The logic and the rules set it. See **Types**, below |
-| `event confirmed` · `event view_event ->` | Something that happens. With `->`, it also reaches the logic |
+| `event confirmed` · `event view_event ->` · `event moved(x, y) ->` | Something that happens. With `->`, it also reaches the logic. With what it carries in parentheses, an `emit` of it has to give all of it, by place or by name, and the logic gets it by those names |
 | `text notice.title = "Meeting"` | A live text: the logic changes it, or an `input` |
 | `image fox = icon "firefox", 48, 48` | An image, and the largest logical size it is painted at. `icon "name"`, `file "path"`, or `from some_text`: whichever that text says (an icon name, or a path if it starts with `/`). A `file` that moves —a **GIF, an animated PNG or an animated WebP**— plays by itself, looping; the render wakes up only when it changes frame, it stops while the image is not seen, and with reduced motion it stays on its first frame. Its frames go to the atlas at the size it is painted, up to a quarter of it: one that asks for more keeps one frame in two —or three…—, at the same pace. **The declared size fixes the shape of the image's cell**: the picture is fitted inside a box of that shape, keeping its proportions, and that box is then stretched to the `size:` it is drawn at. Declare it with the proportions it is drawn at, or a picture of another shape is squashed, or leaves empty bands. Declared `0, 0`, it is the file's own size and shape (see `fit:` below) |
 | `figure hat = file "hat.svg"` | An svg **as geometry**: its layers become paths, each one named by the `id` of its group in the file. The path is relative to the file that writes it, so a library takes its pieces with it |
@@ -440,6 +440,42 @@ can tell any scene anything, `quit` too. Two scenes that each answer the
 other's `emit` with one of their own tell each other forever, as they would
 with `run("pleamar", "--say", …)`. The two share no state: the one that owns a
 value keeps it as a fact, and tells the others with `emit` when it changes.
+
+**Scenes brought in** (G22, issue 75). A shell whose bar, notices and OSD
+are scenes of their own can also run them **in one process**, sharing the
+render, the graphics card and the connection to the compositor:
+
+```
+import scene "bar.plm" as Bar
+import scene "notices.plm" as Notices
+scene Shell { }
+```
+
+- Each one is a whole scene, which still opens alone (`pleamar --scene bar.plm`).
+  Brought in, **everything it declares is under its name**: its `volume` is
+  `Bar.volume`, its zone `hit` is `Bar.hit`, and the shell's or another one's
+  `volume` is another fact. Its surface without a name, and what it draws
+  loose, are the surface `Bar`; its named ones, `Bar.panel`. Inside it,
+  `screen.width` and `screen.height` are what its own surface measures.
+- It **reads** the others' facts, texts and models by their full name
+  (`size: Bar.volume * 10, 4`), hears their events (`on Bar.rang { … }`) and
+  emits them (`emit Bar.landed(id: 3, x: local.x)`). All of it is checked when
+  loading, at both ends: an event the other does not declare, or that carries
+  something else (`event landed(id, x)`), is an error. Something that names
+  another scene does not open alone: that scene is not there.
+- It **writes only its own**: setting another's fact, text or property is an
+  error that says to tell its owner with an event. A value that two of them
+  write is a `shared fact` with an owner, still to come (issue 75, C).
+- Its logic (`bar.luau`) runs in its own Luau state under its name, as a
+  plugin's, with **its own** `permissions { … }`. They need no `--approve`:
+  opening the shell is already deciding, as for the shell's own.
+- It still **answers `--say` by its file's name**: `pleamar --say bar "emit rang"`
+  is `emit Bar.rang` in the shell (and so are `fact`, `text`, `submit`, `focus`,
+  `get`, `press`, `hold`, `drag`, `wheel` and `type`), so whatever spoke to the
+  bar alone, `sys.call("say", "bar", …)` too, still reaches it.
+- Only the scene that is opened brings others in; a scene brought in does not
+  bring more. They share one render: a slow one slows the others, and if the
+  process ends, all of them do.
 
 **One per monitor.** `screens: each [max N]` repeats the surface on every monitor (4 at most, unless said otherwise), and **each copy has its own**: its properties, its zones and its rules. Inside:
 

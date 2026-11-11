@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(files.len(), 3);
         // Each one on a surface of its own, named as the scene that brings it calls it.
         let surfaces: Vec<&str> = scene.surfaces.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(surfaces, ["", "Bar", "Osd"]);
+        assert_eq!(surfaces, ["", "Bar.panel", "Bar", "Osd"]);
         // The three `volume`s and the three `hit`s, each its own.
         for name in ["volume", "Bar.volume", "Osd.volume"] {
             assert!(scene.facts.iter().any(|(n, _)| *n == name), "no fact {name}");
@@ -551,6 +551,8 @@ mod tests {
             assert!(zones.contains(&name), "no zone {name}: {zones:?}");
         }
         assert_eq!(scene.rules.len(), 5);
+        // Its hover is its own zone's.
+        assert!(scene.props.iter().any(|(n, _, _)| *n == "Bar.hit.hover"), "no Bar.hit.hover");
     }
 
     #[test]

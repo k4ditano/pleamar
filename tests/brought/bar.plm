@@ -5,7 +5,11 @@ scene Bar {
     event ping
     event rang
     event landed(id, x)
-    box hit { from: 0, 0; size: screen.width, 40 }
+    zone box hit { from: 0, 0; size: screen.width, 40 }
+    box knob { from: 0, 0; size: 10 + 10 * hit.hover, 10 }
+    surface panel { size: 60, 60
+        box dot { from: 0, 0; size: 10, 10 }
+    }
     on press hit { volume = volume + 1; emit rang }
     on ping { volume = 0 }
 }
