@@ -54,6 +54,9 @@ struct Timer {
 
 #[derive(Default)]
 struct Shared {
+    /// In the logic of a scene brought in (G22): the names of the other scenes beside it,
+    /// whose facts, texts, models and events it names whole (`Bar.volume`) and only reads.
+    neighbors: Vec<String>,
     handlers: HashMap<String, Vec<Function>>,
     timers: Vec<Timer>,
     processes: HashMap<u32, Function>,
@@ -119,6 +122,7 @@ impl Shared {
             slots: self.slots.clone(),
             plugin: self.plugin.clone(),
             unapproved: self.unapproved,
+            neighbors: self.neighbors.clone(),
             ..Default::default()
         }
     }
@@ -646,6 +650,27 @@ struct LivePlugin {
     wants_frames: Arc<AtomicBool>,
 }
 
+/// Whether a name is one of the scenes' beside this one (G22): `Bar.volume` from Osd's logic.
+fn neighbor_of<'a>(c: &'a Shared, k: &str) -> Option<&'a String> {
+    c.neighbors.iter().find(|n| k.len() > n.len() && k.starts_with(n.as_str()) && k.as_bytes()[n.len()] == b'.')
+}
+
+/// The real name of what a logic names, knowing its neighbours: theirs are whole.
+fn named(c: &Shared, prefix: &Option<String>, k: &str) -> String {
+    match neighbor_of(c, k) {
+        Some(_) => k.to_owned(),
+        None => qualified(prefix, k),
+    }
+}
+
+/// A scene brought in reads the others' and does not write them (G22).
+fn not_its_own(c: &Shared, prefix: &Option<String>, what: &str, k: &str) -> mlua::Result<()> {
+    match neighbor_of(c, k) {
+        Some(n) => Err(mlua::Error::runtime(format!("the {what} '{k}' is {n}'s: {} reads it, and tells {n} with an event (`emit(\"{n}.something\")`) to change it", prefix.as_deref().unwrap_or("this scene")))),
+        None => Ok(()),
+    }
+}
+
 /// The real name of what a logic names: in a plugin, under its name.
 fn qualified(prefix: &Option<String>, k: &str) -> String {
     match prefix {
@@ -757,6 +782,10 @@ impl LuauScript {
         c.signals = e.signals.iter().map(|s| s.0.to_owned()).collect();
         c.services = e.services.clone();
         c.translations = e.translations.clone();
+        c.neighbors = match &self.definition {
+            Some(d) if d.brought => e.scenes.iter().filter(|n| **n != d.name).cloned().collect(),
+            _ => Vec::new(),
+        };
     }
 
     /// Whether this scene is asked what a Bluetooth pairing asks. Read again
@@ -980,6 +1009,7 @@ impl LuauScript {
         let pre = self.prefix.clone();
         let frontier = self.frontier.clone();
         let set = lua.create_function(move |_, (_, k, v): (Table, String, Value)| {
+            not_its_own(&c.lock().unwrap(), &pre, "fact", &k)?;
             let k = qualified(&pre, &k);
             // A misspelled name is an error here, with its line, and not a warning lost in the render.
             if !c.lock().unwrap().facts.contains_key(&k) {
@@ -995,8 +1025,8 @@ impl LuauScript {
         let c = self.c.clone();
         let pre = self.prefix.clone();
         let get = lua.create_function(move |lua, (_, k): (Table, String)| {
-            let k = qualified(&pre, &k);
             let c = c.lock().unwrap();
+            let k = named(&c, &pre, &k);
             match c.facts.get(&k) {
                 Some(v) => from_number(lua, c.types.get(&k), *v),
                 None => Ok(Value::Nil),
@@ -1009,6 +1039,7 @@ impl LuauScript {
         let pre = self.prefix.clone();
         let frontier = self.frontier.clone();
         let set = lua.create_function(move |_, (_, k, v): (Table, String, String)| {
+            not_its_own(&c.lock().unwrap(), &pre, "text", &k)?;
             let k = qualified(&pre, &k);
             if !c.lock().unwrap().texts.contains_key(&k) {
                 return Err(not_found(&pre, "no text", &k, c.lock().unwrap().texts.keys()));
@@ -1020,7 +1051,10 @@ impl LuauScript {
         })?;
         let c = self.c.clone();
         let pre = self.prefix.clone();
-        let get = lua.create_function(move |_, (_, k): (Table, String)| Ok(c.lock().unwrap().texts.get(&qualified(&pre, &k)).cloned()))?;
+        let get = lua.create_function(move |_, (_, k): (Table, String)| {
+            let c = c.lock().unwrap();
+            Ok(c.texts.get(&named(&c, &pre, &k)).cloned())
+        })?;
         g.set("text", Self::live_table(&lua, get, set)?)?;
 
         // model.rows = { { label = "Open", enabled = true }, … }: a whole list, in one go.
@@ -1033,6 +1067,7 @@ impl LuauScript {
         let pre = self.prefix.clone();
         let frontier = self.frontier.clone();
         let set = lua.create_function(move |_, (_, k, list): (Table, String, Value)| {
+            not_its_own(&c.lock().unwrap(), &pre, "model", &k)?;
             let k = qualified(&pre, &k);
             let Value::Table(list) = list else {
                 return Err(mlua::Error::runtime(format!("'model.{k}' takes a list of records: model.{k} = {{ {{ … }}, {{ … }} }}")));
@@ -1046,8 +1081,11 @@ impl LuauScript {
             frontier.cross(&k, || crate::scene::Crossing::Model(k.clone(), lua_to_value(&Value::Table(list.clone()), 0)));
             store.raw_set(k, list)
         })?;
-        let pre = self.prefix.clone();
-        let get = lua.create_function(move |_, (_, k): (Table, String)| stored.raw_get::<Value>(qualified(&pre, &k)))?;
+        let (pre, c) = (self.prefix.clone(), self.c.clone());
+        let get = lua.create_function(move |_, (_, k): (Table, String)| {
+            let k = named(&c.lock().unwrap(), &pre, &k);
+            stored.raw_get::<Value>(k)
+        })?;
         g.set("model", Self::live_table(&lua, get, set)?)?;
 
         let tx = self.tx.clone();
@@ -1056,7 +1094,8 @@ impl LuauScript {
         // emit("tapped") · emit("Weather.ask", data): what it brings reaches a logic
         // across a plugin's boundary (the scene's rules hear the event, not the data).
         g.set("emit", lua.create_function(move |_, (n, data): (String, Value)| {
-            let n = qualified(&pre, &n);
+            // Another scene's event is emitted whole: telling it is how one changes what is its.
+            let n = named(&c.lock().unwrap(), &pre, &n);
             // An event that does not exist used to be a warning lost in the render: here it is an error, with its line.
             if !c.lock().unwrap().signals.contains(&n) {
                 let known: Vec<String> = c.lock().unwrap().signals.iter().cloned().collect();
@@ -1088,8 +1127,10 @@ impl LuauScript {
         let (tx, wants_frames) = (self.tx.clone(), self.wants_frames.clone());
         g.set("on", lua.create_function(move |_, (what, f): (String, Function)| {
             let frame = what == "frame";
-            let what = qualified_listener(&pre, &what);
             let mut c = c.lock().unwrap();
+            // Another scene's are heard whole: `on("Bar.rang", …)`, `on("fact:Bar.volume", …)`.
+            let theirs = what.split_once(':').map_or(what.as_str(), |(_, n)| n);
+            let what = if neighbor_of(&c, theirs).is_some() { what.clone() } else { qualified_listener(&pre, &what) };
             c.handlers.entry(what).or_default().push(f);
             // Listening to every frame is what keeps them coming: the render
             // is told, and woken if it was at rest.
@@ -1694,6 +1735,17 @@ impl Script for LuauScript {
     fn on_event(&mut self, e: Event, ctx: &mut Context) {
         // Every plugin receives the same, but only has handlers with its name in front:
         // it does not find out about what is not its own.
+        // What crosses from a scene brought in, the other scenes brought in hear too (G22):
+        // its logic wrote `volume`, or emitted `rang`. Not the one it came from.
+        if let (None, Event::Boundary(b)) = (&self.prefix, &e) {
+            let name = match &**b {
+                crate::scene::Crossing::Text(n, _) | crate::scene::Crossing::Fact(n, _) | crate::scene::Crossing::Model(n, _) | crate::scene::Crossing::Signal(n, _) => n.as_str(),
+            };
+            let from = name.split_once('.').map_or("", |x| x.0);
+            for p in self.plugins.iter().filter(|p| p.definition.brought && p.definition.name != from) {
+                let _ = p.mailbox.send(e.clone());
+            }
+        }
         if !matches!(e, Event::NewScene(..) | Event::Boundary(_)) {
             // A frame, only to the ones that listen to them: the rest would be
             // woken sixty times a second for nothing.
@@ -2414,6 +2466,58 @@ mod tests {
         assert_eq!(texts.get("Bar.said").map(String::as_str), Some("heard"), "{texts:?}");
         // Past its permission, without anyone approving it: the argument is what is wrong.
         assert!(texts.get("Bar.perm").is_some_and(|e| e.contains("takes the absolute path")), "{texts:?}");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Two scenes brought in, logic to logic (G22): one reads and hears the other's, once,
+    /// and does not write it.
+    #[test]
+    fn the_logic_of_a_scene_brought_in_reads_and_hears_the_others() {
+        use super::{LuauScript, Script};
+        use crate::scene::{Event, ToRender};
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("pleamar-neighbors-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("bar.plm"), "scene Bar {\n    surface { size: 10, 10 }\n    fact volume = 3\n    event go ->\n    event rang ->\n}\n").unwrap();
+        std::fs::write(dir.join("bar.luau"), "on(\"go\", function() fact.volume = 7; emit(\"rang\") end)\n").unwrap();
+        std::fs::write(dir.join("osd.plm"), "uses scene \"bar.plm\" as Bar\nscene Osd {\n    surface { size: 10, 10 }\n    text heard = \"\"\n    text refused = \"\"\n}\n").unwrap();
+        std::fs::write(dir.join("osd.luau"), concat!(
+            "local n = 0\n",
+            "on(\"Bar.rang\", function()\n",
+            "    n = n + 1\n",
+            "    text.heard = tostring(n) .. \" \" .. tostring(fact[\"Bar.volume\"])\n",
+            "    local ok, e = pcall(function() fact[\"Bar.volume\"] = 1 end)\n",
+            "    text.refused = tostring(e)\n",
+            "end)\n",
+        )).unwrap();
+        let (scene, logic) = (dir.join("shell.plm"), dir.join("shell.luau"));
+        std::fs::write(&scene, "import scene \"bar.plm\" as Bar\nimport scene \"osd.plm\" as Osd\nscene Shell {\n    surface { size: 10, 10 }\n}\n").unwrap();
+        std::fs::write(&logic, "emit(\"Bar.go\")\n").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (to_logic, letters) = std::sync::mpsc::channel();
+        let blocked = std::sync::Arc::default();
+        let mut s = LuauScript::new(&scene.to_string_lossy(), &logic.to_string_lossy(), tx.clone(), to_logic, std::sync::Arc::clone(&blocked));
+        s.scene();
+        let mut ctx = crate::logic::Context::for_plugin(tx, blocked);
+        s.on_event(Event::Alarm("start"), &mut ctx);
+        let mut texts: std::collections::HashMap<&str, String> = Default::default();
+        // Past when it is heard, to see that it is heard once.
+        let until = std::time::Instant::now() + Duration::from_millis(1500);
+        while std::time::Instant::now() < until {
+            while let Ok(e) = letters.try_recv() {
+                s.on_event(e, &mut ctx);
+            }
+            for m in rx.try_iter() {
+                if let ToRender::Text(k, v) = m {
+                    texts.insert(k, v);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(texts.get("Osd.heard").map(String::as_str), Some("1 7"), "{texts:?}");
+        assert!(texts.get("Osd.refused").is_some_and(|e| e.contains("is Bar's")), "{texts:?}");
         drop(s);
         let _ = std::fs::remove_dir_all(&dir);
     }

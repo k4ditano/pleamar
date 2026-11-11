@@ -249,6 +249,11 @@ reference) keeps its logic: `bar.luau` runs as a plugin's does, in its own
 Luau state, where `fact.volume` is `Bar.volume` and `on("rang", …)` hears
 `emit("Bar.rang")`. Its permissions are its own `permissions { … }` and need
 no `--approve`: opening the scene that brings it in is already deciding.
+It also names the other scenes beside it whole, as its `.plm` does:
+`fact["Bar.volume"]`, `text["Bar.title"]`, `model["Bar.rows"]` are read,
+`on("Bar.rang", …)` and `on("fact:Bar.volume", …)` heard (also when Bar's
+own logic wrote or emitted them), and `emit("Bar.ping")` tells Bar. Writing
+another's is an error: tell its owner with an event.
 
 ## Permissions
 

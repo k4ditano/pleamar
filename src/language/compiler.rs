@@ -921,6 +921,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         }
     }
     // A scene brought in answers `--say` by its file's name (G22).
+    o.e.scenes = brought_scenes.iter().map(|b| b.name.clone()).collect();
     o.e.brought = brought_scenes.iter().filter(|b| !b.absent).map(|b| (b.name.clone(), files.get(b.files[0]).map_or(b.name.clone(), |f| f.trim_end_matches(".plm").to_owned()))).collect();
     // A scene used and not here: said, once, where it is read.
     if o.errors.is_empty() {

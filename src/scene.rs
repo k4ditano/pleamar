@@ -2192,6 +2192,9 @@ pub struct Scene {
     /// The scenes brought into this one (`import scene "bar.plm" as Bar`, G22): the name it
     /// gives each, and the one `--say` reaches it by, its file's (`bar`).
     pub brought: Vec<(String, String)>,
+    /// And every scene named so, brought in or only used (`uses scene`): their logic
+    /// names one another whole.
+    pub scenes: Vec<String>,
     pub props: Vec<(&'static str, f32, Spring)>,
     pub instrs: Vec<Instr>,
     pub behaviors: Vec<Behavior>,
