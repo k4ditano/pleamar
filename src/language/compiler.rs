@@ -279,13 +279,12 @@ pub struct Library {
 }
 
 /// A scene brought into the one opened (`import scene "bar.plm" as Bar`, G22): its name,
-/// the files it is written in (its own and its parts', not its libraries'), its logic if
-/// it has any, and the line of its `import scene`.
+/// the files it is written in (its own and its parts', not its libraries'), and its logic
+/// if it has any.
 pub struct BroughtScene {
     pub name: String,
     pub files: Vec<usize>,
     pub logic: Option<std::path::PathBuf>,
-    pub line: usize,
 }
 
 /// What a scene brought in draws loose, which goes into its own surface: the drawing
@@ -916,6 +915,8 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             o.errors.push(CompileError::at(b.file * super::PER_FILE + 1, 1, format!("library '{}' asks for permissions, but has no logic to use them: its `.luau` is missing next to it", b.name)));
         }
     }
+    // A scene brought in answers `--say` by its file's name (G22).
+    o.e.brought = brought_scenes.iter().map(|b| (b.name.clone(), files.get(b.files[0]).map_or(b.name.clone(), |f| f.trim_end_matches(".plm").to_owned()))).collect();
     // A scene brought in with a `.luau` next to it: its logic, with its own permissions, under its name (G22).
     for b in brought_scenes {
         let permissions = o.permissions_of.get(&b.files[0]).cloned().unwrap_or_default();

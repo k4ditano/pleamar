@@ -2189,6 +2189,9 @@ pub fn ms(n: u64) -> Duration {
 
 #[derive(Default)]
 pub struct Scene {
+    /// The scenes brought into this one (`import scene "bar.plm" as Bar`, G22): the name it
+    /// gives each, and the one `--say` reaches it by, its file's (`bar`).
+    pub brought: Vec<(String, String)>,
     pub props: Vec<(&'static str, f32, Spring)>,
     pub instrs: Vec<Instr>,
     pub behaviors: Vec<Behavior>,

@@ -636,7 +636,7 @@ pub fn listen_for_commands(scene: &str, receive: Commands) {
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(path.with_extension("display"));
     let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else { return };
-    *OWN_SOCKET.lock().unwrap() = Some(path.clone());
+    OWN_SOCKETS.lock().unwrap().push(path.clone());
     note_display();
     std::thread::Builder::new()
         .name("commands".into())
@@ -679,7 +679,7 @@ fn still_there(c: &impl std::os::fd::AsRawFd) -> bool {
 /// (`notes.display`), for `--say` to tell a scene on the caller's display
 /// from one of the same name on another —a nested compositor's copy of the
 /// lock screen, and the real one (issue #67)—.
-static OWN_SOCKET: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+static OWN_SOCKETS: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
 static SHOWN_ON: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// The display a program started from here talks to: `WAYLAND_DISPLAY`, a
@@ -702,8 +702,11 @@ pub fn shown_on(display: String) {
 
 fn note_display() {
     #[cfg(unix)]
-    if let (Some(sock), Some(d)) = (OWN_SOCKET.lock().unwrap().clone(), SHOWN_ON.lock().unwrap().clone()) {
-        let _ = std::fs::write(sock.with_extension("display"), d);
+    if let Some(d) = SHOWN_ON.lock().unwrap().clone() {
+        // The scene's, and those of the scenes it brings in (G22).
+        for sock in OWN_SOCKETS.lock().unwrap().iter() {
+            let _ = std::fs::write(sock.with_extension("display"), &d);
+        }
     }
 }
 

@@ -437,6 +437,8 @@ pub fn run_with(options: Vec<String>) {
         if a.naive { "NAIVE (single thread)" } else { "decoupled (independent render)" },
         a.stall
     );
+    // The scenes it brings in (G22): each also answers `--say` by its own name.
+    let brought = scene.brought.clone();
     let _ = to_render.send(ToRender::Scene(scene));
     crate::platform::watch_cursor(to_render.clone());
     // Reduced motion and the colour scheme, as the system says them, unless
@@ -482,9 +484,12 @@ pub fn run_with(options: Vec<String>) {
     // a global compositor shortcut runs— comes in as if the logic had said it.
     {
         let name = a.answer_as.clone().unwrap_or_else(|| std::path::Path::new(&a.scene).file_stem().map_or(a.scene.clone(), |n| n.to_string_lossy().into_owned()));
-        let tx = Mutex::new((to_render.clone(), to_logic_for_commands));
-        let me = name.clone();
-        platform::listen_for_commands(&name, std::sync::Arc::new(move |line: String, out: &mut dyn FnMut(&str) -> bool| {
+        // The same orders, for the scene and for each one it brings in (G22), which answers
+        // to its own file's name and hears them said to its names: `--say bar emit rang`.
+        let commands = |me: String, prefix: String| -> platform::Commands {
+        let tx = Mutex::new((to_render.clone(), to_logic_for_commands.clone()));
+        std::sync::Arc::new(move |line: String, out: &mut dyn FnMut(&str) -> bool| {
+            let line = under(&prefix, &line);
             // Copies, and the lock let go at once: a `wait` that lasts does not hold up the others.
             let (tx, to_logic) = {
                 let guard = tx.lock().unwrap();
@@ -599,7 +604,12 @@ pub fn run_with(options: Vec<String>) {
                 }
             };
             None
-        }));
+        })
+        };
+        platform::listen_for_commands(&name, commands(name.clone(), String::new()));
+        for (piece, said) in &brought {
+            platform::listen_for_commands(said, commands(said.clone(), format!("{piece}.")));
+        }
     }
     if let Some(steps) = a.mouse.clone().filter(|_| a.film.is_none()) {
         // To rehearse the zones without taking the mouse away from anyone.
@@ -639,6 +649,25 @@ pub fn run_with(options: Vec<String>) {
     let _ = to_render.send(ToRender::Quit);
     let _ = render.join();
     quit();
+}
+
+/// What is said to a scene brought in (G22) is said to its names: `--say bar emit rang`
+/// is `emit Bar.rang` for the scene that brought it in as Bar. The orders that name
+/// something take the name; the others (`wait`, `watch`, `describe`…) are the scene's as they are.
+fn under(prefix: &str, line: &str) -> String {
+    let t = line.trim();
+    if prefix.is_empty() {
+        return t.to_owned();
+    }
+    let mut p = t.splitn(3, ' ');
+    let (what, who, rest) = (p.next().unwrap_or(""), p.next().filter(|w| !w.is_empty()), p.next());
+    match (what, who) {
+        ("emit" | "fact" | "text" | "submit" | "focus" | "get" | "press" | "hold" | "drag" | "wheel" | "type", Some(w)) => match rest {
+            Some(r) => format!("{what} {prefix}{w} {r}"),
+            None => format!("{what} {prefix}{w}"),
+        },
+        _ => t.to_owned(),
+    }
 }
 
 /// One step of a `--mouse` script (what goes before the `@`): what the render
@@ -831,4 +860,19 @@ fn autostart() -> i32 {
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    /// What `--say bar …` says to the scene brought in as Bar is said to its names (G22).
+    #[test]
+    fn an_order_to_a_scene_brought_in_names_its_own() {
+        use super::under;
+        assert_eq!(under("Bar.", "emit rang"), "emit Bar.rang");
+        assert_eq!(under("Bar.", "fact volume 3"), "fact Bar.volume 3");
+        assert_eq!(under("Bar.", "press hit right 2"), "press Bar.hit right 2");
+        assert_eq!(under("Bar.", "wait volume == 3"), "wait volume == 3");
+        assert_eq!(under("Bar.", "hello"), "hello");
+        assert_eq!(under("", "emit rang\n"), "emit rang");
+    }
 }

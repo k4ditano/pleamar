@@ -360,7 +360,7 @@ impl Reader {
             kept.push(tree::Entry::Node(tree::Node { head: vec![word, named], body: Some(own), line: n.line, col: n.col }));
         }
         let logic = target.with_extension("luau");
-        self.brought_scenes.push(compiler::BroughtScene { name: name.clone(), files, logic: logic.is_file().then_some(logic), line: n.line });
+        self.brought_scenes.push(compiler::BroughtScene { name: name.clone(), files, logic: logic.is_file().then_some(logic) });
         self.piece_entries.extend(kept);
         Ok(())
     }
