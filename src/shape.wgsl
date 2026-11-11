@@ -863,8 +863,12 @@ fn shade(e: VertexOut) -> vec4<f32> {
             // `tint:` the base share of its own colour (22 %); the extra over
             // bright or busy backdrops scales with it.
             glass_color = mix(vivid, tone, el.glass4.x);
-            let extra = max(bright * 0.5, detail * 0.55) * (0.35 + 0.65 * frost) * (el.glass4.x / LENS_TINT);
-            glass_color = mix(glass_color, tone, clamp(extra, 0.0, 1.0));
+            // It is a share of what is still seen through, and it never takes all of it: scaled
+            // by `tint:` up to the usual 22 % and no further, and at most 40 %. Scaled freely, a
+            // `tint: 40%` over a bright icon reached 91 % of a dark fill: the icon became a dark
+            // blob, ringed by where the detail measure saw its edge (Calima's sidebar).
+            let extra = max(bright * 0.5, detail * 0.55) * (0.35 + 0.65 * frost) * min(el.glass4.x / LENS_TINT, 1.0);
+            glass_color = mix(glass_color, tone, clamp(extra, 0.0, 0.4));
         }
         // The bevel, tilted away from the eye, mirrors what is round the glass
         // (Fresnel, as Schlick puts it): a little on the slope, most where it
