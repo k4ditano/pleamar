@@ -362,16 +362,25 @@ impl Reader {
         };
         let libraries: Vec<usize> = self.libraries[libraries_before..].iter().map(|b| b.file).collect();
         let files: Vec<usize> = (first..self.files.len()).filter(|k| !libraries.contains(k)).collect();
-        // Its surface without a name, and what it draws loose, become its surface `Bar`.
+        // Its surface without a name, and what it draws loose, become its surface `Bar`. A
+        // scene whose surfaces all have a name keeps its loose rules at its level, as alone:
+        // a surface `Bar` would be one more on the screen, for nothing.
+        let body = scene.body.clone().unwrap_or_default();
+        let has_main = body.iter().any(|e| matches!(e, tree::Entry::Node(x) if x.head.len() == 1 && matches!(x.head[0].kind, TokenKind::Id(ref w) if w == "surface")));
         let mut kept = Vec::new();
         let mut own = Vec::new();
-        for e in scene.body.clone().unwrap_or_default() {
+        for e in body {
             match e {
                 tree::Entry::Node(x) if x.head.len() == 1 && matches!(x.head[0].kind, TokenKind::Id(ref w) if w == "surface") => own.extend(x.body.unwrap_or_default()),
+                e if !has_main && compiler::is_rule(&e) => kept.push(e),
                 e if compiler::is_loose_repeat(&e) => {
                     let (declared, drawn) = compiler::split_repeat(&e);
                     kept.extend(declared);
-                    own.extend(drawn);
+                    // Its rules, with nothing drawn, stay at the scene's level too when it has no main surface.
+                    match drawn {
+                        Some(d) if !has_main && !compiler::draws_anything(&d) => kept.push(d),
+                        d => own.extend(d),
+                    }
                 }
                 e if compiler::draws_loose(&e) => own.push(e),
                 e => kept.push(e),
@@ -626,6 +635,16 @@ mod tests {
         assert_eq!(scene.rules.len(), 5);
         // Its hover is its own zone's.
         assert!(scene.props.iter().any(|(n, _, _)| *n == "Bar.hit.hover"), "no Bar.hit.hover");
+    }
+
+    #[test]
+    fn a_scene_whose_surfaces_all_have_a_name_brings_no_surface_of_its_own() {
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/brought-all-named.plm")).unwrap();
+        let surfaces: Vec<&str> = scene.surfaces.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(surfaces, ["Named.panel"]);
+        // `wheel` is still the zone called so, and the image reads the text the repeat declared.
+        assert!(scene.zones.iter().any(|z| z.id == "wheel"));
+        assert!(scene.texts.iter().any(|(n, _)| *n == "Named.ch.0.img"));
     }
 
     #[test]

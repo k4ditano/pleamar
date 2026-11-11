@@ -57,6 +57,8 @@ struct Shared {
     /// In the logic of a scene brought in (G22): the names of the other scenes beside it,
     /// whose facts, texts, models and events it names whole (`Bar.volume`) and only reads.
     neighbors: Vec<String>,
+    /// And the libraries the scenes import, whose boundary a scene brought in owns as one alone does.
+    libraries: Vec<String>,
     handlers: HashMap<String, Vec<Function>>,
     timers: Vec<Timer>,
     processes: HashMap<u32, Function>,
@@ -123,6 +125,7 @@ impl Shared {
             plugin: self.plugin.clone(),
             unapproved: self.unapproved,
             neighbors: self.neighbors.clone(),
+            libraries: self.libraries.clone(),
             ..Default::default()
         }
     }
@@ -657,10 +660,17 @@ fn neighbor_of<'a>(c: &'a Shared, k: &str) -> Option<&'a String> {
     c.neighbors.iter().find(|n| k.len() > n.len() && k.starts_with(n.as_str()) && k.as_bytes()[n.len()] == b'.')
 }
 
+/// Whether a name is a library's (`Palette.pal_primary_r`): in a scene brought in, as in a
+/// scene alone, the libraries it imports are the scene's, and named whole.
+fn library_of(c: &Shared, k: &str) -> bool {
+    c.libraries.iter().any(|n| k.len() > n.len() && k.starts_with(n.as_str()) && k.as_bytes()[n.len()] == b'.')
+}
+
 /// The real name of what a logic names, knowing its neighbours: theirs are whole.
 fn named(c: &Shared, prefix: &Option<String>, k: &str) -> String {
     match neighbor_of(c, k) {
         Some(_) => k.to_owned(),
+        None if library_of(c, k) => k.to_owned(),
         None => qualified(prefix, k),
     }
 }
@@ -797,6 +807,7 @@ impl LuauScript {
             Some(d) if d.brought => e.scenes.iter().filter(|n| **n != d.name).cloned().collect(),
             _ => Vec::new(),
         };
+        c.libraries = if self.brought() { e.libraries.clone() } else { Vec::new() };
     }
 
     /// Whether this scene is asked what a Bluetooth pairing asks. Read again
@@ -1028,7 +1039,7 @@ impl LuauScript {
         let frontier = self.frontier.clone();
         let set = lua.create_function(move |_, (_, k, v): (Table, String, Value)| {
             not_its_own(&c.lock().unwrap(), &pre, "fact", &k)?;
-            let k = qualified(&pre, &k);
+            let k = named(&c.lock().unwrap(), &pre, &k);
             // A misspelled name is an error here, with its line, and not a warning lost in the render.
             if !c.lock().unwrap().facts.contains_key(&k) {
                 return Err(not_found(&pre, "no fact", &k, c.lock().unwrap().facts.keys()));
@@ -1058,7 +1069,7 @@ impl LuauScript {
         let frontier = self.frontier.clone();
         let set = lua.create_function(move |_, (_, k, v): (Table, String, String)| {
             not_its_own(&c.lock().unwrap(), &pre, "text", &k)?;
-            let k = qualified(&pre, &k);
+            let k = named(&c.lock().unwrap(), &pre, &k);
             if !c.lock().unwrap().texts.contains_key(&k) {
                 return Err(not_found(&pre, "no text", &k, c.lock().unwrap().texts.keys()));
             }
@@ -1086,7 +1097,7 @@ impl LuauScript {
         let frontier = self.frontier.clone();
         let set = lua.create_function(move |_, (_, k, list): (Table, String, Value)| {
             not_its_own(&c.lock().unwrap(), &pre, "model", &k)?;
-            let k = qualified(&pre, &k);
+            let k = named(&c.lock().unwrap(), &pre, &k);
             let Value::Table(list) = list else {
                 return Err(mlua::Error::runtime(format!("'model.{k}' takes a list of records: model.{k} = {{ {{ … }}, {{ … }} }}")));
             };
@@ -1157,7 +1168,7 @@ impl LuauScript {
             let theirs = what.split_once(':').map_or(what.as_str(), |(_, n)| n);
             // A scene brought in hears the keyboard and the rest as it would alone: they are nobody's.
             let input = brought && matches!(what.as_str(), "key" | "key_down" | "key_up" | "focus" | "blur" | "link" | "copy" | "demo");
-            let what = if input || neighbor_of(&c, theirs).is_some() { what.clone() } else { qualified_listener(&pre, &what) };
+            let what = if input || neighbor_of(&c, theirs).is_some() || library_of(&c, theirs) { what.clone() } else { qualified_listener(&pre, &what) };
             c.handlers.entry(what).or_default().push(f);
             // Listening to every frame is what keeps them coming: the render
             // is told, and woken if it was at rest.

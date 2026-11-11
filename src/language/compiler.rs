@@ -298,6 +298,21 @@ pub(super) fn draws_loose(e: &Entry) -> bool {
     !is_surface(e) && (pass_of(e) == 2 || hoists(e))
 }
 
+/// Whether something draws: not a `let`, a `layer`, a declaration, a rule or a
+/// behaviour, nor a `repeat` of only those.
+pub(super) fn draws_anything(e: &Entry) -> bool {
+    match e {
+        Entry::Prop { .. } => false,
+        Entry::Node(n) if is_repeat(e) => n.body.as_deref().unwrap_or(&[]).iter().any(draws_anything),
+        Entry::Node(n) => pass_of(e) == 2 && !is_declaration(n),
+    }
+}
+
+/// A rule or a behaviour (`on`, `every`, `follow`, `spin`…): it draws nothing.
+pub(super) fn is_rule(e: &Entry) -> bool {
+    matches!(e, Entry::Node(n) if is_declaration(n))
+}
+
 pub(super) fn is_loose_repeat(e: &Entry) -> bool {
     is_repeat(e)
 }
@@ -970,6 +985,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     }
     // A scene brought in answers `--say` by its file's name (G22).
     o.e.scenes = brought_scenes.iter().map(|b| b.name.clone()).collect();
+    o.e.libraries = libraries.iter().map(|b| b.name.clone()).collect();
     o.e.brought = brought_scenes.iter().filter(|b| !b.absent).map(|b| (b.name.clone(), files.get(b.files[0]).map_or(b.name.clone(), |f| f.trim_end_matches(".plm").to_owned()))).collect();
     // A scene used and not here: said, once, where it is read.
     if o.errors.is_empty() {

@@ -1,0 +1,20 @@
+// Brought into brought-all-named.plm: a scene whose surfaces all have a name, as Calima's.
+// Its loose rules stay at its level (no surface `Named` appears); a `repeat` declares texts
+// that an `image … = from` reads before it, and the elements of an array a `sort` reads;
+// a zone is called as a name every scene has (`wheel`).
+scene Named {
+    surface panel { size: 200, 100
+        zone box wheel { from: 0, 0; size: 200, 100 }
+        box { from: 0, 0; size: 10 + iord[0], 10 }
+    }
+    event scrolled(by) ->
+    repeat j in 0..3 {
+        text ch.$j.img = ""
+        layer row.$j { rest {} }
+    }
+    image chim0 = from ch.0.img, 0, 0
+    let ikey[4]
+    repeat i in 0..4 { ikey[i] = 4 - i }
+    let iord[4] = sort(i in 0..4 by ikey[i])
+    on scroll wheel { emit scrolled(wheel) }
+}

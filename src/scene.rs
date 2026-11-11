@@ -2195,6 +2195,8 @@ pub struct Scene {
     /// And every scene named so, brought in or only used (`uses scene`): their logic
     /// names one another whole.
     pub scenes: Vec<String>,
+    /// The names of the libraries it imports (`Palette`), whose boundary is the scene's.
+    pub libraries: Vec<String>,
     pub props: Vec<(&'static str, f32, Spring)>,
     pub instrs: Vec<Instr>,
     pub behaviors: Vec<Behavior>,

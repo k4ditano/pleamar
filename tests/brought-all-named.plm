@@ -1,0 +1,3 @@
+// expect: ok
+import scene "brought/all-named.plm" as Named
+scene Shell { }
