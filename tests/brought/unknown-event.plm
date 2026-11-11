@@ -1,0 +1,6 @@
+// Brought into brought-unknown-event.plm: Bar has no event `nope`.
+scene Teller {
+    surface { size: 100, 100 }
+    box hit { from: 0, 0; size: 5, 5 }
+    on press hit { emit Bar.nope }
+}

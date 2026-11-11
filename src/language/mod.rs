@@ -72,6 +72,10 @@ struct Reader {
     /// The `import`s written in a part's file, before its `part`: the scene's, as if written
     /// at its top, with their paths already from where they were written.
     hoisted: Vec<tree::Entry>,
+    /// The scenes brought into this one (`import scene "bar.plm" as Bar`), and what they
+    /// write, already under their own surface: it goes into the scene's body at the end.
+    brought_scenes: Vec<compiler::BroughtScene>,
+    piece_entries: Vec<tree::Entry>,
 }
 
 impl Reader {
@@ -170,6 +174,11 @@ impl Reader {
             let tree::Entry::Node(n) = &e else { rest.push(e); continue };
             if !matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "import") {
                 rest.push(e);
+                continue;
+            }
+            // `import scene "bar.plm" as Bar`: a whole scene, under its name (G22).
+            if matches!(n.head.get(1).map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "scene") {
+                self.import_scene(n, brought)?;
                 continue;
             }
             // `import "menu.plm" as menu`: its components are `menu.Row`, so two
@@ -284,6 +293,77 @@ impl Reader {
         }
         Ok(rest)
     }
+
+    /// `import scene "bar.plm" as Bar`: a scene that can also be opened alone, brought
+    /// into this one with everything of its own under its name (G22). Its libraries are
+    /// the scene's, as if imported here; its parts are its own. Its surface without a name
+    /// becomes the surface `Bar`, and what it draws loose goes into it.
+    fn import_scene(&mut self, n: &tree::Node, brought: &mut Vec<tree::Entry>) -> Result<(), CompileError> {
+        use tokens::TokenKind;
+        let usage = "a scene is brought into another as `import scene \"bar.plm\" as Bar`";
+        let (Some(TokenKind::Str(which)), Some(TokenKind::Id(a)), Some(TokenKind::Id(name)), 5, None) =
+            (n.head.get(2).map(|f| &f.kind), n.head.get(3).map(|f| &f.kind), n.head.get(4).map(|f| &f.kind), n.head.len(), &n.body)
+        else {
+            return Err(CompileError::at(n.line, n.col, usage));
+        };
+        if a != "as" || name.contains('.') || name.contains('$') {
+            return Err(CompileError::at(n.line, n.col, usage));
+        }
+        // Only the scene that is opened brings others: a scene brought in, or a library, does not.
+        if self.open_stack.len() > 1 {
+            return Err(CompileError::at(n.line, n.col, "only the scene that is opened brings in others: a scene brought in, or a library, cannot `import scene`"));
+        }
+        if self.brought_scenes.iter().any(|p| p.name == *name) {
+            return Err(CompileError::at(n.line, n.head[4].col, format!("there is already a scene called '{name}' in this one")));
+        }
+        let here = self.open_stack.first().cloned().unwrap_or_default();
+        let target = here.parent().unwrap_or(Path::new(".")).join(which);
+        let target = target.canonicalize().map_err(|e| CompileError::at(n.line, n.head[2].col, format!("cannot find '{which}' (looking in {}): {e}", target.display())))?;
+        if self.open_stack.contains(&target) {
+            return Err(CompileError::at(n.line, n.head[2].col, format!("'{which}' is this same scene: a scene does not bring itself in")));
+        }
+        if let Some(p) = self.brought_scenes.iter().find(|p| self.files.get(p.files[0]).is_some_and(|(r, _)| *r == target)) {
+            return Err(CompileError::at(n.line, n.head[2].col, format!("'{which}' is already brought in as {}: a scene comes in once", p.name)));
+        }
+        self.open_stack.push(target.clone());
+        let first = self.files.len();
+        let libraries_before = self.libraries.len();
+        let mut theirs = self.open(&target)?;
+        self.resolve_includes(&target, &mut theirs)?;
+        let hoisted = std::mem::take(&mut self.hoisted);
+        theirs.splice(0..0, hoisted);
+        let rest = self.resolve_imports(&target, theirs, brought)?;
+        self.open_stack.pop();
+        let scene = match rest.as_slice() {
+            [tree::Entry::Node(s)] if matches!(s.head.first().map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "scene") => s,
+            [tree::Entry::Node(s)] if matches!(s.head.first().map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "library") => {
+                return Err(CompileError::at(n.line, n.head[2].col, format!("'{which}' is a library: it is imported with `import \"{which}\"`, without `scene`")));
+            }
+            _ => return Err(CompileError::at(n.line, n.head[2].col, format!("'{which}' is not a scene: what `import scene` brings is `scene Name {{ … }}`"))),
+        };
+        let libraries: Vec<usize> = self.libraries[libraries_before..].iter().map(|b| b.file).collect();
+        let files: Vec<usize> = (first..self.files.len()).filter(|k| !libraries.contains(k)).collect();
+        // Its surface without a name, and what it draws loose, become its surface `Bar`.
+        let mut kept = Vec::new();
+        let mut own = Vec::new();
+        for e in scene.body.clone().unwrap_or_default() {
+            match e {
+                tree::Entry::Node(x) if x.head.len() == 1 && matches!(x.head[0].kind, TokenKind::Id(ref w) if w == "surface") => own.extend(x.body.unwrap_or_default()),
+                e if compiler::draws_loose(&e) => own.push(e),
+                e => kept.push(e),
+            }
+        }
+        if !own.is_empty() {
+            // Its name is written on the `import scene` line: it is the scene's name for it, not one of its own.
+            let word = tokens::Token { kind: TokenKind::Id("surface".into()), line: n.line, col: n.col };
+            let named = n.head[4].clone();
+            kept.push(tree::Entry::Node(tree::Node { head: vec![word, named], body: Some(own), line: n.line, col: n.col }));
+        }
+        let logic = target.with_extension("luau");
+        self.brought_scenes.push(compiler::BroughtScene { name: name.clone(), files, logic: logic.is_file().then_some(logic), line: n.line });
+        self.piece_entries.extend(kept);
+        Ok(())
+    }
 }
 
 /// pleamar's own libraries, inside the program: `import "pleamar:ui"`.
@@ -393,15 +473,17 @@ fn read_with_symbols(path: &str, unsaved: Vec<(PathBuf, String)>) -> (Result<(Sc
         let mut brought = Vec::new();
         let mut rest = l.resolve_imports(&main, entries, &mut brought).map_err(|f| vec![f])?;
         // What is imported goes before the scene's own, as if it were written there.
+        // And the scenes it brings in, after its own (each on surfaces of its own).
         if let [tree::Entry::Node(scene)] = rest.as_mut_slice() {
             if let Some(body) = scene.body.as_mut() {
                 brought.append(body);
+                brought.append(&mut l.piece_entries);
                 *body = brought;
             }
         }
         let names: Vec<String> = l.files.iter().map(|(r, _)| r.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect();
         let dirs: Vec<PathBuf> = l.files.iter().map(|(r, _)| r.parent().map_or_else(PathBuf::new, Path::to_owned)).collect();
-        let (r, s) = compiler::compile(&rest, &names, &dirs, &l.strict, &l.libraries);
+        let (r, s) = compiler::compile(&rest, &names, &dirs, &l.strict, &l.libraries, &l.brought_scenes);
         symbols = s;
         r
     })();
@@ -450,6 +532,25 @@ mod tests {
             }
         }
         props
+    }
+
+    #[test]
+    fn a_scene_brought_in_keeps_its_names_and_surface_apart() {
+        let (scene, files) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/brought-scenes.plm")).unwrap();
+        assert_eq!(files.len(), 3);
+        // Each one on a surface of its own, named as the scene that brings it calls it.
+        let surfaces: Vec<&str> = scene.surfaces.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(surfaces, ["", "Bar", "Osd"]);
+        // The three `volume`s and the three `hit`s, each its own.
+        for name in ["volume", "Bar.volume", "Osd.volume"] {
+            assert!(scene.facts.iter().any(|(n, _)| *n == name), "no fact {name}");
+        }
+        assert_eq!(scene.facts.iter().find(|(n, _)| *n == "Bar.volume").unwrap().1, 3.0);
+        let zones: Vec<&str> = scene.zones.iter().map(|z| z.id).collect();
+        for name in ["hit", "Bar.hit", "Osd.hit"] {
+            assert!(zones.contains(&name), "no zone {name}: {zones:?}");
+        }
+        assert_eq!(scene.rules.len(), 5);
     }
 
     #[test]

@@ -1,0 +1,3 @@
+// expect: error «it is imported with `import "../lib/ui.plm"`, without `scene`»
+import scene "../lib/ui.plm" as Ui
+scene Shell { surface { size: 10, 10 } }

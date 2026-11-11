@@ -1,0 +1,4 @@
+// expect: error «the fact 'Bar.volume' is not Writer's»
+import scene "brought/bar.plm" as Bar
+import scene "brought/writes-another.plm" as Writer
+scene Shell { surface { size: 10, 10 } }

@@ -1,0 +1,6 @@
+// Brought into brought-writes-another.plm: it writes Bar's volume, which is not its own.
+scene Writer {
+    surface { size: 100, 100 }
+    box hit { from: 0, 0; size: 5, 5 }
+    on press hit { Bar.volume = 9 }
+}

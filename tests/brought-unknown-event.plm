@@ -1,0 +1,4 @@
+// expect: error «there is no event called 'Bar.nope'»
+import scene "brought/bar.plm" as Bar
+import scene "brought/unknown-event.plm" as Teller
+scene Shell { surface { size: 10, 10 } }

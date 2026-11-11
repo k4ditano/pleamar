@@ -1,0 +1,3 @@
+// expect: error «a scene does not bring itself in»
+import scene "brought-itself.plm" as Me
+scene Shell { surface { size: 10, 10 } }

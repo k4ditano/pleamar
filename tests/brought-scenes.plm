@@ -1,0 +1,9 @@
+// expect: ok
+import scene "brought/bar.plm" as Bar
+import scene "brought/osd.plm" as Osd
+scene Shell {
+    surface { size: 100, 100 }
+    fact volume = 0
+    box hit { from: 0, 0; size: 10, 10 }
+    on press hit { volume = 2 }
+}

@@ -278,6 +278,22 @@ pub struct Library {
     pub logic: Option<std::path::PathBuf>,
 }
 
+/// A scene brought into the one opened (`import scene "bar.plm" as Bar`, G22): its name,
+/// the files it is written in (its own and its parts', not its libraries'), its logic if
+/// it has any, and the line of its `import scene`.
+pub struct BroughtScene {
+    pub name: String,
+    pub files: Vec<usize>,
+    pub logic: Option<std::path::PathBuf>,
+    pub line: usize,
+}
+
+/// What a scene brought in draws loose, which goes into its own surface: the drawing
+/// and the rules, and a `repeat` (which defines and draws).
+pub(super) fn draws_loose(e: &Entry) -> bool {
+    !is_surface(e) && (pass_of(e) == 2 || hoists(e))
+}
+
 /// What a copy brings for the slots of its component, and the scope of whoever wrote it.
 struct InstanceChildren<'a> {
     outer: Vec<Rc<Scope>>,
@@ -348,6 +364,8 @@ struct Compiler<'a> {
     /// Which files, by their number, are `strict` libraries.
     strict_files: &'a [usize],
     libraries: &'a [Library],
+    /// The scenes brought in (G22): what each declares lives under its name.
+    brought_scenes: &'a [BroughtScene],
     /// The folder of each file: a relative path is relative to the file that writes it.
     dirs: &'a [std::path::PathBuf],
     /// The boundary each library declares, by the number of its file: what it is
@@ -496,7 +514,7 @@ pub struct Symbol {
     pub col: usize,
 }
 
-pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path::PathBuf], strict_files: &'a [usize], libraries: &'a [Library]) -> (Result<Scene, Vec<CompileError>>, Vec<Symbol>) {
+pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path::PathBuf], strict_files: &'a [usize], libraries: &'a [Library], brought_scenes: &'a [BroughtScene]) -> (Result<Scene, Vec<CompileError>>, Vec<Symbol>) {
     // Nothing left over from a compilation before this one (a reload runs on the same thread).
     LEFTOVER.with(|l| l.borrow_mut().clear());
     LEFTOVER_SAID.with(|s| s.borrow_mut().clear());
@@ -527,7 +545,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), declaring_zone: false, zone_springs: Vec::new(), zone_springs_named: HashSet::new(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(), type_index: Default::default(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), declaring_zone: false, zone_springs: Vec::new(), zone_springs_named: HashSet::new(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, brought_scenes, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(), type_index: Default::default(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -1168,6 +1186,28 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
+        // Written in a scene brought in (G22): its own names are under its name, and what
+        // the monitor measures is what its own surface measures. Not inside a library's
+        // component, which reads with its library's names.
+        if let Some(b) = self.brought_at_peek().filter(|_| self.scopes.iter().all(|e| e.library.is_none())) {
+            if let Some(own) = self.boundary_of.get(&b.files[0]) {
+                let mut until = n.len();
+                loop {
+                    if let Some(g) = own.get(&n[..until]) {
+                        return format!("{g}{}", &n[until..]);
+                    }
+                    match n[..until].rfind('.') {
+                        Some(p) => until = p,
+                        None => break,
+                    }
+                }
+            }
+            if let Some(part) = n.strip_prefix("screen.").filter(|p| *p == "width" || *p == "height") {
+                if self.props.contains_key(&format!("{}.{part}", b.name)) {
+                    return format!("{}.{part}", b.name);
+                }
+            }
+        }
         // Inside a component of a library, `now` is the `Clock.now` of its boundary.
         // (Or at the library's own level: a gesture of its own that moves a pose of its own.)
         let from_library = self.scopes.iter().rev().find_map(|e| e.library).or_else(|| {
@@ -1320,6 +1360,15 @@ impl<'a> Compiler<'a> {
     }
 
     /// The name with which something is declared from in here.
+    /// The scene brought in (G22) whose file the last token read is in, if any.
+    fn brought_at_peek(&self) -> Option<&'a BroughtScene> {
+        let file = PEEKED.with(|m| m.get().0) / super::PER_FILE;
+        if file == 0 {
+            return None;
+        }
+        self.brought_scenes.iter().find(|b| b.files.contains(&file))
+    }
+
     fn declare(&mut self, local: &str) -> String {
         let interpolated = self.interpolate(local);
         // The location of the name that has just been read, if it is on this same line.
@@ -1335,8 +1384,12 @@ impl<'a> Compiler<'a> {
         // text `query`, which its `input` declares again as a zone— is still
         // the scene's: if the copy aliased it to `query#screen0`,
         // everything that comes after it would look for a text that does not exist.
+        // In a scene brought in (G22) everything it declares is under its name: `Bar.hit`,
+        // and a copy's `Bar.hit#screen1`, so that it never meets the scene's own `hit`.
+        let own = self.brought_at_peek().map_or(String::new(), |b| format!("{}.", b.name));
+        let scenes = format!("{own}{interpolated}");
         let from_scene = self.scopes.last().is_some_and(|e| e.suffix.starts_with("#screen"))
-            && (self.texts.contains_key(&interpolated) || self.facts.contains_key(&interpolated) || self.props.contains_key(&interpolated) || self.lets.contains_key(&interpolated));
+            && (self.texts.contains_key(&scenes) || self.facts.contains_key(&scenes) || self.props.contains_key(&scenes) || self.lets.contains_key(&scenes));
         let suffix = self.copy_suffix();
         // A name with `$` (`cell.$i`) stays the scene's, readable from anywhere as
         // `cell.3`; but inside a component's copy it is that copy's, as its other
@@ -1349,16 +1402,21 @@ impl<'a> Compiler<'a> {
         let in_component = self.scopes.iter().any(|e| e.instance.is_some()) || in_row;
         if in_row && !from_scene && !suffix.is_empty() {
             // The rest of the row names it by its number: `on press port.0`.
-            let g = format!("{interpolated}{suffix}");
+            let g = format!("{own}{interpolated}{suffix}");
             if let Some(e) = self.row_scope().map(Rc::make_mut) {
                 e.alias.insert(interpolated.clone(), g);
             }
         }
         match self.scopes.last_mut().map(Rc::make_mut) {
             Some(e) if !e.suffix.is_empty() && (!local.contains('$') || in_component) && !from_scene => {
-                let g = format!("{interpolated}{suffix}");
+                let g = format!("{own}{interpolated}{suffix}");
                 e.alias.insert(interpolated, g.clone());
                 g
+            }
+            _ if !own.is_empty() => {
+                let key = self.brought_at_peek().map_or(0, |b| b.files[0]);
+                self.boundary_of.entry(key).or_default().insert(interpolated, scenes.clone());
+                scenes
             }
             _ => {
                 // At the level of a library: its boundary lives under its name, so that two
@@ -8432,6 +8490,8 @@ impl<'a> Compiler<'a> {
             });
             for f in n.head.iter().chain(feedback) {
                 if let TokenKind::Id(s) = &f.kind {
+                    // Read where it is written: in a scene brought in, `hit` is its own (G22).
+                    PEEKED.with(|m| m.set((f.line, f.col)));
                     let g = self.global(s);
                     if let Some(m) = self.screen_mark() {
                         named.insert(format!("{g}{m}"));
@@ -8570,11 +8630,15 @@ impl<'a> Compiler<'a> {
                 continue;
             }
             match e {
-                Entry::Prop { name, value, line, col } => effects.push(Effect::Animate(self.transition(name, value, *line, *col)?)),
+                Entry::Prop { name, value, line, col } => {
+                    let effect = Effect::Animate(self.transition(name, value, *line, *col)?);
+                    self.writes_only_its_own(*line, *col, &effect)?;
+                    effects.push(effect);
+                }
                 Entry::Node(x) => {
                     let mut c = Cur::new(&x.head, x.line, x.col);
                     let p = c.id("an effect")?;
-                    effects.push(match if vocab::EFFECTS.contains(&p.as_str()) { p.as_str() } else { "" } {
+                    let effect = match if vocab::EFFECTS.contains(&p.as_str()) { p.as_str() } else { "" } {
                         "ripple" => Effect::Ripple(self.zone(&mut c)?),
                         "toggle" => Effect::Toggle(self.fact(&mut c)?),
                         "blur" => Effect::FocusField(None),
@@ -8794,12 +8858,40 @@ impl<'a> Compiler<'a> {
                             };
                             Effect::Fact(h, value)
                         }
-                    });
+                    };
                     c.expect_end()?;
+                    self.writes_only_its_own(x.line, x.col, &effect)?;
+                    effects.push(effect);
                 }
             }
         }
         Ok(())
+    }
+
+    /// In a scene brought in (G22) a rule writes only what is its own: the facts, texts
+    /// and properties of the scene that brings it, or of another one brought in, it reads
+    /// and does not write. A value two scenes write is a `shared fact` (C), still to come.
+    fn writes_only_its_own(&self, line: usize, col: usize, effect: &Effect) -> R<()> {
+        let file = line / super::PER_FILE;
+        let Some(b) = (file > 0).then(|| self.brought_scenes.iter().find(|b| b.files.contains(&file))).flatten() else {
+            return Ok(());
+        };
+        let own = format!("{}.", b.name);
+        let another = |n: &str| self.brought_scenes.iter().any(|o| o.name != b.name && n.starts_with(&format!("{}.", o.name)));
+        // A fact or a text that is not under its name is someone else's; a property, only if it is
+        // another scene's (the ones the compiler makes for it, a hover's spring, carry no name).
+        let (kind, name) = match effect {
+            Effect::Fact(h, _) | Effect::Toggle(h) => ("fact", Some(self.e.facts[h.0 as usize].0).filter(|n| !n.starts_with(&own))),
+            Effect::FactAt(all, _, _) => ("fact", all.iter().map(|h| self.e.facts[h.0 as usize].0).find(|n| !n.starts_with(&own))),
+            Effect::Text(t, _) => ("text", Some(self.e.texts[t.0 as usize].0).filter(|n| !n.starts_with(&own))),
+            Effect::Animate(t) => ("property", Some(self.e.props[t.prop.0 as usize].0).filter(|n| another(n))),
+            Effect::Impulse(p, _) => ("property", Some(self.e.props[p.0 as usize].0).filter(|n| another(n))),
+            _ => ("", None),
+        };
+        match name {
+            Some(n) => Err(CompileError::at(line, col, format!("the {kind} '{n}' is not {}'s: a scene brought in writes only its own, and reads the others'. To change it, tell its owner with an event (`emit Owner.something`), and let it write it", b.name))),
+            None => Ok(()),
+        }
     }
 
     fn rule_inner(&mut self, n: &Node, word: &str, c: &mut Cur, payload_name: &mut Option<String>) -> R<()> {

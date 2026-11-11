@@ -1,0 +1,10 @@
+// A scene of its own, and brought into brought-scenes.plm as Bar.
+scene Bar {
+    surface { size: 200, 40 }
+    fact volume = 3
+    event ping
+    event rang
+    box hit { from: 0, 0; size: screen.width, 40 }
+    on press hit { volume = volume + 1; emit rang }
+    on ping { volume = 0 }
+}
