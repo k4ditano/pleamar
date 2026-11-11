@@ -4,6 +4,7 @@ scene Bar {
     fact volume = 3
     event ping
     event rang
+    event landed(id, x)
     box hit { from: 0, 0; size: screen.width, 40 }
     on press hit { volume = volume + 1; emit rang }
     on ping { volume = 0 }

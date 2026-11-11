@@ -4,6 +4,6 @@ scene Osd {
     surface { size: 100, 100 }
     fact volume = 0
     box hit { from: 0, 0; size: 50 + Bar.volume, 50 }
-    on press hit { volume = 1; emit Bar.ping }
+    on press hit { volume = 1; emit Bar.ping; emit Bar.landed(id: 3, x: local.x) }
     on Bar.rang { volume = Bar.volume }
 }

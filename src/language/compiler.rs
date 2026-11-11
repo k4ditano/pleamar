@@ -365,6 +365,9 @@ struct Compiler<'a> {
     libraries: &'a [Library],
     /// The scenes brought in (G22): what each declares lives under its name.
     brought_scenes: &'a [BroughtScene],
+    /// What each event carries, when its declaration says it (`event moved(x, y)`): an
+    /// `emit` of it is checked against it, also from another scene (issue 75, B).
+    event_fields: HashMap<String, Vec<&'static str>>,
     /// The folder of each file: a relative path is relative to the file that writes it.
     dirs: &'a [std::path::PathBuf],
     /// The boundary each library declares, by the number of its file: what it is
@@ -544,7 +547,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), declaring_zone: false, zone_springs: Vec::new(), zone_springs_named: HashSet::new(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, brought_scenes, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(), type_index: Default::default(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), declaring_zone: false, zone_springs: Vec::new(), zone_springs_named: HashSet::new(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, brought_scenes, event_fields: HashMap::new(), boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(), type_index: Default::default(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -2643,6 +2646,27 @@ impl<'a> Compiler<'a> {
                 }
                 "event" => {
                     let name = self.declare(&c.id("a name for the event")?);
+                    // `event moved(x, y)`: what it carries, by name and in order.
+                    if c.sym("(") {
+                        let mut fields: Vec<&'static str> = Vec::new();
+                        if !c.sym(")") {
+                            loop {
+                                let f = c.id("the name of a value the event carries")?;
+                                if fields.contains(&f.as_str()) {
+                                    return c.error(format!("'{name}' carries '{f}' twice"));
+                                }
+                                fields.push(interned(&f));
+                                if !c.sym(",") {
+                                    break;
+                                }
+                            }
+                            c.expect_sym(")")?;
+                        }
+                        if fields.len() > 8 {
+                            return c.error("an event carries at most 8 values: for more, the logic can read facts");
+                        }
+                        self.event_fields.insert(name.clone(), fields);
+                    }
                     let outgoing = c.sym("->");
                     c.expect_end()?;
                     let s = match self.signals.get(&name) {
@@ -8793,7 +8817,12 @@ impl<'a> Compiler<'a> {
                         // `emit opened` or, with a payload, `emit opened(i)`.
                         "emit" => {
                             let s = self.signal(&mut c)?;
+                            let event = self.e.signals[s.0 as usize].0;
+                            let fields = self.event_fields.get(event).cloned();
                             if !c.sym("(") {
+                                if let Some(f) = fields.filter(|f| !f.is_empty()) {
+                                    return c.error(format!("'{event}' carries {}: `emit {event}({})`", f.join(", "), f.join(", ")));
+                                }
                                 Effect::Signal(s, None)
                             } else {
                                 // `emit moved(x, y)` or `emit moved(x: local.x, y: local.y)`:
@@ -8817,7 +8846,10 @@ impl<'a> Compiler<'a> {
                                 if values.len() > 8 {
                                     return c.error("an `emit` carries at most 8 values: for more, the logic can read facts");
                                 }
-                                if values.len() == 1 && values[0].0.is_none() {
+                                // Declared with what it carries: that, all of it, by place or by name.
+                                if let Some(f) = fields {
+                                    Effect::SignalWith(s, self.as_declared(&c, event, &f, values)?)
+                                } else if values.len() == 1 && values[0].0.is_none() {
                                     Effect::Signal(s, values.pop().map(|v| v.1))
                                 } else {
                                     Effect::SignalWith(s, values)
@@ -8880,6 +8912,31 @@ impl<'a> Compiler<'a> {
             }
         }
         Ok(())
+    }
+
+    /// The values of an `emit` of an event that says what it carries (`event moved(x, y)`),
+    /// checked and in its order, each with its name: all by place (`emit moved(3, 4)`) or
+    /// all by name (`emit moved(y: 4, x: 3)`), and all of them. Across scenes too (issue 75, B).
+    fn as_declared(&self, c: &Cur, event: &str, fields: &[&'static str], values: Vec<(Option<&'static str>, Expr)>) -> R<Vec<(Option<&'static str>, Expr)>> {
+        let said = format!("`emit {event}({})`", fields.join(", "));
+        if values.len() != fields.len() {
+            return c.error(format!("'{event}' carries {} value{}, and this gives {}: {said}", fields.len(), if fields.len() == 1 { "" } else { "s" }, values.len()));
+        }
+        if values.iter().all(|(n, _)| n.is_none()) {
+            return Ok(values.into_iter().zip(fields).map(|((_, v), f)| (Some(*f), v)).collect());
+        }
+        let mut slots: Vec<Option<Expr>> = vec![None; fields.len()];
+        for (name, v) in values {
+            let Some(name) = name else {
+                return c.error(format!("say the values of '{event}' all by place or all by name: {said}"));
+            };
+            match fields.iter().position(|f| *f == name) {
+                Some(k) if slots[k].is_none() => slots[k] = Some(v),
+                Some(_) => return c.error(format!("'{name}' is given twice to '{event}'")),
+                None => return c.error(format!("'{event}' carries no '{name}': it carries {}", fields.join(", "))),
+            }
+        }
+        Ok(slots.into_iter().zip(fields).map(|(v, f)| (Some(*f), v.unwrap())).collect())
     }
 
     /// In a scene brought in (G22) a rule writes only what is its own: the facts, texts

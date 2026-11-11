@@ -1,0 +1,7 @@
+// expect: error «'moved' carries 2 values, and this gives 1: `emit moved(x, y)`»
+scene Fields {
+    surface { size: 100, 100 }
+    event moved(x, y) ->
+    box hit { from: 0, 0; size: 50, 50 }
+    on press hit { emit moved(3) }
+}

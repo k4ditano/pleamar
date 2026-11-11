@@ -1,0 +1,4 @@
+// expect: error «'Bar.landed' carries no 'y': it carries id, x»
+import scene "brought/bar.plm" as Bar
+import scene "brought/lands-wrong.plm" as Lander
+scene Shell { surface { size: 10, 10 } }

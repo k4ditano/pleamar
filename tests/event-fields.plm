@@ -1,0 +1,8 @@
+// expect: ok
+scene Fields {
+    surface { size: 100, 100 }
+    event moved(x, y) ->
+    event none() ->
+    box hit { from: 0, 0; size: 50, 50 }
+    on press hit { emit moved(local.x, local.y); emit moved(y: 1, x: 2); emit none }
+}

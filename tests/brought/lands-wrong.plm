@@ -1,0 +1,6 @@
+// Brought into brought-event-fields.plm: Bar's `landed` carries id and x, not y.
+scene Lander {
+    surface { size: 100, 100 }
+    box hit { from: 0, 0; size: 5, 5 }
+    on press hit { emit Bar.landed(id: 1, y: 2) }
+}
