@@ -2370,6 +2370,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A scene brought in (G22) has its logic, under its name, with its own permissions,
+    /// approved by opening the scene that brings it: it hears what is emitted to it.
+    #[test]
+    fn a_scene_brought_in_runs_its_logic_with_its_permissions() {
+        use super::{LuauScript, Script};
+        use crate::scene::{Event, ToRender};
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("pleamar-brought-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("bar.plm"), "scene Bar {\n    surface { size: 10, 10 }\n    permissions { services: \"clipboard\" }\n    text said = \"\"\n    text perm = \"\"\n    event rang ->\n}\n").unwrap();
+        std::fs::write(dir.join("bar.luau"), concat!(
+            "on(\"rang\", function()\n",
+            "    text.said = \"heard\"\n",
+            "    local ok, e = pcall(sys.call, \"clipboard.image.save\", 42)\n",
+            "    text.perm = tostring(e)\n",
+            "end)\n",
+        )).unwrap();
+        let (scene, logic) = (dir.join("shell.plm"), dir.join("shell.luau"));
+        std::fs::write(&scene, "import scene \"bar.plm\" as Bar\nscene Shell {\n    surface { size: 10, 10 }\n}\n").unwrap();
+        std::fs::write(&logic, "emit(\"Bar.rang\")\n").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (to_logic, letters) = std::sync::mpsc::channel();
+        let blocked = std::sync::Arc::default();
+        let mut s = LuauScript::new(&scene.to_string_lossy(), &logic.to_string_lossy(), tx.clone(), to_logic, std::sync::Arc::clone(&blocked));
+        s.scene();
+        let mut ctx = crate::logic::Context::for_plugin(tx, blocked);
+        s.on_event(Event::Alarm("start"), &mut ctx);
+        let mut texts: std::collections::HashMap<&str, String> = Default::default();
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < until && !texts.contains_key("Bar.perm") {
+            while let Ok(e) = letters.try_recv() {
+                s.on_event(e, &mut ctx);
+            }
+            for m in rx.try_iter() {
+                if let ToRender::Text(k, v) = m {
+                    texts.insert(k, v);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(texts.get("Bar.said").map(String::as_str), Some("heard"), "{texts:?}");
+        // Past its permission, without anyone approving it: the argument is what is wrong.
+        assert!(texts.get("Bar.perm").is_some_and(|e| e.contains("takes the absolute path")), "{texts:?}");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn saving_the_copied_picture_asks_only_for_the_clipboard() {
         use super::{LuauScript, Script};

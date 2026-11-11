@@ -112,9 +112,10 @@ fn key(p: &Plugin) -> String {
     p.logic.canonicalize().unwrap_or_else(|_| p.logic.clone()).to_string_lossy().into_owned()
 }
 
-/// A plugin that asks for nothing does not need anyone to say yes to it.
+/// A plugin that asks for nothing does not need anyone to say yes to it; nor does a
+/// scene brought into the one opened (G22): opening that one is already deciding.
 pub fn is_approved(p: &Plugin) -> bool {
-    p.permissions == Permissions::default() || approved().get(&key(p)) == Some(&fingerprint(p))
+    p.brought || p.permissions == Permissions::default() || approved().get(&key(p)) == Some(&fingerprint(p))
 }
 
 /// The permissions it really runs with: its own if they are approved; if not, none.

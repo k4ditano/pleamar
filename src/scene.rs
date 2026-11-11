@@ -2294,6 +2294,9 @@ pub struct Plugin {
     pub name: String,
     pub logic: std::path::PathBuf,
     pub permissions: Permissions,
+    /// The logic of a scene brought into the one opened (`import scene`, G22), not a
+    /// library's: opening the scene that brings it in is already deciding, as for its own.
+    pub brought: bool,
 }
 
 /// Shaped data that crosses the boundary: a list of rows, all with the

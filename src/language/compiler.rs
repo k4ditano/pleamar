@@ -911,9 +911,18 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     // A library with a `.luau` next to it is a plugin: its logic, with its permissions.
     for b in libraries {
         if let Some(logic) = &b.logic {
-            o.e.plugins.push(Plugin { name: b.name.clone(), logic: logic.clone(), permissions: o.permissions_of.get(&b.file).cloned().unwrap_or_default() });
+            o.e.plugins.push(Plugin { name: b.name.clone(), logic: logic.clone(), permissions: o.permissions_of.get(&b.file).cloned().unwrap_or_default(), brought: false });
         } else if o.permissions_of.contains_key(&b.file) {
             o.errors.push(CompileError::at(b.file * super::PER_FILE + 1, 1, format!("library '{}' asks for permissions, but has no logic to use them: its `.luau` is missing next to it", b.name)));
+        }
+    }
+    // A scene brought in with a `.luau` next to it: its logic, with its own permissions, under its name (G22).
+    for b in brought_scenes {
+        let permissions = o.permissions_of.get(&b.files[0]).cloned().unwrap_or_default();
+        if let Some(logic) = &b.logic {
+            o.e.plugins.push(Plugin { name: b.name.clone(), logic: logic.clone(), permissions, brought: true });
+        } else if permissions != Permissions::default() {
+            o.errors.push(CompileError::at(b.files[0] * super::PER_FILE + 1, 1, format!("the scene brought in as {} asks for permissions, but has no logic to use them: its `.luau` is missing next to it", b.name)));
         }
     }
     // What a component of a `strict` library read from the scene without asking for it.
@@ -2544,9 +2553,13 @@ impl<'a> Compiler<'a> {
                             list.push(c.string()?);
                         }
                         c.expect_end()?;
+                        // A scene brought in keeps its permissions for its own logic (G22), whichever of its files says them.
                         let owner = match n.line / super::PER_FILE {
                             0 => &mut self.e.permissions,
-                            k => self.permissions_of.entry(k).or_default(),
+                            k => {
+                                let k = self.brought_scenes.iter().find(|b| b.files.contains(&k)).map_or(k, |b| b.files[0]);
+                                self.permissions_of.entry(k).or_default()
+                            }
                         };
                         match target {
                             0 => owner.commands = list,
