@@ -2708,7 +2708,31 @@ impl SeatHandler for State {
             self.keyboard = self.seats.get_keyboard(qh, &seat, None).ok();
         }
     }
-    fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, _: Capability) {}
+    /// A compositor takes the keyboard away with its last device (a suspend,
+    /// another VT) and gives it back afterwards. The one taken before is dead
+    /// by then, and keeping it is what stopped `new_capability` from taking
+    /// the new one: no key reached a scene again, a lock's field among them.
+    fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, seat: wl_seat::WlSeat, c: Capability) {
+        // Only the seat it came from takes it away: another one losing its
+        // own (an agent's, a second person's) is not yours going.
+        let from_here = self
+            .keyboard
+            .as_ref()
+            .and_then(|k| k.data::<smithay_client_toolkit::seat::keyboard::KeyboardData<Self, ()>>())
+            .is_some_and(|d| d.seat() == &seat);
+        if c != Capability::Keyboard || !from_here {
+            return;
+        }
+        if let Some(k) = self.keyboard.take() {
+            // `release` came with version 3: before it, there is only letting go.
+            if k.version() >= 3 {
+                k.release();
+            }
+        }
+        // Whatever was held went with it, and so did the focus.
+        self.mods = Mods::default();
+        let _ = self.to_render.send(ToRender::KeyboardFocus(false));
+    }
     fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
 }
 
