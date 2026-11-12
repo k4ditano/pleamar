@@ -256,7 +256,7 @@ impl Film {
         if shown.is_empty() {
             return;
         }
-        let (fonts, swash) = self.fonts.get_or_insert_with(|| (FontSystem::new(), SwashCache::new()));
+        let (fonts, swash) = self.fonts.get_or_insert_with(|| (crate::fonts::font_system(), SwashCache::new()));
         let size_px = (size.1 as f32 / 22.0).clamp(15.0, 30.0);
         let pad = size_px * 0.6;
         let laid: Vec<(Buffer, f32, f32)> = shown

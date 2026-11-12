@@ -352,8 +352,9 @@ pub(crate) struct Typesetter {
 impl Typesetter {
     pub(crate) fn new() -> Self {
         let t0 = std::time::Instant::now();
-        let fonts = FontSystem::new();
-        println!("text   · {} system fonts in {} ms", fonts.db().len(), t0.elapsed().as_millis());
+        let fonts = crate::fonts::font_system();
+        let (_, parsed, cached) = crate::fonts::last_read();
+        println!("text   · {} system fonts in {} ms ({parsed} files read, {cached} from the cache)", fonts.db().len(), t0.elapsed().as_millis());
         Typesetter { fonts, swash: SwashCache::new(), scale_context: swash::scale::ScaleContext::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), pending_fit: Vec::new(), pending_pictures: Vec::new(), last_picture: 0, scale: 1.0, exhausted: false, frames: HashMap::new(), fonts_read: HashSet::new() }
     }
 
