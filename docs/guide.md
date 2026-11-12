@@ -260,6 +260,10 @@ by itself. It reloads every time you save it, so you can change it while it runs
 - Everything that exists, with its exact shape:
   [the reference](11-language-reference.md).
 - What the logic can do: [the Luau boundary](10-luau-logic.md).
+- Ready pieces —buttons, switches, tabs, menus, tables—: `import "pleamar:ui"`
+  (§10.2 of the reference).
+- When your shell grows into a bar, notices and an OSD: keep each a scene of its
+  own and run them in one process, [a shell of several scenes](recipes.md#a-shell-of-several-scenes).
 - In the editor: `pleamar --lsp` gives errors as you type, and
   `pleamar --highlight vim` the highlighting. See [`editor/`](../editor/).
 

@@ -173,6 +173,16 @@ The numbers, how they were taken and what to watch out for: `marea-plm/MEDIDAS.m
 
 # What's new
 
+- **0.8 (experimental, on the `exp2` branch)**: several scenes in one process
+  that talk to each other, checked at both ends (`import scene`, `uses scene`,
+  events that say what they carry); text as people and agents write it
+  (markdown with tables, links, pictures and code blocks, fields of several
+  lines with undo, an input method, mentions and paste); lists with identity
+  and windows that draw their own frame, popups out of popups, `pleamar:ui`'s
+  menus and tables; colours with their transparency; a real blur and a finer
+  glass; it runs on more graphics cards and says why when one cannot; and
+  `--film` to see a scene without a screen. Try it with
+  `git clone -b exp2 https://github.com/k4ditano/pleamar`.
 - **0.6 — what the language would not let you write**: a quote inside a text
   (`\"`), a block that opens on the line after its header, and a colour chosen
   with `pick` or `if` inside a `let`.
@@ -404,8 +414,8 @@ per plugin, one per service, and a workshop thread for text and images.
 
 Measured against two real Quickshell configs (648 QML files between them), in
 [`docs/07-whats-missing.md`](docs/07-whats-missing.md): a live view of a whole
-screen inside the scene (windows come as thumbnails), input methods for Japanese
-or Chinese, and list copies that are born and die on their own.
+screen inside the scene (windows come as thumbnails), an input method on Windows
+and macOS (Wayland has one), and list copies that are born and die on their own.
 
 Known limitations, **each one with its plan to fix it**, in
 [`docs/08-limitations.md`](docs/08-limitations.md). They are written down as
@@ -420,7 +430,7 @@ they show up, not at the end.
 | [`docs/11-language-reference.md`][Reference] | The reference: grammar, types, every element and every property |
 | [`docs/10-luau-logic.md`](docs/10-luau-logic.md) | What the logic can do, and what it cannot |
 | [`docs/07-whats-missing.md`](docs/07-whats-missing.md) | Parity with Quickshell, told by real usage |
-| [`docs/08-limitations.md`](docs/08-limitations.md) | Everything that fails or is missing, with its plan |
+| [`docs/08-limitations.md`](docs/08-limitations.md) | Everything that fails or is missing, with its plan, and what was fixed when |
 | [`docs/02-how-it-works.md`](docs/02-how-it-works.md) | Inside: the threads, the renderer, the why |
 | [`skill/`](skill/) | The skill the installer gives your AI agents |
 

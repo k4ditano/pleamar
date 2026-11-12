@@ -134,6 +134,24 @@ A `popup` is not another scene: it is **another window onto the same one**. What
 
 The renderer decides when (the `open:` fact and the geometry, looked at after the rules) and calls `platform::popup`; the platform creates the `xdg_popup` from that same thread —Wayland's objects allow it—, and when the compositor configures it, the render surface reaches the renderer like any other. The mouse inside a popup arrives with the origin already added. On closing, the renderer first lets go of what it was painting and then the surface is destroyed.
 
+## Several scenes in one process (`language/mod.rs`, `compiler.rs`, `logic_luau.rs`)
+
+`import scene "bar.plm" as Bar` reads another scene into the one opened, as one
+scene: everything it declares under its name (the plugins' boundary, by file),
+its loose drawing on its own surface `Bar`, its logic as one more Luau state
+with its own permissions, and one more socket for `--say`. What one scene's logic
+writes or emits crosses to the opened scene's logic with who sent it, which
+passes it to the others. `uses scene` reads only another's declarations, so a
+scene that names one still opens alone.
+
+## Which card (`gpu.rs`)
+
+The card the compositor paints with, then the others that show on the surface
+(the frugal first, software last), then OpenGL: each is tried by building
+pleamar's own shader on it, and asked only for the limits it has. The effects
+(blur, glass) are built apart, and a card that refuses them paints without them.
+A card lost while running ends the process (70), for a supervisor to restart it.
+
 ## Doing only what changed
 
 A round of a big scene costs what changed in it, not how big it is. Each result a round works out is kept with **what it read** (`scene::Seen`: the facts, the properties and the speeds it reached, not the ones it names) and is worked out again only when one of those changed:

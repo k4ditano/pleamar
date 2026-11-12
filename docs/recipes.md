@@ -20,6 +20,9 @@ whole scene and compiles: `./run-tests.sh` checks them.
 - [Windows in rows](#windows-in-rows)
 - [A chat](#a-chat)
 - [Light or dark, and less motion](#light-or-dark-and-less-motion)
+- [A window that draws its own frame](#a-window-that-draws-its-own-frame)
+- [A submenu](#a-submenu)
+- [A shell of several scenes](#a-shell-of-several-scenes)
 
 ## A list of thousands
 
@@ -630,38 +633,42 @@ number of slots is said.
 ## A chat
 
 A list that starts at its end and stays there while it grows, each bubble on
-its own side and as wide as what it says. `stick: end` keeps the list at its
-end unless the person scrolled away to read; `list.pinned` says which, and is
-what a «↓ new» button needs. `place:` puts one child alone across the column
-(0 is the start, 1 the end), and `tight: true` makes a text with a `width:`
-take only as much as its longest line.
+its own side and as wide as what it says, and a field to write in. `stick: end`
+keeps the list at its end unless the person scrolled away to read; `list.pinned`
+says which. `place:` puts one child alone across the column (0 is the start, 1
+the end), and `tight: true` makes a text with a `width:` take only as much as its
+longest line. `for m in said key m.id` keeps each message's bubble while it stays
+in the list, so a message added at the end does not repaint the others, and
+`markdown: true` shows what an agent's answer marks: bold, lists, code, links.
+The field has three lines: Enter breaks a line and Ctrl+Enter sends (`send:
+enter` turns it round).
 
 ```plm
-language 0.5
+language 0.9
 scene Chat {
-    surface { size: 300, 420; kind: window; title: "chat" }
-    model said max 64 { text: text; mine: bool }
+    surface { size: 300, 480; kind: window; title: "chat" }
+    model said max 64 { id: number; text: text; mine: bool }
+    text draft = ""
+    event send ->
     let ink = #f5f7f5
 
-    box { from: 0, 0; size: 300, 420; color: #151616 }
-    column chat { at: 16, 16;  view: 268, 388;  stick: end;  gap: 8
-        for m in said {
+    box { from: 0, 0; size: 300, 480; color: #151616 }
+    column chat { at: 16, 16;  view: 268, 360;  stick: end;  gap: 8
+        for m in said key m.id {
             row { padding: 10; corner: 14; fill: if(m.mine, #2f5a50, #232526); place: if(m.mine, 1, 0)
                 text m.text { width: 200; tight: true; size: 13; color: ink; markdown: true; lines: 0 }
             }
         }
     }
-
-    //  Scrolled away to read: a way back down, which sticks to the end again.
-    box down { at: 150, 384; size: 96, 28; corner: 14; color: #2f5a50; opacity: 1 - chat.pinned
-               cursor: pointer; label: "Newest" }
-    text "↓ new" { at: 150, 384; anchor: center; size: 12; color: ink; opacity: 1 - chat.pinned }
-    on press down { chat.scroll: chat.content - chat.height ~calm; chat.pinned = 1 }
+    box { from: 16, 392; size: 268, 72; corner: 12; color: #232526 }
+    input draft { at: 28, 404; width: 244; lines: 3; size: 13; color: ink; placeholder: "Write… (Ctrl+Enter sends)"; label: "Message" }
+    on submit draft { emit send }
 }
 ```
 
-The logic only hands over the list (`model.said = { { text = "hi", mine = true }, … }`):
-where each bubble goes, and keeping up with the end, is the scene's.
+The logic hands over the list (`model.said = { { id = 1, text = "hi", mine = true }, … }`)
+and hears `send` with `text.draft`: where each bubble goes, and keeping up with
+the end, is the scene's.
 
 ## Light or dark, and less motion
 
@@ -695,3 +702,88 @@ scene Themed {
 Both are facts like any other: a shell's own switch can set them too
 (`--say … fact color.scheme 2`), and the desktop's next change says its own again.
 
+## A window that draws its own frame
+
+`decorations: none` asks the compositor for a window without its frame: the
+scene draws its own. A zone with `handle: self` carries the window while it is
+pressed, and `handle: self, bottom_right` stretches it by that corner.
+
+```plm
+language 0.9
+scene Frame {
+    surface { size: 420, 260; kind: window; title: "notes"; decorations: none }
+    box { from: 0, 0; size: 420, 260; corner: 14; color: #1b1e22 }
+    box bar { from: 0, 0; size: 420, 36; corner: 14; color: #23272c; handle: self; label: "Move" }
+    text "notes" { at: 16, 18; anchor: left center; size: 13; color: #f5f7f5 }
+    zone box corner { from: 400, 240; size: 20, 20; cursor: se_resize; handle: self, bottom_right; label: "Resize" }
+    box shut { from: 384, 8; size: 20, 20; corner: 10; color: #e06c5a; label: "Close"; cursor: pointer }
+    on press shut { quit }
+}
+```
+
+## A submenu
+
+A `popup` with `keyboard: true` takes the keyboard while it is open (its fields
+can be typed into, and Escape closes it); one with `parent: menu` opens out of
+that popup, its `at` inside it, and closes with it.
+
+```plm
+language 0.9
+scene Menus {
+    surface { size: 240, 40; anchor: top_left }
+    fact menu_open = false
+    fact more_open = false
+    box file { from: 0, 0; size: 80, 40; color: #23272c; cursor: pointer; label: "File" }
+    text "File" { at: 40, 20; anchor: center; size: 13; color: #f5f7f5 }
+    on press file { toggle menu_open }
+    popup menu { at: 0, 40; size: 180, 96; open: menu_open; keyboard: true
+        box { from: 0, 0; size: 180, 96; corner: 10; color: #23272c }
+        box more { from: 4, 4; size: 172, 30; corner: 6; color: #2f3338; label: "Open recent" }
+        text "Open recent ›" { at: 14, 19; anchor: left center; size: 13; color: #f5f7f5 }
+        on enter more { more_open = true }
+    }
+    popup recent { at: 180, 4; size: 200, 70; open: more_open; parent: menu
+        box { from: 0, 0; size: 200, 70; corner: 10; color: #2a2e33 }
+        text "notes.md" { at: 14, 20; anchor: left center; size: 13; color: #f5f7f5 }
+    }
+}
+```
+
+## A shell of several scenes
+
+A bar, its notices and an OSD, each a scene that opens and restarts alone, run
+in one process when one scene brings the others in: one render, one card, one
+connection to the compositor. Each keeps its names (`Bar.unread`), its logic, its
+permissions and its name for `--say`. It reads the others' values and emits their
+events, checked at both ends; it writes only its own. (Three files: not checked
+by `./run-tests.sh`, which reads one scene at a time.)
+
+```
+// shell.plm
+import scene "bar.plm" as Bar
+import scene "notices.plm" as Notices
+scene Shell { }
+
+// bar.plm
+scene Bar {
+    surface { size: full, 40; anchor: top }
+    fact unread = 0
+    event landed(id, x) ->
+    box { from: 0, 0; size: screen.width, 40; color: #1b1e22e6 }
+    text "{unread}" { at: 20, 20; anchor: left center; size: 13; color: #f5f7f5 }
+    on landed(c) { unread = unread + 1 }
+}
+
+// notices.plm: `uses` so it still opens alone
+uses scene "bar.plm" as Bar
+scene Notices {
+    surface toast { size: 320, 90; anchor: top_right }
+    box card { from: 10, 10; size: 300, 70; corner: 14; color: #23272cf2 }
+    text "{Bar.unread} unread" { at: 160, 45; anchor: center; size: 12; color: #f5f7f5 }
+    on press card { emit Bar.landed(id: 7, x: local.x) }
+}
+```
+
+From the logic it is the same: `bar.luau` writes `fact.unread`, and
+`notices.luau` reads `fact["Bar.unread"]` and calls `emit("Bar.landed", { id = 7, x = 0 })`.
+Calima runs its shell and its notices this way.

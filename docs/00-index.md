@@ -37,7 +37,8 @@
 - **Surfaces**: panels on any layer-shell compositor, one per monitor with its own state, popups, plain windows and lock screens.
 - **For whoever writes it**: hot reload that loses nothing, a language server, highlighting for vim and VS Code, types for luau-lsp, `--report` to measure on someone else's machine, and a skill that teaches AI agents to write and check scenes.
 - **[pleamar-wm](https://github.com/k4ditano/pleamar-wm)**: a compositor whose window manager is a pleamar scene, with hands for AI agents.
-- ⬜ Still missing: copies born at runtime, deferred loading, IME, and a whole screen live inside the scene. See the next step.
+- **0.8, experimental (`exp2`, Nov 2026)**: several scenes in one process, talking with checked events (`import scene`, `uses scene`); markdown, fields of several lines with an input method, mentions and paste; lists with identity; windows with their own frame and popups out of popups; `pleamar:ui`'s menus and tables; a real blur and a finer glass; any card that can paint it does, and `--film` films a scene with no screen. What each brought and how it was checked: [08](08-limitations.md), «Fixed».
+- ⬜ Still missing: copies born at runtime, deferred loading, an input method outside Wayland, inertia in lists, and a whole screen live inside the scene. See the next step.
 
 Every version, with what it brought: [Releases](https://github.com/k4ditano/pleamar/releases).
 

@@ -78,6 +78,7 @@ Kept in sight here, because it is the reason this exists:
 - **A language that cannot hang:** no free loops, no recursion. What is declared always terminates.
 - **Plugins with a contract:** a boundary of their own under their own name, a thread of their own, and permissions **approved by whoever uses them** (`pleamar --approve`). In Quickshell, somebody else's piece of configuration is JavaScript with every permission the person running it has.
 - **Shapes that blend**, with shadow, rim and light, no layers and no tricks: it is SDF.
+- **A shell of several scenes in one process**, each able to restart alone and to open alone (`import scene`, `uses scene`), talking through events the compiler checks at both ends. In Quickshell the pieces of a shell share one QML engine and one global namespace.
 - **Cross-platform by design:** everything system-related behind `src/platform/`, and `./portable.sh` checks that it compiles for Windows and macOS. Workspaces and the active window go through standard protocols, not through one compositor.
 
 ## 3.1. What else came out of this

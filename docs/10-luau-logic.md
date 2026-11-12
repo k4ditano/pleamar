@@ -278,6 +278,10 @@ Undeclared is nothing. **A command can be declared with its first arguments**: `
 
 In the scene, `emit opened(i)`; in the logic, `on("opened", function(i) … end)`. Before, it took one event per index.
 
+With several values, `emit moved(x: local.x, y: local.y)` (or by place, `emit pair(a, b)`, up to 8): the logic gets a table, by name (`p.x`) or by place (`t[1]`). An event can say what it carries, `event moved(x, y) ->`, and then every `emit` of it, in the scene or from another scene brought in, has to give all of it. From the logic, `emit("moved", { x = 3, y = 4 })` hands the table to the logics that hear it.
+
+What the person does outside the scene's own shapes reaches the logic too: a paste in a field (`on("paste:draft", function(p) … end)`, with `p.text`, `p.image`, `p.uris`), a link pressed in a markdown text (`on("link", function(href) … end)`), a picture copied (`sys.ask("clipboard.image")`, and `sys.call("clipboard.image.save", path)` to keep it), and the desktop's own file chooser (`sys.ask("files.pick", "open", "*.md,*.png")`, `"save"`, `"folder"`), which belongs to the scene's window.
+
 ## Lists that come from data
 
 ```lua
