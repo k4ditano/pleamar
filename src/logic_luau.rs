@@ -626,6 +626,8 @@ pub struct LuauScript {
 #[derive(Clone, Default)]
 struct Frontier {
     owner: Option<Sender<Event>>,
+    /// In a scene brought in: its name, sent with what crosses (`Event::BoundaryFrom`).
+    sender: Option<String>,
     plugins: Arc<Mutex<Vec<(String, Sender<Event>)>>>,
 }
 
@@ -639,7 +641,10 @@ impl Frontier {
             }
         };
         if let Some(to) = to {
-            let _ = to.send(Event::Boundary(Box::new(what())));
+            let _ = to.send(match &self.sender {
+                Some(s) => Event::BoundaryFrom(s.clone(), Box::new(what())),
+                None => Event::Boundary(Box::new(what())),
+            });
         }
     }
 }
@@ -723,7 +728,7 @@ impl LuauScript {
     fn for_plugin(&self, p: &crate::scene::Plugin, number: usize) -> Self {
         // A scene brought in is a scene, not a library's plugin: its permissions are a scene's.
         let c = Shared { next: (number as u32 + 1) * 1_000_000, plugin: (!p.brought).then(|| p.name.clone()), ..Default::default() };
-        LuauScript { scene: self.scene.clone(), logic: p.logic.to_string_lossy().into_owned(), tx: self.tx.clone(), to_logic: self.to_logic.clone(), blocked: self.blocked.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefix: Some(p.name.clone()), wants_frames: Arc::default(), plugins: Vec::new(), definition: Some(p.clone()), frontier: Frontier { owner: Some(self.to_logic.clone()), plugins: Arc::default() }, mailbox: None }
+        LuauScript { scene: self.scene.clone(), logic: p.logic.to_string_lossy().into_owned(), tx: self.tx.clone(), to_logic: self.to_logic.clone(), blocked: self.blocked.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefix: Some(p.name.clone()), wants_frames: Arc::default(), plugins: Vec::new(), definition: Some(p.clone()), frontier: Frontier { owner: Some(self.to_logic.clone()), plugins: Arc::default(), sender: p.brought.then(|| p.name.clone()) }, mailbox: None }
     }
 
     /// Sets a plugin running on its thread. From there it tends its mailbox and its timers.
@@ -1775,15 +1780,28 @@ impl Script for LuauScript {
         // it does not find out about what is not its own.
         // What crosses from a scene brought in, the other scenes brought in hear too (G22):
         // its logic wrote `volume`, or emitted `rang`. Not the one it came from.
-        if let (None, Event::Boundary(b)) = (&self.prefix, &e) {
-            let name = match &**b {
-                crate::scene::Crossing::Text(n, _) | crate::scene::Crossing::Fact(n, _) | crate::scene::Crossing::Model(n, _) | crate::scene::Crossing::Signal(n, _) => n.as_str(),
-            };
-            let from = name.split_once('.').map_or("", |x| x.0);
-            for p in self.plugins.iter().filter(|p| p.definition.brought && p.definition.name != from) {
-                let _ = p.mailbox.send(e.clone());
+        // Who sent it is said with it (issue 145): the name in front only says whose it is.
+        // What a library's plugin writes (no sender) the scenes brought in hear too: their
+        // logic names the libraries whole.
+        let e = match e {
+            Event::BoundaryFrom(from, b) => {
+                if self.prefix.is_none() {
+                    for p in self.plugins.iter().filter(|p| p.definition.brought && p.definition.name != from) {
+                        let _ = p.mailbox.send(Event::Boundary(b.clone()));
+                    }
+                }
+                Event::Boundary(b)
             }
-        }
+            Event::Boundary(b) => {
+                if self.prefix.is_none() {
+                    for p in self.plugins.iter().filter(|p| p.definition.brought) {
+                        let _ = p.mailbox.send(Event::Boundary(b.clone()));
+                    }
+                }
+                Event::Boundary(b)
+            }
+            other => other,
+        };
         if !matches!(e, Event::NewScene(..) | Event::Boundary(_)) {
             // A frame, only to the ones that listen to them: the rest would be
             // woken sixty times a second for nothing.
@@ -2175,9 +2193,16 @@ pub fn check_logic(scene: &Scene, scene_path: &str) -> (Vec<String>, Vec<String>
             files.push((p.logic.clone(), Some(p.name.as_str())));
         }
     }
+    // A scene brought in (G22) names its own under its name, and the other scenes' and the
+    // libraries' whole, as its logic does when it runs (issue 145: `emit("Core.close")` from
+    // P1 was said not to be in P1's boundary).
+    let whole: Vec<String> = scene.libraries.iter().map(|l| format!("{l}.")).collect();
     let names = |all: &mut dyn Iterator<Item = String>, prefix: Option<&str>| -> Vec<String> {
+        let brought = prefix.is_some_and(|p| scene.scenes.iter().any(|s| s == p));
         all.filter_map(|n| match prefix {
-            Some(p) => n.strip_prefix(&format!("{p}.")).map(str::to_owned),
+            Some(p) => n.strip_prefix(&format!("{p}.")).map(str::to_owned).or_else(|| {
+                (brought && (scene.scenes.iter().any(|s| s != p && n.starts_with(&format!("{s}."))) || whole.iter().any(|w| n.starts_with(w.as_str())))).then(|| n.clone())
+            }),
             None => Some(n),
         })
         .collect()
@@ -2558,6 +2583,65 @@ mod tests {
         assert!(texts.get("Osd.refused").is_some_and(|e| e.contains("is Bar's")), "{texts:?}");
         drop(s);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Issue 145: one scene brought in emits another's event from its logic
+    /// (`emit("Core.height", { v = 42 })`), and the other's logic hears it, with what it
+    /// carries; the name in front says whose the event is, not who sent it.
+    #[test]
+    fn a_scene_brought_in_hears_its_events_emitted_by_another_scenes_logic() {
+        use super::{LuauScript, Script};
+        use crate::scene::{Event, ToRender};
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("pleamar-145-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("core.plm"), "scene Core {\n    fact got = 0\n    text said = \"\"\n    event height(v) ->\n    event close ->\n}\n").unwrap();
+        std::fs::write(dir.join("core.luau"), concat!(
+            "on(\"height\", function(v) fact.got = (type(v) == \"table\" and tonumber(v.v)) or -1 end)\n",
+            "on(\"close\", function() fact.got = fact.got + 100; text.said = tostring(fact.got) end)\n",
+        )).unwrap();
+        std::fs::write(dir.join("p1.plm"), "uses scene \"core.plm\" as Core\nscene P1 {\n    surface s { size: 10, 10 }\n}\n").unwrap();
+        std::fs::write(dir.join("p1.luau"), "after(200, function() emit(\"Core.height\", { v = 42 }); emit(\"Core.close\") end)\n").unwrap();
+        let scene = dir.join("main.plm");
+        std::fs::write(&scene, "import scene \"core.plm\" as Core\nimport scene \"p1.plm\" as P1\nscene Main {\n    surface { size: 10, 10 }\n}\n").unwrap();
+        let logic = dir.join("main.luau");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (to_logic, letters) = std::sync::mpsc::channel();
+        let blocked = std::sync::Arc::default();
+        let mut s = LuauScript::new(&scene.to_string_lossy(), &logic.to_string_lossy(), tx.clone(), to_logic, std::sync::Arc::clone(&blocked));
+        s.scene();
+        let mut ctx = crate::logic::Context::for_plugin(tx, blocked);
+        s.on_event(Event::Alarm("start"), &mut ctx);
+        let mut said = None;
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < until && said.is_none() {
+            while let Ok(e) = letters.try_recv() {
+                s.on_event(e, &mut ctx);
+            }
+            for m in rx.try_iter() {
+                if let ToRender::Text(k, v) = m {
+                    if k == "Core.said" {
+                        said = Some(v);
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // 42 from `height`'s payload, then `close`'s 100: both heard by Core's logic, once.
+        assert_eq!(said.as_deref(), Some("142"));
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Issue 145: `--check` reads a scene brought in naming another's event whole as fine.
+    #[test]
+    fn check_reads_another_scenes_event_from_a_scene_brought_in_as_fine() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/brought/emit145/main.plm");
+        let scene = crate::scenes::from_file::read(path).unwrap();
+        let (errors, warnings) = super::check_logic(&scene, path);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]

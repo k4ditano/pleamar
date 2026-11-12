@@ -1,0 +1,5 @@
+scene Core {
+    fact got = 0
+    event height(v) ->
+    event close ->
+}

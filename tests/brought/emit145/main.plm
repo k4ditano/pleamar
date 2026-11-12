@@ -1,0 +1,3 @@
+import scene "core.plm" as Core
+import scene "p1.plm" as P1
+scene Main { }

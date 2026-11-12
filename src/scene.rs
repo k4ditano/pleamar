@@ -3003,6 +3003,11 @@ pub enum Event {
     /// which owns it: to the scene's, what the plugin wrote or emitted; to the
     /// plugin's, what the scene's wrote or emitted of the plugin's. Never passed on.
     Boundary(Box<Crossing>),
+    /// The same, from the logic of a scene brought in (G22), with its name: the scene's
+    /// logic passes it on to the other scenes brought in, but not back to it. The name in
+    /// front of what crosses says whose it is, not who sent it: `emit("Core.close")` from
+    /// P1 is Core's event, and Core has to hear it (issue 145).
+    BoundaryFrom(String, Box<Crossing>),
 }
 
 /// A value of a plugin's boundary, by its full name (`Weather.out`).
