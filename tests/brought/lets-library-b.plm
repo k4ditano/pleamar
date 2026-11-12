@@ -1,0 +1,8 @@
+// The same library, imported by another scene with its own `c_r`.
+import "../common/lets-of-the-scene.plm"
+scene LibB {
+    surface { size: 100, 40; anchor: top_left }
+    fact c_r = 0.5
+    zone box hit { from: 0, 0; size: plain + 1, 10 }
+    box { from: 0, 0; size: 10, 10; color: col }
+}

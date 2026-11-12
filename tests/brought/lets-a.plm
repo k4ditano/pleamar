@@ -1,0 +1,6 @@
+// A scene of its own, brought into brought-lets.plm as RA: its `let w` is its own.
+scene RA {
+    surface { size: 200, 100; anchor: top_left }
+    let w = 20
+    zone box hit { from: 0, 0; size: w, 50 }
+}

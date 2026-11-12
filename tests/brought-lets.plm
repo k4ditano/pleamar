@@ -1,0 +1,9 @@
+// expect: ok
+// Issue 149: the `let`s of a scene brought in are under its name, as its facts and zones are. Two
+// scenes that both write `let w` each keep theirs: RA's box is 20 wide, RB's 150 (a note used to
+// say the second changed what `w` meant in everything after it, and it did, at runtime).
+import scene "brought/lets-a.plm" as RA
+import scene "brought/lets-b.plm" as RB
+scene Host {
+    surface { size: 10, 10 }
+}

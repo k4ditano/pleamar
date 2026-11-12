@@ -76,6 +76,9 @@ struct Reader {
     /// write, already under their own surface: it goes into the scene's body at the end.
     brought_scenes: Vec<compiler::BroughtScene>,
     piece_entries: Vec<tree::Entry>,
+    /// While a scene is being brought in: the libraries it imports, its own and the ones they
+    /// import, even when another had read them first (issue 149).
+    scene_libs: Option<Vec<PathBuf>>,
     /// `uses scene "bar.plm" as Bar`, as they were read: the name, the file, which file
     /// says it and where. Settled once every scene brought in is known (`settle_uses`).
     uses: Vec<(String, PathBuf, PathBuf, usize, usize)>,
@@ -236,6 +239,11 @@ impl Reader {
                     return Err(CompileError::at(n.line, n.col, format!("'{which}' is already imported {}, and here {}: a library has one name in a scene", said(before), said(&surname))));
                 }
             }
+            if let Some(libs) = self.scene_libs.as_mut() {
+                if !libs.contains(&target) {
+                    libs.push(target.clone());
+                }
+            }
             if self.files.iter().any(|(r, _)| r == &target) {
                 continue;
             }
@@ -351,7 +359,9 @@ impl Reader {
         self.resolve_includes(&target, &mut theirs)?;
         let hoisted = std::mem::take(&mut self.hoisted);
         theirs.splice(0..0, hoisted);
+        let outer = self.scene_libs.replace(Vec::new());
         let rest = self.resolve_imports(&target, theirs, brought)?;
+        let imported = std::mem::replace(&mut self.scene_libs, outer).unwrap_or_default();
         self.open_stack.pop();
         let scene = match rest.as_slice() {
             [tree::Entry::Node(s)] if matches!(s.head.first().map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "scene") => s,
@@ -362,12 +372,43 @@ impl Reader {
         };
         let libraries: Vec<usize> = self.libraries[libraries_before..].iter().map(|b| b.file).collect();
         let files: Vec<usize> = (first..self.files.len()).filter(|k| !libraries.contains(k)).collect();
+        // What its libraries declare with `let` is the scene's too, under its name: they read its facts
+        // (`let col = rgb(c_r, 0, 0)`), and two scenes that import one each have their own. So each library's
+        // `let`s are read again, in a file that belongs to the scene, before its own lines (issue 149).
+        let mut lets = Vec::new();
+        let (mut libs, mut lib_lets) = (Vec::new(), Vec::new());
+        for t in &imported {
+            let Some(original) = self.files.iter().position(|(r, _)| r == t) else { continue };
+            libs.push(original);
+            let copy = self.files.len();
+            let theirs = self.open(t)?;
+            let only_lets = |d: &tree::Entry| {
+                matches!(d, tree::Entry::Node(x) if matches!(x.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "let")
+                    && !matches!(x.head.get(2).map(|f| &f.kind), Some(TokenKind::Sym("["))))
+            };
+            let mine: Vec<tree::Entry> = theirs
+                .into_iter()
+                .filter_map(|e| match e {
+                    tree::Entry::Node(x) if matches!(x.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "library") => x.body,
+                    _ => None,
+                })
+                .flatten()
+                .filter(only_lets)
+                .collect();
+            if mine.is_empty() {
+                // Nothing to read again: the file is not needed.
+                self.files.pop();
+                continue;
+            }
+            lib_lets.push((copy, original));
+            lets.extend(mine);
+        }
         // Its surface without a name, and what it draws loose, become its surface `Bar`. A
         // scene whose surfaces all have a name keeps its loose rules at its level, as alone:
         // a surface `Bar` would be one more on the screen, for nothing.
         let body = scene.body.clone().unwrap_or_default();
         let has_main = body.iter().any(|e| matches!(e, tree::Entry::Node(x) if x.head.len() == 1 && matches!(x.head[0].kind, TokenKind::Id(ref w) if w == "surface")));
-        let mut kept = Vec::new();
+        let mut kept = lets;
         let mut own = Vec::new();
         for e in body {
             match e {
@@ -393,7 +434,7 @@ impl Reader {
             kept.push(tree::Entry::Node(tree::Node { head: vec![word, named], body: Some(own), line: n.line, col: n.col }));
         }
         let logic = target.with_extension("luau");
-        self.brought_scenes.push(compiler::BroughtScene { name: name.clone(), files, logic: logic.is_file().then_some(logic), absent: false });
+        self.brought_scenes.push(compiler::BroughtScene { name: name.clone(), files, logic: logic.is_file().then_some(logic), absent: false, libs, lib_lets });
         self.piece_entries.extend(kept);
         Ok(())
     }
@@ -440,7 +481,7 @@ impl Reader {
             };
             let kept: Vec<tree::Entry> = scene.body.clone().unwrap_or_default().into_iter().filter(declares).collect();
             let files = (first..self.files.len()).collect();
-            self.brought_scenes.push(compiler::BroughtScene { name, files, logic: None, absent: true });
+            self.brought_scenes.push(compiler::BroughtScene { name, files, logic: None, absent: true, libs: Vec::new(), lib_lets: Vec::new() });
             self.piece_entries.extend(kept);
         }
         Ok(())
@@ -635,6 +676,35 @@ mod tests {
         assert_eq!(scene.rules.len(), 5);
         // Its hover is its own zone's.
         assert!(scene.props.iter().any(|(n, _, _)| *n == "Bar.hit.hover"), "no Bar.hit.hover");
+    }
+
+    /// How wide the box of a zone is, with the scene's facts as they start.
+    fn zone_width(scene: &Scene, zone: &str) -> f32 {
+        let z = scene.zones.iter().find(|z| z.id == zone).unwrap_or_else(|| panic!("no zone {zone}: {:?}", scene.zones.iter().map(|z| z.id).collect::<Vec<_>>()));
+        let Shape::Rect { half_size, .. } = &z.shape else { panic!("a box") };
+        let facts: Vec<f32> = scene.facts.iter().map(|(_, v)| *v).collect();
+        let props = settled(scene, &facts);
+        half_size.0.eval(Ctx { props: &props, facts: &facts, seen: None }) * 2.0
+    }
+
+    #[test]
+    fn the_lets_of_a_scene_brought_in_are_under_its_name() {
+        // Issue 149: two scenes that both write `let w`, each keeps its own.
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/brought-lets.plm")).unwrap();
+        assert_eq!(zone_width(&scene, "RA.hit"), 20.0);
+        assert_eq!(zone_width(&scene, "RB.hit"), 150.0);
+    }
+
+    #[test]
+    fn a_library_imported_by_a_scene_brought_in_reads_that_scenes_facts() {
+        // Issue 149: `let col = rgb(c_r, 0, 0)` in a library reads the `c_r` of the scene that
+        // imports it, and a second scene that imports the same library gets its own copy.
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/brought-lets-library.plm")).unwrap();
+        for name in ["LibA.c_r", "LibB.c_r"] {
+            assert!(scene.facts.iter().any(|(n, _)| *n == name), "no fact {name}");
+        }
+        assert_eq!(zone_width(&scene, "LibA.hit"), 7.0);
+        assert_eq!(zone_width(&scene, "LibB.hit"), 8.0);
     }
 
     #[test]

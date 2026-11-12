@@ -1,0 +1,5 @@
+// A library whose `let` reads what the scene that imports it declares: `c_r`.
+library Reds {
+    let col = rgb(c_r, 0, 0)
+    let plain = 7
+}

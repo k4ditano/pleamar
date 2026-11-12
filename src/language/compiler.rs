@@ -290,6 +290,12 @@ pub struct BroughtScene {
     pub logic: Option<std::path::PathBuf>,
     /// Named with `uses scene` and not brought in: only its declarations, nothing of it runs.
     pub absent: bool,
+    /// The libraries it imports (its own and the ones those import), by their file: what they
+    /// declare with `let` reads names of the scene, so it is read again in its own (issue 149).
+    pub libs: Vec<usize>,
+    /// For each of those libraries, the copy of its `let`s that belongs to the scene (a file of its
+    /// own, which says only them) and the library's file: the copy lives under the scene's name.
+    pub lib_lets: Vec<(usize, usize)>,
 }
 
 /// What a scene brought in draws loose, which goes into its own surface: the drawing
@@ -1280,7 +1286,15 @@ impl<'a> Compiler<'a> {
         // the monitor measures is what its own surface measures. (By the file the name is
         // written in: a library's own are never a scene's, and what a scene passes to a
         // library's component, `show: remote.on`, is written in the scene.)
-        if let Some(g) = self.brought_at_peek().and_then(|b| self.in_brought(b, &n)) {
+        // (A copy of a library's `let`s reads that library's own names first, then the scene's.)
+        let here = PEEKED.with(|m| m.get().0) / super::PER_FILE;
+        let original = self.original_of(here);
+        if original != here {
+            if let Some(g) = self.boundary_of.get(&original).and_then(|own| Self::boundary_name(own, &n)) {
+                return g;
+            }
+        }
+        if let Some(g) = self.let_owner().and_then(|b| self.in_brought(b, &n)) {
             return g;
         }
         // Inside a component of a library, `now` is the `Clock.now` of its boundary.
@@ -1470,6 +1484,58 @@ impl<'a> Compiler<'a> {
             .or_else(|| self.zones.get(n))
             .or_else(|| own.as_ref().and_then(|o| self.zones.get(o)))
             .copied()
+    }
+
+    /// The scene brought in (G22) that a file belongs to: its own, its parts', and the copy
+    /// of its libraries' `let`s that is made for it (issue 149).
+    fn owner_of_file(&self, file: usize) -> Option<&'a BroughtScene> {
+        if file == 0 {
+            return None;
+        }
+        self.brought_scenes.iter().find(|b| b.files.contains(&file) || b.lib_lets.iter().any(|(copy, _)| *copy == file))
+    }
+
+    /// The same for the last token read.
+    fn let_owner(&self) -> Option<&'a BroughtScene> {
+        self.owner_of_file(PEEKED.with(|m| m.get().0) / super::PER_FILE)
+    }
+
+    /// The library a copy of its `let`s comes from; any other file is its own.
+    fn original_of(&self, file: usize) -> usize {
+        self.brought_scenes.iter().find_map(|b| b.lib_lets.iter().find(|(copy, _)| *copy == file).map(|(_, original)| *original)).unwrap_or(file)
+    }
+
+    /// Whether this file is a library that a scene brought in imports: its `let`s are read in
+    /// each scene's own copy, and what one cannot read here (a fact of the scene) is not an error here.
+    fn library_of_a_scene(&self, file: usize) -> bool {
+        file > 0 && self.brought_scenes.iter().any(|b| b.libs.contains(&file))
+    }
+
+    /// A name written in `let`s' own boundary map as `n`, if it is there: `ink` is `Bar.ink`.
+    fn boundary_name(own: &HashMap<String, String>, n: &str) -> Option<String> {
+        let mut until = n.len();
+        loop {
+            if let Some(g) = own.get(&n[..until]) {
+                return Some(format!("{g}{}", &n[until..]));
+            }
+            match n[..until].rfind('.') {
+                Some(p) => until = p,
+                None => return None,
+            }
+        }
+    }
+
+    /// A colour written by name, as the scene it is written in calls it: the colour `ink` of a
+    /// scene brought in is `Bar.ink` (issue 149).
+    fn colored(&self, n: &str) -> String {
+        if let Some(b) = self.let_owner() {
+            if let Some(g) = self.boundary_of.get(&b.files[0]).and_then(|own| own.get(n)) {
+                if self.colors.contains_key(g) {
+                    return g.clone();
+                }
+            }
+        }
+        n.to_owned()
     }
 
     /// A name a scene brought in (G22) writes, under its name, when it is not already: a zone
@@ -2229,7 +2295,7 @@ impl<'a> Compiler<'a> {
         let alpha = match c.peek() {
             Some(TokenKind::Color(k)) => Some(Expr::K(k[3])),
             Some(TokenKind::Id(n)) if !matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => {
-                Some(self.scopes.iter().rev().find_map(|e| e.color_alpha.get(n)).or_else(|| self.color_alpha.get(n)).cloned().unwrap_or(Expr::K(1.0)))
+                Some(self.scopes.iter().rev().find_map(|e| e.color_alpha.get(n)).or_else(|| self.color_alpha.get(&self.colored(n))).cloned().unwrap_or(Expr::K(1.0)))
             }
             // `mix`, `if`, `pick`, `rgb`: it is worked out from theirs, inside.
             _ => None,
@@ -2258,12 +2324,14 @@ impl<'a> Compiler<'a> {
                 c.i += 1;
                 Ok(color(k[0], k[1], k[2]))
             }
-            Some(TokenKind::Id(n)) if self.scopes.iter().any(|e| e.colors.contains_key(n)) || self.colors.contains_key(n) => {
+            Some(TokenKind::Id(n)) if self.scopes.iter().any(|e| e.colors.contains_key(n)) || self.colors.contains_key(&self.colored(n)) => {
                 c.i += 1;
+                // A scene brought in calls its own colours by their short name (issue 149).
+                let m = self.colored(n);
                 if !self.scopes.iter().any(|e| e.colors.contains_key(n)) {
-                    self.watch(n);
+                    self.watch(&m);
                 }
-                Ok(self.scopes.iter().rev().find_map(|e| e.colors.get(n)).unwrap_or_else(|| &self.colors[n]).clone())
+                Ok(self.scopes.iter().rev().find_map(|e| e.colors.get(n)).unwrap_or_else(|| &self.colors[&m]).clone())
             }
             Some(TokenKind::Id(m)) if m == "mix" => {
                 c.i += 1;
@@ -3075,6 +3143,23 @@ impl<'a> Compiler<'a> {
                     if c.sym("[") {
                         return self.array(n, &name, &mut c);
                     }
+                    // In a scene brought in (G22) its `let`s are under its name, as its facts, zones and
+                    // surfaces are, and so are the ones its libraries bring (read again in its own copy of
+                    // them): two scenes that both write `let w` do not step on each other, and a library's
+                    // `let` that reads a fact of the scene finds it (issue 149). Only at the scene's level:
+                    // in a component, a `repeat` or a monitor's copy the `let` is theirs, as ever.
+                    let local = name.clone();
+                    let name = match self.owner_of_file(n.line / super::PER_FILE).filter(|_| self.scopes.is_empty()) {
+                        Some(b) => {
+                            let under = format!("{}.{local}", b.name);
+                            self.boundary_of.entry(b.files[0]).or_default().insert(local.clone(), under.clone());
+                            under
+                        }
+                        None => name,
+                    };
+                    // What a library of a scene brought in reads of the scene is not there when it is read
+                    // on its own: it is the scene's copy that says it, and what is wrong with it.
+                    let lenient = n.line >= super::PER_FILE && self.scopes.is_empty() && self.library_of_a_scene(n.line / super::PER_FILE);
                     if n.line >= super::PER_FILE {
                         self.from_library.insert(name.clone());
                     }
@@ -3205,14 +3290,18 @@ impl<'a> Compiler<'a> {
                             Some(TokenKind::Color(_)) => true,
                             Some(TokenKind::Id(n)) if n == "rgb" && matches!(c.tokens.get(k + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => true,
                             Some(TokenKind::Id(n)) => {
-                                (self.colors.contains_key(n) || self.scopes.iter().any(|e| e.colors.contains_key(n)))
+                                (self.colors.contains_key(&self.colored(n)) || self.scopes.iter().any(|e| e.colors.contains_key(n)))
                                     && (!in_choice || matches!(c.tokens.get(k + 1).map(|x| &x.kind), Some(TokenKind::Sym(",")) | Some(TokenKind::Sym(")"))))
                             }
                             _ => false,
                         }
                     };
                     if is_color {
-                        let k = self.color(&mut c)?;
+                        let k = match self.color(&mut c) {
+                            Ok(k) => k,
+                            Err(_) if lenient => return Ok(()),
+                            Err(e) => return Err(e),
+                        };
                         let said = self.take_alpha();
                         c.expect_end()?;
                         if !opaque(&said) {
@@ -3234,7 +3323,11 @@ impl<'a> Compiler<'a> {
                         };
                         return Ok(());
                     }
-                    let e = self.expr(&mut c)?;
+                    let e = match self.expr(&mut c) {
+                        Ok(e) => e,
+                        Err(_) if lenient => return Ok(()),
+                        Err(e) => return Err(e),
+                    };
                     c.expect_end()?;
                     // A `let` is **substituted** where it is named, so a big
                     // one used three times is its tree three times. Written as a
@@ -6095,7 +6188,7 @@ impl<'a> Compiler<'a> {
             Some(TokenKind::Id(x)) if x == "rgb" && matches!(c.tokens.get(c.i + 1).map(|y| &y.kind), Some(TokenKind::Sym("("))) => {
                 env.colors.insert(p.clone(), self.color(c)?);
             }
-            Some(TokenKind::Id(x)) if alone && (self.colors.contains_key(x) || self.scopes.iter().any(|e| e.colors.contains_key(x))) => {
+            Some(TokenKind::Id(x)) if alone && (self.colors.contains_key(&self.colored(x)) || self.scopes.iter().any(|e| e.colors.contains_key(x))) => {
                 env.colors.insert(p.clone(), self.color(c)?);
                 let said = self.take_alpha();
                 if !opaque(&said) {

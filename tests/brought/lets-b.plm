@@ -1,0 +1,6 @@
+// A scene of its own, brought into brought-lets.plm as RB: it writes `let w` too.
+scene RB {
+    surface { size: 200, 100; anchor: top_left }
+    let w = 150
+    zone box hit { from: 0, 50; size: w, 50 }
+}

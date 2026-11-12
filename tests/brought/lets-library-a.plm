@@ -1,0 +1,8 @@
+// A scene of its own that imports a library whose `let` reads its fact `c_r`.
+import "../common/lets-of-the-scene.plm"
+scene LibA {
+    surface { size: 100, 40; anchor: top_left }
+    fact c_r = 1
+    zone box hit { from: 0, 0; size: plain, 10 }
+    box { from: 0, 0; size: 10, 10; color: col }
+}

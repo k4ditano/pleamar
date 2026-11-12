@@ -1,0 +1,8 @@
+// expect: ok
+// Issue 149: a library imported by a scene brought in is the scene's: its `let`s read the scene's
+// facts (`c_r` is `LibA.c_r`), and a second scene that imports the same library gets its own.
+import scene "brought/lets-library-a.plm" as LibA
+import scene "brought/lets-library-b.plm" as LibB
+scene Host {
+    surface { size: 10, 10 }
+}
