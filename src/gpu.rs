@@ -3542,6 +3542,14 @@ pub trait Frames: Send {
     fn gave_up(&self) -> bool {
         false
     }
+    /// Whether, closed, the surface can show nothing without frames of its own
+    /// (`rest`). If not, it is painted empty in its frames as before.
+    fn can_rest(&self) -> bool {
+        false
+    }
+    /// The surface is closed: show nothing, holding as little as possible —its
+    /// frames let go, made again when it next paints—.
+    fn rest(&mut self, _device: &wgpu::Device) {}
 }
 
 /// What the platform hands the render thread for each surface.
@@ -5318,6 +5326,31 @@ impl Gpu {
     /// knows what each of them holds, and only what changed since that one was
     /// last painted is painted again; a swapchain's are unknown, and are painted whole.
     pub fn paint(&self, l: &mut Sheet, d: &DrawList, uniforms: &[f32], request_frame: bool, damage: Option<&[[f32; 4]]>) -> bool {
+        // Closed (`open:` false), it shows nothing, and keeps nothing for when it
+        // opens: its canvas, its glass's, its layers. Where the platform can, it
+        // shows nothing without frames of its own either (`Frames::rest`): kept,
+        // they were some 30 MB of the card per 1080p monitor for a surface
+        // nobody sees (#147). Opening, all of it is made again and painted whole.
+        if !l.open {
+            l.kept = None;
+            l.own = None;
+            // (Its lens went when it closed, with its capture: `render`.)
+            if l.layers > 0 {
+                self.release_layers(l);
+            }
+            l.painted_as.clear();
+            l.damage_log.clear();
+            if let Target::Frames(frames) = &mut l.target
+                && frames.can_rest()
+            {
+                // Asked before the commit that carries the empty buffer, as with a frame.
+                if request_frame {
+                    l.window.request_frame();
+                }
+                frames.rest(&self.device);
+                return true;
+            }
+        }
         // Only the layers of the groups that fall on this surface: the one
         // fading on another monitor costs this one neither memory nor a pass.
         // What blends the layer takes up the union of what is inside, so if

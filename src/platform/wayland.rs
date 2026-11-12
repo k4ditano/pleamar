@@ -43,6 +43,7 @@ use smithay_client_toolkit::reexports::protocols::wp::fractional_scale::v1::clie
     wp_fractional_scale_v1::{self, WpFractionalScaleV1},
 };
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
+use wayland_protocols::wp::single_pixel_buffer::v1::client::wp_single_pixel_buffer_manager_v1::WpSinglePixelBufferManagerV1;
 use wayland_protocols::wp::presentation_time::client::{wp_presentation::{self, WpPresentation}, wp_presentation_feedback::{self, WpPresentationFeedback}};
 use wayland_protocols::xdg::foreign::zv2::client::{zxdg_exporter_v2::ZxdgExporterV2, zxdg_exported_v2::{self, ZxdgExportedV2}};
 use wayland_protocols::wp::pointer_gestures::zv1::client::{zwp_pointer_gesture_pinch_v1::{self, ZwpPointerGesturePinchV1}, zwp_pointer_gestures_v1::ZwpPointerGesturesV1};
@@ -67,6 +68,9 @@ struct Dmabufs {
     connection: Connection,
 }
 static DMABUFS: std::sync::OnceLock<Dmabufs> = std::sync::OnceLock::new();
+/// Buffers of one pixel (`single-pixel-buffer`): what a closed surface shows,
+/// stretched by its viewport, instead of three frames the size of the monitor.
+static SINGLE_PIXEL: std::sync::OnceLock<WpSinglePixelBufferManagerV1> = std::sync::OnceLock::new();
 static ARGB_LAYOUTS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 static XRGB_LAYOUTS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
@@ -134,6 +138,13 @@ struct OwnFrames {
     to_show: Option<Sender<Show>>,
     /// The same queue, for the window's own commits (see `WaylandWindow::shown`).
     shared: Arc<Mutex<Option<Sender<Show>>>>,
+    /// Whether the surface has a viewport that sets its size, whatever the
+    /// buffer's: then, closed, it can show a buffer of one pixel (`rest`).
+    viewport: bool,
+    /// That buffer of one transparent pixel, once made.
+    empty: Option<WlBuffer>,
+    /// Whether frames were made before: said in the log only the first time.
+    made_before: bool,
 }
 
 struct OwnFrame {
@@ -186,6 +197,9 @@ fn card_done_with(fd: &std::os::fd::OwnedFd, wait: std::time::Duration) -> bool 
 enum Show {
     /// That one, once the card has painted it: those pieces changed (`None`, all).
     Frame { buffer: WlBuffer, px: (u32, u32), pieces: Option<Vec<[u32; 4]>>, sent: gpu::Sent },
+    /// That buffer of one transparent pixel, which the viewport stretches to the
+    /// surface's size: what a closed surface shows (`Frames::rest`).
+    Empty(WlBuffer),
     /// These are not used any more: after whatever was asked before.
     Forget(Vec<WlBuffer>),
     /// Say so once everything asked before has reached the compositor.
@@ -242,8 +256,60 @@ impl OwnFrames {
             self.frames.push(OwnFrame { texture: e.texture, buffer, busy, fd: e.fd });
         }
         let _ = d.connection.flush();
-        println!("render · {} frames of our own of {}×{} handed to the compositor, with what changed in each (layout {modifier:#018x})", self.frames.len(), self.px.0, self.px.1);
+        if !std::mem::replace(&mut self.made_before, true) {
+            println!("render · {} frames of our own of {}×{} handed to the compositor, with what changed in each (layout {modifier:#018x})", self.frames.len(), self.px.0, self.px.1);
+        }
         Ok(())
+    }
+
+    /// The queue that hands things to the compositor in order, made the first time.
+    fn queue(&mut self, device: &wgpu::Device) -> Sender<Show> {
+        self.to_show
+            .get_or_insert_with(|| {
+                let (tx, rx) = std::sync::mpsc::channel::<Show>();
+                let (wl, device) = (self.wl.clone(), device.clone());
+                let connection = DMABUFS.get().map(|d| d.connection.clone());
+                let _ = std::thread::Builder::new().name("frames shown".into()).spawn(move || {
+                    for job in rx {
+                        match job {
+                            Show::Frame { buffer, px, pieces, sent } => {
+                                // The compositor reads it as it is: not before the card has finished it.
+                                sent.wait(&device, std::time::Duration::from_secs(1));
+                                wl.attach(Some(&buffer), 0, 0);
+                                match pieces {
+                                    None => wl.damage_buffer(0, 0, px.0 as i32, px.1 as i32),
+                                    Some(p) => {
+                                        for [x, y, w, h] in p.into_iter().filter(|b| b[2] > 0 && b[3] > 0) {
+                                            wl.damage_buffer(x as i32, y as i32, w as i32, h as i32);
+                                        }
+                                    }
+                                }
+                                wl.commit();
+                            }
+                            Show::Empty(buffer) => {
+                                wl.attach(Some(&buffer), 0, 0);
+                                wl.damage_buffer(0, 0, 1, 1);
+                                wl.commit();
+                            }
+                            Show::Forget(buffers) => buffers.iter().for_each(|b| b.destroy()),
+                            Show::Commit => wl.commit(),
+                            Show::Run(f) => f(),
+                            Show::Settled(done) => {
+                                if let Some(c) = &connection {
+                                    let _ = c.flush();
+                                }
+                                let _ = done.send(());
+                            }
+                        }
+                        if let Some(c) = &connection {
+                            let _ = c.flush();
+                        }
+                    }
+                });
+                *self.shared.lock().unwrap() = Some(tx.clone());
+                tx
+            })
+            .clone()
     }
 }
 
@@ -282,47 +348,10 @@ impl gpu::Frames for OwnFrames {
     fn present_pieces(&mut self, which: usize, _done: wgpu::SubmissionIndex, device: &wgpu::Device, queue: &wgpu::Queue, pieces: Option<&[[u32; 4]]>) {
         let Some(f) = self.frames.get(which) else { return };
         f.busy.store(true, Ordering::Release);
+        let buffer = f.buffer.clone();
         self.latest = Some(which);
-        let tx = self.to_show.get_or_insert_with(|| {
-            let (tx, rx) = std::sync::mpsc::channel::<Show>();
-            let (wl, device) = (self.wl.clone(), device.clone());
-            let connection = DMABUFS.get().map(|d| d.connection.clone());
-            let _ = std::thread::Builder::new().name("frames shown".into()).spawn(move || {
-                for job in rx {
-                    match job {
-                        Show::Frame { buffer, px, pieces, sent } => {
-                            // The compositor reads it as it is: not before the card has finished it.
-                            sent.wait(&device, std::time::Duration::from_secs(1));
-                            wl.attach(Some(&buffer), 0, 0);
-                            match pieces {
-                                None => wl.damage_buffer(0, 0, px.0 as i32, px.1 as i32),
-                                Some(p) => {
-                                    for [x, y, w, h] in p.into_iter().filter(|b| b[2] > 0 && b[3] > 0) {
-                                        wl.damage_buffer(x as i32, y as i32, w as i32, h as i32);
-                                    }
-                                }
-                            }
-                            wl.commit();
-                        }
-                        Show::Forget(buffers) => buffers.iter().for_each(|b| b.destroy()),
-                        Show::Commit => wl.commit(),
-                        Show::Run(f) => f(),
-                        Show::Settled(done) => {
-                            if let Some(c) = &connection {
-                                let _ = c.flush();
-                            }
-                            let _ = done.send(());
-                        }
-                    }
-                    if let Some(c) = &connection {
-                        let _ = c.flush();
-                    }
-                }
-            });
-            *self.shared.lock().unwrap() = Some(tx.clone());
-            tx
-        });
-        let _ = tx.send(Show::Frame { buffer: f.buffer.clone(), px: self.px, pieces: pieces.map(|p| p.to_vec()), sent: gpu::Sent::after(queue) });
+        let tx = self.queue(device);
+        let _ = tx.send(Show::Frame { buffer, px: self.px, pieces: pieces.map(|p| p.to_vec()), sent: gpu::Sent::after(queue) });
     }
 
     fn whole_screen(&self) -> bool {
@@ -357,11 +386,36 @@ impl gpu::Frames for OwnFrames {
     fn gave_up(&self) -> bool {
         self.failed
     }
+
+    /// Closed: one transparent pixel, stretched by the viewport over the whole
+    /// surface, and its three frames let go (#147: some 25 MB per 1080p monitor
+    /// for a surface nobody sees). They are made again when it paints. Only with
+    /// a viewport —without it the buffer sets the size— and `single-pixel-buffer`.
+    fn can_rest(&self) -> bool {
+        self.viewport && !self.failed && SINGLE_PIXEL.get().is_some() && DMABUFS.get().is_some()
+    }
+
+    fn rest(&mut self, device: &wgpu::Device) {
+        let (true, Some(m), Some(d)) = (self.can_rest(), SINGLE_PIXEL.get(), DMABUFS.get()) else { return };
+        let empty = self.empty.get_or_insert_with(|| m.create_u32_rgba_buffer(0, 0, 0, 0, &d.qh, Silent)).clone();
+        let _ = self.queue(device).send(Show::Empty(empty));
+        // After the empty one, in the same queue: the one on screen is let go
+        // only once the compositor has the empty one instead.
+        self.forget();
+    }
 }
 
 impl Drop for OwnFrames {
     fn drop(&mut self) {
         self.forget();
+        if let Some(b) = self.empty.take() {
+            match &self.to_show {
+                Some(tx) => {
+                    let _ = tx.send(Show::Forget(vec![b]));
+                }
+                None => b.destroy(),
+            }
+        }
         // Back to the system's frames: the window commits by itself again.
         *self.shared.lock().unwrap() = None;
     }
@@ -887,6 +941,8 @@ struct WaylandWindow {
     /// first frame, still waiting for the card, and a lock screen with no
     /// buffer was killed by Hyprland (`Null buffer attached`, issue 49).
     shown: Arc<Mutex<Option<Sender<Show>>>>,
+    /// Whether it has a viewport that sets its size (see `OwnFrames::rest`).
+    viewport: bool,
 }
 
 impl WaylandWindow {
@@ -951,7 +1007,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn own_frames(&self) -> Option<Box<dyn gpu::Frames>> {
-        (DMABUFS.get().is_some() && !ARGB_LAYOUTS.lock().unwrap().is_empty()).then(|| Box::new(OwnFrames { wl: self.wl.clone(), px: (0, 0), frames: Vec::new(), latest: None, failed: false, to_show: None, shared: self.shown.clone() }) as Box<dyn gpu::Frames>)
+        (DMABUFS.get().is_some() && !ARGB_LAYOUTS.lock().unwrap().is_empty()).then(|| Box::new(OwnFrames { wl: self.wl.clone(), px: (0, 0), frames: Vec::new(), latest: None, failed: false, to_show: None, shared: self.shown.clone(), viewport: self.viewport, empty: None, made_before: false }) as Box<dyn gpu::Frames>)
     }
 
     fn desktop_place(&self) -> Option<(String, (i32, i32))> {
@@ -2376,7 +2432,7 @@ impl PopupHandler for State {
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: a.id,
                 target: gpu::Target::Surface(surface),
-                window: Box::new(WaylandWindow { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursors: e.cursors.clone(), serial: e.serial.clone(), layer: None, toplevel: None, qh: e.qh.clone(), id: a.id, effect: Mutex::new(None), backdrop: a.backdrop.clone(), shown: Default::default() }),
+                window: Box::new(WaylandWindow { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursors: e.cursors.clone(), serial: e.serial.clone(), layer: None, toplevel: None, qh: e.qh.clone(), id: a.id, effect: Mutex::new(None), backdrop: a.backdrop.clone(), shown: Default::default(), viewport: a.viewport.is_some() }),
                 scale: a.parent.scale,
                 size: a.size,
                 mhz: a.parent.mhz,
@@ -2445,6 +2501,9 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
     }
     if let Ok(m) = globals.bind::<ExtBackgroundEffectManagerV1, _, _>(&qh, 1..=1, Silent) {
         let _ = BACKGROUND_EFFECTS.set(m);
+    }
+    if let Ok(m) = globals.bind::<WpSinglePixelBufferManagerV1, _, _>(&qh, 1..=1, Silent) {
+        let _ = SINGLE_PIXEL.set(m);
     }
     if let Ok(global) = globals.bind::<ZwpLinuxDmabufV1, _, _>(&qh, 3..=3, Layouts) {
         let _ = DMABUFS.set(Dmabufs { global, qh: qh.clone(), connection: connection.clone() });
@@ -2617,7 +2676,7 @@ impl State {
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: p.id,
                 target: gpu::Target::Surface(surface),
-                window: Box::new(WaylandWindow { wl: p.role.wl().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: p.role.layer().cloned(), toplevel: p.role.toplevel(), qh: self.qh.clone(), id: p.id, effect: Mutex::new(None), backdrop: p.backdrop.clone(), shown: Default::default() }),
+                window: Box::new(WaylandWindow { wl: p.role.wl().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: p.role.layer().cloned(), toplevel: p.role.toplevel(), qh: self.qh.clone(), id: p.id, effect: Mutex::new(None), backdrop: p.backdrop.clone(), shown: Default::default(), viewport: p.viewport.is_some() }),
                 scale: p.scale,
                 size,
                 mhz,
@@ -2689,7 +2748,7 @@ impl smithay_client_toolkit::session_lock::SessionLockHandler for State {
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: face.id,
                 target: gpu::Target::Surface(paints),
-                window: Box::new(WaylandWindow { wl: face.surface.wl_surface().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: None, toplevel: None, qh: self.qh.clone(), id: face.id, effect: Mutex::new(None), backdrop: None, shown: Default::default() }),
+                window: Box::new(WaylandWindow { wl: face.surface.wl_surface().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: None, toplevel: None, qh: self.qh.clone(), id: face.id, effect: Mutex::new(None), backdrop: None, shown: Default::default(), viewport: face.viewport.is_some() }),
                 scale: 1.0,
                 size,
                 mhz: face.mhz,
