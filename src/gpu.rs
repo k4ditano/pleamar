@@ -4013,7 +4013,11 @@ impl Gpu {
                 // than 20: with blocks of 8, what is reserved is what is used.
                 // Asking for memory is rare here —growing a store, a layer—, so
                 // what is lost in speed is not noticed.
-                memory_hints: wgpu::MemoryHints::MemoryUsage,
+                // Blocks of 4 (the least there is), all the same: `MemoryUsage`'s
+                // grow from 8 to 64, and a block is given back to the driver only
+                // when nothing is left in it, so a layer freed (#147) stayed in the
+                // process's memory, and a texture of 4 or more has a block of its own.
+                memory_hints: wgpu::MemoryHints::Manual { suballocated_device_memory_block_size: (4 << 20)..(4 << 20) },
                 // To read a program's frames straight from its memory on the
                 // card (the scene's `windows`), where the card can.
                 // Video frames as decoders hand them over (NV12), if the card reads them.
