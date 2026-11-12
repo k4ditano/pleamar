@@ -1,0 +1,3 @@
+// expect: ok
+import scene "brought/children-each.plm" as P
+scene Main { }

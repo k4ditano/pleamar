@@ -1,0 +1,4 @@
+// expect: ok
+import scene "brought/monitor-a.plm" as A
+import scene "brought/monitor-b.plm" as B
+scene Main { }

@@ -648,6 +648,24 @@ mod tests {
     }
 
     #[test]
+    fn each_scene_brought_in_reads_its_own_monitor_text_and_zones() {
+        // Issue 144: `screens: mon` in two scenes brought in, each its own `mon`.
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/brought-monitor-text.plm")).unwrap();
+        for (surface, text, monitor) in [("A.p", "A.mon", "a-monitor"), ("B.p", "B.mon", "b-monitor")] {
+            let s = scene.surfaces.iter().find(|s| s.name == surface).unwrap_or_else(|| panic!("no surface {surface}"));
+            let t = s.screens_from.expect("its screens follow a text");
+            assert_eq!(scene.texts[t.0 as usize].0, text);
+            assert_eq!(s.screens, crate::scene::Screens::Named(vec![monitor.to_owned()]));
+        }
+        // Issue 143: a zone in a component's children on a `screens: each` surface, one per copy, each with its rules.
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/brought-children-each.plm")).unwrap();
+        let (alone, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/brought/children-each.plm")).unwrap();
+        assert_eq!(scene.rules.len(), alone.rules.len());
+        assert_eq!(scene.zones.len(), alone.zones.len());
+        assert!(scene.zones.iter().any(|z| z.id == "P.hit_a#screen1"), "{:?}", scene.zones.iter().map(|z| z.id).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn a_zone_named_in_a_repeat_inside_a_for_is_each_rows_own() {
         use crate::scene::Trigger;
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/zone-in-repeat-in-for.plm")).unwrap();

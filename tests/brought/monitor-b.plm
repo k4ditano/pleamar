@@ -1,0 +1,13 @@
+// Brought into brought-monitor-text.plm (issue 144): a surface on the monitor its own text names,
+// the text called the same in both scenes.
+scene Sb {
+    text mon = "b-monitor"
+    surface p {
+        size: 100, 100
+        anchor: top
+        screens: mon
+        open: true
+        zone box z { from: 0, 0; size: 10, 10 }
+        on press right z { }
+    }
+}

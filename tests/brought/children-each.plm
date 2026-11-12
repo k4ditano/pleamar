@@ -1,0 +1,16 @@
+// Brought into brought-children-each.plm (issue 143): a zone in a component's children on a `screens: each` surface, named by rules.
+scene Panel {
+    fact n = 0
+    component Wrap(x: number) { group { move: x, 0; children } }
+    surface p {
+        size: 200, 100
+        anchor: top
+        screens: each
+        open: true
+        Wrap(5) {
+            zone box hit_a { from: 0, 0; size: 20, 20 }
+            on press hit_a { n = n + 1 }
+            on press right hit_a { }
+        }
+    }
+}

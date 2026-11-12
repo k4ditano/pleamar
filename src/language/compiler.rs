@@ -930,6 +930,8 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         o.errors.push(CompileError::at(1, 1, format!("the lock surface '{}' has to say when it locks: `open: locked`, with a fact. Without it, the session would be locked from the start", s.name)));
     }
     for (which, name, (l, col)) in std::mem::take(&mut o.pending_anchors) {
+        // Read where it is written: in a scene brought in, its own names (G22, issue 144).
+        PEEKED.with(|m| m.set((l, col)));
         let g = o.global(&name);
         let Some(h) = o.facts.get(&g).copied() else {
             let known: Vec<&String> = o.facts.keys().collect();
@@ -957,6 +959,8 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         }
     }
     for (which, name, (l, col)) in std::mem::take(&mut o.pending_screens) {
+        // Read where it is written: in a scene brought in, its own names (G22, issue 144).
+        PEEKED.with(|m| m.set((l, col)));
         let g = o.global(&name);
         let Some(t) = o.texts.get(&g).copied() else {
             let known: Vec<&String> = o.texts.keys().collect();
@@ -1459,7 +1463,22 @@ impl<'a> Compiler<'a> {
 
     /// A zone by the name a rule gives it: this copy's own, if it has one.
     fn zone_named(&self, n: &str) -> Option<ZoneId> {
-        self.screen_mark().and_then(|m| self.zones.get(&format!("{n}{m}"))).or_else(|| self.zones.get(n)).copied()
+        let own = self.brought_prefixed(n);
+        let mark = self.screen_mark();
+        mark.as_ref().and_then(|m| self.zones.get(&format!("{n}{m}")))
+            .or_else(|| mark.as_ref().zip(own.as_ref()).and_then(|(m, o)| self.zones.get(&format!("{o}{m}"))))
+            .or_else(|| self.zones.get(n))
+            .or_else(|| own.as_ref().and_then(|o| self.zones.get(o)))
+            .copied()
+    }
+
+    /// A name a scene brought in (G22) writes, under its name, when it is not already: a zone
+    /// a copy per monitor declares inside a component's `children` is `P.hit#screen1`, and a
+    /// rule there that names it gets back the bare `hit` (issue 143).
+    fn brought_prefixed(&self, n: &str) -> Option<String> {
+        let b = self.brought_at_peek()?;
+        let own = format!("{}.", b.name);
+        (!n.starts_with(&own) && !ALWAYS.contains(&n)).then(|| format!("{own}{n}"))
     }
 
     /// The name with which something is declared from in here.
@@ -8628,6 +8647,9 @@ impl<'a> Compiler<'a> {
                     let g = self.global(s);
                     if let Some(m) = self.screen_mark() {
                         named.insert(format!("{g}{m}"));
+                        if let Some(o) = self.brought_prefixed(&g) {
+                            named.insert(format!("{o}{m}"));
+                        }
                     }
                     named.insert(g);
                 }
