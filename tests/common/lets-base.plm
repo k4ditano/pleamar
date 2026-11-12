@@ -1,0 +1,4 @@
+// A library with a `let` that a scene's array and folds read.
+library Base {
+    let base = 4
+}

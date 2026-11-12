@@ -1495,6 +1495,16 @@ impl<'a> Compiler<'a> {
         self.brought_scenes.iter().find(|b| b.files.contains(&file) || b.lib_lets.iter().any(|(copy, _)| *copy == file))
     }
 
+    /// The name a scene-level `let` written in this line has in the compiler: `Bar.x` when the
+    /// line is in a scene brought in and the scene declared it, `x` otherwise (issue 149).
+    /// For what works from a `repeat` and not from a token: its folds.
+    fn let_name_in(&self, line: usize, name: &str) -> String {
+        match self.owner_of_file(line / super::PER_FILE) {
+            Some(b) => self.boundary_of.get(&b.files[0]).and_then(|own| own.get(name)).cloned().unwrap_or_else(|| name.to_owned()),
+            None => name.to_owned(),
+        }
+    }
+
     /// The same for the last token read.
     fn let_owner(&self) -> Option<&'a BroughtScene> {
         self.owner_of_file(PEEKED.with(|m| m.get().0) / super::PER_FILE)
@@ -6420,8 +6430,10 @@ impl<'a> Compiler<'a> {
                 // What each of the scene's `let`s it folds is worth as it begins.
                 let mut start = Scope { folds: true, ..Default::default() };
                 for name in fold_targets(n.body.as_deref().unwrap_or(&[])) {
-                    let own = o.hoisting.flatten().map(|s| format!("{name}#screen{s}")).filter(|m| o.lets.contains_key(m));
-                    if let Some(e) = own.as_ref().or(Some(&name)).and_then(|m| o.lets.get(m)) {
+                    // The `let` it folds, by the name it has in the compiler: in a scene brought in it is `Bar.x`.
+                    let g = o.let_name_in(n.line, &name);
+                    let own = o.hoisting.flatten().map(|s| format!("{g}#screen{s}")).filter(|m| o.lets.contains_key(m));
+                    if let Some(e) = own.as_ref().or(Some(&g)).and_then(|m| o.lets.get(m)) {
                         start.exprs.insert(name, e.clone());
                     }
                 }
@@ -6432,7 +6444,7 @@ impl<'a> Compiler<'a> {
                 settled.push((o.hoisting.flatten(), o.scopes.pop().unwrap()));
             });
             for (copy, folds) in settled {
-                self.settle_folds(copy, &folds);
+                self.settle_folds(copy, &folds, n.line);
             }
             return Ok(());
         }
@@ -6465,7 +6477,10 @@ impl<'a> Compiler<'a> {
         for e in self.top {
             let Entry::Node(n) = e else { continue };
             let (Some(TokenKind::Id(w)), Some(TokenKind::Id(name)), Some(TokenKind::Sym("="))) = (n.head.first().map(|t| &t.kind), n.head.get(1).map(|t| &t.kind), n.head.get(2).map(|t| &t.kind)) else { continue };
-            if w != "let" || self.lets.contains_key(name) {
+            // In a scene brought in, a `let` is under its scene's name (issue 149).
+            let owner = self.owner_of_file(n.line / super::PER_FILE);
+            let key = owner.map_or_else(|| name.clone(), |b| format!("{}.{name}", b.name));
+            if w != "let" || self.lets.contains_key(&key) {
                 continue;
             }
             let before = self.unwatched.replace(true);
@@ -6473,8 +6488,11 @@ impl<'a> Compiler<'a> {
             let value = self.expr(&mut c).ok().filter(|_| c.at_end());
             self.unwatched.set(before);
             if let Some(Expr::K(v)) = value {
-                self.lets.insert(name.clone(), Expr::K(v));
-                added.push(name.clone());
+                if let Some(b) = owner {
+                    self.boundary_of.entry(b.files[0]).or_default().insert(name.clone(), key.clone());
+                }
+                self.lets.insert(key.clone(), Expr::K(v));
+                added.push(key);
             }
         }
         added
@@ -6573,8 +6591,10 @@ impl<'a> Compiler<'a> {
 
     /// After the `repeat`, each fold is its last link: the scene's, and a
     /// copy's own where its chain is another.
-    fn settle_folds(&mut self, copy: Option<usize>, folds: &Scope) {
-        for (name, e) in &folds.exprs {
+    fn settle_folds(&mut self, copy: Option<usize>, folds: &Scope, line: usize) {
+        for (local, e) in &folds.exprs {
+            // By the name the `let` has in the compiler (`Bar.x` in a scene brought in), the one it is read by.
+            let name = &self.let_name_in(line, local);
             let raw = format!("{e:?}");
             match copy {
                 None => {

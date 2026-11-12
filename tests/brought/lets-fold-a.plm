@@ -1,0 +1,14 @@
+// A scene of its own, brought into brought-lets-fold.plm as FoldA: a fold, an array, a `repeat` bounded by a `let`.
+import "../common/lets-base.plm"
+scene FoldA {
+    surface { size: 200, 40; anchor: top_left }
+    fact k = 1
+    let n = 2
+    let x = 0
+    let a[3]
+    repeat i in 0..n { fact g.$i = 0 }
+    repeat i in 0..4 { x += 10 + k * 5 }
+    repeat i in 0..3 { a[i] = base + i }
+    zone box hit { from: 0, 0; size: x, 40 }
+    zone box arr { from: 0, 0; size: a[2] * 5, 10 }
+}

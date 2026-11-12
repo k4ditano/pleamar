@@ -1,0 +1,9 @@
+// expect: ok
+// Issue 149 (what Calima's island needs): in a scene brought in, a fold (`x += …` in a `repeat`), a `repeat`
+// bounded by a `let`, and an array that reads a library's `let` all use the scene's own `let`s, by the
+// name they have under it. The fold left in its last link: FoldA's `x` is 60 and FoldB's 21.
+import scene "brought/lets-fold-a.plm" as FoldA
+import scene "brought/lets-fold-b.plm" as FoldB
+scene Host {
+    surface { size: 10, 10 }
+}

@@ -708,6 +708,20 @@ mod tests {
     }
 
     #[test]
+    fn a_fold_a_bound_and_an_array_of_a_scene_brought_in_read_its_own_lets() {
+        // Issue 149 (Calima's island): a fold reads and leaves its `let` under the scene's name, a `repeat` bounded
+        // by a `let` unfolds with the scene's own, and an array reads the `let` of a library the scene imports.
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/brought-lets-fold.plm")).unwrap();
+        assert_eq!(zone_width(&scene, "FoldA.hit"), 60.0, "FoldA's fold: four turns of 10 + k * 5");
+        assert_eq!(zone_width(&scene, "FoldB.hit"), 21.0, "FoldB's fold: three turns of 7");
+        assert_eq!(zone_width(&scene, "FoldA.arr"), 30.0, "FoldA's a[2] is base + 2");
+        assert_eq!(zone_width(&scene, "FoldB.arr"), 50.0, "FoldB's a[2] is base * 2 + 2");
+        let has = |name: &str| scene.facts.iter().any(|(n, _)| *n == name);
+        assert!(has("FoldA.g.1") && !has("FoldA.g.2"), "FoldA unfolds two turns (its n is 2)");
+        assert!(has("FoldB.g.2"), "FoldB unfolds three (its n is 3)");
+    }
+
+    #[test]
     fn a_scene_whose_surfaces_all_have_a_name_brings_no_surface_of_its_own() {
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/brought-all-named.plm")).unwrap();
         let surfaces: Vec<&str> = scene.surfaces.iter().map(|s| s.name.as_str()).collect();

@@ -1,0 +1,13 @@
+// The same names, other values: it brings its own `n`, `x` and `a`.
+import "../common/lets-base.plm"
+scene FoldB {
+    surface { size: 200, 40; anchor: top_left }
+    let n = 3
+    let x = 0
+    let a[3]
+    repeat i in 0..n { fact g.$i = 0 }
+    repeat i in 0..3 { x += 7 }
+    repeat i in 0..3 { a[i] = base * 2 + i }
+    zone box hit { from: 0, 0; size: x, 40 }
+    zone box arr { from: 0, 0; size: a[2] * 5, 10 }
+}
