@@ -1,0 +1,11 @@
+// expect: error «a `surface` cannot go inside a `repeat`»
+language 0.1
+scene RepeatedSurface {
+    surface { size: 1, 1; anchor: top_left; level: background }
+    repeat j in 0..4 {
+        surface dk.$j {
+            size: 300, 60; anchor: bottom_right; level: overlay
+            box { from: 0, 0; size: 300, 60; color: #000000 }
+        }
+    }
+}

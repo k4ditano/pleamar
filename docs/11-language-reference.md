@@ -500,6 +500,8 @@ Its loose `prop`s and `fact`s, though, are **one for all the copies**: they are 
 
 **A named surface beside the copies** (one with its own `screens:`, such as a text naming the monitor a panel was opened on) reads `screen.index`, `screen.width` and `screen.height` from **the copy on its monitor**, and so do the loose `let`s it names: `let mine = if(panel_on == screen.index, 1, 0)` is 1 there when the copy it sits over is the panel's, as it is in that copy. On a monitor without a copy, `screen.index` is -1. So a panel the copies all open can be drawn once, on a surface of its own that follows the monitor, instead of once in every copy.
 
+That holds for **one** monitor at a time. A named surface whose `screens:` names several (a list, or a text such as `"HDMI-A-2,HDMI-A-1"`) is one surface shown on each of them: the same pixels everywhere, with the `screen.index` of the first monitor it is on. To draw something different on each, give each monitor its own named surface (`screens: dk_s0` … `dk_s3`, one name each), or use `screens: each`. A `surface` cannot go inside a `repeat`: it is an error.
+
 ```
 surface { size: full, 44; anchor: top; screens: each }
 model mon max 4 { active: number = 1; title: text }     // one record per monitor, from the logic

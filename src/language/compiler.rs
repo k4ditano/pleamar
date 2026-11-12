@@ -6389,6 +6389,15 @@ impl<'a> Compiler<'a> {
     /// pass 1 only its `let`s and definitions, so that what comes after it can
     /// read them; in pass 2 the rest, with the definitions already made.
     fn repeat(&mut self, n: &'a Node, c: &mut Cur) -> R<()> {
+        // A surface is declared once, with its own name: inside a `repeat` it was dropped
+        // without a word —`--check` passed and no surface was made— (#150).
+        let surface_inside = n.body.as_deref().unwrap_or(&[]).iter().find_map(|e| match e {
+            Entry::Node(s) if matches!(s.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "surface") => Some(s),
+            _ => None,
+        });
+        if let Some(s) = surface_inside {
+            return Err(CompileError::at(s.line, s.col, "a `surface` cannot go inside a `repeat`: declare each one with its own name (`surface dk0 { … }`, `surface dk1 { … }`), or give one `screens: each` for a copy on each monitor"));
+        }
         let mut head = self.repeat_head(c);
         // In pass 0, one at the scene's level declares its values with the
         // other declarations: anything can read them, wherever it is written.
