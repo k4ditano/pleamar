@@ -21,6 +21,7 @@ const DOCS: &[(&str, &str, &str)] = &[
     ("recipes", "whole scenes that work", include_str!("../docs/recipes.md")),
     ("logic", "what the .luau logic can and cannot do", include_str!("../docs/10-luau-logic.md")),
     ("measuring", "measuring what a scene costs and how long its animations last", MEASURING),
+    ("limitations", "what does not work yet, and what was fixed when and how it was checked", include_str!("../docs/08-limitations.md")),
     ("skill", "how to write scenes well: what an agent reads first (the skill itself)", SKILL),
     ("desktop", "the desktop: shells, apps, the window manager, from ~/.config/pleamar", DESKTOP),
 ];
@@ -49,7 +50,7 @@ pub fn docs(topic: &str) -> i32 {
                 eprintln!("there is no «{topic}»:");
             }
             for (name, what, _) in DOCS {
-                println!("  pleamar --docs {name:<10} {what}");
+                println!("  pleamar --docs {name:<11} {what}");
             }
             i32::from(!topic.is_empty())
         }

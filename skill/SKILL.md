@@ -45,6 +45,7 @@ pleamar --docs guide       # from zero to a bar, six steps
 pleamar --docs recipes     # whole scenes that work: lists, grids, gradients, paths, saved settings, windows, popups
 pleamar --docs logic       # what the .luau logic can and cannot do
 pleamar --docs measuring   # measuring cost and animations
+pleamar --docs limitations # what does not work yet (and what was fixed, when, how it was checked)
 pleamar --grammar          # every word the compiler accepts
 ```
 
@@ -122,6 +123,7 @@ scene Name {
     text title = "…"
     model rows max 14 { label: text }
     event chosen ->                           // `->` means the logic hears it too
+    event moved(x, y) ->                      // an event that says what it carries: every `emit` is checked
     prop x = 360 ~calm                        // something that moves: a spring
     let mint = #9ed6bd                        // a name for an expression or colour
 
@@ -213,6 +215,75 @@ scene Name {
   `services: "audio"` lets the logic know the volume; changing it needs
   `"audio.volume"` or `"audio.*"`.
 
+## A shell of several scenes: `import scene`
+
+A bar, its notices and an OSD are better as **separate scenes** —each opens and
+restarts alone— and can still run **in one process** (one render, one graphics
+card, one connection to the compositor). The scene that is opened brings the
+others in:
+
+```
+import scene "bar.plm" as Bar           // shell.plm: nothing of its own needed
+import scene "notices.plm" as Notices
+scene Shell { }
+```
+
+```
+uses scene "bar.plm" as Bar             // notices.plm: it talks to Bar, and still opens alone
+scene Notices {
+    surface toast { size: 320, 90; anchor: top_right }
+    box card { from: 10, 10; size: 300, 70; corner: 14; color: #23272cf2 }
+    text "{Bar.unread} unread" { at: 160, 45; anchor: center; size: 12; color: #f5f7f5 }
+    on press card { emit Bar.landed(id: 7, x: local.x) }
+}
+```
+
+- Brought in, **everything a scene declares is under its name**: its `unread` is
+  `Bar.unread`, its zone `hit` is `Bar.hit`, its unnamed surface is `Bar`.
+- It **reads** another's facts, texts and models (`Bar.unread`), hears its
+  events (`on Bar.landed(c)`) and emits them (`emit Bar.landed(id: 7, x: 0)`):
+  all checked when loading, at both ends. It **writes only its own**: to change
+  another's value, emit an event that its owner answers.
+- `uses scene "bar.plm" as Bar` is what lets a scene that names another **open
+  alone**: then Bar's facts keep their first values and its events never come.
+- Each one keeps its logic (`bar.luau`, under its name: `fact.unread` is
+  `Bar.unread`; another's names whole: `fact["Notices.count"]`,
+  `on("Notices.dismissed", …)`, `emit("Bar.landed", { id = 7, x = 0 })`), its own
+  `permissions { … }` (no `--approve` needed) and its name for `--say`
+  (`pleamar --say bar "emit landed"` still reaches it).
+- They share one render: a slow one slows the others. Details: «Scenes brought
+  in» in `pleamar --docs reference`.
+
+## Text, fields, lists and windows
+
+- **A text that is written by someone** (a chat, notes, an agent's answer):
+  `markdown: true` shows what its marks mean —bold, italic, links that can be
+  pressed (`on link`, or `on("link", …)` in the logic), lists, tables, quotes,
+  checkboxes, `code`—; `code_block: #1b1e22` boxes the fenced blocks, `images:`
+  shows the pictures it names, and `mark 4..20, #74b9ff` inside the text colours a stretch.
+- **A field** is an `input`: `lines: 4` (or `height:`) for several lines, where
+  Enter breaks the line and Ctrl+Enter sends (`send: enter` turns it round);
+  `placeholder:` can hold live text; `mentions:` shows `@names` as chips;
+  `paste: logic` lets the logic decide what a paste does (`on("paste:draft", …)`,
+  with `p.text`, `p.image`, `p.uris`). Undo and redo, selection and an input
+  method come with it.
+- **A list that changes**: `for m in said key m.id { … }` keeps each record's
+  copy (its springs, its hover) while it stays in the list. A layout with `view:`
+  works out which rows are seen; `stick: end` keeps it at its end, as a chat.
+- **Windows and popups**: `decorations: none` on a window's surface draws its
+  own frame, and a zone with `handle: self` carries it (`handle: self, bottom_right` stretches it);
+  a `popup` can take the keyboard (`keyboard: true`, Escape closes it) and open
+  out of another (`parent: menu`).
+- **Ready pieces**: `import "pleamar:ui"` brings `Button`, `Switch`, `Tabs`,
+  `Select`, `Slider`, `Checkbox`, `Menu`/`MenuItem`, `Table`/`TableRow`,
+  `Tooltip`, `Toast`, `Chip`, `Avatar`, `Card`, `Tile`… with a theme you can
+  change (§10.2 of the reference).
+- **Colours with their transparency**: `#rrggbbaa`, kept through `mix()`, `if()`
+  and `pick()`. A row or column can have a `border:`.
+- **Pictures the logic has**: `image me = data "me"` (bytes from the logic),
+  `sys.ask("clipboard.image")` for a copied picture, `sys.ask("files.pick", "open",
+  "*.png")` for the desktop's own file chooser.
+
 ## When the language falls short: your own shader
 
 Before faking an effect with a hundred shapes, write it. `shader aurora = file
@@ -258,6 +329,7 @@ fact.open = true                 -- a declared fact
 text.title = "hello"             -- a declared live text
 model.rows = { { label = "a" } } -- the whole list at once, atomically
 emit("chosen", 3)                -- a declared event
+emit("moved", { x = 3, y = 4 })  -- one that carries several values: a table
 on("chosen", function(n) end)    -- listen: events, "fact:x", "text:x", "press:zone"
 after(200, f)  every(1000, f)    -- timers
 run("date", {"+%H:%M"}, f)       -- a command, if `permissions { run: … }` allows it
@@ -307,3 +379,14 @@ adds a mouse and keys there. Never drive the real mouse or keyboard.
 
 Do not say an animation lasts what it was asked to last without measuring it
 (`--record`, and `pleamar --docs measuring`).
+
+## When the graphics card is the problem
+
+pleamar picks the card the compositor paints with, asks only for what that card
+has, and tries the next one (software last, then OpenGL) when a card cannot build
+its shader; the log says which and why (`render · …`). Blur and glass a card
+refuses are switched off, not fatal. To see a scene as it is painted where that
+happens, `PLEAMAR_NO_EFFECTS=1`; to choose, `PLEAMAR_GPU=high` (the fast card of
+a laptop) or `PLEAMAR_BACKEND=gl` / `vulkan`. A card lost while running (a
+driver reset) ends the process with 70, for whatever supervises it to start it
+again.

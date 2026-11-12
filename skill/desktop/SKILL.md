@@ -208,6 +208,9 @@ Their items are named, and acting on one answers with what happened:
 order (`drag knob.1 0 -40`, `hold X`, `wheel X 3`), `wait PID expr 'status ==
 "Saved"'` for one of their own expressions. An item the scene keeps for the
 user's hand (`persons` in its states) is refused: ask them to press it.
+A scene that brings others in (`import scene "bar.plm" as Bar`) names their
+items under their names: `press PID @Bar.hit`. Each of them also answers
+`pleamar --say bar …` by its own file's name.
 
 ## Exit codes
 
@@ -230,6 +233,11 @@ user's hand (`persons` in its states) is refused: ask them to press it.
 - **The keyboard before the mouse**, where there is a shortcut: in a browser
   `hotkey PID ctrl+l`, then `type PID -- "address"` and `key PID enter`.
 - **Any text can be typed**: accents, ñ and emoji too.
+- **A program closed to the tray has no window**, so `windows` does not list it
+  even though it runs. `agent open` with its command brings its window back
+  (most programs open only one), without taking the user's keyboard.
+- **In a chat box, a line break is `hotkey PID shift+enter`**: Enter alone sends
+  what is written so far.
 - Things that open on their own (a translation offer, a cookie banner, a
   video that plays) are the page's, not yours: close them if they are in the
   way, and mention them.
