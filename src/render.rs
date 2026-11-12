@@ -829,6 +829,14 @@ pub fn run(
             // resting, there is nothing to paint after it. It woke it once per
             // frame of a window in the scene —a round for nothing, every time—.
             while incoming.is_empty() {
+                // What a sheet holds for a while (layers, glass, canvas) is given back when
+                // it has gone unused long enough, though the scene paints nothing (#147).
+                let idle_at = gpu.as_ref().and_then(|_| sheets.iter().filter_map(Gpu::idle_deadline).min());
+                if let (Some(g), Some(at)) = (&gpu, idle_at) {
+                    if at <= crate::clock::now() {
+                        sheets.iter_mut().for_each(|l| g.release_idle(l));
+                    }
+                }
                 // A program's buffer still on loan is looked at every couple of
                 // milliseconds, without a round: it goes back as soon as it is copied.
                 if let (Some(g), Some(send)) = (&gpu, &nest) {
@@ -844,7 +852,8 @@ pub fn run(
                         !done
                     });
                 }
-                let wait = until.saturating_duration_since(crate::clock::now());
+                let wake = idle_at.filter(|at| *at > crate::clock::now()).map_or(until, |at| at.min(until));
+                let wait = wake.saturating_duration_since(crate::clock::now());
                 let wait = if nest_lent.is_empty() { wait } else { wait.min(Duration::from_millis(2)) };
                 match rx.recv_timeout(wait) {
                     // A sheet that skipped a round for it paints now: it wakes the render.
@@ -876,6 +885,11 @@ pub fn run(
             resting = false;
             last = crate::clock::now() - Duration::from_secs_f32(period_ms / 1000.0);
             woke = true;
+        }
+        // The same on the rounds that do paint: a sheet that is not painted (a closed surface)
+        // would otherwise hold what it had for ever.
+        if let Some(g) = &gpu {
+            sheets.iter_mut().for_each(|l| g.release_idle(l));
         }
         let rested_at = crate::clock::now();
         sec_before[0] = (rested_at - top).as_secs_f64() * 1000.0;

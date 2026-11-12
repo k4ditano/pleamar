@@ -88,22 +88,23 @@ pub struct Soften {
 
 /// A sheet's scratch pictures: at each size, from the whole down to 1/32, two
 /// —one is read while the other is written—. Made as they are first needed,
-/// and let go after `IDLE_FRAMES` frames without a blur (a 1080p sheet's are
+/// and let go after `IDLE_FOR` without a blur (a 1080p sheet's are
 /// some 13 MB of the card's, and a blur is often a moment: a panel coming in).
 #[derive(Default)]
 pub struct Levels {
     px: (u32, u32),
     by_size: RefCell<Vec<Option<[(wgpu::Texture, wgpu::TextureView); 2]>>>,
-    /// Frames painted since one of them was last used.
-    idle: Cell<u32>,
+    /// When one of them was last used.
+    used: Cell<Option<std::time::Instant>>,
 }
 
-/// About two seconds at 60 Hz.
-const IDLE_FRAMES: u32 = 120;
+/// How long they are kept without a blur. By time and not by frames painted:
+/// a scene at rest paints none, and would hold them for ever (#147).
+const IDLE_FOR: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl Levels {
     fn level(&self, d: &wgpu::Device, k: u32) -> [wgpu::TextureView; 2] {
-        self.idle.set(0);
+        self.used.set(Some(crate::clock::now()));
         let mut v = self.by_size.borrow_mut();
         if v.len() <= k as usize {
             v.resize_with(k as usize + 1, || None);
@@ -173,11 +174,23 @@ impl Soften {
         if levels.px != px {
             *levels = Levels { px, ..Default::default() };
         }
-        let idle = levels.idle.get().saturating_add(1);
-        levels.idle.set(idle);
-        if idle > IDLE_FRAMES && !levels.by_size.borrow().is_empty() {
+        Self::release_idle(levels);
+    }
+
+    /// Lets go of the scratch pictures if they have gone unused long enough.
+    /// Whether it did.
+    pub fn release_idle(levels: &Levels) -> bool {
+        let idle = levels.used.get().is_some_and(|u| crate::clock::since(u) >= IDLE_FOR);
+        if idle && !levels.by_size.borrow().is_empty() {
             levels.by_size.borrow_mut().clear();
+            return true;
         }
+        false
+    }
+
+    /// When `release_idle` will have something to let go of, if it holds any.
+    pub fn idle_deadline(levels: &Levels) -> Option<std::time::Instant> {
+        if levels.by_size.borrow().is_empty() { None } else { levels.used.get().map(|u| u + IDLE_FOR) }
     }
 
     /// How many halvings, and the gaussian left for that size, for a blur of

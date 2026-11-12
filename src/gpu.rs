@@ -22,13 +22,15 @@ fn windows_budget() -> u64 {
     static BUDGET: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *BUDGET.get_or_init(|| std::env::var("PLEAMAR_WINDOWS_BUDGET_MB").ok().and_then(|v| v.parse::<u64>().ok()).filter(|m| *m > 0).map_or(1 << 30, |m| m << 20))
 }
-/// How many frames painted without groups with opacity until their layers are given back.
-const IDLE_LAYER_FRAMES: u32 = 300;
-/// How many frames a surface keeps what it took of its own painting for its
-/// glass after the last one that needed it.
-const IDLE_OWN_FRAMES: u32 = 300;
-/// How many frames a surface keeps its canvas (`Sheet::kept`) painting all of it every time.
-const IDLE_KEPT_FRAMES: u32 = 300;
+/// How long without groups with opacity until their layers are given back. By
+/// time and not by frames painted: a scene at rest paints none, and would
+/// hold them for ever (#147).
+const IDLE_LAYER_FOR: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long a surface keeps what it took of its own painting for its
+/// glass after the last time that needed it.
+const IDLE_OWN_FOR: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long a surface keeps its canvas (`Sheet::kept`) after the last time it was used.
+const IDLE_KEPT_FOR: std::time::Duration = std::time::Duration::from_secs(5);
 /// The strip added to the surface for the frame graph.
 pub const HUD_HEIGHT: f32 = 84.0;
 /// How much room to start with. If a scene asks for more, the stores grow to double.
@@ -3614,9 +3616,9 @@ pub struct Sheet {
     known_as: (u8, (u32, u32)),
     /// On a surface without a lens: the canvas it is painted on, which stays
     /// from frame to frame and is copied to the screen, so only what changed
-    /// is painted again. And how many frames it has gone without that.
+    /// is painted again. And when it last used it.
     kept: Option<(wgpu::Texture, wgpu::TextureView)>,
-    idle_kept_frames: u32,
+    kept_used: std::time::Instant,
     pub name: String,
     pub mhz: i32,
     pub scale: f32,
@@ -3648,9 +3650,9 @@ pub struct Sheet {
     soft: crate::soften::Levels,
     layer_group: wgpu::BindGroup,
     /// How many layers it has of the surface's size (0: only the dummy one),
-    /// and how many frames it has gone without using any.
+    /// and when it last used any.
     layers: u32,
-    idle_layer_frames: u32,
+    layers_used: std::time::Instant,
     /// The last thing the compositor was asked to blur, in its coordinates.
     pub blur_rects: Vec<[i32; 4]>,
     /// If it shows glass and what is behind can be seen: its canvas and its background.
@@ -3659,8 +3661,8 @@ pub struct Sheet {
     /// monitor of pleamar-wm's own, and on a surface what a glass with
     /// something of the scene's under it sees before the background.
     pub own: Option<crate::lens::Own>,
-    /// How many frames it has gone without a glass over anything of its own.
-    idle_own_frames: u32,
+    /// When it last had a glass over anything of its own.
+    own_used: std::time::Instant,
     /// Whether this frame has glass in its piece of the plane.
     pub wants_lens: bool,
     /// Which capture of what is behind is on the way, and since when.
@@ -4548,8 +4550,8 @@ impl Gpu {
         });
         let (layer_views, layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
         let mut l = Sheet {
-            id: n.id, frame_no: 0, painted_as: Vec::new(), damage_log: Default::default(), known_as: (0, (0, 0)), kept: None, idle_kept_frames: 0, name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, unseen: false, missed: 0, cleared: false, view: n.view,
-            target: n.target, spare: None, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, soft: Default::default(), layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, own: None, idle_own_frames: 0, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, glass_rects: Vec::new(), glass_src: Vec::new(), asked_box: [0; 4], capture_asked: std::time::Instant::now(), rate_last: None, capture_taken: long_ago(), capture_owed: false, capture_forced: false, captures_lost: 0, glass_grew: false, watch_replaced: false, owed_damage: Vec::new(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], presented: false, keyboard_mode: None,
+            id: n.id, frame_no: 0, painted_as: Vec::new(), damage_log: Default::default(), known_as: (0, (0, 0)), kept: None, kept_used: crate::clock::now(), name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, unseen: false, missed: 0, cleared: false, view: n.view,
+            target: n.target, spare: None, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, soft: Default::default(), layers: 0, layers_used: crate::clock::now(), blur_rects: Vec::new(), lens: None, own: None, own_used: crate::clock::now(), wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, glass_rects: Vec::new(), glass_src: Vec::new(), asked_box: [0; 4], capture_asked: std::time::Instant::now(), rate_last: None, capture_taken: long_ago(), capture_owed: false, capture_forced: false, captures_lost: 0, glass_grew: false, watch_replaced: false, owed_damage: Vec::new(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], presented: false, keyboard_mode: None,
         };
         // Frames of our own where the platform makes them, so the compositor
         // is told which piece of each changed: a swapchain's are handed over
@@ -4603,7 +4605,46 @@ impl Gpu {
     fn release_layers(&self, l: &mut Sheet) {
         (l.layer_views, l.layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
         l.layers = 0;
-        l.idle_layer_frames = 0;
+        l.layers_used = crate::clock::now();
+    }
+
+    /// Gives back what a sheet holds for a while and has gone unused for long
+    /// enough, without painting: a scene at rest paints nothing, and counting
+    /// painted frames it would keep them for ever (#147).
+    pub fn release_idle(&self, l: &mut Sheet) {
+        let now = crate::clock::now();
+        let mut gave = false;
+        if l.layers > 0 && now.saturating_duration_since(l.layers_used) >= IDLE_LAYER_FOR {
+            self.release_layers(l);
+            gave = true;
+        }
+        if l.own.is_some() && now.saturating_duration_since(l.own_used) >= IDLE_OWN_FOR {
+            l.own = None;
+            gave = true;
+        }
+        if l.kept.is_some() && now.saturating_duration_since(l.kept_used) >= IDLE_KEPT_FOR {
+            l.kept = None;
+            gave = true;
+        }
+        gave |= crate::soften::Soften::release_idle(&l.soft);
+        // The card only frees what was dropped when the device is polled, and a
+        // scene at rest submits nothing that would do it.
+        if gave {
+            let _ = self.device.poll(wgpu::PollType::Poll);
+        }
+    }
+
+    /// When `release_idle` will have something to give back, if the sheet holds anything for a while.
+    pub fn idle_deadline(l: &Sheet) -> Option<std::time::Instant> {
+        [
+            (l.layers > 0).then(|| l.layers_used + IDLE_LAYER_FOR),
+            l.own.is_some().then(|| l.own_used + IDLE_OWN_FOR),
+            l.kept.is_some().then(|| l.kept_used + IDLE_KEPT_FOR),
+            crate::soften::Soften::idle_deadline(&l.soft),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     /// That there are at least `n` layers of the surface's size; and if it has
@@ -4615,12 +4656,11 @@ impl Gpu {
             l.layers = n;
         }
         if n == 0 && l.layers > 0 {
-            l.idle_layer_frames += 1;
-            if l.idle_layer_frames > IDLE_LAYER_FRAMES {
+            if crate::clock::since(l.layers_used) > IDLE_LAYER_FOR {
                 self.release_layers(l);
             }
         } else {
-            l.idle_layer_frames = 0;
+            l.layers_used = crate::clock::now();
         }
     }
 
@@ -5405,7 +5445,7 @@ impl Gpu {
         let readable = l.lens.is_some() || l.kept.as_ref().is_some_and(|k| k.0.usage().contains(wgpu::TextureUsages::TEXTURE_BINDING));
         let over_own = glass && own_box.is_some() && !whole_screen && readable && d.glass_over_own(v);
         if let Some(b) = own_box.filter(|_| whole_screen || over_own) {
-            l.idle_own_frames = 0;
+            l.own_used = crate::clock::now();
             let need = (b[2] - b[0], b[3] - b[1]);
             if l.own.as_ref().is_none_or(|o| !o.fits(need, l.px) || o.blur_generation() != self.blur.generation) {
                 l.own = Some(crate::lens::Own::new(self, crate::lens::own_size(need, l.px)));
@@ -5413,10 +5453,9 @@ impl Gpu {
             if let Some(own) = &l.own {
                 own.place(self, (b[0].min(l.px.0.saturating_sub(own.px.0)), b[1].min(l.px.1.saturating_sub(own.px.1))));
             }
-        } else if glass && l.own.is_some() && l.idle_own_frames < IDLE_OWN_FRAMES {
+        } else if glass && l.own.is_some() && crate::clock::since(l.own_used) < IDLE_OWN_FOR {
             // Kept a while: something passing under a glass now and then
             // would otherwise remake it each time.
-            l.idle_own_frames += 1;
         } else {
             l.own = None;
         }
@@ -5496,7 +5535,7 @@ impl Gpu {
         let keeps_canvas = (matches!(frame, Frame::Surface(_)) || !whole_screen) && l.lens.is_none();
         let mut kept_fresh = false;
         if keeps_canvas && self.can_copy && damage.is_some() && l.open && !full_repaint {
-            l.idle_kept_frames = 0;
+            l.kept_used = crate::clock::now();
             if l.kept.is_none() {
                 // Readable too: a window's glass takes what it painted under it from here (`lens::Own`).
                 l.kept = Some(crate::lens::texture(&self.device, "kept", l.px, self.format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING));
@@ -5505,8 +5544,7 @@ impl Gpu {
                 kept_fresh = true;
             }
         } else if l.kept.is_some() {
-            l.idle_kept_frames += 1;
-            if !keeps_canvas || l.idle_kept_frames > IDLE_KEPT_FRAMES {
+            if !keeps_canvas || crate::clock::since(l.kept_used) > IDLE_KEPT_FOR {
                 l.kept = None;
             }
         }
