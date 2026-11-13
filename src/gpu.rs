@@ -5462,8 +5462,32 @@ impl Gpu {
         // window keeps (`kept`). Painted straight onto the system's frame, the copy read a
         // texture that cannot be read, and wgpu took the render down: a window's glass over
         // its own text (Atalaya's search palette).
-        let readable = l.lens.is_some() || l.kept.as_ref().is_some_and(|k| k.0.usage().contains(wgpu::TextureUsages::TEXTURE_BINDING));
-        let over_own = glass && own_box.is_some() && !whole_screen && readable && d.glass_over_own(v);
+        // Which canvas that is is settled first, for this frame, and the same way in whole
+        // frames and in partial ones: a glass with no lens over something of its own paints
+        // on the kept canvas even when it is painted whole (`PLEAMAR_FULL_REPAINT=1`, or
+        // what changed not known). It was decided after, by whether the kept canvas
+        // happened to be there already —it is only made for partial repaints—, so the
+        // same glass was frosted over its own in some frames and not in others (issue 152).
+        let glass_over_own = glass && own_box.is_some() && !whole_screen && d.glass_over_own(v);
+        let full_repaint = std::env::var_os("PLEAMAR_FULL_REPAINT").is_some();
+        let keeps_canvas = (matches!(l.target, Target::Surface(_)) || !whole_screen) && l.lens.is_none();
+        let mut kept_fresh = false;
+        if keeps_canvas && self.can_copy && l.open && ((damage.is_some() && !full_repaint) || glass_over_own) {
+            l.kept_used = crate::clock::now();
+            if l.kept.is_none() {
+                // Readable too: a window's glass takes what it painted under it from here (`lens::Own`).
+                l.kept = Some(crate::lens::texture(&self.device, "kept", l.px, self.format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING));
+                l.painted_as.clear();
+                l.damage_log.clear();
+                kept_fresh = true;
+            }
+        } else if l.kept.is_some() {
+            if !keeps_canvas || crate::clock::since(l.kept_used) > IDLE_KEPT_FOR {
+                l.kept = None;
+            }
+        }
+        let readable = l.lens.is_some() || (keeps_canvas && l.kept.as_ref().is_some_and(|k| k.0.usage().contains(wgpu::TextureUsages::TEXTURE_BINDING)));
+        let over_own = glass_over_own && readable;
         if let Some(b) = own_box.filter(|_| whole_screen || over_own) {
             l.own_used = crate::clock::now();
             let need = (b[2] - b[0], b[3] - b[1]);
@@ -5551,23 +5575,8 @@ impl Gpu {
         // each what changed since it was last painted repainted what changed
         // in the last three frames. They are brought up to date from the kept
         // canvas instead, by copies of those pieces.
-        let full_repaint = std::env::var_os("PLEAMAR_FULL_REPAINT").is_some();
-        let keeps_canvas = (matches!(frame, Frame::Surface(_)) || !whole_screen) && l.lens.is_none();
-        let mut kept_fresh = false;
-        if keeps_canvas && self.can_copy && damage.is_some() && l.open && !full_repaint {
-            l.kept_used = crate::clock::now();
-            if l.kept.is_none() {
-                // Readable too: a window's glass takes what it painted under it from here (`lens::Own`).
-                l.kept = Some(crate::lens::texture(&self.device, "kept", l.px, self.format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING));
-                l.painted_as.clear();
-                l.damage_log.clear();
-                kept_fresh = true;
-            }
-        } else if l.kept.is_some() {
-            if !keeps_canvas || crate::clock::since(l.kept_used) > IDLE_KEPT_FOR {
-                l.kept = None;
-            }
-        }
+        // (Whether it keeps a canvas, and whether it was just made, is settled above,
+        // before the glass decides whether it frosts what the scene painted under it.)
         // Which canvas this frame goes on, if what it holds is known: one
         // the platform lends, one of the lens's two, or the kept one.
         let known: Option<(u8, usize)> = match (&frame, &l.lens, &l.kept) {
@@ -5606,6 +5615,20 @@ impl Gpu {
                         [((b[0] - v[0]) * l.scale).floor().max(0.0), ((b[1] - v[1]) * l.scale).floor().max(0.0), ((b[2] - v[0]) * l.scale).ceil().min(pw), ((b[3] - v[1]) * l.scale).ceil().min(ph)]
                     }))
                 });
+                // What a glass that reads what the scene painted under it makes
+                // changes as far as its frosting reaches (see below, issue 48): that
+                // is what changed in this frame, and what is noted for the frames
+                // after. Noted as it came, a frame of our own brought up from the
+                // kept canvas got only the piece that changed, and kept an older
+                // glass round it: the two frames that take turns on the monitor
+                // showed it each its own way, flickering (issue 152).
+                let now = match now {
+                    Some(c) if with_own && l.own.is_some() => {
+                        let px: Vec<[u32; 4]> = c.iter().map(|b| [b[0] as u32, b[1] as u32, (b[2] - b[0]) as u32, (b[3] - b[1]) as u32]).collect();
+                        grown_for_glass(px, d, v, l.scale, l.px).map(|g| g.iter().map(|b| [b[0] as f32, b[1] as f32, (b[0] + b[2]) as f32, (b[1] + b[3]) as f32]).collect())
+                    }
+                    c => c,
+                };
                 let as_px = |r: &Vec<[f32; 4]>| (r.iter().map(|b| (b[2] - b[0]) * (b[3] - b[1])).sum::<f32>() < 0.7 * pw * ph).then(|| r.iter().map(|b| [b[0] as u32, b[1] as u32, (b[2] - b[0]) as u32, (b[3] - b[1]) as u32]).collect());
                 this_frame = now.as_ref().and_then(as_px);
                 let frame_no = l.frame_no;
@@ -5818,7 +5841,12 @@ impl Gpu {
             let mut flush = |encoder: &mut wgpu::CommandEncoder, ranges: &[Range<u32>], keep: &mut bool, erase: &mut bool, then_take: Option<&Range<u32>>| {
                 let mut batch: Vec<Range<u32>> = Vec::new();
                 let paint = |encoder: &mut wgpu::CommandEncoder, batch: &mut Vec<Range<u32>>, keep: &mut bool, erase: &mut bool, dirty: &mut bool| {
-                    if !batch.is_empty() || !*keep {
+                    // The piece painted again is emptied before anything is taken from it,
+                    // even with nothing to draw before: a glass whose first take came before
+                    // any draw in the piece (what is under it, in a group's layer) took
+                    // the last frame's —the glass already on it— and frosted that into a
+                    // flat grey card (issue 152). A whole frame was cleared by its first pass.
+                    if !batch.is_empty() || !*keep || *erase {
                         pass_to(encoder, target, &l.layer_group, batch, *keep, scissor, *erase);
                         *dirty |= !batch.is_empty();
                         (*keep, *erase) = (true, false);

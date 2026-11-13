@@ -1,0 +1,33 @@
+// expect: ok
+// Issue 152: glass with no lens over something of the scene's own —its own
+// shadow, stripes, a text— next to cards whose tint changes, so only pieces of
+// the surface are painted again. Filmed whole and in pieces, the frames have
+// to be the same (tests/glass_partial_repaint.rs). The surface is wide enough
+// for what changes to stay under 70 % of it: past that, it is painted whole
+// anyway.
+scene GlassOverOwnPartial {
+    event t0
+    event t1
+    prop h0 = 0 ~quick
+    prop h1 = 0 ~quick
+    on t0 { h0: 1 - h0 }
+    on t1 { h1: 1 - h1 }
+    surface { size: 900, 320 }
+    repeat s in 0..6 {
+        box { from: 180, 105 + s * 20; size: 500, 8; color: #ffd27a }
+    }
+    text "glass over its own words" { at: 430, 145; size: 22; color: #ffffff }
+    repeat i in 0..3 {
+        let x = 200 + i * 150
+        body {
+            color: #2a2a30
+            glass: 1
+            lens: false
+            rim: 70%
+            shine: 0, 0
+            shadow: 0, 6, 18, 30%
+            box { from: x, 95; size: 130, 130; corner: 20 }
+        }
+        box { from: x, 95; size: 130, 130; corner: 20; color: #ff7ab8; opacity: 4% * if(i == 0, h0, if(i == 1, h1, 0)) }
+    }
+}
