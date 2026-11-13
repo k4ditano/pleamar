@@ -519,6 +519,12 @@ pub fn run(
     // changed, at most every `READER_EVERY`; and what it asks is done as an agent's
     // press is, by a person's hand.
     let mut screen_readers = crate::a11y::Readers::default();
+    // Sheets that wait for a card that can show on them (`Gpu::new`, R6): since when, when
+    // to ask again, and the last ten seconds it was said in.
+    let mut waiting_sheets: Vec<Box<crate::gpu::NewSheet>> = Vec::new();
+    let mut card_waiting: Option<Instant> = None;
+    let mut card_again_at: Option<Instant> = None;
+    let mut card_said_at = 0u64;
     let mut reader_dirty = false;
     let mut reader_next = crate::clock::now();
     let mut reader_acts: std::collections::VecDeque<(usize, crate::a11y::Ask)> = std::collections::VecDeque::new();
@@ -943,6 +949,11 @@ pub fn run(
         let listened_at = crate::clock::now();
         sec_before[1] = (listened_at - rested_at).as_secs_f64() * 1000.0;
         incoming.extend(rx.try_iter());
+        // Sheets waiting for a card that can show on them: asked again.
+        if card_again_at.is_some_and(|at| crate::clock::now() >= at) {
+            card_again_at = None;
+            incoming.extend(waiting_sheets.drain(..).map(ToRender::Sheet));
+        }
         sec_messages = incoming.len();
         if let (Some(g), Some(send)) = (&gpu, &nest) {
             // The card is asked at most every 5 ms from here: its notices are set
@@ -1157,12 +1168,35 @@ pub fn run(
                     if first_card && crate::gpu::timing_enabled() {
                         println!("timing · the first surface arrives {} ms after starting", crate::clock::since(op.start_time).as_millis());
                     }
-                    let g = gpu.get_or_insert_with(|| {
-                        Gpu::new(&instance, match &n.target {
+                    // The card for the first surface: if none can show on it yet —a compositor
+                    // that has not offered the card's buffers, as pleamar-wm in its first
+                    // seconds— the sheet waits and is asked again (R6: it panicked).
+                    if gpu.is_none() {
+                        match Gpu::new(&instance, match &n.target {
                             crate::gpu::Target::Surface(s) => Some(s),
                             crate::gpu::Target::Frames(_) => None,
-                        })
-                    });
+                        }) {
+                            Ok(g) => {
+                                if let Some(since) = card_waiting.take() {
+                                    println!("render · a card can show on the surface now, after {} ms", crate::clock::since(since).as_millis());
+                                }
+                                gpu = Some(g);
+                            }
+                            Err(crate::gpu::NotYet(why)) => {
+                                let now = crate::clock::now();
+                                let since = *card_waiting.get_or_insert(now);
+                                let waited = now.saturating_duration_since(since);
+                                if waited.is_zero() || waited.as_secs() / 10 != card_said_at {
+                                    card_said_at = waited.as_secs() / 10;
+                                    println!("render · {why}: asked again every {} ms", CARD_AGAIN.as_millis());
+                                }
+                                waiting_sheets.push(n);
+                                card_again_at = Some(now + CARD_AGAIN);
+                                continue;
+                            }
+                        }
+                    }
+                    let g = gpu.as_mut().expect("the card, just made");
                     let t_scene_gpu = std::time::Instant::now();
                     g.set_lens_image(scene.lens_image.as_deref());
                     g.set_shaders(&scene.shaders);
@@ -1260,6 +1294,7 @@ pub fn run(
                     region = vec![[i32::MIN; 4]];
                 }
                 ToRender::SheetGone(id) => {
+                    waiting_sheets.retain(|w| w.id != id);
                     screen_readers.remove(id);
                     sheets.retain(|l| l.id != id);
                     crate::platform::sheet_released(id);
@@ -6308,6 +6343,10 @@ pub fn run(
             }
             cycle.close();
             next_appointment = appointments.iter().min().copied();
+            // A sheet still waiting for its card: woken to ask again.
+            if let Some(at) = card_again_at {
+                next_appointment = Some(next_appointment.map_or(at, |a| a.min(at)));
+            }
             // A reader still owed what changed: woken for it.
             if reader_dirty && screen_readers.listening() {
                 next_appointment = Some(next_appointment.map_or(reader_next, |a| a.min(reader_next)));
@@ -8299,6 +8338,9 @@ enum Step {
     Type(usize, String),
     Key(String, Mods, Option<String>),
 }
+
+/// How often a sheet that no card can show on yet asks again (`Gpu::new`, R6).
+const CARD_AGAIN: Duration = Duration::from_millis(250);
 
 /// How often a screen reader is told what changed, at most (`a11y.rs`).
 const READER_EVERY: Duration = Duration::from_millis(100);

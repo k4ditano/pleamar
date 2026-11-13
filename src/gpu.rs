@@ -4079,6 +4079,31 @@ fn last_line(e: &str) -> &str {
     e.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("").trim()
 }
 
+/// No card could be had for the first surface, yet: the render asks again in a while (`Gpu::new`).
+#[derive(Debug)]
+pub struct NotYet(pub String);
+
+/// What to do when no card made a device that can paint for us.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum NoCard {
+    /// Wait for the compositor and ask again: with a surface, nothing else can show on it.
+    Wait,
+    /// OpenGL, through EGL: only with no surface (a monitor of pleamar-wm's own).
+    OpenGl,
+    /// Nothing more to try (`PLEAMAR_BACKEND=vulkan` with no surface).
+    GiveUp,
+}
+
+/// See `NoCard`. With a surface, OpenGL is never tried: its instance is another, and the
+/// surface is not its own (R6: wgpu panicked looking it up).
+fn when_no_card(surface: bool, _any_card: bool, vulkan_only: bool) -> NoCard {
+    match (surface, vulkan_only) {
+        (true, _) => NoCard::Wait,
+        (false, false) => NoCard::OpenGl,
+        (false, true) => NoCard::GiveUp,
+    }
+}
+
 /// The order cards are tried in after the one chosen: the frugal first, software last.
 fn card_rank(t: wgpu::DeviceType) -> u8 {
     match t {
@@ -4103,7 +4128,7 @@ impl Gpu {
     /// With the first sheet's surface, if it has one: the card chosen has to be
     /// able to show on it. Without —a monitor driven by the platform itself—,
     /// the card is whatever there is.
-    pub fn new(instance: &wgpu::Instance, first: Option<&wgpu::Surface<'static>>) -> Gpu {
+    pub fn new(instance: &wgpu::Instance, first: Option<&wgpu::Surface<'static>>) -> Result<Gpu, NotYet> {
         let t_start = std::time::Instant::now();
         // `PLEAMAR_GPU=high` asks for the fast card (a laptop's discrete one) instead of the frugal one.
         let asked = std::env::var("PLEAMAR_GPU").ok();
@@ -4230,7 +4255,19 @@ impl Gpu {
                         Err(e) => println!("render · {} ({:?}) made no device ({e}): trying the next card", adapter.get_info().name, adapter.get_info().backend),
                     }
                 }
-                if made.is_none() && backend != "vulkan" {
+                // No card can show on the surface: the compositor may not be ready yet (pleamar-wm
+                // offers programs its card's buffers —linux-dmabuf, which NVIDIA's Vulkan needs to
+                // show anything— once its own card is up, a few seconds after its socket is there).
+                // OpenGL is no way out with a surface: it is another instance, and the surface is not
+                // its own (wgpu panicked, «non-existent resource SurfaceId»: R6). Asked again later.
+                if made.is_none() {
+                    let any_card = !pollster::block_on(instance.enumerate_adapters(wgpu::Backends::PRIMARY)).is_empty();
+                    match when_no_card(first.is_some(), any_card, backend == "vulkan") {
+                        NoCard::Wait => return Err(NotYet(if any_card { "no card can show on this surface yet: the compositor has not offered it the card's buffers (linux-dmabuf)" } else { "no Vulkan card here to show on this surface" }.to_owned())),
+                        NoCard::OpenGl | NoCard::GiveUp => {}
+                    }
+                }
+                if made.is_none() && when_no_card(first.is_some(), true, backend == "vulkan") == NoCard::OpenGl {
                     let i = gl_instance.get_or_insert_with(|| wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::GL, ..wgpu::InstanceDescriptor::new_without_display_handle() }));
                     if let Some(a) = pollster::block_on(i.request_adapter(&wgpu::RequestAdapterOptions { compatible_surface: first, power_preference, ..Default::default() })).ok() {
                         match device_of(&a) {
@@ -4362,7 +4399,7 @@ impl Gpu {
                 effects_ms,
             );
         }
-        g
+        Ok(g)
     }
 
     /// The four groups the shapes shader reads, written out. See `shape.wgsl`.
@@ -6641,6 +6678,25 @@ impl Summing {
 /// The card out of memory, and then the texture it could not make used (05-11:
 /// a view of the windows' one took the session down). Needs a real card: a
 /// request of 64 GB, which any card says no to without keeping anything.
+#[cfg(test)]
+mod no_card {
+    use super::{when_no_card, NoCard};
+
+    /// R6: a surface whose compositor is not ready (no card can show on it yet) waits; it is
+    /// never handed to OpenGL, whose instance does not know it (wgpu panicked there).
+    #[test]
+    fn a_surface_no_card_can_show_on_yet_is_waited_for() {
+        for any in [true, false] {
+            for vulkan_only in [true, false] {
+                assert_eq!(when_no_card(true, any, vulkan_only), NoCard::Wait);
+            }
+        }
+        // Without a surface (pleamar-wm's own monitors), OpenGL is still the way out.
+        assert_eq!(when_no_card(false, true, false), NoCard::OpenGl);
+        assert_eq!(when_no_card(false, true, true), NoCard::GiveUp);
+    }
+}
+
 #[cfg(test)]
 mod card_full {
     #[test]
