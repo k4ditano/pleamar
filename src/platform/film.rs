@@ -417,6 +417,11 @@ impl super::PlatformWindow for FilmWindow {
     fn keyboard(&self, _: crate::scene::Keyboard) {}
 }
 
+/// `PLEAMAR_FILM_HANDED=1`: the surfaces filmed as handed to another compositor (`FilmFrames::whole_screen`).
+fn film_handed() -> bool {
+    std::env::var_os("PLEAMAR_FILM_HANDED").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
 struct FilmFrames {
     sheet: u32,
     px: (u32, u32),
@@ -478,6 +483,14 @@ impl crate::gpu::Frames for FilmFrames {
             }
         }
         let _ = self.to_render.send(ToRender::Frame(self.sheet));
+    }
+
+    /// A monitor of pleamar-wm's own, unless `PLEAMAR_FILM_HANDED=1`: then each
+    /// surface is filmed as one handed to another compositor (Hyprland, sway…),
+    /// painted on the canvas it keeps and brought up to date by pieces —what
+    /// is behind it is the film's background, with nothing to blur it—.
+    fn whole_screen(&self) -> bool {
+        !film_handed()
     }
 
     fn resize(&mut self, px: (u32, u32)) {
