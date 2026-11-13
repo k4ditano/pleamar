@@ -60,6 +60,14 @@ pub fn scene_type_sizes() -> Vec<(&'static str, usize)> {
         ("Rule", size_of::<scene::Rule>()),
         ("Effect", size_of::<scene::Effect>()),
         ("Trigger", size_of::<scene::Trigger>()),
+        ("Style", size_of::<scene::Style>()),
+        ("Shape", size_of::<shapes::Shape>()),
+        ("Paint", size_of::<scene::Paint>()),
+        ("Glass", size_of::<scene::Glass>()),
+        ("Point", size_of::<scene::Point>()),
+        ("Color", size_of::<scene::Color>()),
+        ("Light", size_of::<scene::Light>()),
+        ("Shadow", size_of::<scene::Shadow>()),
     ]
 }
 mod fonts;
