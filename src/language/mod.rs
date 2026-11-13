@@ -844,7 +844,7 @@ mod tests {
     #[test]
     fn how_many_lines_a_text_takes_can_follow_a_fact() {
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/text-lines-follow.plm")).unwrap();
-        let styles: Vec<&crate::scene::Style> = scene.instrs.iter().filter_map(|i| if let crate::scene::Instr::Text { style, .. } = i { Some(style) } else { None }).collect();
+        let styles: Vec<&crate::scene::Style> = scene.instrs.iter().filter_map(|i| if let crate::scene::Instr::Text { style, .. } = i { Some(&**style) } else { None }).collect();
         let open = scene.facts.iter().position(|f| f.0 == "open").unwrap();
         let mut facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
         let lines = styles[0].lines_of.as_ref().expect("worked out at every frame");
