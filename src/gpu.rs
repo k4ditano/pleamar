@@ -4,6 +4,9 @@
 use crate::scene::*;
 use crate::platform::PlatformWindow;
 use crate::text::{LayoutKey, AtlasSlot, Texts, ATLAS_MOST, ATLAS_SIZE};
+
+/// The least rows a texture of an atlas has: it grows from there as the workshop fills it.
+const ATLAS_MIN_ROWS: u32 = 64;
 use std::ops::Range;
 
 const PER_SHAPE: usize = 20;
@@ -3796,6 +3799,9 @@ pub struct Gpu {
     elements_buffer: wgpu::Buffer,
     atlas: wgpu::Texture,
     atlas_view: wgpu::TextureView,
+    /// The letters' atlas: one byte a pixel, how much of it each letter covers (`text.rs`, `masks`).
+    glyphs: wgpu::Texture,
+    glyphs_view: wgpu::TextureView,
     /// The windows of the scene's compositor, one per layer: width, height and layers.
     windows: wgpu::Texture,
     windows_view: wgpu::TextureView,
@@ -4338,13 +4344,16 @@ impl Gpu {
         // scene that brings its own shaders gets a new pipeline with the same
         // layout, and every bind group already made keeps being valid for it.)
         let base = crate::shaders::generate(&[]);
-        // A single atlas for glyphs and images. 2048² in RGBA is 16 MB; it
-        // grows taller only when what is seen does not fit (`fit_atlas`).
-        let (atlas, atlas_view) = Self::atlas_texture(&device, ATLAS_SIZE);
+        // Two atlases, as wide as ATLAS_SIZE: one in RGBA for the images and the emoji, one of a
+        // byte a pixel for the letters. 2048² in RGBA is 16 MB and one byte a pixel is 4: but the
+        // textures are as tall as what they hold (`fit_atlas`, `fit_glyphs`: they grow as it does,
+        // never past what the workshop may give out), not as tall as it may be.
+        let (atlas, atlas_view) = Self::atlas_texture(&device, ATLAS_MIN_ROWS);
+        let (glyphs, glyphs_view) = Self::glyph_texture(&device, ATLAS_MIN_ROWS);
         let (windows, windows_view) = Self::windows_texture(&device, (1, 1, 1));
         // What binding 7 holds while no picture of its own is drawn.
         let (_, no_picture_view) = Self::picture_texture(&device, (1, 1));
-        let scene_group = Self::build_scene_group(&device, &pipeline, &shapes_buffer, &elements_buffer, &points_buffer, &stops_buffer, &atlas_view, &sampler, &windows_view, &no_picture_view);
+        let scene_group = Self::build_scene_group(&device, &pipeline, &shapes_buffer, &elements_buffer, &points_buffer, &stops_buffer, &atlas_view, &glyphs_view, &sampler, &windows_view, &no_picture_view);
         let limit = device.limits().max_storage_buffer_binding_size as usize / 4;
         let no_layers_group = Self::make_layers(&device, &pipeline, format, 1, 1, 1).1;
         let erase = Self::erase_pipeline(&device, format);
@@ -4380,7 +4389,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { _gl_instance: gl_instance, effects_off, lens, blur, blur_sampler, blur_values: crate::blur::DEFAULT_VALUES, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, late, veil: [veil_cut, veil_add], erase, soften, pipeline_layout, user_code: base, lens_image: Default::default(), built_for_image: false, lens_epoch: 0, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, backdrop_sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group, no_picture_view, pictures: Default::default() };
+        let mut g = Gpu { _gl_instance: gl_instance, effects_off, lens, blur, blur_sampler, blur_values: crate::blur::DEFAULT_VALUES, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, late, veil: [veil_cut, veil_add], erase, soften, pipeline_layout, user_code: base, lens_image: Default::default(), built_for_image: false, lens_epoch: 0, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, glyphs, glyphs_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, backdrop_sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group, no_picture_view, pictures: Default::default() };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -4419,7 +4428,7 @@ impl Gpu {
         };
         let sampler = |binding| wgpu::BindGroupLayoutEntry { binding, visibility: both, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None };
         let group = |label, entries: &[wgpu::BindGroupLayoutEntry]| d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries });
-        let scene = group("scene", &[storage(0), storage(1), texture(2, wgpu::TextureViewDimension::D2), sampler(3), storage(4), storage(5), texture(6, wgpu::TextureViewDimension::D2Array), texture(7, wgpu::TextureViewDimension::D2)]);
+        let scene = group("scene", &[storage(0), storage(1), texture(2, wgpu::TextureViewDimension::D2), sampler(3), storage(4), storage(5), texture(6, wgpu::TextureViewDimension::D2Array), texture(7, wgpu::TextureViewDimension::D2), texture(8, wgpu::TextureViewDimension::D2)]);
         let layers = group("layers", &[texture(0, wgpu::TextureViewDimension::D2Array)]);
         let uniforms = group("surface", &[wgpu::BindGroupLayoutEntry {
             binding: 0,
@@ -4638,6 +4647,22 @@ impl Gpu {
         (atlas, view)
     }
 
+    /// The letters' atlas: one byte a pixel.
+    fn glyph_texture(device: &wgpu::Device, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
+        let atlas = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("letters"),
+            size: wgpu::Extent3d { width: ATLAS_SIZE, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = atlas.create_view(&Default::default());
+        (atlas, view)
+    }
+
     /// The tallest atlas this card allows.
     pub fn atlas_most(&self) -> u32 {
         self.device.limits().max_texture_dimension_2d.min(ATLAS_MOST)
@@ -4645,8 +4670,9 @@ impl Gpu {
 
     /// The atlas as tall as the workshop paints it, with what it already had:
     /// the pieces keep their place, and their `uv` is in pixels.
-    pub fn fit_atlas(&mut self, height: u32) {
+    pub fn fit_atlas(&mut self, rows: u32) {
         let have = self.atlas.height();
+        let height = Self::atlas_rows(rows, self.atlas_most());
         if height <= have {
             return;
         }
@@ -4658,6 +4684,41 @@ impl Gpu {
         self.atlas_view = view;
         self.rebind();
         println!("render · the atlas is now {ATLAS_SIZE}×{height}");
+    }
+
+    /// How tall a texture of the atlases is to be to hold that many rows: a power of two, so it
+    /// is made again only a few times in all, and no taller than the card allows.
+    fn atlas_rows(rows: u32, most: u32) -> u32 {
+        rows.max(ATLAS_MIN_ROWS).next_power_of_two().min(most.max(ATLAS_MIN_ROWS))
+    }
+
+    /// The letters' atlas as tall as the workshop has filled it, with what it already had.
+    pub fn fit_glyphs(&mut self, rows: u32) {
+        let have = self.glyphs.height();
+        let height = Self::atlas_rows(rows, self.atlas_most());
+        if height <= have {
+            return;
+        }
+        let (glyphs, view) = Self::glyph_texture(&self.device, height);
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_texture(self.glyphs.as_image_copy(), glyphs.as_image_copy(), wgpu::Extent3d { width: ATLAS_SIZE, height: have, depth_or_array_layers: 1 });
+        self.queue.submit([enc.finish()]);
+        self.glyphs = glyphs;
+        self.glyphs_view = view;
+        self.rebind();
+        println!("render · the letters' atlas is now {ATLAS_SIZE}×{height}");
+    }
+
+    /// The letters painted since last time, a byte a pixel.
+    pub fn upload_glyphs(&self, pending: &mut Vec<(AtlasSlot, Vec<u8>)>) {
+        for (h, coverage) in pending.drain(..) {
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: &self.glyphs, mip_level: 0, origin: wgpu::Origin3d { x: h.x, y: h.y, z: 0 }, aspect: wgpu::TextureAspect::All },
+                &coverage,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(h.width), rows_per_image: None },
+                wgpu::Extent3d { width: h.width, height: h.height, depth_or_array_layers: 1 },
+            );
+        }
     }
 
     pub fn upload_atlas(&self, pending_upload: &mut Vec<(AtlasSlot, Vec<u8>)>) {
@@ -5433,7 +5494,7 @@ impl Gpu {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn build_scene_group(device: &wgpu::Device, pipeline: &wgpu::RenderPipeline, shapes: &wgpu::Buffer, elements: &wgpu::Buffer, points: &wgpu::Buffer, stops: &wgpu::Buffer, atlas: &wgpu::TextureView, sampler: &wgpu::Sampler, windows: &wgpu::TextureView, picture: &wgpu::TextureView) -> wgpu::BindGroup {
+    fn build_scene_group(device: &wgpu::Device, pipeline: &wgpu::RenderPipeline, shapes: &wgpu::Buffer, elements: &wgpu::Buffer, points: &wgpu::Buffer, stops: &wgpu::Buffer, atlas: &wgpu::TextureView, glyphs: &wgpu::TextureView, sampler: &wgpu::Sampler, windows: &wgpu::TextureView, picture: &wgpu::TextureView) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -5446,6 +5507,7 @@ impl Gpu {
                 wgpu::BindGroupEntry { binding: 5, resource: stops.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(windows) },
                 wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(picture) },
+                wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::TextureView(glyphs) },
             ],
         })
     }
@@ -5453,7 +5515,7 @@ impl Gpu {
     /// The scene's group, and one for each picture of its own: remade
     /// whenever something they bind is.
     fn rebind(&mut self) {
-        let group = |picture: &wgpu::TextureView| Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.sampler, &self.windows_view, picture);
+        let group = |picture: &wgpu::TextureView| Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.glyphs_view, &self.sampler, &self.windows_view, picture);
         self.scene_group = group(&self.no_picture_view);
         let groups: Vec<(u32, wgpu::BindGroup)> = self.pictures.iter().map(|(page, (_, view, _))| (*page, group(view))).collect();
         for (page, g) in groups {
@@ -5487,7 +5549,7 @@ impl Gpu {
         for (page, (w, h), rgba) in pending.drain(..) {
             if self.pictures.get(&page).is_none_or(|(t, ..)| (t.width(), t.height()) != (w, h)) {
                 let (t, v) = Self::picture_texture(&self.device, (w, h));
-                let g = Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.sampler, &self.windows_view, &v);
+                let g = Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.glyphs_view, &self.sampler, &self.windows_view, &v);
                 self.pictures.insert(page, (t, v, g));
             }
             let (t, ..) = &self.pictures[&page];

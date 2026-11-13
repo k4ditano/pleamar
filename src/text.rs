@@ -285,6 +285,12 @@ impl Shelves {
         Shelves { rows: Vec::new(), next_y: 1, height: self.height, most: self.most, short: false }
     }
 
+    /// How many rows of the atlas hold something (or are kept for what a shelf may still take):
+    /// what a texture on the card has to be tall enough for. Rows below are never touched.
+    fn used(&self) -> u32 {
+        self.next_y
+    }
+
     /// Twice as tall, if it may be and it would help.
     fn grow(&mut self) -> bool {
         if !self.short || self.height >= self.most {
@@ -330,9 +336,14 @@ pub(crate) struct Typesetter {
     /// For the letters hinted here (`hinted_mask`).
     scale_context: swash::scale::ScaleContext,
     shelves: Shelves,
+    /// The shelves of the letters' own atlas, one channel (a letter is only how much it covers,
+    /// which the shader paints in the text's colour): four times less card for text than in RGBA.
+    masks: Shelves,
     glyphs: HashMap<CacheKey, Option<(AtlasSlot, i32, i32, bool)>>,
     /// What has been painted since the last delivery: where and what (premultiplied RGBA).
     pending_upload: Vec<(AtlasSlot, Vec<u8>)>,
+    /// The same for the letters' atlas: one byte a pixel.
+    pending_masks: Vec<(AtlasSlot, Vec<u8>)>,
     /// Live windows' frames on the card, for the render to make small into the atlas.
     pending_fit: Vec<Fit>,
     /// Pictures too big for the atlas, each to a texture of its own: which, how big, what.
@@ -355,15 +366,17 @@ impl Typesetter {
         let fonts = crate::fonts::font_system();
         let (_, parsed, cached) = crate::fonts::last_read();
         println!("text   · {} system fonts in {} ms ({parsed} files read, {cached} from the cache)", fonts.db().len(), t0.elapsed().as_millis());
-        Typesetter { fonts, swash: SwashCache::new(), scale_context: swash::scale::ScaleContext::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), pending_fit: Vec::new(), pending_pictures: Vec::new(), last_picture: 0, scale: 1.0, exhausted: false, frames: HashMap::new(), fonts_read: HashSet::new() }
+        Typesetter { fonts, swash: SwashCache::new(), scale_context: swash::scale::ScaleContext::new(), shelves: Shelves::new(), masks: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), pending_masks: Vec::new(), pending_fit: Vec::new(), pending_pictures: Vec::new(), last_picture: 0, scale: 1.0, exhausted: false, frames: HashMap::new(), fonts_read: HashSet::new() }
     }
 
     /// When the scale changes, everything painted stops being valid.
     fn clear(&mut self, scale: f32) {
         self.scale = scale;
         self.shelves = self.shelves.emptied();
+        self.masks = self.masks.emptied();
         self.glyphs.clear();
         self.pending_upload.clear();
+        self.pending_masks.clear();
         self.pending_fit.clear();
         self.pending_pictures.clear();
         self.exhausted = false;
@@ -710,8 +723,18 @@ impl Typesetter {
                 return None;
             }
             let rgba: Vec<u8> = match img.content {
-                // A mask: premultiplied white, which the shader will tint.
-                SwashContent::Mask => img.data.iter().flat_map(|a| [*a, *a, *a, *a]).collect(),
+                // A mask is how much of each pixel the letter covers: one byte, in the letters' own
+                // atlas, where the shader will tint it.
+                SwashContent::Mask => {
+                    let Some(slot) = self.masks.request(w, h) else {
+                        *full = true;
+                        no_space = true;
+                        return None;
+                    };
+                    self.upload_mask(slot, img.data);
+                    return Some((slot, img.placement.left, img.placement.top, false));
+                }
+                // An emoji brings its own colours, and goes in the RGBA atlas with the images.
                 SwashContent::Color => img.data.chunks_exact(4).flat_map(|p| {
                     let a = p[3] as u16;
                     [(p[0] as u16 * a / 255) as u8, (p[1] as u16 * a / 255) as u8, (p[2] as u16 * a / 255) as u8, p[3]]
@@ -807,6 +830,18 @@ impl Typesetter {
             pixels[start..start + row.len()].copy_from_slice(row);
         }
         self.pending_upload.push((padded, pixels));
+    }
+
+    /// A letter's coverage, one byte a pixel, into the letters' atlas with its gutter of nothing.
+    fn upload_mask(&mut self, slot: AtlasSlot, coverage: Vec<u8>) {
+        let padded = AtlasSlot { x: slot.x - 1, y: slot.y - 1, width: slot.width + 2, height: slot.height + 2, page: 0 };
+        let stride = padded.width as usize;
+        let mut pixels = vec![0; stride * padded.height as usize];
+        for (y, row) in coverage.chunks_exact(slot.width as usize).enumerate() {
+            let start = (y + 1) * stride + 1;
+            pixels[start..start + row.len()].copy_from_slice(row);
+        }
+        self.pending_masks.push((padded, pixels));
     }
 
     /// A picture too big for the atlas, to a texture of its own. With `into`,
@@ -994,10 +1029,11 @@ impl Typesetter {
     fn rebuild(&mut self, working: &WorkingSet, images: &[(ImageSource, (u32, u32))]) -> Snapshot {
         loop {
             let snapshot = self.rebuild_once(working, images);
-            if !self.exhausted || !self.shelves.grow() {
+            // (Both: `|`, not `||`; whichever was short of room grows.)
+            if !self.exhausted || !(self.shelves.grow() | self.masks.grow()) {
                 return snapshot;
             }
-            println!("text   · what is seen does not fit the atlas: it grows to {ATLAS_SIZE}×{}", self.shelves.height);
+            println!("text   · what is seen does not fit the atlas: it grows to {ATLAS_SIZE}×{} (letters {ATLAS_SIZE}×{})", self.shelves.height, self.masks.height);
         }
     }
 
@@ -1037,6 +1073,7 @@ impl Typesetter {
             }
             Job::Limit(most) => {
                 self.shelves.most = most.clamp(ATLAS_SIZE, ATLAS_MOST);
+                self.masks.most = self.shelves.most;
                 return None;
             }
             Job::Layout(key, generation) => {
@@ -1060,7 +1097,7 @@ impl Typesetter {
                 Delivery::Rebuilt { snapshot, working, generation }
             }
         };
-        Some(Parcel { delivery, pending_upload: std::mem::take(&mut self.pending_upload), pending_fit: std::mem::take(&mut self.pending_fit), pending_pictures: std::mem::take(&mut self.pending_pictures), exhausted: self.exhausted, height: self.shelves.height, most: self.shelves.most })
+        Some(Parcel { delivery, pending_upload: std::mem::take(&mut self.pending_upload), pending_masks: std::mem::take(&mut self.pending_masks), used: self.shelves.used(), mask_used: self.masks.used(), pending_fit: std::mem::take(&mut self.pending_fit), pending_pictures: std::mem::take(&mut self.pending_pictures), exhausted: self.exhausted, height: self.shelves.height, most: self.shelves.most })
     }
 }
 
@@ -1121,6 +1158,11 @@ pub enum Delivery {
 pub struct Parcel {
     pub delivery: Delivery,
     pub pending_upload: Vec<(AtlasSlot, Vec<u8>)>,
+    /// The letters', one byte a pixel, and how many rows of each atlas hold something: what
+    /// the card's textures have to be tall enough for (they are made as tall as that, not as the atlas may be).
+    pub pending_masks: Vec<(AtlasSlot, Vec<u8>)>,
+    pub used: u32,
+    pub mask_used: u32,
     pub pending_fit: Vec<Fit>,
     pub pending_pictures: Vec<(u32, (u32, u32), Vec<u8>)>,
     pub exhausted: bool,
@@ -1151,6 +1193,10 @@ pub struct Texts {
     /// The last thing each live image showed, while the new one arrives.
     last_live: HashMap<usize, AtlasSlot>,
     pub pending_upload: Vec<(AtlasSlot, Vec<u8>)>,
+    /// The letters' atlas's (one byte a pixel), and the rows of each atlas the card has to have.
+    pub pending_masks: Vec<(AtlasSlot, Vec<u8>)>,
+    used: u32,
+    mask_used: u32,
     pub pending_fit: Vec<Fit>,
     /// Pictures of their own to make or paint again on the card, and those to let go.
     pub pending_pictures: Vec<(u32, (u32, u32), Vec<u8>)>,
@@ -1221,7 +1267,7 @@ impl Texts {
     }
 
     fn new(to_workshop: Sender<Job>) -> Self {
-        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), live_version: HashMap::new(), last_live: HashMap::new(), pending_upload: Vec::new(), pending_fit: Vec::new(), pending_pictures: Vec::new(), dropped_pictures: Vec::new(), pictures: HashSet::new(), unseen: HashMap::new(), generation: 0, scale: 1.0, working: WorkingSet::default(), recording: None, exhausted: false, rebuilding: false, too_large: None, height: ATLAS_SIZE, most: ATLAS_SIZE }
+        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), live_version: HashMap::new(), last_live: HashMap::new(), pending_upload: Vec::new(), pending_masks: Vec::new(), used: 1, mask_used: 1, pending_fit: Vec::new(), pending_pictures: Vec::new(), dropped_pictures: Vec::new(), pictures: HashSet::new(), unseen: HashMap::new(), generation: 0, scale: 1.0, working: WorkingSet::default(), recording: None, exhausted: false, rebuilding: false, too_large: None, height: ATLAS_SIZE, most: ATLAS_SIZE }
     }
 
     pub fn scale(&self) -> f32 {
@@ -1237,6 +1283,12 @@ impl Texts {
     /// How tall the atlas has to be on the card: it is never made smaller.
     pub fn atlas_height(&self) -> u32 {
         self.height
+    }
+
+    /// How many rows of the RGBA atlas hold something, and of the letters' one: the card's textures
+    /// are as tall as that (a power of two at least), and grow as it does.
+    pub fn rows_used(&self) -> (u32, u32) {
+        (self.used, self.mask_used)
     }
 
     /// The tallest atlas the card allows. What did not fit before is tried again.
@@ -1273,6 +1325,7 @@ impl Texts {
         self.live_version.clear();
         self.last_live.clear();
         self.pending_upload.clear();
+        self.pending_masks.clear();
         self.pending_fit.clear();
         self.pending_pictures.clear();
         self.unseen.clear();
@@ -1294,6 +1347,8 @@ impl Texts {
     pub fn receive(&mut self, p: Parcel) {
         // Even from an old generation: the workshop's atlas is that tall now.
         self.height = self.height.max(p.height);
+        self.used = self.used.max(p.used);
+        self.mask_used = self.mask_used.max(p.mask_used);
         let generation = match &p.delivery {
             Delivery::Layout { generation, .. } | Delivery::Images { generation, .. } | Delivery::Live { generation, .. } | Delivery::Rebuilt { generation, .. } => *generation,
         };
@@ -1305,9 +1360,11 @@ impl Texts {
             // Old UVs and new atlas pixels become visible together. Until
             // this parcel arrived, the previous frame remained usable.
             self.pending_upload.clear();
+            self.pending_masks.clear();
             self.pending_fit.clear();
         }
         self.pending_upload.extend(p.pending_upload);
+        self.pending_masks.extend(p.pending_masks);
         self.pending_fit.extend(p.pending_fit);
         self.pictures.extend(p.pending_pictures.iter().map(|(page, ..)| *page));
         self.pending_pictures.extend(p.pending_pictures);
@@ -1887,9 +1944,9 @@ mod tests {
         let expected = t.lay_out(&key).glyphs.len();
         assert!(expected > 30, "system font did not shape the Spanish fixture");
         t.clear(1.0);
-        assert!(t.shelves.request(ATLAS_SIZE - 2, ATLAS_SIZE - 2).is_some());
+        assert!(t.masks.request(ATLAS_SIZE - 2, ATLAS_SIZE - 2).is_some());
         assert!(t.lay_out(&key).glyphs.is_empty());
-        t.shelves = Shelves::new();
+        t.masks = Shelves::new();
         assert_eq!(t.lay_out(&key).glyphs.len(), expected, "atlas exhaustion must not cache letters as nonexistent");
     }
 
@@ -2098,7 +2155,7 @@ mod tests {
         let (send, _jobs) = channel();
         let mut texts = Texts::new(send);
         texts.generation = 5;
-        texts.receive(Parcel { delivery: Delivery::Live { name: "x".into(), size: (1, 1), slot: None, generation: 4 }, pending_upload: Vec::new(), pending_fit: Vec::new(), pending_pictures: Vec::new(), exhausted: false, height: 4096, most: ATLAS_SIZE });
+        texts.receive(Parcel { delivery: Delivery::Live { name: "x".into(), size: (1, 1), slot: None, generation: 4 }, pending_upload: Vec::new(), pending_masks: Vec::new(), used: 1, mask_used: 1, pending_fit: Vec::new(), pending_pictures: Vec::new(), exhausted: false, height: 4096, most: ATLAS_SIZE });
         assert_eq!(texts.atlas_height(), 4096);
         texts.too_large = Some(WorkingSet::default());
         texts.allow_atlas(8192);
@@ -2108,7 +2165,7 @@ mod tests {
         texts.rebuilding = true;
         let snapshot = Snapshot { layouts: HashMap::new(), images: Vec::new(), animations: Vec::new(), live: HashMap::new() };
         let generation = texts.generation;
-        texts.receive(Parcel { delivery: Delivery::Rebuilt { snapshot, working: WorkingSet::default(), generation }, pending_upload: Vec::new(), pending_fit: Vec::new(), pending_pictures: Vec::new(), exhausted: true, height: ATLAS_SIZE, most: ATLAS_SIZE });
+        texts.receive(Parcel { delivery: Delivery::Rebuilt { snapshot, working: WorkingSet::default(), generation }, pending_upload: Vec::new(), pending_masks: Vec::new(), used: 1, mask_used: 1, pending_fit: Vec::new(), pending_pictures: Vec::new(), exhausted: true, height: ATLAS_SIZE, most: ATLAS_SIZE });
         assert!(texts.exhausted && texts.too_large.is_none() && !texts.rebuilding);
     }
 
@@ -2128,6 +2185,24 @@ mod tests {
             assert!(px.0 > 0 && px.1 > 0 && px.0 <= ATLAS_SIZE - 2 && px.1 <= ATLAS_SIZE - 2);
             assert!(Shelves::new().request(px.0, px.1).is_some());
         }
+    }
+
+    #[test]
+    fn letters_go_in_their_own_one_byte_atlas_and_emoji_stay_in_the_rgba_one() {
+        let mut t = Typesetter::new();
+        let key = spanish();
+        let expected = t.lay_out(&key).glyphs.len();
+        assert!(expected > 30, "system font did not shape the Spanish fixture");
+        // Every letter is a mask, one byte a pixel, with its gutter: nothing of it in the RGBA atlas.
+        assert!(t.pending_upload.is_empty(), "a letter went into the RGBA atlas");
+        assert!(!t.pending_masks.is_empty());
+        for (padded, bytes) in &t.pending_masks {
+            assert_eq!(bytes.len(), (padded.width * padded.height) as usize);
+            assert!(bytes[..padded.width as usize].iter().all(|b| *b == 0), "the gutter above it is empty");
+        }
+        // The rows of each atlas a card's texture has to hold: the letters', not the images'.
+        assert!(t.masks.used() > 1 && t.shelves.used() == 1, "rows used: {} of letters, {} of images", t.masks.used(), t.shelves.used());
+        assert!(t.masks.used() < 200, "a line of text takes a few rows: {}", t.masks.used());
     }
 
     #[test]
@@ -2163,8 +2238,8 @@ mod tests {
         deliver(&mut t, &mut texts, &jobs);
         let previous = texts.layout(0, old).unwrap();
         texts.pending_upload.clear();
-        t.shelves.rows.clear();
-        t.shelves.next_y = ATLAS_SIZE;
+        t.masks.rows.clear();
+        t.masks.next_y = ATLAS_SIZE;
         texts.begin_frame();
         texts.layout(0, spanish());
         deliver(&mut t, &mut texts, &jobs);
@@ -2208,6 +2283,7 @@ mod tests {
                 // The real render consumes the previous frame's uploads
                 // before receiving any of the jobs queued by that frame.
                 texts.pending_upload.clear();
+                texts.pending_masks.clear();
                 deliver(&mut t, &mut texts, &jobs);
             }
             assert!(!texts.rebuilding && !texts.exhausted, "cover {i} never recovered");

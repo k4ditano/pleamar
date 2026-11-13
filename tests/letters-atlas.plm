@@ -1,0 +1,15 @@
+// expect: ok
+language 0.1
+// Letters live in an atlas of their own, one byte a pixel, and images and emoji in the RGBA one:
+// a film of this (tests/letters_atlas.rs) has to show both, the text in its colour, with its
+// outline and shadow, and the picture beside it.
+scene Letters {
+    surface { size: 360, 150 }
+    image boat = file "../examples/pieces/boat.svg", 64, 64
+    box { from: 0, 0; size: 360, 150; color: #14181c }
+    text "Sphinx of black quartz" { at: 10, 10; size: 22; color: #ffd166 }
+    text "PLEAMAR" { at: 10, 50; size: 40; weight: 800; color: #fff; outline: 2, #0b0f14; shadow: 3, 5, 6, 70%, #000000 }
+    box { from: 8, 106; size: 50, 24; color: #e8eef2 }
+    text "dark" { at: 10, 110; size: 16; color: #101418 }
+    image boat { at: 280, 70; size: 64, 64 }
+}

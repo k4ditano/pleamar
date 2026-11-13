@@ -85,6 +85,8 @@ const FAR: f32 = 1e6;
 // A picture too big for the atlas, a texture of its own: bound only while
 // the element that shows it is drawn.
 @group(0) @binding(7) var picture: texture_2d<f32>;
+// The letters: how much of each pixel a letter covers, in the red of a one-channel atlas.
+@group(0) @binding(8) var glyphs: texture_2d<f32>;
 // 2 · what belongs to each surface: its size and its scale.
 @group(2) @binding(0) var<uniform> u: U;
 // Groups with opacity are painted separately, here, and blended at once.
@@ -619,7 +621,10 @@ fn shade(e: VertexOut) -> vec4<f32> {
         if (el.color1.x > 0.5) { at = sharp_texel(el, at); }
         // Above 0 in the second slot: a picture of its own, not a piece of the atlas.
         var t: vec4<f32>;
-        if (el.header.y > 0.5) {
+        if (el.header.z > 1.5) {
+            // A letter: its coverage is in its own atlas, which has no colour to read.
+            t = vec4<f32>(0.0, 0.0, 0.0, textureSampleLevel(glyphs, atlas_sampler, at / vec2<f32>(textureDimensions(glyphs)), 0.0).r);
+        } else if (el.header.y > 0.5) {
             t = textureSampleLevel(picture, atlas_sampler, at / vec2<f32>(textureDimensions(picture)), 0.0);
         } else {
             t = textureSampleLevel(atlas, atlas_sampler, at / vec2<f32>(textureDimensions(atlas)), 0.0);
@@ -1213,7 +1218,7 @@ fn fs_particle(e: ParticleOut) -> @location(0) vec4<f32> {
 fn glyph_at(el: Element, q: vec2<f32>) -> f32 {
     let uv01 = (q - el.dest.xy) / max(el.dest.zw, vec2<f32>(1.0));
     if (uv01.x < 0.0 || uv01.x > 1.0 || uv01.y < 0.0 || uv01.y > 1.0) { return 0.0; }
-    return textureSampleLevel(atlas, atlas_sampler, mix(el.uv.xy, el.uv.zw, uv01) / vec2<f32>(textureDimensions(atlas)), 0.0).a;
+    return textureSampleLevel(glyphs, atlas_sampler, mix(el.uv.xy, el.uv.zw, uv01) / vec2<f32>(textureDimensions(glyphs)), 0.0).r;
 }
 
 // color0 the letter's colour · color1 the shadow's colour, and the gradient's kind ·
