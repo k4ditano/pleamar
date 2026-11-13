@@ -74,7 +74,7 @@ impl Script for Showcase {
         //     box and texture did not go hand in hand, it would show.
         let label = (430.0, 108.0);
         e.paint(Instr::Transform(Some(Transform::at((label.0.into(), label.1.into())).rotate(sway.e()))));
-        e.paint(Instr::Text { content: Content::Literal("pleamar".into()), at: (label.0.into(), label.1.into()), anchor: (0.5, 0.5), width: None, style: Style::new(22.0, white.clone()).weight(500), alpha: 1.0.into(), measure: None });
+        e.paint(Instr::Text { content: Content::Literal("pleamar".into()), at: (label.0.into(), label.1.into()), anchor: (0.5, 0.5), width: None, style: (Style::new(22.0, white.clone()).weight(500)).into(), alpha: 1.0.into(), measure: None });
         e.paint(Instr::Solid {
             shape: Shape::Rect { center: (label.0.into(), label.1.into()), half_size: (64.0.into(), 20.0.into()), radius: 8.0.into() }.stroke(1.5),
             color: white.clone(),
@@ -112,9 +112,9 @@ impl Script for Showcase {
         //     mixes scripts and emoji, and aligns.
         let grey = color(0.62, 0.65, 0.64);
         let paragraph = "Shaped text: ligatures fi ffl, Arabic مرحبا بالعالم, Japanese こんにちは and emoji 🌊🎉🦀. This sentence is long on purpose, so that it does not fit in three lines and has to end in an ellipsis.";
-        e.paint(Instr::Text { content: Content::Literal(paragraph.into()), at: (30.0.into(), 222.0.into()), anchor: (0.0, 0.0), width: Some(330.0.into()), style: Style::new(13.5, white.clone()).lines(3), alpha: 1.0.into(), measure: None });
+        e.paint(Instr::Text { content: Content::Literal(paragraph.into()), at: (30.0.into(), 222.0.into()), anchor: (0.0, 0.0), width: Some(330.0.into()), style: (Style::new(13.5, white.clone()).lines(3)).into(), alpha: 1.0.into(), measure: None });
         for (k, (a, t)) in [(TextAlign::Left, "on the left"), (TextAlign::Center, "in the center"), (TextAlign::Right, "on the right")].into_iter().enumerate() {
-            e.paint(Instr::Text { content: Content::Literal(t.into()), at: (390.0.into(), (222.0 + k as f32 * 20.0).into()), anchor: (0.0, 0.0), width: Some(150.0.into()), style: Style::new(13.0, grey.clone()).align(a), alpha: 1.0.into(), measure: None });
+            e.paint(Instr::Text { content: Content::Literal(t.into()), at: (390.0.into(), (222.0 + k as f32 * 20.0).into()), anchor: (0.0, 0.0), width: Some(150.0.into()), style: (Style::new(13.0, grey.clone()).align(a)).into(), alpha: 1.0.into(), measure: None });
         }
         e.paint(Instr::Solid { shape: Shape::Rect { center: (465.0.into(), 252.0.into()), half_size: (77.0.into(), 32.0.into()), radius: 6.0.into() }.stroke(1.0), color: grey.clone(), alpha: 0.35.into(), glass_spec: None });
 
@@ -138,7 +138,7 @@ impl Script for Showcase {
         e.paint(Instr::Group { shadow: None });
         e.paint(Instr::Shape { shape: Shape::Rect { center: (360.0.into(), 326.0.into()), half_size: (box_w * 0.5, tag_h * 0.5 + 7.0), radius: 16.0.into() }, fusion: 0.0.into() });
         e.paint(Instr::Fill { paint: color(0.62, 0.84, 0.74).into(), alpha: 1.0.into(), rim: 0.0.into(), light: None, border: None, glass_spec: None });
-        e.paint(Instr::Text { content: Content::Live(tag), at: (360.0.into(), 326.0.into()), anchor: (0.5, 0.5), width: None, style: Style::new(15.0, color(0.07, 0.12, 0.10)).weight(500), alpha: 1.0.into(), measure: Some((tag_w, tag_h)) });
+        e.paint(Instr::Text { content: Content::Live(tag), at: (360.0.into(), 326.0.into()), anchor: (0.5, 0.5), width: None, style: (Style::new(15.0, color(0.07, 0.12, 0.10)).weight(500)).into(), alpha: 1.0.into(), measure: Some((tag_w, tag_h)) });
 
         e.surfaces = vec![Surface { height: 372, ..Default::default() }];
         e

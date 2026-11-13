@@ -33,7 +33,8 @@ fn note_plugins(path: &str, e: &Scene) {
 }
 
 fn compile(path: &str) -> Result<Scene, String> {
-    let (e, mut files) = crate::language::read_file(path)?;
+    let (mut e, mut files) = crate::language::read_file(path)?;
+    e.shrink();
     crate::alloc_report::say(&format!("the scene read ({} properties, {} instructions)", e.props.len(), e.instrs.len()), &[]);
     files.extend(e.attachments.iter().cloned());
     *FILES.lock().unwrap() = Some((path.to_owned(), files));

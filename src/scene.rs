@@ -1368,6 +1368,10 @@ pub fn color(r: f32, g: f32, b: f32) -> Color {
 /// The draw list. The render turns it into elements —one quad each—
 /// and paints them in order.
 #[derive(Clone, Debug)]
+// Every instruction takes as much room as the biggest kind of one: a text's style
+// (872 bytes) and a glass (480) made each 1440, a plain box too, and a settings page
+// of 10 000 instructions held 15 MB for them (pleamar#153). They are boxed: a few
+// hundred bytes each now, the style and the glass only where there is one.
 pub enum Instr {
     /// Starts a body: from here on, shapes accumulate.
     Group { shadow: Option<Shadow> },
@@ -1376,7 +1380,7 @@ pub enum Instr {
     Shape { shape: Shape, fusion: Expr },
     /// Paints the accumulated body: shadow, fill, light and rim. With `glass_spec`, from
     /// 0 to 1, the fill turns into glass: translucent, and with the light on the edges.
-    Fill { paint: Paint, alpha: Expr, rim: Expr, light: Option<Light>, border: Option<(Expr, Color)>, glass_spec: Option<Glass> },
+    Fill { paint: Paint, alpha: Expr, rim: Expr, light: Option<Light>, border: Option<(Expr, Color)>, glass_spec: Option<Box<Glass>> },
     /// Everything that comes after is clipped to this shape, as well as to the ones
     /// that were already there (up to four). `None` removes the last one.
     Clip(Option<(Shape, f32)>),
@@ -1403,7 +1407,7 @@ pub enum Instr {
     /// effects inside it, so that the effects, which need the layer, get it.
     Fade(Expr),
     /// A loose shape, of a solid color.
-    Solid { shape: Shape, color: Color, alpha: Expr, glass_spec: Option<Glass> },
+    Solid { shape: Shape, color: Color, alpha: Expr, glass_spec: Option<Box<Glass>> },
     /// A box painted by one of the scene's own shaders: `target` is where
     /// (x, y, width, height), with `corner` rounding it. `values` are up to eight
     /// numbers and `colors` up to two, which the shader reads as `s.a`, `s.b`,
@@ -1415,7 +1419,7 @@ pub enum Instr {
     /// center. With `width` it is broken into lines; without it, it is a single one.
     /// `measure`, if given, are two properties where the render leaves how much space
     /// the text takes: with them a box can grow with its label.
-    Text { content: Content, at: Point, anchor: (f32, f32), width: Option<Expr>, style: Style, alpha: Expr, measure: Option<(PropId, PropId)> },
+    Text { content: Content, at: Point, anchor: (f32, f32), width: Option<Expr>, style: Box<Style>, alpha: Expr, measure: Option<(PropId, PropId)> },
     /// A field to type into. It edits a live text; the cursor, the selection and the
     /// echo of each key are handled by the render, without waiting for the logic. `zone` is
     /// the name of the zone that focuses it when pressed.
@@ -1427,7 +1431,7 @@ pub enum Instr {
     /// for a file's, `@brief.md`), and it is written and erased whole.
     /// `send:` on several lines: whether Enter sends (Shift+Enter writes the line
     /// break) or writes it (Ctrl+Enter sends); worked out every frame, not 0 is Enter.
-    Field { text: TextId, zone: &'static str, at: Point, width: Expr, style: Style, alpha: Expr, placeholder: Content, selection: Color, secret: bool, passive: bool, lines: u8, height: Option<Expr>, send: Expr, mentions: Option<(Color, Option<Color>)>, paste_to_logic: bool },
+    Field { text: TextId, zone: &'static str, at: Point, width: Expr, style: Box<Style>, alpha: Expr, placeholder: Content, selection: Color, secret: bool, passive: bool, lines: u8, height: Option<Expr>, send: Expr, mentions: Option<Box<(Color, Option<Color>)>>, paste_to_logic: bool },
     /// An image or an icon. With `tint`, its shape is painted in that color: what
     /// a symbolic icon wants.
     /// `cell`: the image is a sheet of pictures in a grid, and only one is
@@ -1718,6 +1722,22 @@ pub struct ZArrangement {
 }
 
 impl Scene {
+    /// What a read scene holds and will not grow: let go of the room its lists kept
+    /// for growing while it was read (a list that doubles holds up to twice what it
+    /// has; for a scene's instructions, megabytes, pleamar#153).
+    pub fn shrink(&mut self) {
+        self.instrs.shrink_to_fit();
+        self.zones.shrink_to_fit();
+        self.rules.shrink_to_fit();
+        self.props.shrink_to_fit();
+        self.facts.shrink_to_fit();
+        self.texts.shrink_to_fit();
+        self.zone_springs.shrink_to_fit();
+        self.behaviors.shrink_to_fit();
+        self.spans.shrink_to_fit();
+        self.prop_aliases.shrink_to_fit();
+    }
+
     /// Siblings with `z:` sorted by it (the same value: as declared), each
     /// taking the place in the sequence of the one it now stands for.
     pub fn z_arrange(&self, c: Ctx) -> Option<ZArrangement> {

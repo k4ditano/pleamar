@@ -4726,7 +4726,7 @@ impl<'a> Compiler<'a> {
         if selectable {
             self.e.paint(Instr::Selectable(selection));
         }
-        self.e.paint(Instr::Text { content, at, anchor, width, style, alpha, measure });
+        self.e.paint(Instr::Text { content, at, anchor, width, style: style.into(), alpha, measure });
         Ok(())
     }
 
@@ -4955,7 +4955,7 @@ impl<'a> Compiler<'a> {
             active: None, visible: shown, under: self.under.clone(), forced: true, cursor: Cursor::Text, cursor_when: None, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None, yields: None,
         });
         self.last_size = Some((width.clone(), height));
-        self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret, passive, lines, height: height_of, send, mentions, paste_to_logic });
+        self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style: style.into(), alpha, placeholder, selection, secret, passive, lines, height: height_of, send, mentions: mentions.map(Box::new), paste_to_logic });
         Ok(())
     }
 

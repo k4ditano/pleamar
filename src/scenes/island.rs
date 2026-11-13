@@ -63,9 +63,9 @@ impl Script for Island {
         let icon = e.image(ImageSource::Icon("firefox".into()), 28, 28);
         e.paint(Instr::Image { image: icon, target: ((CX - OPEN.0 * 0.5 + 22.0).into(), (TOP + 10.0).into(), 28.0.into(), 28.0.into()), alpha: t.clone(), tint: None, cell: None, fit: 0 });
         let left = CX - OPEN.0 * 0.5;
-        e.paint(Instr::Text { content: Content::Literal("Tycho — Awake".into()), at: ((left + 26.0).into(), (TOP + 58.0).into()), anchor: (0.0, 0.5), width: Some(250.0.into()), style: Style::new(16.0, white.clone()).weight(500).lines(1), alpha: t.clone(), measure: None });
-        e.paint(Instr::Text { content: Content::Literal("Now playing".into()), at: ((left + OPEN.0 - 26.0).into(), (TOP + 24.0).into()), anchor: (1.0, 0.5), width: None, style: Style::new(12.5, white.clone()), alpha: t.clone() * 0.55, measure: None });
-        e.paint(Instr::Text { content: Content::Live(elapsed), at: ((left + OPEN.0 - 26.0).into(), (TOP + 76.0).into()), anchor: (1.0, 0.5), width: None, style: Style::new(12.5, white), alpha: t.clone() * 0.6, measure: None });
+        e.paint(Instr::Text { content: Content::Literal("Tycho — Awake".into()), at: ((left + 26.0).into(), (TOP + 58.0).into()), anchor: (0.0, 0.5), width: Some(250.0.into()), style: (Style::new(16.0, white.clone()).weight(500).lines(1)).into(), alpha: t.clone(), measure: None });
+        e.paint(Instr::Text { content: Content::Literal("Now playing".into()), at: ((left + OPEN.0 - 26.0).into(), (TOP + 24.0).into()), anchor: (1.0, 0.5), width: None, style: (Style::new(12.5, white.clone())).into(), alpha: t.clone() * 0.55, measure: None });
+        e.paint(Instr::Text { content: Content::Live(elapsed), at: ((left + OPEN.0 - 26.0).into(), (TOP + 76.0).into()), anchor: (1.0, 0.5), width: None, style: (Style::new(12.5, white)).into(), alpha: t.clone() * 0.6, measure: None });
         e.paint(Instr::Solid {
             shape: Shape::Rect { center: ((CX - 60.0).into(), (TOP + 76.0).into()), half_size: (130.0.into(), 1.5.into()), radius: 1.5.into() },
             color: color(0.62, 0.84, 0.74),
