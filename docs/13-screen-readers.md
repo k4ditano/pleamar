@@ -49,7 +49,7 @@ Measured on an RTX 2060, in a headless pleamar-wm with AT-SPI on the bus but no 
 - Peak memory: 172 against 173 MB.
 - A scene moving every frame: 16.94 ms between frames both ways. The render's CPU per round was 0.115 against 0.118 ms composing and 0.74 against 0.71 painting, also within noise.
 - With an AT-SPI client reading the tree every second: one run, composing 0.12 against 0.11 ms.
-- The binary grows by 2.9 MB (37.7 to 40.6 MB, +7.7 %): AccessKit, its AT-SPI side and their async runtime. zbus and zvariant were already there, in the same versions.
+- The binary grows by 2.9 MB (37.7 to 40.6 MB, +7.8 %): AccessKit, its AT-SPI side and their async runtime. zbus and zvariant were already there, in the same versions.
 
 The `accessibility` feature is on by default. Without it (`--no-default-features --features luau`) the same calls compile to nothing.
 
