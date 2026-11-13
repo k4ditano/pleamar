@@ -20,6 +20,7 @@ mod lsp;
 mod luau_types;
 pub mod gpu;
 mod agent;
+mod alloc_report;
 mod a11y;
 #[cfg(target_os = "linux")]
 pub mod dmabuf;

@@ -489,6 +489,8 @@ pub fn run(
     // What the drawing read the last time it was made.
     let mut compose_seen = crate::scene::Seen::default();
     let mut zone_memo = ZoneMemo::default();
+    // `PLEAMAR_MEMORY=1`: said again a while after the first frame (`alloc_report`).
+    let mut memory_again_at: Option<Instant> = None;
     // What an agent's look needs of the scene, made at the first look and kept until it changes.
     let mut agent_index: Option<crate::agent::Index> = None;
     // The `keep: visible` behaviors, and for each the first child it saw and where that child started.
@@ -6137,6 +6139,14 @@ pub fn run(
         } else if painted > 0 && first_frame {
             first_frame = false;
             println!("render · first frame {} ms after starting", crate::clock::since(op.start_time).as_millis());
+            if crate::alloc_report::on() {
+                memory_again_at = Some(crate::clock::now() + Duration::from_secs(3));
+                crate::alloc_report::say("the first frame", &memory_parts(&draw, &props, &facts, &texts, compose_memo.as_ref(), &zone_memo));
+            }
+        }
+        if memory_again_at.is_some_and(|at| crate::clock::now() >= at) {
+            memory_again_at = None;
+            crate::alloc_report::say("at rest, 3 s after the first frame", &memory_parts(&draw, &props, &facts, &texts, compose_memo.as_ref(), &zone_memo));
         }
 
         // What the texts measured goes into their properties: the coming frame,
@@ -7747,6 +7757,12 @@ struct OneZone {
     values: Vec<(f32, f32)>,
 }
 
+impl OneZone {
+    fn heap(&self) -> usize {
+        self.reads.capacity() * 4 + self.values.capacity() * 8
+    }
+}
+
 impl ZoneMemo {
     /// Whether what was worked out still holds.
     fn holds(&self, facts: &[f32], props: &[crate::scene::Animated], hidden: &[bool], absent: &[std::ops::Range<usize>]) -> bool {
@@ -8344,6 +8360,25 @@ enum Step {
 
 /// How often a sheet that no card can show on yet asks again (`Gpu::new`, R6).
 const CARD_AGAIN: Duration = Duration::from_millis(250);
+
+/// What the render's own parts hold, for `PLEAMAR_MEMORY=1` (pleamar#153).
+fn memory_parts(draw: &crate::gpu::DrawList, props: &[Animated], facts: &[f32], texts: &[String], memo: Option<&ComposeMemo>, zones: &ZoneMemo) -> Vec<(&'static str, usize)> {
+    use std::mem::size_of;
+    let strings = |t: &[String]| t.len() * size_of::<String>() + t.iter().map(|s| s.capacity()).sum::<usize>();
+    let mut parts = draw.heap();
+    parts.push(("properties (value, speed, spring)", std::mem::size_of_val(props)));
+    parts.push(("facts", std::mem::size_of_val(facts)));
+    parts.push(("texts", strings(texts)));
+    parts.push((
+        "what the last drawing read (compose memo)",
+        memo.map_or(0, |m| m.facts.capacity() * 4 + m.props.capacity() * 8 + strings(&m.texts) + m.seen.heap()),
+    ));
+    parts.push((
+        "zones: boxes, aliveness and what each read",
+        zones.read_facts.capacity() * 4 + zones.read_props.capacity() * 4 + zones.facts.capacity() * 4 + zones.props.capacity() * 8 + zones.hidden.capacity() + zones.live.capacity() + zones.bounds.capacity() * size_of::<Option<[f32; 4]>>() + zones.each.capacity() * size_of::<OneZone>() + zones.each.iter().map(OneZone::heap).sum::<usize>() + zones.seen.heap(),
+    ));
+    parts
+}
 
 /// How often a screen reader is told what changed, at most (`a11y.rs`).
 const READER_EVERY: Duration = Duration::from_millis(100);

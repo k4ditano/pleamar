@@ -1058,6 +1058,29 @@ impl DrawList {
 
     /// That nothing is copied from this frame: what was in the atlas is no
     /// longer valid, and a letter may have moved without changing its number.
+    /// What the drawing holds in memory, by part (`PLEAMAR_MEMORY=1`, see `alloc_report`).
+    pub fn heap(&self) -> Vec<(&'static str, usize)> {
+        use crate::alloc_report::vec;
+        use std::mem::size_of;
+        let f = |v: &Vec<f32>| vec(v, v.capacity());
+        let memo: usize = self.shape_memo.capacity() * size_of::<Option<Box<ShapeMemo>>>()
+            + self.shape_memo.iter().flatten().map(|m| size_of::<ShapeMemo>() + vec(&m.reads, m.reads.capacity()) + vec(&m.values, m.values.capacity()) + vec(&m.points, m.points.capacity())).sum::<usize>();
+        let kept: usize = self.kept.capacity() * size_of::<Option<Kept>>()
+            + self.kept.iter().flatten().map(|k| vec(&k.facts, k.facts.capacity()) + vec(&k.props, k.props.capacity()) + vec(&k.fact_values, k.fact_values.capacity()) + vec(&k.prop_values, k.prop_values.capacity()) + vec(&k.keys, k.keys.capacity())).sum::<usize>();
+        let l = &self.last;
+        let last = f(&l.shapes) + vec(&l.shape_bounds, l.shape_bounds.capacity()) + f(&l.points) + f(&l.stops) + f(&l.elements) + vec(&l.hidden, l.hidden.capacity()) + vec(&l.fields, l.fields.capacity()) + vec(&l.selectable, l.selectable.capacity());
+        vec![
+            ("drawing: elements (64 floats each)", f(&self.elements)),
+            ("drawing: shapes and their boxes", f(&self.shapes) + vec(&self.shape_bounds, self.shape_bounds.capacity())),
+            ("drawing: points and gradient stops", f(&self.points) + f(&self.stops)),
+            ("drawing: each shape's memo (shape_memo)", memo),
+            ("drawing: stretches kept to copy (kept, stretch lists)", kept + vec(&self.stretch_list, self.stretch_list.capacity()) + vec(&self.stretch_at, self.stretch_at.capacity())),
+            ("drawing: the frame before (last)", last),
+            ("drawing: hidden, plan and glass cache", vec(&self.hidden, self.hidden.capacity()) + vec(&self.plan.sequence, self.plan.sequence.capacity()) + vec(&self.plan.asleep, self.plan.asleep.capacity()) + vec(&self.plan.closes, self.plan.closes.capacity()) + vec(&self.plan.emitters_before, self.plan.emitters_before.capacity()) + self.glass_cache.capacity() * size_of::<(([u32; 12], u64), (Vec<[f32; 4]>, bool))>()),
+            ("drawing: texts placed, fields, links", vec(&self.selectable, self.selectable.capacity()) + vec(&self.fields, self.fields.capacity()) + vec(&self.links, self.links.capacity()) + vec(&self.texts_seen, self.texts_seen.capacity())),
+        ]
+    }
+
     pub fn forget_kept(&mut self) {
         self.copy_key = None;
     }

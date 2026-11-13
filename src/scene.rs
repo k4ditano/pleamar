@@ -274,6 +274,10 @@ pub struct Seen {
 pub const SEEN_FACT: u32 = 1 << 31;
 
 impl Seen {
+    /// What it holds in memory (`alloc_report`).
+    pub fn heap(&self) -> usize {
+        (self.facts.capacity() + self.props.capacity()) * 8 + self.log.borrow().capacity() * 4
+    }
     /// Nothing read yet, with room for that many of each.
     pub fn reset(&mut self, facts: usize, props: usize) {
         self.facts.clear();

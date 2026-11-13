@@ -70,3 +70,5 @@ default = ["luau", "accessibility"]
 # Screen readers (AT-SPI on Linux, through AccessKit): nothing is built nor sent until one asks. See docs/13-screen-readers.md.
 accessibility = ["dep:accesskit", "dep:accesskit_unix"]
 luau = ["dep:mlua"]
+# Counts every allocation, for `PLEAMAR_MEMORY=1` to say how much the heap holds (pleamar#153): to measure, not to ship.
+alloc-report = []
