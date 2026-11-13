@@ -506,18 +506,56 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
 // takes away as much of what is under it as the glass covers, the second adds
 // that much of it frosted. What the scene left transparent stays so, and the
 // compositor blurs the desktop there as before.
-var<private> veil_cov: f32 = 0.0;
+// How much the glass covers is all they need of it: measured as `shade` measures it
+// —the same tiles, clips and shapes, in the same order— and nothing else. They used to
+// run all of `shade` for it, and each was the driver compiling the whole glass again:
+// on a cold start, some 300 ms apiece before the first frame (an RTX 2060).
+fn veil_coverage(e: VertexOut) -> f32 {
+    let p = e.pos.xy / u.header.w + u.hud.xw;
+    let el = elements[e.element];
+    // Only a body's glass with nothing captured behind veils (`shade`, its else).
+    if (u32(el.header.x) != 0u) { return 0.0; }
+    let glass = el.uv.x;
+    if (glass > 0.0 && u.backdrop.x > 0.5 && el.uv.z > 0.5) { return 0.0; }
+    var tile = vec2<u32>(0u, 0u);
+    var tiled = false;
+    let table = shapes[u32(el.header.y)].a.w;
+    if (table > 0.5) {
+        let t = u32(table) - 1u;
+        let q0 = (floor(e.pos.xy * 0.5) * 2.0 + 0.5) / u.header.w + u.hud.xw;
+        let q1 = q0 + vec2<f32>(1.0 / u.header.w);
+        let quad = tile_entry(t, q0).y + tile_entry(t, vec2<f32>(q1.x, q0.y)).y + tile_entry(t, vec2<f32>(q0.x, q1.y)).y + tile_entry(t, q1).y;
+        if (quad == 0u) { discard; }
+        tile = tile_entry(t, p);
+        tiled = true;
+    }
+    var clip = 1.0;
+    for (var k = 0; k < 4; k++) {
+        let r = el.clips[k];
+        if (r >= 0.0) { clip *= coverage(shape_distance(u32(r), p)); }
+    }
+    let alpha = el.header.w * clip;
+    if (alpha <= 0.001) { discard; }
+    let first = u32(el.header.y);
+    let n = u32(el.header.z);
+    var d = FAR;
+    let count = select(n, tile.y, tiled);
+    for (var j = 0u; j < count; j++) {
+        let k = first + select(j, u32(points[tile.x + j]), tiled);
+        d = smooth_min(d, shape_distance(k, p), shapes[k].a.y);
+    }
+    return coverage(d) * alpha * glass;
+}
 
 @fragment
 fn fs_veil_cut(e: VertexOut) -> @location(0) vec4<f32> {
-    let c = shade(e);
-    return vec4<f32>(0.0, 0.0, 0.0, veil_cov);
+    return vec4<f32>(0.0, 0.0, 0.0, veil_coverage(e));
 }
 
 @fragment
 fn fs_veil_add(e: VertexOut) -> @location(0) vec4<f32> {
-    let c = shade(e);
-    return textureSampleLevel(backdrop_blurred, backdrop_sampler, behind_at(e.pos.xy), 0.0) * veil_cov;
+    let cov = veil_coverage(e);
+    return textureSampleLevel(backdrop_blurred, backdrop_sampler, behind_at(e.pos.xy), 0.0) * cov;
 }
 
 fn shade(e: VertexOut) -> vec4<f32> {
@@ -937,7 +975,6 @@ fn shade(e: VertexOut) -> vec4<f32> {
     } else {
         // Without it, the fill is a tint: it lets what is behind show through
         // (which the compositor blurs) and keeps its colour; and on top, its light.
-        veil_cov = coverage(d) * alpha * glass;
         c = over(c, tone, edge_coverage(d, tone) * alpha * mix(1.0, 0.36, glass));
         // Smoke and milk over what the compositor blurs, which we never see:
         // a veil of black or of white, as near as it gets.
