@@ -3287,3 +3287,16 @@ mod cursor_tests {
         assert_eq!(Cursor::from_name("bogus"), None);
     }
 }
+
+#[cfg(test)]
+mod sizes {
+    /// An instruction is as big as the biggest kind of one, and a scene holds one for
+    /// everything it draws: a style or a glass inline made each 1440 bytes, and a
+    /// settings page of 10 000 instructions held 15 MB for them (pleamar#153). What is
+    /// big and seldom there goes in a box.
+    #[test]
+    fn an_instruction_stays_small() {
+        assert!(std::mem::size_of::<super::Instr>() <= 448, "Instr is {} bytes", std::mem::size_of::<super::Instr>());
+        assert!(std::mem::size_of::<super::Style>() <= 384, "Style is {} bytes", std::mem::size_of::<super::Style>());
+    }
+}
