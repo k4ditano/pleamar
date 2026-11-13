@@ -4532,7 +4532,7 @@ impl<'a> Compiler<'a> {
         // With `markdown:`, the colour of what it marks.
         for (k, name) in ["link", "code", "quote", "heading", "strike"].into_iter().enumerate() {
             if let Some(c) = p.get_mut(name) {
-                style.markdown_colors[k] = Some(self.color(c)?);
+                style.markdown_colors.get_or_insert_with(|| Box::new([None, None, None, None, None]))[k] = Some(self.color(c)?);
             }
         }
         // `paragraph: 9.5`: with `markdown:`, a blank line between blocks that tall, not a whole line.
@@ -4553,7 +4553,7 @@ impl<'a> Compiler<'a> {
         }
         // `code_block: #1b1e22`: with `markdown:`, each fenced block in a box of that colour.
         if let Some(c) = p.get_mut("code_block") {
-            style.code_block = Some(self.color(c)?);
+            style.code_block = Some(Box::new(self.color(c)?));
         }
         // `images: 160`: with `markdown:`, a picture alone on its line is painted that tall.
         if let Some(c) = p.get_mut("images") {

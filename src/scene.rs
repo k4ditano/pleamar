@@ -1298,13 +1298,15 @@ pub struct Style {
     /// With `markdown:`, the colour of what it marks: `link:` (a link's text and
     /// an `@name`), `code:`, `quote:`, `heading:`, and `strike:` the line across
     /// what is struck through. None keeps the text's.
-    pub markdown_colors: [Option<Color>; 5],
+    /// Boxed, and only when one is said: five colours took 480 bytes of every text's
+    /// style, markdown or not (pleamar#153). See `Style::markdown_color`.
+    pub markdown_colors: Option<Box<[Option<Color>; 5]>>,
     /// `images: 160`: with `markdown:`, a picture alone on its line is painted,
     /// that tall, in the room it takes; without it, it is its words.
     pub images: Option<f32>,
     /// `code_block: #1b1e22`: with `markdown:`, each fenced block in a box of that
     /// colour, with a head (its language and «Copy») and its lines numbered.
-    pub code_block: Option<Color>,
+    pub code_block: Option<Box<Color>>,
     /// `paragraph: 9.5`: with `markdown:`, how tall a blank line between blocks is.
     pub paragraph: Option<f32>,
     /// `list_indent: 2`: with `markdown:`, spaces before every point of a list.
@@ -1327,7 +1329,11 @@ pub const MOST_MARKS: usize = 16;
 
 impl Style {
     pub fn new(px: f32, color: Color) -> Self {
-        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, tight: false, size: None, weight_of: None, lines_of: None, family_from: None, marks: Vec::new(), markdown_colors: [None, None, None, None, None], images: None, code_block: None, paragraph: None, list_indent: 0 }
+        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, tight: false, size: None, weight_of: None, lines_of: None, family_from: None, marks: Vec::new(), markdown_colors: None, images: None, code_block: None, paragraph: None, list_indent: 0 }
+    }
+    /// With `markdown:`, the colour said for what it marks: 0 link, 1 code, 2 quote, 3 heading, 4 strike.
+    pub fn markdown_color(&self, k: usize) -> Option<&Color> {
+        self.markdown_colors.as_ref().and_then(|c| c.get(k)).and_then(Option::as_ref)
     }
     pub fn weight(mut self, p: u16) -> Self {
         self.weight = p;

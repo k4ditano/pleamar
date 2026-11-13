@@ -3232,10 +3232,10 @@ impl DrawList {
                     // And what is in a colour of its own: what the markdown marks, in the
                     // colours the text gives it, then each mark; where they meet, the last.
                     let mut paints: Vec<(u32, u32, [f32; 3])> = Vec::new();
-                    if style.markdown_colors[..4].iter().any(Option::is_some) {
+                    if (0..4).any(|k| style.markdown_color(k).is_some()) {
                         use crate::markdown::{CODE, HEADING, LINK, QUOTE};
                         for &(a, b, l) in &md_marks {
-                            let pick = [(CODE, 1), (LINK, 0), (HEADING, 3), (QUOTE, 2)].into_iter().find_map(|(bit, k)| (l & bit != 0).then_some(style.markdown_colors[k].as_ref()).flatten());
+                            let pick = [(CODE, 1), (LINK, 0), (HEADING, 3), (QUOTE, 2)].into_iter().find_map(|(bit, k)| (l & bit != 0).then_some(style.markdown_color(k)).flatten());
                             if let Some(col) = pick {
                                 paints.push((a, b, color(col)));
                             }
@@ -3326,7 +3326,7 @@ impl DrawList {
                     }
                     // Its fenced blocks as blocks (`code_block:`): a box behind each, a band
                     // behind its head and a line round it; its «Copy» is pressed as a link is.
-                    if let Some(fill) = style.code_block.as_ref().map(&color) {
+                    if let Some(fill) = style.code_block.as_deref().map(&color) {
                         let w = m.size.0;
                         for b in &md_code {
                             let (Some(head), Some(last)) = (m.lines.get(m.line_of(b.head as usize)), m.lines.get(m.line_of(b.end.saturating_sub(1) as usize))) else { continue };
@@ -3353,7 +3353,7 @@ impl DrawList {
                     // Its tables: a soft plate with a line round it, a line under the head and a
                     // fainter one between rows (a row shown as a card, only those), in `quote:` (or the text's colour).
                     if !m.tables.is_empty() {
-                        let ink = style.markdown_colors[2].as_ref().map_or(rgb, &color);
+                        let ink = style.markdown_color(2).map_or(rgb, &color);
                         for t in &m.tables {
                             let (Some(&l), Some(&r), Some(&top), Some(&bottom)) = (t.cols.first(), t.cols.last(), t.rows.first(), t.rows.last()) else { continue };
                             let plate = |stroke: f32| crate::shapes::FlatShape { kind: 1, cx: x0 + (l + r) * 0.5, cy: y0 + (top + bottom) * 0.5, mx: (r - l) * 0.5, my: (bottom - top) * 0.5, radius: 6.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke, affine };
@@ -3419,7 +3419,7 @@ impl DrawList {
                         .iter()
                         .filter(|k| k.2 & crate::markdown::STRIKE != 0)
                         .flat_map(|&(from, to, _)| {
-                            let col = style.markdown_colors[4].as_ref().map_or_else(|| m.glyphs.iter().find(|g| g.at >= from).map_or(rgb, &tint), color);
+                            let col = style.markdown_color(4).map_or_else(|| m.glyphs.iter().find(|g| g.at >= from).map_or(rgb, &tint), color);
                             m.spans(from as usize, to as usize).into_iter().map(move |b| (b, col))
                         })
                         .collect();
