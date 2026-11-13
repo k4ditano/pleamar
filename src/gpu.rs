@@ -3928,48 +3928,88 @@ fn can_paint(adapter: &wgpu::Adapter) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether a device made on a card can build pleamar's own shader: what a card says it can
-/// do is not always what its driver translates (NVIDIA's OpenGL claims stores in vertex
-/// shaders and then refuses the GLSL for them). Built in error scopes, the internal errors
-/// too (a translation that fails is one), so it is only said, and the next card tried.
-fn builds_shapes(device: &wgpu::Device) -> Result<(), String> {
-    let t = std::time::Instant::now();
-    let r = builds_shapes_untimed(device);
-    STARTUP_TRIAL_MS.with(|c| c.set(c.get() + t.elapsed().as_secs_f32() * 1000.0));
-    r
+/// What a card is given before it paints: its device, and every pipeline of pleamar's own,
+/// built on it. Building them is how a card is tried: what a card says it can do is not
+/// always what its driver translates (NVIDIA's OpenGL claims stores in vertex shaders and
+/// then refuses the GLSL for them), so a card whose driver refuses pleamar's shader is only
+/// said, and the next one tried. It used to be tried with a pipeline of its own, thrown
+/// away, before the real ones: on a cold start (no driver cache) that was a third of the
+/// time to the first frame (a RTX 2060: 565 ms of 2.1 s).
+struct Made {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    format: wgpu::TextureFormat,
+    alpha: wgpu::CompositeAlphaMode,
+    non_blocking: Option<wgpu::PresentMode>,
+    layout: wgpu::PipelineLayout,
+    shapes: [wgpu::RenderPipeline; 6],
+    soften: crate::soften::Soften,
+    lens: crate::lens::Pipelines,
+    blur: crate::blur::Built,
+    /// Why the effects cannot be had here, if the card refused them.
+    effects_refused: Option<String>,
+    /// For `PLEAMAR_TIMING`: the device, the shapes' pipelines and the effects' (side by side), and both.
+    ms: (f32, f32, f32, f32),
 }
 
-thread_local! {
-    /// How long trying pleamar's shader on each card took, for the start's breakdown (`PLEAMAR_TIMING`).
-    static STARTUP_TRIAL_MS: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
+/// The format a surface is painted in, how its alpha goes, and a present mode that does not wait.
+fn surface_format(adapter: &wgpu::Adapter, first: Option<&wgpu::Surface<'static>>) -> (wgpu::TextureFormat, wgpu::CompositeAlphaMode, Option<wgpu::PresentMode>) {
+    match first {
+        Some(first) => {
+            let caps = first.get_capabilities(adapter);
+            // No sRGB: the compositor blends the bytes as they are, and premultiplied
+            // alpha only works out if nobody re-encodes them along the way.
+            // And eight bits a channel before anything else: a float format
+            // (`Rgba16Float`, first on some AMD cards under Hyprland) is read as
+            // linear light, so the sRGB values painted into it came out far too
+            // light —a pale pink, #ffadfa, as white (#37)—.
+            let eight = [wgpu::TextureFormat::Bgra8Unorm, wgpu::TextureFormat::Rgba8Unorm];
+            let format = eight
+                .iter()
+                .copied()
+                .find(|f| caps.formats.contains(f))
+                .or_else(|| caps.formats.iter().copied().find(|f| !f.is_srgb() && !matches!(f, wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float)))
+                .or_else(|| caps.formats.iter().copied().find(|f| !f.is_srgb()))
+                .unwrap_or(caps.formats[0]);
+            let alpha = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
+                wgpu::CompositeAlphaMode::PreMultiplied
+            } else {
+                eprintln!("warning: no premultiplied alpha ({:?}); the background will come out opaque", caps.alpha_modes);
+                wgpu::CompositeAlphaMode::Auto
+            };
+            let non_blocking = [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate].into_iter().find(|m| caps.present_modes.contains(m));
+            (format, alpha, non_blocking)
+        }
+        // A monitor driven directly: BGRA as the monitor takes it (XRGB8888),
+        // and the pace set like with mailbox —the platform says when a frame
+        // has been shown—.
+        None => (wgpu::TextureFormat::Bgra8Unorm, wgpu::CompositeAlphaMode::Opaque, Some(wgpu::PresentMode::Mailbox)),
+    }
 }
 
-fn builds_shapes_untimed(device: &wgpu::Device) -> Result<(), String> {
-    let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
-    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape, tried"), source: wgpu::ShaderSource::Wgsl(format!("{}{}", include_str!("shape.wgsl"), crate::shaders::generate(&[])).into()) });
-    let _ = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("elements, tried"),
-        layout: None,
-        vertex: wgpu::VertexState { module: &module, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fs"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState { format: wgpu::TextureFormat::Bgra8Unorm, blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
-        }),
-        multiview_mask: None,
-        cache: None,
-    });
+/// On a thread of its own, with room for the shader translators' recursion (a thread's
+/// default stack can be short of it; see `wgpu::Device`). In `scope`, so it can borrow.
+fn on_a_thread<'s, 'e, T: Send + 's>(scope: &'s std::thread::Scope<'s, 'e>, f: impl FnOnce() -> T + Send + 's) -> std::thread::ScopedJoinHandle<'s, T> {
+    std::thread::Builder::new().name("pleamar pipelines".into()).stack_size(16 << 20).spawn_scoped(scope, f).expect("a thread to build the card's pipelines on")
+}
+
+/// What `f` makes on the card, or the error the card gave making it: validation and internal
+/// ones (a driver's translation that fails). The scopes are this thread's.
+fn in_scopes<T>(d: &wgpu::Device, f: impl FnOnce() -> T) -> Result<T, String> {
+    let internal = d.push_error_scope(wgpu::ErrorFilter::Internal);
+    let validation = d.push_error_scope(wgpu::ErrorFilter::Validation);
+    let made = f();
     let v = pollster::block_on(validation.pop());
     let i = pollster::block_on(internal.pop());
     match v.or(i) {
-        None => Ok(()),
-        Some(e) => Err(format!("it cannot build pleamar's shader: {}", e.to_string().lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("").trim())),
+        None => Ok(made),
+        Some(e) => Err(e.to_string()),
     }
+}
+
+/// The last line of an error from the card, which is what says what went wrong.
+fn last_line(e: &str) -> &str {
+    e.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("").trim()
 }
 
 /// The order cards are tried in after the one chosen: the frugal first, software last.
@@ -4033,10 +4073,11 @@ impl Gpu {
         // OpenGL first, if it is wanted; and if its device cannot be made (a
         // driver that gives an OpenGL without compute shaders, as NVIDIA's
         // does here), the card as it is, rather than nothing at all.
-        let device_of = |adapter: &wgpu::Adapter| -> Result<(wgpu::Device, wgpu::Queue), String> {
+        let device_of = |adapter: &wgpu::Adapter| -> Result<Made, String> {
             can_paint(adapter)?;
             let required_limits = limits_for(adapter);
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            let t_device = std::time::Instant::now();
+            let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 // By default, wgpu reserves blocks of 128 MB on the card and 64 in
                 // system memory, thinking of a game. A whole scene fits in less
                 // than 20: with blocks of 8, what is reserved is what is used.
@@ -4054,8 +4095,35 @@ impl Gpu {
                 required_limits,
                 ..Default::default()
             }))
-            .map_err(|e| e.to_string())
-            .and_then(|(device, queue)| builds_shapes(&device).map(|()| (device, queue)))
+            .map_err(|e| e.to_string())?;
+            let device_ms = t_device.elapsed().as_secs_f32() * 1000.0;
+            let (format, alpha, non_blocking) = surface_format(adapter, first);
+            let layout = Self::pipeline_layout(&device);
+            // The shapes' pipelines and the effects' are built side by side: each is
+            // the driver compiling a shader, a few hundred milliseconds when it has
+            // not seen it before, and one does not wait for the other.
+            let t_both = std::time::Instant::now();
+            let (shapes, (soften, lens, blur, effects_refused, effects_ms), shapes_ms) = std::thread::scope(|s| {
+                let effects = on_a_thread(s, || {
+                    let t = std::time::Instant::now();
+                    // The effects —a group's blur, the glass and its frosting— are made inside a scope of
+                    // their own: a card that refuses one (an old OpenGL, a format it cannot paint into) gets
+                    // the scene without them, said once, instead of a render that falls on its first frame.
+                    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+                    let soften = crate::soften::Soften::new(&device, format);
+                    let lens = crate::lens::Pipelines::new(&device);
+                    let (blur, blur_refused) = crate::blur::Built::made(&device, crate::blur::default_plan(), 1);
+                    let refused = pollster::block_on(scope.pop()).map(|e| e.to_string()).or(blur_refused);
+                    (soften, lens, blur, refused, t.elapsed().as_secs_f32() * 1000.0)
+                });
+                let t = std::time::Instant::now();
+                let shapes = Self::build_pipeline(&device, &layout, format, &crate::shaders::generate(&[]), false);
+                let shapes_ms = t.elapsed().as_secs_f32() * 1000.0;
+                (shapes, effects.join().expect("building the effects' pipelines"), shapes_ms)
+            });
+            let shapes = shapes.map_err(|e| format!("it cannot build pleamar's shader: {}", last_line(&e)))?;
+            let both_ms = t_both.elapsed().as_secs_f32() * 1000.0;
+            Ok(Made { device, queue, format, alpha, non_blocking, layout, shapes, soften, lens, blur, effects_refused, ms: (device_ms, shapes_ms, effects_ms, both_ms) })
         };
         let t_adapter = t_start.elapsed();
         let on_gl = gl_adapter.and_then(|a| match device_of(&a) {
@@ -4072,7 +4140,7 @@ impl Gpu {
         // a laptop with two), the others that can show on the surface, the frugal ones first
         // and software last; and, if no Vulkan card makes one, OpenGL.
         let mut gl_instance = gl_instance;
-        let (adapter, (device, queue)) = match on_gl {
+        let (adapter, made) = match on_gl {
             Some(x) => x,
             None => {
                 let first_info = primary.as_ref().map(|a| a.get_info());
@@ -4110,6 +4178,8 @@ impl Gpu {
                 made.expect("no graphics card made a device here, neither on Vulkan nor on OpenGL: install your card's Vulkan driver and the Vulkan loader (vulkan-icd-loader); `vulkaninfo --summary` says what there is")
             }
         };
+        let Made { device, queue, format, alpha, non_blocking, layout: pipeline_layout, shapes, soften, lens, blur, effects_refused, ms: made_ms } = made;
+        let [pipeline, particles, screen, multiply, veil_cut, veil_add] = shapes;
         // The card out of memory —a texture too big for what it has free— is
         // said and lived through: what asked for it is not drawn. wgpu's own
         // answer is to panic, and a window manager's whole session went down
@@ -4133,40 +4203,8 @@ impl Gpu {
                 std::process::exit(70);
             }
         });
-        let (format, alpha, non_blocking) = match first {
-            Some(first) => {
-                let caps = first.get_capabilities(&adapter);
-                // No sRGB: the compositor blends the bytes as they are, and premultiplied
-                // alpha only works out if nobody re-encodes them along the way.
-                // And eight bits a channel before anything else: a float format
-                // (`Rgba16Float`, first on some AMD cards under Hyprland) is read as
-                // linear light, so the sRGB values painted into it came out far too
-                // light —a pale pink, #ffadfa, as white (#37)—.
-                let eight = [wgpu::TextureFormat::Bgra8Unorm, wgpu::TextureFormat::Rgba8Unorm];
-                let format = eight
-                    .iter()
-                    .copied()
-                    .find(|f| caps.formats.contains(f))
-                    .or_else(|| caps.formats.iter().copied().find(|f| !f.is_srgb() && !matches!(f, wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float)))
-                    .or_else(|| caps.formats.iter().copied().find(|f| !f.is_srgb()))
-                    .unwrap_or(caps.formats[0]);
-                let alpha = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
-                    wgpu::CompositeAlphaMode::PreMultiplied
-                } else {
-                    eprintln!("warning: no premultiplied alpha ({:?}); the background will come out opaque", caps.alpha_modes);
-                    wgpu::CompositeAlphaMode::Auto
-                };
-                let non_blocking = [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate].into_iter().find(|m| caps.present_modes.contains(m));
-                (format, alpha, non_blocking)
-            }
-            // A monitor driven directly: BGRA as the monitor takes it (XRGB8888),
-            // and the pace set like with mailbox —the platform says when a frame
-            // has been shown—.
-            None => (wgpu::TextureFormat::Bgra8Unorm, wgpu::CompositeAlphaMode::Opaque, Some(wgpu::PresentMode::Mailbox)),
-        };
         let info = adapter.get_info();
         println!("render · {} ({:?}) · {:?} · {:?}", info.name, info.backend, format, alpha);
-        let t_device = t_start.elapsed();
 
         let store = |label, floats: usize| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -4192,14 +4230,10 @@ impl Gpu {
             address_mode_v: wgpu::AddressMode::MirrorRepeat,
             ..Default::default()
         });
-        // The layout is written out, not taken from the shader: that way a
+        // (The layout is written out, not taken from the shader: that way a
         // scene that brings its own shaders gets a new pipeline with the same
-        // layout, and every bind group already made keeps being valid for it.
-        let pipeline_layout = Self::pipeline_layout(&device);
+        // layout, and every bind group already made keeps being valid for it.)
         let base = crate::shaders::generate(&[]);
-        let t_shapes = std::time::Instant::now();
-        let [pipeline, particles, screen, multiply, veil_cut, veil_add] = Self::build_pipeline(&device, &pipeline_layout, format, &base, false).expect("pleamar's own shader does not compile");
-        let shapes_ms = t_shapes.elapsed().as_secs_f32() * 1000.0;
         // A single atlas for glyphs and images. 2048² in RGBA is 16 MB; it
         // grows taller only when what is seen does not fit (`fit_atlas`).
         let (atlas, atlas_view) = Self::atlas_texture(&device, ATLAS_SIZE);
@@ -4210,27 +4244,18 @@ impl Gpu {
         let limit = device.limits().max_storage_buffer_binding_size as usize / 4;
         let no_layers_group = Self::make_layers(&device, &pipeline, format, 1, 1, 1).1;
         let erase = Self::erase_pipeline(&device, format);
-        // The effects —a group's blur, the glass and its frosting— are made inside a scope of
-        // their own: a card that refuses one (an old OpenGL, a format it cannot paint into) gets
-        // the scene without them, said once, instead of a render that falls on its first frame.
-        let t_effects = std::time::Instant::now();
-        let effects = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let soften = crate::soften::Soften::new(&device, format);
-        let lens = crate::lens::Pipelines::new(&device);
-        let (blur, blur_refused) = crate::blur::Built::made(&device, crate::blur::default_plan(), 1);
-        // (`PLEAMAR_NO_EFFECTS=1` does as such a card would: to see a scene as it paints there.)
-        let effects_off = match (pollster::block_on(effects.pop()), blur_refused) {
-            (None, None) if std::env::var_os("PLEAMAR_NO_EFFECTS").is_some() => {
+        // (`PLEAMAR_NO_EFFECTS=1` does as a card that refuses the effects would: to see a scene as it paints there.)
+        let effects_off = match effects_refused {
+            None if std::env::var_os("PLEAMAR_NO_EFFECTS").is_some() => {
                 println!("render · no blur and no glass, as PLEAMAR_NO_EFFECTS asks");
                 true
             }
-            (None, None) => false,
-            (e, b) => {
-                println!("render · {}: no blur and no glass here (the card refused them: {}); everything else is painted", adapter.get_info().name, e.map(|e| e.to_string()).or(b).unwrap_or_default().lines().next().unwrap_or(""));
+            None => false,
+            Some(e) => {
+                println!("render · {}: no blur and no glass here (the card refused them: {}); everything else is painted", adapter.get_info().name, e.lines().next().unwrap_or(""));
                 true
             }
         };
-        let effects_ms = t_effects.elapsed().as_secs_f32() * 1000.0;
         let blur_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
@@ -4258,17 +4283,16 @@ impl Gpu {
         }
         // `PLEAMAR_TIMING=1`: where the start goes —a cold one (no driver cache) is mostly shaders—.
         if timing_enabled() {
-            let trial = STARTUP_TRIAL_MS.with(|c| c.get());
             let ms = |d: std::time::Duration| d.as_secs_f32() * 1000.0;
+            let (device_ms, shapes_ms, effects_ms, both_ms) = made_ms;
             println!(
-                "timing · the card ready in {:.0} ms: card chosen {:.0} · device {:.0} · trying the shader on it {:.0} · shapes' pipelines {:.0} · effects' pipelines {:.0} · the rest {:.0}",
+                "timing · the card ready in {:.0} ms: card chosen {:.0} · device {:.0} · pipelines {:.0} (shapes' {:.0} and effects' {:.0}, side by side)",
                 ms(t_start.elapsed()),
                 ms(t_adapter),
-                ms(t_device - t_adapter) - trial,
-                trial,
+                device_ms,
+                both_ms,
                 shapes_ms,
                 effects_ms,
-                ms(t_start.elapsed()) - ms(t_device) - shapes_ms - effects_ms
             );
         }
         g
@@ -4334,44 +4358,59 @@ impl Gpu {
     /// text instead of bringing the program down: they were checked when the
     /// scene was read, but a driver can still say no.
     fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str, picture: bool) -> Result<[wgpu::RenderPipeline; 6], String> {
-        let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         // With a picture for a backdrop (`lens = image`) the glass is all bent picture: the
         // 12 % that lets what is really behind through is cancelled by subtracting the backdrop, which is
         // only right when the backdrop is what is behind.
         let shape = if picture { include_str!("shape.wgsl").replace("const LENS_ALPHA: f32 = 0.88;", "const LENS_ALPHA: f32 = 1.0;") } else { include_str!("shape.wgsl").to_string() };
         let source = format!("{shape}{extra}");
-        let module = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape"), source: wgpu::ShaderSource::Wgsl(source.into()) });
-        let make = |label, vs, fs, blend: wgpu::BlendState| {
-            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(layout),
-                vertex: wgpu::VertexState { module: &module, entry_point: Some(vs), compilation_options: Default::default(), buffers: &[] },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some(fs),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState { format, blend: Some(blend), write_mask: wgpu::ColorWrites::ALL })],
-                }),
-                multiview_mask: None,
-                cache: None,
+        // In error scopes, the internal errors too (a driver's translation that fails is one):
+        // a card that cannot build it is said and the next one tried (`Made`).
+        let module = in_scopes(d, || d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape"), source: wgpu::ShaderSource::Wgsl(source.into()) }))?;
+        let make = |label: &'static str, vs: &'static str, fs: &'static str, blend: wgpu::BlendState| {
+            in_scopes(d, || {
+                d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(layout),
+                    vertex: wgpu::VertexState { module: &module, entry_point: Some(vs), compilation_options: Default::default(), buffers: &[] },
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &module,
+                        entry_point: Some(fs),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState { format, blend: Some(blend), write_mask: wgpu::ColorWrites::ALL })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                })
             })
         };
         let over = wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING;
-        let pipelines = [
-            make("elements", "vs", "fs", over),
-            make("particles", "vs_particle", "fs_particle", over),
-            make("screen", "vs", "fs", BLENDS[0]),
-            make("multiply", "vs", "fs", BLENDS[1]),
-            make("veil: cut", "vs", "fs_veil_cut", VEIL[0]),
-            make("veil: add", "vs", "fs_veil_add", VEIL[1]),
+        let specs: [(&'static str, &'static str, &'static str, wgpu::BlendState); 6] = [
+            ("elements", "vs", "fs", over),
+            ("particles", "vs_particle", "fs_particle", over),
+            ("screen", "vs", "fs", BLENDS[0]),
+            ("multiply", "vs", "fs", BLENDS[1]),
+            ("veil: cut", "vs", "fs_veil_cut", VEIL[0]),
+            ("veil: add", "vs", "fs_veil_add", VEIL[1]),
         ];
-        match pollster::block_on(scope.pop()) {
-            None => Ok(pipelines),
-            Some(e) => Err(e.to_string()),
+        // Each is the driver compiling the whole shader again for that stage and blend: a
+        // couple of hundred milliseconds each when it has not seen it before (a cold start,
+        // or a new pleamar), one after the other twice what 0.7 took. They are compiled side
+        // by side, each on a thread of its own, the first on this one.
+        let make = &make;
+        let built: Vec<Result<wgpu::RenderPipeline, String>> = std::thread::scope(|s| {
+            let others: Vec<_> = specs[1..].iter().map(|&(l, v, f, b)| on_a_thread(s, move || make(l, v, f, b))).collect();
+            let (l, v, f, b) = specs[0];
+            let first = make(l, v, f, b);
+            std::iter::once(first).chain(others.into_iter().map(|h| h.join().unwrap_or_else(|_| Err("building a pipeline panicked".into())))).collect()
+        });
+        let mut pipelines = Vec::with_capacity(6);
+        for p in built {
+            pipelines.push(p?);
         }
+        pipelines.try_into().map_err(|_| "six pipelines".to_owned())
     }
 
     /// The blur in use.
