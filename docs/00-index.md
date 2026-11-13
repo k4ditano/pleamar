@@ -13,6 +13,7 @@
 | [Language reference — version 0.6](11-language-reference.md) | **The reference**: lexicon, EBNF grammar, every element with what it accepts, and the version number. Its examples are compiled by `./run-tests.sh`, and its vocabulary is compared against the compiler's |
 | [The logic, in Luau](10-luau-logic.md) | The boundary seen from the logic: what a `.luau` can do, and its sandbox |
 | [Scenes an agent can read](12-agents.md) | The scene as a tree, acting by name, `wait`, and `agent: no` |
+| [Screen readers](13-screen-readers.md) | The same tree to Orca over AT-SPI (AccessKit): what it is told, what it can do, and that it costs nothing without one |
 
 ## How it is made, and how it got here
 

@@ -32,8 +32,9 @@ pub struct Sight<'a> {
     /// The scene's lookups, kept between looks (see `Index`).
     pub index: Option<&'a Index>,
     /// Looked at for the person themself, through their screen reader (`a11y.rs`),
-    /// not for an agent: what is kept from agents (`agent: no`) is there, its
-    /// words too —a secret field's never—.
+    /// not for an agent: what only a person may use (`agent: no`) can be used, and
+    /// says its words —a secret field's never—. What is hidden from agents
+    /// (`agent: hidden`) stays hidden: AT-SPI is read by whatever runs as the person.
     pub person: bool,
 }
 
@@ -287,9 +288,9 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
     let mut parts = Vec::new();
     for (shown, s) in sight.shown.iter().enumerate() {
         let Some(surface) = scene.surfaces.get(s.surface) else { continue };
-        // The lock screen is never told, nor what is kept out of captures or from agents
-        // (a person's reader is told what is kept from agents).
-        if surface.lock_screen || surface.hidden_from_captures || (surface.agent_hidden && !sight.person) {
+        // The lock screen is never told, nor what is kept out of captures or from agents.
+        // Not to a person's reader either: whatever runs as the person reads AT-SPI, an agent too.
+        if surface.lock_screen || surface.hidden_from_captures || surface.agent_hidden {
             continue;
         }
         let (name, kind) = match s.popup.and_then(|p| scene.popups.get(p)) {
@@ -622,7 +623,7 @@ pub fn reach_point(scene: &Scene, c: Ctx, k: usize, sight: &Sight) -> Result<Opt
         return Err(format!("? {said} is not there now"));
     };
     let centre = ((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5);
-    let on_screen = |x: f32, y: f32| sight.shown.iter().any(|s| inside(s.bounds, x, y) && scene.surfaces.get(s.surface).is_some_and(|f| !f.lock_screen && (!f.agent_hidden || sight.person)));
+    let on_screen = |x: f32, y: f32| sight.shown.iter().any(|s| inside(s.bounds, x, y) && scene.surfaces.get(s.surface).is_some_and(|f| !f.lock_screen && !f.agent_hidden));
     if let Some(l) = z.within {
         let lz = &scene.zones[l.0 as usize];
         if let Some(w) = lz.bounds(c)

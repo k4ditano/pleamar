@@ -178,7 +178,7 @@ Implemented (step 5, 6 Oct 2026).
 
 ## 8. What comes after, and why the tree is shaped like this
 
-- **Screen readers.** The same tree, handed to AccessKit, becomes AT-SPI on Linux, UIA on Windows and NSAccessibility on macOS. That is why the roles are a subset of AccessKit's (`button`, `slider`, `field`, `list`, `item`, `region`; later `toggle`, `tab`, `link`), and why `label:` is a text that translates.
+- **Screen readers.** The same tree, handed to AccessKit, becomes AT-SPI on Linux, UIA on Windows and NSAccessibility on macOS. That is why the roles are a subset of AccessKit's (`button`, `slider`, `field`, `list`, `item`, `region`; later `toggle`, `tab`, `link`), and why `label:` is a text that translates. Done on Linux (AT-SPI): see [13](13-screen-readers.md).
 - **MCP.** `pleamar mcp SCENE` would offer `describe`, the actions, `wait` and `watch` as tools, and each event with `->` as a tool of its own. Every pleamar program would be an MCP server with no work.
 - **A program in any language** driving a scene over this same socket (step 3 of the road): the commands above are its first half.
 
