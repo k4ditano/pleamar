@@ -7548,7 +7548,7 @@ impl<'a> Compiler<'a> {
                 shape: Shape::Rect { center: (size.0.clone() * 0.5, size.1.clone() * 0.5), half_size: (size.0.clone() * 0.5, size.1.clone() * 0.5), radius: corner },
                 color,
                 alpha: fill_alpha,
-                glass_spec: fill_glass,
+                glass_spec: fill_glass.map(Box::new),
             };
         }
         if anchor != (0.0, 0.0) {
