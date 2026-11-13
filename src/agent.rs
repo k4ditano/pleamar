@@ -31,6 +31,10 @@ pub struct Sight<'a> {
     pub zones: Option<(&'a [bool], &'a [Option<[f32; 4]>])>,
     /// The scene's lookups, kept between looks (see `Index`).
     pub index: Option<&'a Index>,
+    /// Looked at for the person themself, through their screen reader (`a11y.rs`),
+    /// not for an agent: what is kept from agents (`agent: no`) is there, its
+    /// words too —a secret field's never—.
+    pub person: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -87,6 +91,9 @@ pub struct Node {
     /// Scrolled out of its list: acting on it scrolls it into sight first.
     pub off_view: bool,
     pub persons: bool,
+    /// A secret field (`secret: true`): its words are never told.
+    #[cfg_attr(not(all(target_os = "linux", feature = "accessibility")), allow(dead_code))]
+    pub secret: bool,
     /// In the surface's logical pixels: x, y, width, height.
     pub at: [f32; 4],
     /// The list it is inside, if any (an index into the nodes).
@@ -95,6 +102,8 @@ pub struct Node {
 
 /// One surface or popup, with what it holds.
 pub struct Part {
+    /// Which of `Sight::shown` it is.
+    pub shown: usize,
     pub name: String,
     pub kind: String,
     pub size: (f32, f32),
@@ -276,10 +285,11 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
             .max_by_key(|k| (rank(*k), *k))
     };
     let mut parts = Vec::new();
-    for s in &sight.shown {
+    for (shown, s) in sight.shown.iter().enumerate() {
         let Some(surface) = scene.surfaces.get(s.surface) else { continue };
-        // The lock screen is never told, nor what is kept out of captures or from agents.
-        if surface.lock_screen || surface.hidden_from_captures || surface.agent_hidden {
+        // The lock screen is never told, nor what is kept out of captures or from agents
+        // (a person's reader is told what is kept from agents).
+        if surface.lock_screen || surface.hidden_from_captures || (surface.agent_hidden && !sight.person) {
             continue;
         }
         let (name, kind) = match s.popup.and_then(|p| scene.popups.get(p)) {
@@ -368,7 +378,7 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
             };
             let told = z.told.as_deref();
             let value = match (field, told.and_then(|t| t.value.as_ref())) {
-                (Some((text, _, secret)), _) => Some(if secret || z.reach == Reach::Person { "(hidden)".to_owned() } else { texts.get(text).cloned().unwrap_or_default() }),
+                (Some((text, _, secret)), _) => Some(if secret || (z.reach == Reach::Person && !sight.person) { "(hidden)".to_owned() } else { texts.get(text).cloned().unwrap_or_default() }),
                 (None, Some(crate::scene::Said::Text(t))) => Some(content_text(t, c, texts).into_owned()),
                 // A fact with names says its name (`critical`, `true`); any other sum, its number.
                 (None, Some(crate::scene::Said::Number(e))) => Some(match e {
@@ -402,6 +412,7 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                 selected,
                 off_view: off,
                 persons: z.reach == Reach::Person,
+                secret: field.is_some_and(|f| f.2),
                 at: [zb[0] - b[0], zb[1] - b[1], zb[2] - zb[0], zb[3] - zb[1]],
                 inside: None,
             });
@@ -421,6 +432,7 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                 selected: None,
                 off_view: false,
                 persons: false,
+                secret: false,
                 at: [t.bounds[0] - b[0], t.bounds[1] - b[1], t.bounds[2] - t.bounds[0], t.bounds[3] - t.bounds[1]],
                 inside: None,
             });
@@ -447,7 +459,7 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                 })
                 .min_by(|p, q| (nodes[*p].at[2] * nodes[*p].at[3]).total_cmp(&(nodes[*q].at[2] * nodes[*q].at[3])));
         }
-        parts.push(Part { name, kind, size: (b[2] - b[0], b[3] - b[1]), scale: s.scale, nodes });
+        parts.push(Part { shown, name, kind, size: (b[2] - b[0], b[3] - b[1]), scale: s.scale, nodes });
     }
     parts
 }
@@ -603,14 +615,14 @@ pub fn locate(scene: &Scene, c: Ctx, name: &str, sight: &Sight) -> Option<usize>
 pub fn reach_point(scene: &Scene, c: Ctx, k: usize, sight: &Sight) -> Result<Option<(f32, f32)>, String> {
     let z = &scene.zones[k];
     let said = z.id.split("#screen").next().unwrap_or(z.id);
-    if z.reach == Reach::Person {
+    if z.reach == Reach::Person && !sight.person {
         return Err(format!("? {said} is for a person's hand (agent: no): ask them to"));
     }
     let Some(b) = z.bounds(c).filter(|_| !(sight.gone)(z.at)) else {
         return Err(format!("? {said} is not there now"));
     };
     let centre = ((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5);
-    let on_screen = |x: f32, y: f32| sight.shown.iter().any(|s| inside(s.bounds, x, y) && scene.surfaces.get(s.surface).is_some_and(|f| !f.lock_screen && !f.agent_hidden));
+    let on_screen = |x: f32, y: f32| sight.shown.iter().any(|s| inside(s.bounds, x, y) && scene.surfaces.get(s.surface).is_some_and(|f| !f.lock_screen && (!f.agent_hidden || sight.person)));
     if let Some(l) = z.within {
         let lz = &scene.zones[l.0 as usize];
         if let Some(w) = lz.bounds(c)
@@ -1355,7 +1367,7 @@ mod tests {
             .map(|(k, s)| Shown { surface: k, popup: None, bounds: [s.origin.0, s.origin.1, s.origin.0 + s.width as f32, s.origin.1 + s.height as f32], scale: 1.0 })
             .collect();
         let never = |_: usize| false;
-        let sight = Sight { shown, texts_seen: seen, gone: &never, rank: None, zones: None, index: None };
+        let sight = Sight { shown, texts_seen: seen, gone: &never, rank: None, zones: None, index: None, person: false };
         describe(&scene, Ctx { props: &props, facts: &facts, seen: None }, &texts, &sight)
     }
 
@@ -1377,8 +1389,8 @@ mod tests {
             let boxes: Vec<Option<[f32; 4]>> = scene.zones.iter().zip(&live).map(|(z, l)| if *l { z.bounds(c) } else { None }).collect();
             let never = |_: usize| false;
             let shown = || scene.surfaces.iter().enumerate().map(|(k, s)| Shown { surface: k, popup: None, bounds: [s.origin.0, s.origin.1, s.origin.0 + s.width as f32, s.origin.1 + s.height as f32], scale: 1.0 }).collect();
-            let alone = describe(&scene, c, &texts, &Sight { shown: shown(), texts_seen: &[], gone: &never, rank: None, zones: None, index: None });
-            let given = describe(&scene, c, &texts, &Sight { shown: shown(), texts_seen: &[], gone: &never, rank: None, zones: Some((&live, &boxes)), index: Some(&index) });
+            let alone = describe(&scene, c, &texts, &Sight { shown: shown(), texts_seen: &[], gone: &never, rank: None, zones: None, index: None, person: false });
+            let given = describe(&scene, c, &texts, &Sight { shown: shown(), texts_seen: &[], gone: &never, rank: None, zones: Some((&live, &boxes)), index: Some(&index), person: false });
             assert_eq!(to_text(&alone), to_text(&given));
             assert_eq!(to_json(&alone), to_json(&given));
         }
@@ -1451,7 +1463,7 @@ mod tests {
         let c = Ctx { props: &props, facts: &facts, seen: None };
         let shown = vec![Shown { surface: 0, popup: None, bounds: [0.0, 0.0, 400.0, 300.0], scale: 1.0 }];
         let never = |_: usize| false;
-        let sight = Sight { shown, texts_seen: &[], gone: &never, rank: None, zones: None, index: None };
+        let sight = Sight { shown, texts_seen: &[], gone: &never, rank: None, zones: None, index: None, person: false };
         let at = |n: &str| reach_point(&scene, c, locate(&scene, c, n, &sight).unwrap(), &sight);
         assert_eq!(at("knob.1"), Ok(Some((100.0, 100.0))));
         assert!(at("delete").unwrap_err().contains("a person's hand"));

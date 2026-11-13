@@ -32,6 +32,8 @@ alacritty_terminal = "0.26"
 
 # What belongs to each system, only on that system. The core depends on none of this.
 [target.'cfg(target_os = "linux")'.dependencies]
+accesskit = { version = "0.25", optional = true }
+accesskit_unix = { version = "0.24", optional = true }
 libc = "0.2"
 zbus = "5"
 # Sound, spoken to directly: PulseAudio's protocol, which PipeWire speaks too
@@ -64,5 +66,7 @@ sys-locale = "0.3"
 # sources. It is a feature so that the core can be checked against other
 # systems even without a cross compiler here. See portable.sh.
 [features]
-default = ["luau"]
+default = ["luau", "accessibility"]
+# Screen readers (AT-SPI on Linux, through AccessKit): nothing is built nor sent until one asks. See docs/13-screen-readers.md.
+accessibility = ["dep:accesskit", "dep:accesskit_unix"]
 luau = ["dep:mlua"]

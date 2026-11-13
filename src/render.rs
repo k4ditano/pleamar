@@ -514,6 +514,14 @@ pub fn run(
     // lasts the pointer is its hand; the user's comes back when it is done.
     let mut acts: std::collections::VecDeque<(crate::agent::Act, std::sync::mpsc::Sender<String>)> = std::collections::VecDeque::new();
     let mut acting: Option<Acting> = None;
+    // Screen readers (`a11y.rs`): one registration per sheet, and nothing else
+    // while none listens. With one, the tree is looked at again after something
+    // changed, at most every `READER_EVERY`; and what it asks is done as an agent's
+    // press is, by a person's hand.
+    let mut screen_readers = crate::a11y::Readers::default();
+    let mut reader_dirty = false;
+    let mut reader_next = crate::clock::now();
+    let mut reader_acts: std::collections::VecDeque<(usize, crate::a11y::Ask)> = std::collections::VecDeque::new();
     let mut real_pointer: Option<(f32, f32)> = None;
     // A press of an agent's seat that was not let through, by button: its release is not either.
     let mut agent_held_back = [false; 5];
@@ -1240,6 +1248,10 @@ pub fn run(
                         });
                         println!("render · surface {} on {} · {}×{} · scale {} · {:.0} Hz{which}", n.id, n.name, n.size.0, n.size.1, n.scale, n.mhz as f32 / 1000.0);
                     }
+                    // A film has nobody to read it; a lock screen is not told (`describe`).
+                    if !crate::platform::film::on() && scene.surfaces.get(n.view.surface).is_some_and(|f| !f.lock_screen) {
+                        screen_readers.add(n.id, &n.name, &op.to_self);
+                    }
                     sheets.push(g.sheet(*n, size));
                     if let Some(i) = scene.facts.iter().position(|h| h.0 == "screens.count") {
                         facts[i] = screens_showing(&sheets, &scene.surfaces) as f32;
@@ -1248,6 +1260,7 @@ pub fn run(
                     region = vec![[i32::MIN; 4]];
                 }
                 ToRender::SheetGone(id) => {
+                    screen_readers.remove(id);
                     sheets.retain(|l| l.id != id);
                     crate::platform::sheet_released(id);
                     println!("render · surface {id} gone; {} left", sheets.len());
@@ -1474,6 +1487,22 @@ pub fn run(
                     f.start(&scene, &facts, &texts);
                     tails.push(*f);
                 }
+                ToRender::Reader(e) => {
+                    screen_readers.heard(&e);
+                    match e {
+                        crate::a11y::Event::Listening(_) => {
+                            // Before the next frame would be, as AccessKit asks.
+                            reader_dirty = true;
+                            reader_next = crate::clock::now();
+                        }
+                        crate::a11y::Event::Act(_, node, ask) => {
+                            if let Some(k) = crate::a11y::zone_of(node).filter(|k| *k < scene.zones.len()) {
+                                reader_acts.push_back((k, ask));
+                            }
+                        }
+                        crate::a11y::Event::Gone(_) => {}
+                    }
+                }
                 ToRender::Describe(json, reply_to) => {
                     describing.push((json, reply_to));
                     draw.collect_texts = true;
@@ -1623,6 +1652,9 @@ pub fn run(
                 }
                 ToRender::KeyboardFocus(yes) => {
                     focus_changes.push(yes);
+                    for l in &sheets {
+                        screen_readers.focused(l.id, yes);
+                    }
                     if let Some(send) = &nest {
                         // What the windows had held is let go before they lose the
                         // keyboard: forgotten, it stayed held for the next one.
@@ -2052,7 +2084,7 @@ pub fn run(
             }
         }
         // ── an agent's hand ─────────────────────────────────────
-        if acting.is_some() || !acts.is_empty() {
+        if acting.is_some() || !acts.is_empty() || !reader_acts.is_empty() {
             let c = Ctx { props: &props, facts: &facts, seen: None };
             let absent: Vec<std::ops::Range<usize>> = scene.spans.iter().filter(|t| scene.surfaces.get(t.surface).is_some_and(|s| s.instance > 0) && !sheets.iter().any(|l| l.view.surface == t.surface)).map(|t| t.instrs.clone()).collect();
             let gone = |at: usize| draw.hidden.get(at).copied().unwrap_or(false) || absent.iter().any(|r| r.contains(&at));
@@ -2064,7 +2096,10 @@ pub fn run(
                 rank: rank.as_ref().map(|r| r.as_slice()),
                 zones: None,
                 index: None,
+                person: false,
             };
+            // The same look, for what a person asks through their reader.
+            let person_sight = crate::agent::Sight { person: true, shown: sight.shown.clone(), ..sight };
             let now = crate::clock::now();
             if acting.is_none()
                 && let Some((act, reply)) = acts.pop_front()
@@ -2074,6 +2109,14 @@ pub fn run(
                     Err((reply, m)) => {
                         let _ = reply.send(m + "\n");
                     }
+                }
+            }
+            if acting.is_none()
+                && let Some((k, ask)) = reader_acts.pop_front()
+            {
+                match Acting::for_reader(&scene, c, &person_sight, k, ask, &texts, open_surfaces(&scene, &sheets)) {
+                    Ok(a) => acting = Some(a),
+                    Err(m) => println!("reader · {}", m.trim_start_matches("? ")),
                 }
             }
             let mut failed = None;
@@ -2099,7 +2142,7 @@ pub fn run(
                         }
                         Step::Wait(until) if now < until => break,
                         Step::Wait(_) => {}
-                        Step::Scroll(deadline) => match crate::agent::reach_point(&scene, c, a.zone, &sight) {
+                        Step::Scroll(deadline) => match crate::agent::reach_point(&scene, c, a.zone, if a.person { &person_sight } else { &sight }) {
                             Ok(None) if now < deadline => {
                                 if !a.scrolled
                                     && let Some((prop, by)) = crate::agent::scroll_into_view(&scene, c, a.zone)
@@ -2120,7 +2163,14 @@ pub fn run(
                                 }
                             }
                         },
-                        Step::Point => match crate::agent::reach_point(&scene, c, a.zone, &sight) {
+                        Step::Point => match crate::agent::reach_point(&scene, c, a.zone, if a.person { &person_sight } else { &sight }) {
+                            // A person's reader: their own press, with no agent's cursor to show it.
+                            Ok(Some(p)) if a.person => {
+                                a.from = p;
+                                a.hand = Some(p);
+                                a.steps.pop_front();
+                                break;
+                            }
                             Ok(Some(p)) => {
                                 a.from = p;
                                 a.steps.pop_front();
@@ -4720,6 +4770,13 @@ pub fn run(
         // over a desktop that draws nothing of it —no dock under it, nothing
         // carried— made the whole list again at the monitor's pace, to get the
         // same list.
+        // A reader listening, and something changed since it was last told: the words
+        // on screen are gathered in this round's drawing (`describe` needs them), at most
+        // every `READER_EVERY`. With none listening, this is all it costs.
+        let reader_on = screen_readers.listening();
+        if reader_on && reader_dirty && crate::clock::now() >= reader_next {
+            draw.collect_texts = true;
+        }
         let term_versions = crate::terminal::versions(&draw.terminals);
         let same_scene = !draw.timed
             && !draw.particles_alive
@@ -4743,6 +4800,10 @@ pub fn run(
                     && m.seen.props().all(|k| m.props[k] == (props[k].x, props[k].v))
             });
         if !same_scene {
+            // Something changed: the reader is told, now if its words are gathered, or soon.
+            if reader_on && !draw.collect_texts {
+                reader_dirty = true;
+            }
             compose_seen.reset(facts.len(), props.len());
             draw.compose(to_paint, Ctx { seen: Some(&compose_seen), ..c }, &texts, &mut letters, view.clone(), size, op.hud);
             stretches_copied += draw.copied.0 as u64;
@@ -4791,6 +4852,7 @@ pub fn run(
                     rank: zone_rank.as_ref().map(|r| r.as_slice()),
                     zones: Some((&zone_memo.live, &zone_memo.bounds)),
                     index: Some(index),
+                    person: false,
                 };
                 let parts = crate::agent::describe(&scene, c, &texts, &sight);
                 if check_shortcuts {
@@ -4817,6 +4879,23 @@ pub fn run(
                 }
                 for (json, reply_to) in describing.drain(..) {
                     let _ = reply_to.send(if json { crate::agent::to_json(&parts) } else { crate::agent::to_text(&parts) });
+                }
+                // The person's reader: the same look, for them (`a11y.rs`).
+                if reader_on {
+                    let person = crate::agent::Sight { person: true, shown: sight.shown.clone(), ..sight };
+                    let open: Vec<u32> = sheets.iter().filter(|s| s.open).map(|s| s.id).collect();
+                    for part in crate::agent::describe(&scene, c, &texts, &person) {
+                        // The field being written in, if it is on this surface: where the reader's attention is.
+                        let focus = editing.as_ref().and_then(|e| {
+                            part.nodes.iter().filter(|n| n.role == crate::agent::Role::Field).find(|n| crate::agent::field_of(&scene, &scene.zones[n.zone]).is_some_and(|f| f.0 == e.field)).map(|n| crate::a11y::node_of_zone(n.zone))
+                        });
+                        if let Some(id) = open.get(part.shown) {
+                            // In the surface's logical pixels, as the compositor places it.
+                            screen_readers.send(*id, &part, focus, 1.0);
+                        }
+                    }
+                    reader_dirty = false;
+                    reader_next = crate::clock::now() + READER_EVERY;
                 }
                 draw.collect_texts = false;
                 draw.texts_seen.clear();
@@ -6229,6 +6308,10 @@ pub fn run(
             }
             cycle.close();
             next_appointment = appointments.iter().min().copied();
+            // A reader still owed what changed: woken for it.
+            if reader_dirty && screen_readers.listening() {
+                next_appointment = Some(next_appointment.map_or(reader_next, |a| a.min(reader_next)));
+            }
             resting = true;
             if let Some(p) = &mut probe {
                 p.rest();
@@ -8217,6 +8300,9 @@ enum Step {
     Key(String, Mods, Option<String>),
 }
 
+/// How often a screen reader is told what changed, at most (`a11y.rs`).
+const READER_EVERY: Duration = Duration::from_millis(100);
+
 /// An action an agent asked for by name, while it is being done.
 struct Acting {
     reply: std::sync::mpsc::Sender<String>,
@@ -8233,6 +8319,9 @@ struct Acting {
     done: Option<Instant>,
     heard: String,
     quiet: Instant,
+    /// Asked by a person's screen reader (`a11y.rs`), not by an agent: what is kept
+    /// from agents can be pressed, and no agent's cursor goes there first.
+    person: bool,
 }
 
 impl Acting {
@@ -8315,7 +8404,62 @@ impl Acting {
             }
         };
         let said_name = name.split("#screen").next().unwrap_or(&name).to_owned();
-        Ok(Acting { reply, zone, said_name, said: said + "\n", steps, hand: None, from: (0.0, 0.0), scrolled: false, before: crate::agent::before(scene, c, texts, open), events: Vec::new(), done: None, heard: String::new(), quiet: now })
+        Ok(Acting { reply, zone, said_name, said: said + "\n", steps, hand: None, from: (0.0, 0.0), scrolled: false, before: crate::agent::before(scene, c, texts, open), events: Vec::new(), done: None, heard: String::new(), quiet: now, person: false })
+    }
+
+    /// What a person's screen reader asks of zone `k`, done as their hand would:
+    /// a press, a field written over, a slider a notch along. Nobody waits for
+    /// an answer; the reader hears what changed in the tree.
+    fn for_reader(scene: &Scene, c: Ctx, sight: &crate::agent::Sight, k: usize, ask: crate::a11y::Ask, texts: &[String], open: Vec<String>) -> Result<Acting, String> {
+        use crate::a11y::Ask;
+        let now = crate::clock::now();
+        let z = &scene.zones[k];
+        let field = crate::agent::field_of(scene, z);
+        crate::agent::reach_point(scene, c, k, sight)?;
+        let mut steps = std::collections::VecDeque::new();
+        steps.push_back(Step::Scroll(now + Duration::from_millis(1500)));
+        let press = |steps: &mut std::collections::VecDeque<Step>| {
+            steps.push_back(Step::Point);
+            steps.push_back(Step::Down(0));
+            steps.push_back(Step::Pause(Duration::from_millis(40)));
+            steps.push_back(Step::Up(0));
+            steps.push_back(Step::Leave);
+        };
+        match ask {
+            Ask::Press => press(&mut steps),
+            // A field's attention is it being written in: it is pressed. Anything
+            // else is only where the reader is (`Readers::heard`).
+            Ask::Focus if field.is_some() => press(&mut steps),
+            Ask::Focus => return Err(String::new()),
+            Ask::Value(v) => match field {
+                Some((t, _, false)) => steps.push_back(Step::Type(t, v)),
+                _ => return Err(format!("{} is not a field it can write in", z.id)),
+            },
+            // A notch of the wheel, if it listens to it; if not, a drag of a twentieth of its length.
+            Ask::Step(n) => {
+                let wheels = scene.rules.iter().any(|r| matches!(r.when, crate::scene::Trigger::Wheel(id) if id.0 as usize == k));
+                steps.push_back(Step::Point);
+                if wheels {
+                    steps.push_back(Step::Wheel(n));
+                    steps.push_back(Step::Pause(Duration::from_millis(60)));
+                } else {
+                    let b = z.bounds(c).unwrap_or([0.0; 4]);
+                    let (w, h) = (b[2] - b[0], b[3] - b[1]);
+                    let (dx, dy) = if w >= h { (w * 0.05 * n, 0.0) } else { (0.0, -h * 0.05 * n) };
+                    steps.push_back(Step::Down(0));
+                    for i in 1..=4 {
+                        let f = i as f32 / 4.0;
+                        steps.push_back(Step::Pause(Duration::from_millis(20)));
+                        steps.push_back(Step::Move(dx * f, dy * f));
+                    }
+                    steps.push_back(Step::Up(0));
+                }
+                steps.push_back(Step::Leave);
+            }
+        }
+        let (reply, _) = std::sync::mpsc::channel();
+        let said_name = z.id.split("#screen").next().unwrap_or(z.id).to_owned();
+        Ok(Acting { reply, zone: k, said_name, said: String::new(), steps, hand: None, from: (0.0, 0.0), scrolled: false, before: crate::agent::before(scene, c, texts, open), events: Vec::new(), done: None, heard: String::new(), quiet: now, person: true })
     }
 }
 

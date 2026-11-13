@@ -2682,6 +2682,8 @@ pub enum ToRender {
     /// Someone from outside asks what there is to read and touch: the
     /// scene as a tree (`describe`), as text or as JSON.
     Describe(bool, std::sync::mpsc::Sender<String>),
+    /// A screen reader came, went, or asks for something (`a11y.rs`).
+    Reader(crate::a11y::Event),
     /// An agent asks the scene to do something by name, as a hand would
     /// (`press save`); it is answered with what happened.
     Act(crate::agent::Act, std::sync::mpsc::Sender<String>),
