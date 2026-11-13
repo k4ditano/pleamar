@@ -3933,6 +3933,18 @@ fn can_paint(adapter: &wgpu::Adapter) -> Result<(), String> {
 /// shaders and then refuses the GLSL for them). Built in error scopes, the internal errors
 /// too (a translation that fails is one), so it is only said, and the next card tried.
 fn builds_shapes(device: &wgpu::Device) -> Result<(), String> {
+    let t = std::time::Instant::now();
+    let r = builds_shapes_untimed(device);
+    STARTUP_TRIAL_MS.with(|c| c.set(c.get() + t.elapsed().as_secs_f32() * 1000.0));
+    r
+}
+
+thread_local! {
+    /// How long trying pleamar's shader on each card took, for the start's breakdown (`PLEAMAR_TIMING`).
+    static STARTUP_TRIAL_MS: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
+}
+
+fn builds_shapes_untimed(device: &wgpu::Device) -> Result<(), String> {
     let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape, tried"), source: wgpu::ShaderSource::Wgsl(format!("{}{}", include_str!("shape.wgsl"), crate::shaders::generate(&[])).into()) });
@@ -3985,6 +3997,7 @@ impl Gpu {
     /// able to show on it. Without —a monitor driven by the platform itself—,
     /// the card is whatever there is.
     pub fn new(instance: &wgpu::Instance, first: Option<&wgpu::Surface<'static>>) -> Gpu {
+        let t_start = std::time::Instant::now();
         // `PLEAMAR_GPU=high` asks for the fast card (a laptop's discrete one) instead of the frugal one.
         let asked = std::env::var("PLEAMAR_GPU").ok();
         let power_preference = match asked.as_deref() {
@@ -4044,6 +4057,7 @@ impl Gpu {
             .map_err(|e| e.to_string())
             .and_then(|(device, queue)| builds_shapes(&device).map(|()| (device, queue)))
         };
+        let t_adapter = t_start.elapsed();
         let on_gl = gl_adapter.and_then(|a| match device_of(&a) {
             Ok(dq) => {
                 println!("render · {}: on OpenGL, through EGL (its Vulkan driver cannot take buffers by their layout)", a.get_info().name);
@@ -4152,6 +4166,7 @@ impl Gpu {
         };
         let info = adapter.get_info();
         println!("render · {} ({:?}) · {:?} · {:?}", info.name, info.backend, format, alpha);
+        let t_device = t_start.elapsed();
 
         let store = |label, floats: usize| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -4182,7 +4197,9 @@ impl Gpu {
         // layout, and every bind group already made keeps being valid for it.
         let pipeline_layout = Self::pipeline_layout(&device);
         let base = crate::shaders::generate(&[]);
+        let t_shapes = std::time::Instant::now();
         let [pipeline, particles, screen, multiply, veil_cut, veil_add] = Self::build_pipeline(&device, &pipeline_layout, format, &base, false).expect("pleamar's own shader does not compile");
+        let shapes_ms = t_shapes.elapsed().as_secs_f32() * 1000.0;
         // A single atlas for glyphs and images. 2048² in RGBA is 16 MB; it
         // grows taller only when what is seen does not fit (`fit_atlas`).
         let (atlas, atlas_view) = Self::atlas_texture(&device, ATLAS_SIZE);
@@ -4196,6 +4213,7 @@ impl Gpu {
         // The effects —a group's blur, the glass and its frosting— are made inside a scope of
         // their own: a card that refuses one (an old OpenGL, a format it cannot paint into) gets
         // the scene without them, said once, instead of a render that falls on its first frame.
+        let t_effects = std::time::Instant::now();
         let effects = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let soften = crate::soften::Soften::new(&device, format);
         let lens = crate::lens::Pipelines::new(&device);
@@ -4212,6 +4230,7 @@ impl Gpu {
                 true
             }
         };
+        let effects_ms = t_effects.elapsed().as_secs_f32() * 1000.0;
         let blur_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
@@ -4236,6 +4255,21 @@ impl Gpu {
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
+        }
+        // `PLEAMAR_TIMING=1`: where the start goes —a cold one (no driver cache) is mostly shaders—.
+        if timing_enabled() {
+            let trial = STARTUP_TRIAL_MS.with(|c| c.get());
+            let ms = |d: std::time::Duration| d.as_secs_f32() * 1000.0;
+            println!(
+                "timing · the card ready in {:.0} ms: card chosen {:.0} · device {:.0} · trying the shader on it {:.0} · shapes' pipelines {:.0} · effects' pipelines {:.0} · the rest {:.0}",
+                ms(t_start.elapsed()),
+                ms(t_adapter),
+                ms(t_device - t_adapter) - trial,
+                trial,
+                shapes_ms,
+                effects_ms,
+                ms(t_start.elapsed()) - ms(t_device) - shapes_ms - effects_ms
+            );
         }
         g
     }

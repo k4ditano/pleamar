@@ -1145,15 +1145,23 @@ pub fn run(
                     }
                 }
                 ToRender::Sheet(n) => {
+                    let first_card = gpu.is_none();
+                    if first_card && crate::gpu::timing_enabled() {
+                        println!("timing · the first surface arrives {} ms after starting", crate::clock::since(op.start_time).as_millis());
+                    }
                     let g = gpu.get_or_insert_with(|| {
                         Gpu::new(&instance, match &n.target {
                             crate::gpu::Target::Surface(s) => Some(s),
                             crate::gpu::Target::Frames(_) => None,
                         })
                     });
+                    let t_scene_gpu = std::time::Instant::now();
                     g.set_lens_image(scene.lens_image.as_deref());
                     g.set_shaders(&scene.shaders);
                     g.set_blur(scene.blur.as_ref());
+                    if first_card && crate::gpu::timing_enabled() {
+                        println!("timing · the scene's own shaders and blur on the card: {} ms", t_scene_gpu.elapsed().as_millis());
+                    }
                     letters.allow_atlas(g.atlas_most());
                     // A scene that asks for "the full width" measures whatever its monitor measures, and it
                     // can know it: `screen.width`.
