@@ -42,6 +42,26 @@ pub use gpu::{Frames, NewSheet, Sent, Target, View};
 /// The same wgpu the render paints with, for a platform that lends it textures.
 pub use wgpu;
 pub use scenes::from_file::read as read_scene;
+
+/// How many of each a scene has: properties, instructions, rules, zones, facts, texts
+/// (`examples/scene-memory.rs`, pleamar#153).
+pub fn scene_counts(s: &scene::Scene) -> (usize, usize, usize, usize, usize, usize) {
+    (s.props.len(), s.instrs.len(), s.rules.len(), s.zones.len(), s.facts.len(), s.texts.len())
+}
+
+/// How big the scene's own types are, in bytes (`examples/scene-memory.rs`).
+pub fn scene_type_sizes() -> Vec<(&'static str, usize)> {
+    use std::mem::size_of;
+    vec![
+        ("Instr", size_of::<scene::Instr>()),
+        ("Expr", size_of::<scene::Expr>()),
+        ("Content", size_of::<scene::Content>()),
+        ("Zone", size_of::<scene::Zone>()),
+        ("Rule", size_of::<scene::Rule>()),
+        ("Effect", size_of::<scene::Effect>()),
+        ("Trigger", size_of::<scene::Trigger>()),
+    ]
+}
 mod fonts;
 mod text;
 
