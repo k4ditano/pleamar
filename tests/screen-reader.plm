@@ -3,7 +3,7 @@
 // from agents (a person's reader still presses it), a field, a slider, a toggle
 // and a list. `tools/reader/atspi-check.py` reads it and presses both buttons.
 scene Reader {
-    surface { size: 420, 280; kind: window; title: "Reader" }
+    surface { size: 420, 280; anchor: top_left; margin: 40; level: top }
     fact pressed = 0
     fact quiet = 0
     fact level = 0.5

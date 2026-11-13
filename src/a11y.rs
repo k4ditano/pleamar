@@ -267,7 +267,10 @@ mod reader {
             Role::Text => accesskit::Role::Label,
         };
         let mut node = Node::new(role);
-        if !n.label.is_empty() {
+        // Words drawn on their own are a label's text: AccessKit reads that from its value.
+        if n.role == Role::Text {
+            node.set_value(n.label.as_str());
+        } else if !n.label.is_empty() {
             node.set_label(n.label.as_str());
         }
         match (&n.value, n.role) {

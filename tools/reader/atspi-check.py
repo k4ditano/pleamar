@@ -22,11 +22,22 @@ ap.add_argument("--expect", action="append", default=[])
 ap.add_argument("--wait", type=float, default=10.0)
 a = ap.parse_args()
 
+def said(node):
+    """What a node says: its name, or the text a label holds."""
+    name = node.get_name() or ""
+    if name:
+        return name
+    try:
+        t = node.get_text_iface()
+        return t.get_text(0, -1) if t is not None else ""
+    except Exception:
+        return ""
+
 def walk(node, depth=0, out=None):
     out = [] if out is None else out
     try:
         Atspi.Accessible.clear_cache(node)
-        out.append((depth, node.get_role_name(), node.get_name() or "", node))
+        out.append((depth, node.get_role_name(), said(node), node))
         for i in range(node.get_child_count()):
             child = node.get_child_at_index(i)
             if child is not None:
@@ -66,7 +77,7 @@ for depth, role, name, node in nodes:
             pass
         try:
             states = node.get_state_set()
-            for s in ("checked", "selected", "focusable", "sensitive"):
+            for s in ("checked", "pressed", "selected", "focused", "focusable", "sensitive"):
                 if states.contains(getattr(Atspi.StateType, s.upper())):
                     extra += f" {s}"
         except Exception:
@@ -74,7 +85,14 @@ for depth, role, name, node in nodes:
         try:
             act = node.get_action_iface()
             if act is not None and act.get_n_actions() > 0:
-                extra += " actions=" + ",".join(act.get_action_name(i) for i in range(act.get_n_actions()))
+                extra += " actions=" + ",".join(act.get_name(i) for i in range(act.get_n_actions()))
+        except Exception:
+            pass
+    if node is not None and not name:
+        try:
+            t = node.get_text_iface()
+            if t is not None:
+                extra += f" text=«{t.get_text(0, -1)}»"
         except Exception:
             pass
     print(f"{'  ' * depth}{role} «{name}»{extra}")
