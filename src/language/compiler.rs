@@ -394,7 +394,7 @@ struct Compiler<'a> {
     /// Synthesized syntax must survive the deferred passes, but not the load.
     generated: &'a typed_arena::Arena<Node>,
     /// Stacks that scroll: their zone, their property, how far, how much per notch and with which spring.
-    scrolls: Vec<(String, PropId, Expr, Expr, Spring, FactId, Option<FactId>)>,
+    scrolls: Vec<(String, PropId, Expr, Expr, Spring, FactId, Option<FactId>, bool)>,
     /// Of the stacks that scroll, which ones are rows: they are dragged sideways.
     row_scrolls: std::collections::HashSet<String>,
     /// Surfaces whose `open:` is resolved at the end: (which one, the fact, where it is written).
@@ -6957,6 +6957,22 @@ impl<'a> Compiler<'a> {
             }
             None => false,
         };
+        // `inertia: false`: let go of a drag, the list stops dead instead of gliding on.
+        let inertia = match p.get_mut("inertia") {
+            Some(c) => {
+                let v = c.id("true or false")?;
+                c.expect_end()?;
+                if view.is_none() {
+                    return Err(CompileError::at(n.line, n.col, "`inertia` is for a layout with `view:`: one that scrolls"));
+                }
+                match v.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(CompileError::at(n.line, n.col, "`inertia` is true or false: whether a list dragged and let go goes on gliding (`inertia: false` stops it dead)")),
+                }
+            }
+            None => true,
+        };
         // `wrap: 5`: five per line and on to the next. A grid, with the cell the
         // size of the biggest child; what is not there leaves no gap.
         let wrap = match p.get_mut("wrap") {
@@ -7608,7 +7624,7 @@ impl<'a> Compiler<'a> {
                 if keep_visible {
                     self.e.behaviors.push(Behavior::Keep { scroll: *prop, starts: std::mem::take(&mut kept_starts), lengths: std::mem::take(&mut kept_lengths), until: until.clone(), pinned });
                 }
-                self.scrolls.push((name.clone(), *prop, until, step.clone(), spring.unwrap_or(Spring::QUICK), grab, pinned));
+                self.scrolls.push((name.clone(), *prop, until, step.clone(), spring.unwrap_or(Spring::QUICK), grab, pinned, inertia));
             }
             let target = match self.scopes.last_mut().map(Rc::make_mut) {
                 Some(e) => &mut e.exprs,
@@ -8812,7 +8828,7 @@ impl<'a> Compiler<'a> {
         // And the rules of the stacks that scroll, now that their zones exist.
         let wheel = self.facts["wheel"].e();
         let (dx, dy) = (self.facts["drag.dx"].e(), self.facts["drag.dy"].e());
-        for (name, prop, until, step, spring, grab, pinned) in std::mem::take(&mut self.scrolls) {
+        for (name, prop, until, step, spring, grab, pinned, inertia) in std::mem::take(&mut self.scrolls) {
             let Some(zone) = self.zones.get(&name).copied() else { continue };
             self.e.zones[zone.0 as usize].scrolls = Some(prop);
             // `stick: end`: whether it is at its end (two pixels' leeway), said by the
@@ -8830,13 +8846,22 @@ impl<'a> Compiler<'a> {
             // On any press over it, not only on its own zone: a press on a row went to
             // the row, where it was was not noted, and a drag of two pixels while
             // clicking went from an old value —0: the chat flew to its top—.
-            self.e.rule(Trigger::Grab(zone), vec![Effect::Fact(grab, prop.e())]);
+            let mut on_grab = vec![Effect::Fact(grab, prop.e())];
+            if inertia {
+                // Pressed again while it still glides, it stops where it is, as a hand on a moving list does.
+                on_grab.push(Effect::Halt { prop, until: until.clone(), pinned });
+            }
+            self.e.rule(Trigger::Grab(zone), on_grab);
             let a = (grab.e() - amount).max(Expr::K(0.0)).min(until.clone());
             let mut on_drag = vec![Effect::Animate(Transition { prop, to: a.clone(), spring: Spring::QUICK, delay: Duration::ZERO })];
             if let Some(f) = pinned {
                 on_drag.push(Effect::Fact(f, at_end(&a)));
             }
             self.e.rule(Trigger::Drag(zone), on_drag);
+            // Let go with speed, it goes on in the same direction and slows down smoothly (never past its ends).
+            if inertia {
+                self.e.rule(Trigger::Throw(zone), vec![Effect::Fling { prop, row: self.row_scrolls.contains(&name), until: until.clone(), pinned }]);
+            }
             if let Some(f) = pinned {
                 // It starts at its end, without travelling: when it is first seen, when it is shown
                 // again, and when it goes from nothing to scroll to something (a model filled at once).

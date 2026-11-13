@@ -596,6 +596,9 @@ pub fn run(
     let mut drag: Option<(usize, (f32, f32), Instant)> = None;
     // Since the press, the pointer has gone `DRAG_SLOP` from it.
     let mut drag_far = false;
+    // While dragging: when and how far (`drag.dx`, `drag.dy`) the pointer was at each frame it moved, the last
+    // few of them. What a list that is let go goes on with (`fling_speed`). Empty, and not looked at, the rest of the time.
+    let mut drag_trail: Vec<(Instant, f32, f32)> = Vec::new();
     // A window asked to be carried or stretched from its own frame (slot, 1
     // carried or 2 stretched, edges; 0 let go), and the handle pressed for it.
     let mut handle_asked: Option<(usize, u32, u32)> = None;
@@ -2639,6 +2642,8 @@ pub fn run(
             buttons = kept;
         }
         let (mut pressed, mut pressed_with, mut released) = (None, None, None);
+        // A drag let go with speed: the zone pressed, where, and how fast the pointer went (px/s).
+        let mut thrown: Option<(usize, (f32, f32), (f32, f32))> = None;
         let held_shift = keys_held.iter().any(|(_, n)| n.starts_with("Shift"));
         let held_ctrl = keys_held.iter().any(|(_, n)| n.starts_with("Control"));
         for (button, down) in &buttons {
@@ -2750,8 +2755,11 @@ pub fn run(
                     if let Some(s) = &mut selection {
                         s.dragging = false;
                     }
-                    if let Some((k, _, _)) = drag.take() {
+                    if let Some((k, o, _)) = drag.take() {
                         released = Some(k);
+                        if drag_far {
+                            thrown = fling_speed(&drag_trail, now).map(|v| (k, o, v));
+                        }
                         if let Some(z) = scene.zones.get(k) {
                             let _ = to_logic.send(Event::Release(z.id));
                         }
@@ -3061,6 +3069,14 @@ pub fn run(
             let by = if acting.as_ref().is_some_and(|a| a.hand.is_some()) { (0.0, 0.0) } else { carried };
             let from = if drag.is_some() { *drag_carried.get_or_insert(by) } else { drag_carried.take().unwrap_or(by) };
             let (dx, dy) = drag.map_or((0.0, 0.0), |(_, o, _)| (px - o.0 + by.0 - from.0, py - o.1 + by.1 - from.1));
+            if drag.is_some() {
+                if drag_trail.last().is_none_or(|l| l.1 != dx || l.2 != dy) {
+                    drag_trail.retain(|l| now.saturating_duration_since(l.0) <= FLING_LOOK_BACK * 2);
+                    drag_trail.push((now, dx, dy));
+                }
+            } else if !drag_trail.is_empty() {
+                drag_trail.clear();
+            }
             names.fresh(&scene);
             for &(k, name) in &names.pointer {
                 match name {
@@ -3298,6 +3314,7 @@ pub fn run(
             || pinch != 1.0
             || !keys_up.is_empty()
             || dragged.is_some()
+            || thrown.is_some()
             || !drops.is_empty()
             || carried_now.is_some();
         // Nothing changed, nothing woke, nothing happened: the `on change`s that read only facts and properties cannot fire.
@@ -3363,6 +3380,15 @@ pub fn run(
                                 // if it has moved away from that point (a title bar that
                                 // carries its window with it); others, while they hold it.
                                 (Some(zone), Some((k, o, _))) => zone.active.is_true(c) && (k == z.0 as usize || (drag_far && zone.contains(c, o.0, o.1))),
+                                _ => false,
+                            }
+                    }
+                    // Let go with speed, over a zone that was underneath when it was pressed: a list that goes on gliding.
+                    // Not with reduced motion: there it stops where the hand left it.
+                    Trigger::Throw(z) => {
+                        !reduced_motion
+                            && match (scene.zones.get(z.0 as usize), thrown) {
+                                (Some(zone), Some((k, o, _))) => zone.active.is_true(c) && (k == z.0 as usize || zone.contains(c, o.0, o.1)),
                                 _ => false,
                             }
                     }
@@ -3525,6 +3551,39 @@ pub fn run(
                     Effect::Impulse(p, v) => {
                         let v = v.eval(Ctx { props: &props, facts: &facts, seen: None });
                         props[p.0 as usize].v += v;
+                    }
+                    // A list let go with speed goes on: its spring is a slow one that is given the
+                    // pointer's speed and a target as far as that speed takes it (never past its ends).
+                    Effect::Fling { prop, row, until, pinned } => {
+                        if let (Some((_, _, v)), false) = (thrown, reduced_motion) {
+                            let hi = until.eval(Ctx { props: &props, facts: &facts, seen: None }).max(0.0);
+                            let speed = -(if row { v.0 } else { v.1 });
+                            let a = &mut props[prop.0 as usize];
+                            let to = (a.x + speed / Spring::GLIDE_RATE).clamp(0.0, hi);
+                            a.spring = Spring::GLIDE;
+                            a.target = to;
+                            // With this speed that spring ends exactly at `to`, from either side and without overshooting.
+                            a.v = (to - a.x) * Spring::GLIDE_RATE;
+                            if let Some(f) = pinned {
+                                let v = (to > hi - 2.0) as u8 as f32;
+                                facts[f.0 as usize] = v;
+                                let _ = to_logic.send(Event::Fact(scene.facts[f.0 as usize].0, v));
+                            }
+                        }
+                    }
+                    Effect::Halt { prop, until, pinned } => {
+                        let a = &mut props[prop.0 as usize];
+                        if a.spring.stiffness == Spring::GLIDE.stiffness && !a.at_rest() {
+                            a.target = a.x;
+                            a.v = 0.0;
+                            a.spring = Spring::QUICK;
+                            if let Some(f) = pinned {
+                                let hi = until.eval(Ctx { props: &props, facts: &facts, seen: None }).max(0.0);
+                                let v = (props[prop.0 as usize].x > hi - 2.0) as u8 as f32;
+                                facts[f.0 as usize] = v;
+                                let _ = to_logic.send(Event::Fact(scene.facts[f.0 as usize].0, v));
+                            }
+                        }
                     }
                     Effect::Ripple(z) => ripple_target = Some(z),
                     Effect::Gesture(g) => gestures_asked.push(g.0 as usize),
@@ -6946,6 +7005,34 @@ impl AwakeBehaviors {
 /// How far the pointer goes from where it was pressed before a drag reaches the
 /// zones underneath the one pressed: a click moves the mouse a pixel or two.
 const DRAG_SLOP: f32 = 4.0;
+
+/// How far back the speed of a drag is measured when it is let go. If the pointer has been still for most
+/// of this, the hand stopped before letting go, and the list does too.
+const FLING_LOOK_BACK: Duration = Duration::from_millis(100);
+/// Under this speed (px/s) a list let go just stops; over `FLING_MAX` it is taken as that one.
+const FLING_MIN: f32 = 50.0;
+const FLING_MAX: f32 = 6000.0;
+
+/// The speed (px/s, on `drag.dx` and `drag.dy`) a drag had in its last moments, from where the
+/// pointer was at each frame it moved. `None`: it was not going anywhere when it was let go.
+fn fling_speed(trail: &[(Instant, f32, f32)], now: Instant) -> Option<(f32, f32)> {
+    let last = trail.last()?;
+    if now.saturating_duration_since(last.0) > FLING_LOOK_BACK * 9 / 10 {
+        return None;
+    }
+    let first = trail.iter().find(|s| now.saturating_duration_since(s.0) <= FLING_LOOK_BACK)?;
+    let span = last.0.saturating_duration_since(first.0).as_secs_f32();
+    if span < 0.008 {
+        return None;
+    }
+    let v = ((last.1 - first.1) / span, (last.2 - first.2) / span);
+    let speed = v.0.hypot(v.1);
+    if speed < FLING_MIN {
+        return None;
+    }
+    let k = speed.min(FLING_MAX) / speed;
+    Some((v.0 * k, v.1 * k))
+}
 
 /// Where each fact and each text of the scene is, by its name: the logic
 /// says them by name, and a scene like Atalaya has 26 000 facts —a model of

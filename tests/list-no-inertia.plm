@@ -1,0 +1,22 @@
+// expect: ok
+language 0.1
+// The same list with `inertia: false`: let go, it stops dead where the hand left it.
+scene Still {
+    surface { size: 300, 220 }
+    let ink = #f5f7f5
+    fact opened = 0
+    column list {
+        at: 10, 10
+        view: 280, 200
+        inertia: false
+        repeat k in 0..40 {
+            group {
+                size: 280, 30
+                zone box row { from: 0, 0; size: 280, 28 }
+                text "row {k}" { at: 8, 15; anchor: left center; size: 12; color: ink }
+                on press row { opened = opened + 1 }
+            }
+        }
+    }
+    text "{list.scroll, 0}" { at: 200, 210; size: 10; color: #ffd166 }
+}

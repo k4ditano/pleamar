@@ -1,0 +1,24 @@
+// expect: ok
+language 0.1
+// A list that is dragged by one of its rows goes on gliding when it is let go, with the speed of
+// its last moments, and slows down smoothly without going past its ends (`tests/list_inertia.rs`
+// films it). `inertia: false` is the old way: it stops dead where the hand left it.
+scene Inertia {
+    surface { size: 300, 220 }
+    let ink = #f5f7f5
+    fact opened = 0
+    column list {
+        at: 10, 10
+        view: 280, 200
+        gap: 0
+        repeat k in 0..40 {
+            group {
+                size: 280, 30
+                zone box row { from: 0, 0; size: 280, 28 }
+                text "row {k}" { at: 8, 15; anchor: left center; size: 12; color: ink }
+                on press row { opened = opened + 1 }
+            }
+        }
+    }
+    text "{list.scroll, 0} {opened, 0}" { at: 200, 210; size: 10; color: #ffd166 }
+}

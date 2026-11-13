@@ -2015,6 +2015,10 @@ pub enum Trigger {
     /// The mouse moves with the button held since it was pressed here. Where, in
     /// `local.x` and `local.y`; how much since it was pressed, in `drag.dx` and `drag.dy`.
     Drag(ZoneId),
+    /// A drag that went past the slop is let go with some speed, over a zone that was
+    /// under where it was pressed (what `Drag` reaches). Not written in the language: a list
+    /// with `view:` makes it for itself, to go on gliding (`Effect::Fling`).
+    Throw(ZoneId),
     /// It has been held pressed for this long.
     Hold { zone: ZoneId, duration: Duration },
     /// A key, by its name: `Escape`, `Return`, `a`, `Ctrl+k`.
@@ -2072,6 +2076,13 @@ pub enum Effect {
     /// fires, so it can depend on what is going on: the bounce of
     /// a countdown decreases with the number that is left.
     Impulse(PropId, Expr),
+    /// A list with `view:` let go with the speed it was dragged at: the scroll goes on
+    /// in the same direction and slows down smoothly, without ever going past its end
+    /// (`until`). Only after a `Trigger::Throw`, and not with reduced motion. `row`: it scrolls
+    /// sideways. `pinned`: the fact of a `stick: end`, which is told whether it ends at its end.
+    Fling { prop: PropId, row: bool, until: Expr, pinned: Option<FactId> },
+    /// Pressing a list that is still gliding stops it where it is (`pinned` as in `Fling`).
+    Halt { prop: PropId, until: Expr, pinned: Option<FactId> },
     /// A ring of light from the centre of a zone, without pressing it.
     Ripple(ZoneId),
     Gesture(GestureId),
@@ -2545,6 +2556,10 @@ impl Spring {
     /// `~0ms`: not a spring. It is there at once, still, and whatever
     /// moves it next does so with its own spring.
     pub const INSTANT: Spring = Spring { stiffness: f32::INFINITY, damping: 0.0 };
+    /// How a list goes on after being let go (`Effect::Fling`): critically damped with this rate (1/s), so the
+    /// speed dies out as `e^(-rate·t)` and what is left to glide is `speed / rate`. Nothing to bounce.
+    pub const GLIDE_RATE: f32 = 3.5;
+    pub const GLIDE: Spring = Spring { stiffness: Self::GLIDE_RATE * Self::GLIDE_RATE, damping: 2.0 * Self::GLIDE_RATE };
 
     pub fn is_instant(&self) -> bool {
         self.stiffness.is_infinite()
