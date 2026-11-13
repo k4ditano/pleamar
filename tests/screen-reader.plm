@@ -1,0 +1,24 @@
+// expect: ok
+// What a screen reader is told (docs/13-screen-readers.md): a button, one kept
+// from agents (a person's reader still presses it), a field, a slider, a toggle
+// and a list. `tools/reader/atspi-check.py` reads it and presses both buttons.
+scene Reader {
+    surface { size: 420, 280; kind: window; title: "Reader" }
+    fact pressed = 0
+    fact quiet = 0
+    fact level = 0.5
+    fact wifi = true
+    text query = ""
+    box go { from: 20, 20; size: 120, 40; corner: 8; color: #335577; label: "Press me" }
+    on press go { pressed = pressed + 1 }
+    box hush { from: 160, 20; size: 120, 40; corner: 8; color: #553333; label: "Quiet"; agent: no }
+    on press hush { quiet = quiet + 1 }
+    input query { at: 20, 80; width: 200; placeholder: "Search"; label: "Search" }
+    box vol { from: 20, 130; size: 200, 20; color: #444444; label: "Volume"; role: slider; value: "{level * 100}%" }
+    on drag vol { level = min(1, level + 0.1) }
+    box wifi { from: 240, 130; size: 60, 30; label: "Wi-Fi"; role: toggle; checked: wifi }
+    on press wifi { toggle wifi }
+    box list { from: 20, 170; size: 280, 60; label: "Rows"; role: list }
+    on press list { pressed = pressed }
+    text "pressed {pressed} · quiet {quiet}" { at: 210, 260; size: 14; color: #ffffff }
+}
