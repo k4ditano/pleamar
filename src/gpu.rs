@@ -2823,7 +2823,7 @@ impl DrawList {
                         e[40] = v;
                         e[41] = bevel_for(shape_only);
                         e[42] = lens as u8 as f32;
-                        glass_options(e, glass_spec.as_ref(), shape_only, c);
+                        glass_options(e, glass_spec.as_deref(), shape_only, c);
                         if let Some(l) = light {
                             e[20..23].copy_from_slice(&[l.amount, l.from_y.eval(c), l.height]);
                         }
@@ -2867,7 +2867,7 @@ impl DrawList {
                         e[40] = v;
                         e[41] = bevel_for(b);
                         e[42] = lens as u8 as f32;
-                        glass_options(e, glass_spec.as_ref(), b, c);
+                        glass_options(e, glass_spec.as_deref(), b, c);
                     });
                 }
                 Instr::Image { image, target, alpha, tint, cell, fit } => {
@@ -3120,7 +3120,7 @@ impl DrawList {
                     }
                     // `mentions:`: each `@name` on a pill of its colour, and in it.
                     let mut paints: Vec<(u32, u32, [f32; 3])> = Vec::new();
-                    if let (Some((names, files)), false) = (mentions, empty) {
+                    if let (Some((names, files)), false) = (mentions.as_deref(), empty) {
                         let (names, files) = (color(names), files.as_ref().map(color));
                         for (ma, mb) in crate::markdown::mentions(value) {
                             // A file's (an extension after a dot) in its own colour, if there is one.

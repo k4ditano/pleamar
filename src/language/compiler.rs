@@ -3423,7 +3423,7 @@ impl<'a> Compiler<'a> {
                 "ellipse" | "box" | "arc" | "line" | "path" => {
                     let f = self.shape(n, 0)?;
                     self.last_size = f.size;
-                    self.e.paint(Instr::Solid { shape: f.shape, color: f.color.unwrap_or_else(|| color(1.0, 1.0, 1.0)), alpha: f.opacity.unwrap_or(Expr::K(1.0)), glass_spec: f.glass_spec });
+                    self.e.paint(Instr::Solid { shape: f.shape, color: f.color.unwrap_or_else(|| color(1.0, 1.0, 1.0)), alpha: f.opacity.unwrap_or(Expr::K(1.0)), glass_spec: f.glass_spec.map(Box::new) });
                 }
                 "text" => self.text(n)?,
                 "image" => self.image(n)?,
@@ -3925,7 +3925,7 @@ impl<'a> Compiler<'a> {
             None => alpha,
         };
         let alpha = if opaque(&body_alpha) { alpha } else { alpha * body_alpha };
-        self.e.paint(Instr::Fill { paint, alpha, rim, light, border, glass_spec });
+        self.e.paint(Instr::Fill { paint, alpha, rim, light, border, glass_spec: glass_spec.map(Box::new) });
         self.last_size = size;
         Ok(())
     }

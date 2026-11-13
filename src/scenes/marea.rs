@@ -98,7 +98,7 @@ impl Script for Marea {
         let title = e.live_text("notice.title", "Meeting in 5 min");
         let detail = e.live_text("notice.detail", "Design review · 18:00");
         let write = |e: &mut Scene, c: Content, x: f32, y: f32, anchor: (f32, f32), width: Option<f32>, style: Style, alpha: f32| {
-            e.paint(Instr::Text { content: c, at: (panel_x.clone() + x, origin_y.clone() + y), anchor, width: width.map(Into::into), style: (style.into()).into(), alpha: alpha.into(), measure: None });
+            e.paint(Instr::Text { content: c, at: (panel_x.clone() + x, origin_y.clone() + y), anchor, width: width.map(Into::into), style: style.into(), alpha: alpha.into(), measure: None });
         };
         write(&mut e, Content::Live(app), 26.0, 33.0, (0.0, 0.5), None, Style::new(12.5, white.clone()), 0.62);
         write(&mut e, Content::Live(when), 380.0, 33.0, (1.0, 0.5), None, Style::new(13.5, white.clone()), 0.55);

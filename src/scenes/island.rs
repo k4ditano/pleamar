@@ -57,7 +57,7 @@ impl Script for Island {
             at: (mix(CX, CX - OPEN.0 * 0.5 + 84.0, t.clone()), mix(TOP + 18.0, TOP + 24.0, t.clone())),
             anchor: (0.5, 0.5),
             width: None,
-            style: Style::new(15.0, white.clone()).weight(600),
+            style: Style::new(15.0, white.clone()).weight(600).into(),
             alpha: 0.95.into(), measure: None });
         // And next to it, the icon of whatever is playing. Finding it is the platform's business.
         let icon = e.image(ImageSource::Icon("firefox".into()), 28, 28);
