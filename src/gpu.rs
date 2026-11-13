@@ -142,7 +142,7 @@ pub struct DrawList {
     pub glass_regions: Vec<([f32; 4], Behind)>,
     /// The strips of each glass shape, at the origin, keyed by what makes it
     /// what it is except where it is: while it only moves, they are not searched again.
-    glass_cache: std::collections::HashMap<[u32; 12], (Vec<[f32; 4]>, bool)>,
+    glass_cache: std::collections::HashMap<([u32; 12], u64), (Vec<[f32; 4]>, bool)>,
     /// The windows of the scene's compositor that have an image: for each slot,
     /// where it is in the windows' texture (its layer, and the corners of the
     /// window itself inside it). The render sets it before composing.
@@ -1890,12 +1890,28 @@ impl DrawList {
             }
             let mut at_origin = *p;
             (at_origin.cx, at_origin.cy, at_origin.affine.t) = (0.0, 0.0, [0.0, 0.0]);
-            // A path is its points, which the key does not see: that one is always measured.
-            let strips = if p.kind == 4 {
-                strips_of(&at_origin, &self.points)
+            // A path is its points: they go in the key by what they say, not by where they are in
+            // the list, which moves when anything drawn before it changes. Measured every frame, a
+            // path's strips cost most of a millisecond each, and a dozen still glass bodies made
+            // of strokes cost ten while another one moved, or while their group did (#148).
+            let (points_key, points): (u64, &[f32]) = if p.kind == 4 {
+                let (first, n) = (at_origin.radius as usize * 2, at_origin.ex as usize * 2);
+                let mine = self.points.get(first..first + n).unwrap_or(&[]);
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                // To 1/64 of a pixel (the strips are found to a quarter): the points are kept
+                // from the path's centre, and moving it by a fraction of a pixel left them a
+                // rounding apart, so a stroke that only moved was never found again.
+                for v in mine {
+                    std::hash::Hasher::write_i32(&mut h, (v * 64.0).round() as i32);
+                }
+                (std::hash::Hasher::finish(&h) | 1, &self.points[..])
             } else {
-                let key = [at_origin.kind as f32, at_origin.mx, at_origin.my, at_origin.radius, at_origin.rotation, at_origin.ex, at_origin.ey, at_origin.stroke, at_origin.affine.m[0], at_origin.affine.m[1], at_origin.affine.m[2], at_origin.affine.m[3]].map(f32::to_bits);
-                let cached = self.glass_cache.entry(key).or_insert_with(|| (strips_of(&at_origin, &[]), false));
+                (0, &[])
+            };
+            let radius = if p.kind == 4 { 0.0 } else { at_origin.radius };
+            let key = [at_origin.kind as f32, at_origin.mx, at_origin.my, radius, at_origin.rotation, at_origin.ex, at_origin.ey, at_origin.stroke, at_origin.affine.m[0], at_origin.affine.m[1], at_origin.affine.m[2], at_origin.affine.m[3]].map(f32::to_bits);
+            let strips = {
+                let cached = self.glass_cache.entry((key, points_key)).or_insert_with(|| (strips_of(&at_origin, points), false));
                 cached.1 = true;
                 cached.0.clone()
             };
@@ -6270,6 +6286,40 @@ mod tests {
             assert!(cuts.iter().any(|c| c[0] <= b[0] && c[1] <= b[1] && c[2] >= b[2] && c[3] >= b[3]), "{b:?} is left out");
         }
         assert!(merge_cuts([[5.0, 5.0, 5.0, 9.0]].into_iter()).is_empty());
+    }
+
+    /// A glass path's strips are kept by its points, not by where they sit in the
+    /// list: the same stroke written after other points, or moved, is taken from
+    /// the cache, shifted, and not measured again (#148).
+    #[test]
+    fn a_glass_paths_strips_are_kept_by_its_points() {
+        let mut d = DrawList::default();
+        let stroke = [0.0f32, 0.0, 60.0, 40.0, 20.0, 110.0, 50.0, 120.0];
+        let path = |first: usize, cx: f32| FlatShape { kind: 4, cx, cy: 80.0, mx: 0.0, my: 0.0, radius: (first / 2) as f32, rotation: 0.0, ex: 4.0, ey: 0.0, stroke: 14.0, affine: Affine::IDENTITY };
+        d.points.extend_from_slice(&stroke);
+        d.request_glass(&[path(0, 40.0)], &[], false);
+        let first: Vec<[f32; 4]> = d.glass_regions.iter().map(|r| r.0).collect();
+        assert!(!first.is_empty(), "a stroke has strips");
+        assert_eq!(d.glass_cache.len(), 1);
+        // The same stroke after six other numbers, 25 px further right.
+        d.glass_regions.clear();
+        d.points.clear();
+        d.points.extend_from_slice(&[9.0; 6]);
+        d.points.extend_from_slice(&stroke);
+        d.request_glass(&[path(6, 65.0)], &[], false);
+        assert_eq!(d.glass_cache.len(), 1, "taken from the cache, not measured again");
+        let moved: Vec<[f32; 4]> = d.glass_regions.iter().map(|r| r.0).collect();
+        assert_eq!(moved, first.iter().map(|r| [r[0] + 25.0, r[1], r[2] + 25.0, r[3]]).collect::<Vec<_>>());
+        // The same stroke a rounding away (what moving a path's `at:` leaves): the same entry.
+        d.points.clear();
+        d.points.extend(stroke.iter().map(|v| v + 1e-5));
+        d.request_glass(&[path(0, 40.3)], &[], false);
+        assert_eq!(d.glass_cache.len(), 1, "a rounding apart is the same stroke");
+        // Another stroke is another entry.
+        d.points.clear();
+        d.points.extend_from_slice(&[0.0, 0.0, 30.0, 10.0, 20.0, 50.0, 0.0, 70.0]);
+        d.request_glass(&[path(0, 40.0)], &[], false);
+        assert_eq!(d.glass_cache.len(), 2);
     }
 
     fn area(f: &[[f32; 4]]) -> f32 {
