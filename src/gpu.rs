@@ -3769,13 +3769,11 @@ pub struct Gpu {
     alpha: wgpu::CompositeAlphaMode,
     non_blocking: Option<wgpu::PresentMode>,
     pipeline: wgpu::RenderPipeline,
-    /// The particles: the same shader and layout, other entry points, one
-    /// instance per particle.
-    particles: wgpu::RenderPipeline,
-    /// The same elements pipeline with another blend: a group with `mode:
-    /// screen` or `mode: multiply` is drawn with one of these. See `BLENDS`.
-    screen: wgpu::RenderPipeline,
-    multiply: wgpu::RenderPipeline,
+    /// The particles (the same shader and layout, other entry points, one
+    /// instance per particle), and the elements pipeline with another blend: a
+    /// group with `mode: screen` or `mode: multiply` is drawn with one of these
+    /// (see `BLENDS`). Few scenes draw them on their first frame: built after (`Late`).
+    late: Late,
     /// A glass's veil over what the scene painted under it: what takes it
     /// away as far as the glass covers, and what adds it frosted. See `VEIL`.
     veil: [wgpu::RenderPipeline; 2],
@@ -3928,6 +3926,75 @@ fn can_paint(adapter: &wgpu::Adapter) -> Result<(), String> {
     Ok(())
 }
 
+/// Pipelines few scenes draw with on their first frame —the particles, the screen and
+/// multiply blends—, built on a thread of their own while it is painted, and waited for only
+/// by the first frame that draws with them. On a cold start (no driver cache) each is the
+/// driver compiling the whole shader, a couple of hundred milliseconds.
+pub struct Late {
+    ready: std::sync::OnceLock<Option<[wgpu::RenderPipeline; 3]>>,
+    coming: std::sync::Mutex<Option<std::thread::JoinHandle<Result<[wgpu::RenderPipeline; 3], String>>>>,
+}
+
+impl Late {
+    /// Particles, screen and multiply, built on a thread with the module and layout given.
+    fn build(d: &wgpu::Device, layout: &wgpu::PipelineLayout, module: &wgpu::ShaderModule, format: wgpu::TextureFormat) -> Late {
+        let (d, layout, module) = (d.clone(), layout.clone(), module.clone());
+        let over = wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING;
+        let work = move || -> Result<[wgpu::RenderPipeline; 3], String> {
+            Ok([
+                shape_pipeline(&d, &layout, &module, format, "particles", "vs_particle", "fs_particle", over)?,
+                shape_pipeline(&d, &layout, &module, format, "screen", "vs", "fs", BLENDS[0])?,
+                shape_pipeline(&d, &layout, &module, format, "multiply", "vs", "fs", BLENDS[1])?,
+            ])
+        };
+        let late = Late { ready: std::sync::OnceLock::new(), coming: std::sync::Mutex::new(None) };
+        match std::thread::Builder::new().name("pleamar pipelines".into()).stack_size(16 << 20).spawn(work) {
+            Ok(h) => *late.coming.lock().unwrap() = Some(h),
+            // No thread to be had: built when first drawn with, on the render's.
+            Err(e) => {
+                println!("render · no thread for the particles' and blends' pipelines ({e}): built when they are drawn");
+            }
+        }
+        late
+    }
+
+    /// Particles, screen and multiply; `None` if the card could not build them (said once).
+    fn get(&self) -> Option<&[wgpu::RenderPipeline; 3]> {
+        self.ready
+            .get_or_init(|| {
+                let made = match self.coming.lock().unwrap().take() {
+                    Some(h) => h.join().unwrap_or_else(|_| Err("building them panicked".into())),
+                    None => Err("they were not built".into()),
+                };
+                made.map_err(|e| println!("render · the particles' and blends' pipelines could not be built ({}): they are not drawn", last_line(&e))).ok()
+            })
+            .as_ref()
+    }
+}
+
+/// One pipeline of pleamar's shader: with that stage's entry points and that blend.
+#[allow(clippy::too_many_arguments)]
+fn shape_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, module: &wgpu::ShaderModule, format: wgpu::TextureFormat, label: &'static str, vs: &'static str, fs: &'static str, blend: wgpu::BlendState) -> Result<wgpu::RenderPipeline, String> {
+    in_scopes(d, || {
+        d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(layout),
+            vertex: wgpu::VertexState { module, entry_point: Some(vs), compilation_options: Default::default(), buffers: &[] },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module,
+                entry_point: Some(fs),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: Some(blend), write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    })
+}
+
 /// What a card is given before it paints: its device, and every pipeline of pleamar's own,
 /// built on it. Building them is how a card is tried: what a card says it can do is not
 /// always what its driver translates (NVIDIA's OpenGL claims stores in vertex shaders and
@@ -3942,7 +4009,7 @@ struct Made {
     alpha: wgpu::CompositeAlphaMode,
     non_blocking: Option<wgpu::PresentMode>,
     layout: wgpu::PipelineLayout,
-    shapes: [wgpu::RenderPipeline; 6],
+    shapes: ([wgpu::RenderPipeline; 3], Late),
     soften: crate::soften::Soften,
     lens: crate::lens::Pipelines,
     blur: crate::blur::Built,
@@ -4179,7 +4246,7 @@ impl Gpu {
             }
         };
         let Made { device, queue, format, alpha, non_blocking, layout: pipeline_layout, shapes, soften, lens, blur, effects_refused, ms: made_ms } = made;
-        let [pipeline, particles, screen, multiply, veil_cut, veil_add] = shapes;
+        let ([pipeline, veil_cut, veil_add], late) = shapes;
         // The card out of memory —a texture too big for what it has free— is
         // said and lived through: what asked for it is not drawn. wgpu's own
         // answer is to panic, and a window manager's whole session went down
@@ -4276,7 +4343,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { _gl_instance: gl_instance, effects_off, lens, blur, blur_sampler, blur_values: crate::blur::DEFAULT_VALUES, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, veil: [veil_cut, veil_add], erase, soften, pipeline_layout, user_code: base, lens_image: Default::default(), built_for_image: false, lens_epoch: 0, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, backdrop_sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group, no_picture_view, pictures: Default::default() };
+        let mut g = Gpu { _gl_instance: gl_instance, effects_off, lens, blur, blur_sampler, blur_values: crate::blur::DEFAULT_VALUES, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, late, veil: [veil_cut, veil_add], erase, soften, pipeline_layout, user_code: base, lens_image: Default::default(), built_for_image: false, lens_epoch: 0, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, backdrop_sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group, no_picture_view, pictures: Default::default() };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -4357,7 +4424,7 @@ impl Gpu {
     /// pleamar's shader with the scene's own ones added. An error comes back as
     /// text instead of bringing the program down: they were checked when the
     /// scene was read, but a driver can still say no.
-    fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str, picture: bool) -> Result<[wgpu::RenderPipeline; 6], String> {
+    fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str, picture: bool) -> Result<([wgpu::RenderPipeline; 3], Late), String> {
         // With a picture for a backdrop (`lens = image`) the glass is all bent picture: the
         // 12 % that lets what is really behind through is cancelled by subtracting the backdrop, which is
         // only right when the backdrop is what is behind.
@@ -4366,51 +4433,22 @@ impl Gpu {
         // In error scopes, the internal errors too (a driver's translation that fails is one):
         // a card that cannot build it is said and the next one tried (`Made`).
         let module = in_scopes(d, || d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape"), source: wgpu::ShaderSource::Wgsl(source.into()) }))?;
-        let make = |label: &'static str, vs: &'static str, fs: &'static str, blend: wgpu::BlendState| {
-            in_scopes(d, || {
-                d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(layout),
-                    vertex: wgpu::VertexState { module: &module, entry_point: Some(vs), compilation_options: Default::default(), buffers: &[] },
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &module,
-                        entry_point: Some(fs),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState { format, blend: Some(blend), write_mask: wgpu::ColorWrites::ALL })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
-            })
-        };
+        // Each pipeline is the driver compiling the whole shader again for that stage and
+        // blend: a couple of hundred milliseconds each when it has not seen it before (a cold
+        // start, or a new pleamar); six one after the other were most of a cold start's 2 s.
+        // What the first frame draws with —the elements and a glass's veil— is compiled side
+        // by side, the first on this thread; the rest on its own while that frame is painted.
         let over = wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING;
-        let specs: [(&'static str, &'static str, &'static str, wgpu::BlendState); 6] = [
-            ("elements", "vs", "fs", over),
-            ("particles", "vs_particle", "fs_particle", over),
-            ("screen", "vs", "fs", BLENDS[0]),
-            ("multiply", "vs", "fs", BLENDS[1]),
-            ("veil: cut", "vs", "fs_veil_cut", VEIL[0]),
-            ("veil: add", "vs", "fs_veil_add", VEIL[1]),
-        ];
-        // Each is the driver compiling the whole shader again for that stage and blend: a
-        // couple of hundred milliseconds each when it has not seen it before (a cold start,
-        // or a new pleamar), one after the other twice what 0.7 took. They are compiled side
-        // by side, each on a thread of its own, the first on this one.
-        let make = &make;
-        let built: Vec<Result<wgpu::RenderPipeline, String>> = std::thread::scope(|s| {
-            let others: Vec<_> = specs[1..].iter().map(|&(l, v, f, b)| on_a_thread(s, move || make(l, v, f, b))).collect();
-            let (l, v, f, b) = specs[0];
-            let first = make(l, v, f, b);
-            std::iter::once(first).chain(others.into_iter().map(|h| h.join().unwrap_or_else(|_| Err("building a pipeline panicked".into())))).collect()
+        let module = &module;
+        let (elements, cut, add) = std::thread::scope(|s| {
+            let cut = on_a_thread(s, move || shape_pipeline(d, layout, module, format, "veil: cut", "vs", "fs_veil_cut", VEIL[0]));
+            let add = on_a_thread(s, move || shape_pipeline(d, layout, module, format, "veil: add", "vs", "fs_veil_add", VEIL[1]));
+            let elements = shape_pipeline(d, layout, module, format, "elements", "vs", "fs", over);
+            let joined = |h: std::thread::ScopedJoinHandle<'_, Result<wgpu::RenderPipeline, String>>| h.join().unwrap_or_else(|_| Err("building a pipeline panicked".into()));
+            (elements, joined(cut), joined(add))
         });
-        let mut pipelines = Vec::with_capacity(6);
-        for p in built {
-            pipelines.push(p?);
-        }
-        pipelines.try_into().map_err(|_| "six pipelines".to_owned())
+        let eager = [elements?, cut?, add?];
+        Ok((eager, Late::build(d, layout, module, format)))
     }
 
     /// The blur in use.
@@ -4445,11 +4483,11 @@ impl Gpu {
         }
         self.built_for_image = picture;
         match Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &code, picture) {
-            Ok([p, q, sc, mu, vc, va]) => (self.pipeline, self.particles, self.screen, self.multiply, self.veil) = (p, q, sc, mu, [vc, va]),
+            Ok(([p, vc, va], late)) => (self.pipeline, self.late, self.veil) = (p, late, [vc, va]),
             Err(e) => {
                 eprintln!("shader · the scene's own shaders could not be built, and they are not painted: {e}");
-                if let Ok([p, q, sc, mu, vc, va]) = Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &crate::shaders::generate(&[]), picture) {
-                    (self.pipeline, self.particles, self.screen, self.multiply, self.veil) = (p, q, sc, mu, [vc, va]);
+                if let Ok(([p, vc, va], late)) = Self::build_pipeline(&self.device, &self.pipeline_layout, self.format, &crate::shaders::generate(&[]), picture) {
+                    (self.pipeline, self.late, self.veil) = (p, late, [vc, va]);
                 }
             }
         }
@@ -5802,8 +5840,10 @@ impl Gpu {
                     }
                     match how {
                         0 => {
-                            pass.set_pipeline(&self.particles);
-                            pass.draw(0..6, at * PARTICLE_SLOTS..at * PARTICLE_SLOTS + count);
+                            if let Some([particles, ..]) = self.late.get() {
+                                pass.set_pipeline(particles);
+                                pass.draw(0..6, at * PARTICLE_SLOTS..at * PARTICLE_SLOTS + count);
+                            }
                         }
                         // A glass over what the scene painted: that, frosted in its place, then the glass.
                         5 => {
@@ -5823,8 +5863,10 @@ impl Gpu {
                             }
                         }
                         m => {
-                            pass.set_pipeline(if m == 2 { &self.screen } else { &self.multiply });
-                            pass.draw(0..6, at..at + 1);
+                            if let Some([_, screen, multiply]) = self.late.get() {
+                                pass.set_pipeline(if m == 2 { screen } else { multiply });
+                                pass.draw(0..6, at..at + 1);
+                            }
                         }
                     }
                     pass.set_pipeline(&self.pipeline);
