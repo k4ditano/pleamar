@@ -38,10 +38,10 @@
 - **For whoever writes it**: hot reload that loses nothing, a language server, highlighting for vim and VS Code, types for luau-lsp, `--report` to measure on someone else's machine, and a skill that teaches AI agents to write and check scenes.
 - **[pleamar-wm](https://github.com/k4ditano/pleamar-wm)**: a compositor whose window manager is a pleamar scene, with hands for AI agents.
 - **0.8, experimental (`exp2`, Nov 2026)**: several scenes in one process, talking with checked events (`import scene`, `uses scene`); markdown, fields of several lines with an input method, mentions and paste; lists with identity; windows with their own frame and popups out of popups; `pleamar:ui`'s menus and tables; a real blur and a finer glass; any card that can paint it does, and `--film` films a scene with no screen. What each brought and how it was checked: [08](08-limitations.md), «Fixed».
-- ⬜ Still missing: copies born at runtime, deferred loading, an input method outside Wayland, inertia in lists, and a whole screen live inside the scene. See the next step.
+- ⬜ Still missing: copies born at runtime, deferred loading, an input method outside Wayland, and a whole screen live inside the scene. See the next step.
 
 Every version, with what it brought: [Releases](https://github.com/k4ditano/pleamar/releases).
 
 ## Next step
 
-**The direction:** this is **an alternative to Quickshell**, not the engine of one particular shell. The yardstick is [Parity with Quickshell](07-whats-missing.md), measured against real configurations, and its §4 says the order of work: copies that are born and die on their own (G12) and inertia in lists, then deferred loading, then IME. **Still to be tried by real hands**: the popups and the tray menu (S11), the input field with a real keyboard (E8), the wheel (E1), and notifications and the tray as the only bar (B12, B14).
+**The direction:** this is **an alternative to Quickshell**, not the engine of one particular shell. The yardstick is [Parity with Quickshell](07-whats-missing.md), measured against real configurations, and its §4 says the order of work: copies that are born and die on their own (G12), then deferred loading, then IME. **Still to be tried by real hands**: the popups and the tray menu (S11), the input field with a real keyboard (E8), the wheel (E1), and notifications and the tray as the only bar (B12, B14).

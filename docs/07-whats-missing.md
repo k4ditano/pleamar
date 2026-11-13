@@ -24,7 +24,7 @@ Instantiated types, with the number of times they appear across the two configur
 | `GradientStop` | 66 | ✅ up to eight stops, each one where it says, and radial as well as linear |
 | `Image` | 63 | ✅ `image`, from a file, from an icon or from a piece of data |
 | `TextInput` | 34 | ✅ `input` (single line; an input method on Wayland, and undo) |
-| `ListView` · `Flickable` | 31 · 22 | 🟡 `view:` in a layout, with `content:` and `for … from` for lists of thousands in a handful of copies, and dragged by grabbing any row. No inertia when let go |
+| `ListView` · `Flickable` | 31 · 22 | 🟡 `view:` in a layout, with `content:` and `for … from` for lists of thousands in a handful of copies, dragged by grabbing any row, and it glides on when let go (`inertia: false` stops it dead) |
 | `Flow` | 28 | ✅ `wrap: n` in a `row` or `column`: a grid, and what is not seen leaves no gap |
 | `QtObject` | 38 | 🟡 standalone properties, no grouping |
 
@@ -55,7 +55,7 @@ And what they use from the `Quickshell` object: `env` (82) ✅ `sys.ask("env", �
 
 ### 🟡 Lists: what is left
 
-A list of five thousand already fits in sixteen copies (`content:` + `for … from`, §3.1), so the cost no longer depends on how much there is, and it is dragged by grabbing any of its rows. What is missing is **inertia** when it is let go, and copies that **are born and die on their own** instead of the scene declaring the window and the logic slicing the chunk (G12).
+A list of five thousand already fits in sixteen copies (`content:` + `for … from`, §3.1), so the cost no longer depends on how much there is, and it is dragged by grabbing any of its rows, and it glides on when it is let go. What is missing is copies that **are born and die on their own** instead of the scene declaring the window and the logic slicing the chunk (G12).
 
 ### 🟡 Deferred loading: `Loader`, `LazyLoader`, `Component`
 
@@ -95,6 +95,6 @@ Kept in sight here, because it is the reason this exists:
 
 Done since this list was first written: the language server knows the scene's names, completes them and goes to where they are declared (G9, in Fixed), and plain windows (`kind: window`) and lock screens (`kind: lock`) exist. What is left, in this order:
 
-1. Copies that are born and die on their own (G12), and inertia when a list is let go.
+1. Copies that are born and die on their own (G12). (Inertia when a list is let go is done.)
 2. Deferred loading, so a menu that almost never opens costs nothing until it does.
 3. A whole screen live inside the scene, and an input method on Windows and macOS (E7).

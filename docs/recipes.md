@@ -93,7 +93,7 @@ Five thousand rows cost the same as sixteen: sixteen groups and sixteen zones,
 Nothing to declare. A layout with `view:` is dragged by default, and it is
 grabbed **from the inside**: dragging is not the business of the topmost zone,
 but of any zone that was under the pointer when it was pressed. So a list can be
-dragged by one of its rows.
+dragged by one of its rows. Let go with some speed it goes on gliding and slows down smoothly, never past its ends, and with reduced motion it stops; `inertia: false` on the layout makes it stop dead.
 
 The scroll position is also a property like any other, which a rule can send
 wherever it wants:
