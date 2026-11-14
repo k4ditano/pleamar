@@ -710,7 +710,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             // rule reads is said the way the copy draws, over its own monitor.
             for (n, off) in [("pointer.x", ox), ("pointer.y", oy)] {
                 if off != 0.0 {
-                    scope.exprs.insert(n.to_owned(), Expr::Sub(Box::new(o.facts[n].e()), Box::new(Expr::K(off))));
+                    scope.exprs.insert(n.to_owned(), Expr::Sub(crate::scene::Kid::new(o.facts[n].e()), crate::scene::Kid::new(Expr::K(off))));
                 }
             }
             o.scopes.push(Rc::new(scope));
@@ -2021,7 +2021,7 @@ impl<'a> Compiler<'a> {
             options.push(self.index_chain(c, &element(k as i64), more)?);
         }
         options.push(Expr::K(-1.0));
-        Ok(Expr::Pick(Box::new(i.clone() + Expr::K(1.0)), options).folded_pub())
+        Ok(Expr::Pick(crate::scene::Kid::new(i.clone() + Expr::K(1.0)), options).folded_pub())
     }
 
     /// Whether an element exists, without saying anything if not: what
@@ -2195,7 +2195,7 @@ impl<'a> Compiler<'a> {
                 if options.is_empty() {
                     return Err(CompileError::at(l, col, "`pick` needs a place and something to choose: `pick(i, 10, 20, 30)`"));
                 }
-                Expr::Pick(Box::new(i), options).folded_pub()
+                Expr::Pick(crate::scene::Kid::new(i), options).folded_pub()
             }
             // One argument or two: a wobble in time, or a field to move over.
             "noise" => {
@@ -2388,8 +2388,8 @@ impl<'a> Compiler<'a> {
                 if options.is_empty() {
                     return c.error("`pick` needs a place and colours to choose from: `pick(i, #a, #b)`");
                 }
-                *self.last_alpha.borrow_mut() = if alphas.iter().all(|a| a.constant() == Some(1.0)) { Expr::K(1.0) } else { Expr::Pick(Box::new(i.clone()), alphas).folded_pub() };
-                let channel = |k: usize| Expr::Pick(Box::new(i.clone()), options.iter().map(|o: &Color| o[k].clone()).collect()).folded_pub();
+                *self.last_alpha.borrow_mut() = if alphas.iter().all(|a| a.constant() == Some(1.0)) { Expr::K(1.0) } else { Expr::Pick(crate::scene::Kid::new(i.clone()), alphas).folded_pub() };
+                let channel = |k: usize| Expr::Pick(crate::scene::Kid::new(i.clone()), options.iter().map(|o: &Color| o[k].clone()).collect()).folded_pub();
                 Ok([channel(0), channel(1), channel(2)])
             }
             // `if(cond, #a, #b)`: choosing a colour is mixing with 0 or 1, as with numbers.
@@ -5477,7 +5477,7 @@ impl<'a> Compiler<'a> {
                     let env = env.get_or_insert_with(Scope::default);
                     for (n, off) in [("pointer.x", ox), ("pointer.y", oy)] {
                         if off != 0.0 {
-                            env.exprs.insert(n.to_owned(), Expr::Sub(Box::new(self.facts[n].e()), Box::new(Expr::K(off))));
+                            env.exprs.insert(n.to_owned(), Expr::Sub(crate::scene::Kid::new(self.facts[n].e()), crate::scene::Kid::new(Expr::K(off))));
                         }
                     }
                 }

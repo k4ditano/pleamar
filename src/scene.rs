@@ -375,6 +375,147 @@ impl Seen {
     }
 }
 
+/// A child of an expression. Most of an expression's nodes are leaves —a constant, a
+/// property, a fact—, and each was a box of its own: 32 bytes asked for, 48 taken by
+/// the allocator, millions of them in a big scene (Vitreus's bar: 3.6 million, some
+/// 174 MB, pleamar#153). A leaf is kept here, in the eight bytes the box's pointer
+/// took: its kind in the low three bits (a box is aligned to eight, so its are 0) and
+/// its value above them. Anything else is a box, as before.
+pub struct Kid(usize);
+
+// A box's pointer, or a leaf: owned like a `Box<Expr>`, which is `Send` and `Sync`.
+unsafe impl Send for Kid {}
+unsafe impl Sync for Kid {}
+
+/// What a `Kid` holds: the expression in its box, or the leaf, made again (no allocation).
+pub enum KidRef<'a> {
+    Tree(&'a Expr),
+    Leaf(Expr),
+}
+
+impl std::ops::Deref for KidRef<'_> {
+    type Target = Expr;
+    fn deref(&self) -> &Expr {
+        match self {
+            KidRef::Tree(e) => e,
+            KidRef::Leaf(e) => e,
+        }
+    }
+}
+
+impl Kid {
+    const K: usize = 1;
+    const P: usize = 2;
+    const H: usize = 3;
+    const VEL: usize = 4;
+    const LETTER: usize = 5;
+    const PAYLOAD: usize = 6;
+    const TAG: usize = 7;
+
+    /// A leaf in place; anything else in a box.
+    pub fn new(e: Expr) -> Kid {
+        #[cfg(target_pointer_width = "64")]
+        {
+            let leaf = |tag: usize, value: u32| Kid(((value as usize) << 8) | tag);
+            match e {
+                Expr::K(v) => return leaf(Self::K, v.to_bits()),
+                Expr::P(p) => return leaf(Self::P, p.0),
+                Expr::H(h) => return leaf(Self::H, h.0),
+                Expr::Vel(p) => return leaf(Self::VEL, p.0),
+                Expr::Letter(k) => return leaf(Self::LETTER, k as u32),
+                Expr::Payload => return leaf(Self::PAYLOAD, 0),
+                _ => {}
+            }
+        }
+        Kid(Box::into_raw(Box::new(e)) as usize)
+    }
+
+    fn tag(&self) -> usize {
+        self.0 & Self::TAG
+    }
+
+    /// What it holds.
+    pub fn get(&self) -> KidRef<'_> {
+        let value = (self.0 >> 8) as u32;
+        match self.tag() {
+            // SAFETY: tag 0 is the pointer `new` took from a box, alive as long as `self`.
+            0 => KidRef::Tree(unsafe { &*(self.0 as *const Expr) }),
+            Self::K => KidRef::Leaf(Expr::K(f32::from_bits(value))),
+            Self::P => KidRef::Leaf(Expr::P(PropId(value))),
+            Self::H => KidRef::Leaf(Expr::H(FactId(value))),
+            Self::VEL => KidRef::Leaf(Expr::Vel(PropId(value))),
+            Self::LETTER => KidRef::Leaf(Expr::Letter(value as u8)),
+            _ => KidRef::Leaf(Expr::Payload),
+        }
+    }
+
+    /// The expression, taken out.
+    pub fn into_expr(self) -> Expr {
+        let e = match self.get() {
+            KidRef::Leaf(e) => e,
+            // SAFETY: as in `get`; `self` is forgotten below, so the box is freed once, here.
+            KidRef::Tree(_) => *unsafe { Box::from_raw(self.0 as *mut Expr) },
+        };
+        std::mem::forget(self);
+        e
+    }
+
+    pub fn eval(&self, c: Ctx) -> f32 {
+        self.get().eval(c)
+    }
+    pub fn is_true(&self, c: Ctx) -> bool {
+        self.get().is_true(c)
+    }
+    pub fn constant(&self) -> Option<f32> {
+        self.get().constant()
+    }
+    pub fn only_inputs(&self) -> bool {
+        self.get().only_inputs()
+    }
+    pub fn inputs(&self, props: &mut Vec<u32>, facts: &mut Vec<u32>) {
+        self.get().inputs(props, facts)
+    }
+    pub fn reads(&self, f: impl Fn(FactId) -> bool + Copy) -> bool {
+        self.get().reads(f)
+    }
+    pub fn node_count(&self) -> usize {
+        self.get().node_count()
+    }
+    pub fn with_payload(&self, v: f32) -> Expr {
+        self.get().with_payload(v)
+    }
+}
+
+impl Drop for Kid {
+    fn drop(&mut self) {
+        if self.tag() == 0 {
+            // SAFETY: the box `new` made, freed once.
+            drop(unsafe { Box::from_raw(self.0 as *mut Expr) });
+        }
+    }
+}
+
+impl Clone for Kid {
+    fn clone(&self) -> Kid {
+        match self.get() {
+            KidRef::Tree(e) => Kid(Box::into_raw(Box::new(e.clone())) as usize),
+            KidRef::Leaf(_) => Kid(self.0),
+        }
+    }
+}
+
+impl std::fmt::Debug for Kid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (*self.get()).fmt(f)
+    }
+}
+
+impl From<Expr> for Kid {
+    fn from(e: Expr) -> Kid {
+        Kid::new(e)
+    }
+}
+
 /// A pure expression over the properties. Since it has no side effects, the render
 /// can evaluate it whenever and wherever it wants: it is what a binding would be.
 #[derive(Clone, Debug)]
@@ -384,40 +525,40 @@ pub enum Expr {
     H(FactId),
     /// The velocity of a property: the render knows it, the logic does not.
     Vel(PropId),
-    Add(Box<Expr>, Box<Expr>),
-    Sub(Box<Expr>, Box<Expr>),
-    Mul(Box<Expr>, Box<Expr>),
-    Div(Box<Expr>, Box<Expr>),
-    Min(Box<Expr>, Box<Expr>),
-    Max(Box<Expr>, Box<Expr>),
-    Abs(Box<Expr>),
+    Add(Kid, Kid),
+    Sub(Kid, Kid),
+    Mul(Kid, Kid),
+    Div(Kid, Kid),
+    Min(Kid, Kid),
+    Max(Kid, Kid),
+    Abs(Kid),
     /// Rounding down or up: needed to count rows.
-    Floor(Box<Expr>),
+    Floor(Kid),
     /// Sine and cosine, in degrees: what it takes to place something on an arc.
-    Sin(Box<Expr>),
-    Cos(Box<Expr>),
-    Ceil(Box<Expr>),
+    Sin(Kid),
+    Cos(Kid),
+    Ceil(Kid),
     /// smoothstep(a, b, x)
-    Smoothstep(f32, f32, Box<Expr>),
+    Smoothstep(f32, f32, Kid),
     /// `mix(a, b, t)` and also `if(c, x, y)`, which is mixing with 0 or 1. Each
     /// side appears only once: written as `a + (b - a) * t`, `a` came out twice, and
     /// a chain of `if`s doubled the tree at every link. And with `t` exactly at
     /// 0 or at 1, which is what a condition gives, only one side is evaluated.
-    Mix(Box<Expr>, Box<Expr>, Box<Expr>),
+    Mix(Kid, Kid, Kid),
     // Conditions: true is > 0.5, and they return 1 or 0.
-    Gt(Box<Expr>, Box<Expr>),
-    And(Box<Expr>, Box<Expr>),
-    Or(Box<Expr>, Box<Expr>),
-    Not(Box<Expr>),
+    Gt(Kid, Kid),
+    And(Kid, Kid),
+    Or(Kid, Kid),
+    Not(Kid),
     /// The rest of the functions of one argument: `sqrt`, `fract`, `noise`…
-    Un(Un, Box<Expr>),
+    Un(Un, Kid),
     /// …and of two: `pow`, `atan2`, `mod`, `noise(x, y)`, `length`.
-    Bin(Bin, Box<Expr>, Box<Expr>),
+    Bin(Bin, Kid, Kid),
     /// Inside a text's `letter_*` properties: 0 which letter it is, 1 how many there are.
     Letter(u8),
     /// `pick(i, a, b, c)`: the one at place `i` (0 is the first), rounded and
     /// kept within the list. Only the chosen one is evaluated.
-    Pick(Box<Expr>, Vec<Expr>),
+    Pick(Kid, Vec<Expr>),
     /// `on chosen(v) { … }`: the value the event arrived with. The render puts
     /// it in when it picks up the rule (`with_payload`); anywhere else it is 0.
     Payload,
@@ -724,7 +865,7 @@ impl Expr {
     /// come already folded, because it is built bottom up.
     fn folded(self) -> Expr {
         use Expr::*;
-        let k = |e: &Expr| e.constant();
+        let k = |e: &Kid| e.constant();
         let constant_children = match &self {
             K(_) | P(_) | H(_) | Vel(_) | Letter(_) | Payload => return self,
             Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) | Smoothstep(_, _, a) | Un(_, a) => k(a).is_some(),
@@ -740,15 +881,15 @@ impl Expr {
             return K(self.eval(Ctx { props: &[], facts: &[], seen: None }));
         }
         match self {
-            Add(a, b) if k(&b) == Some(0.0) => *a,
-            Add(a, b) if k(&a) == Some(0.0) => *b,
-            Sub(a, b) if k(&b) == Some(0.0) => *a,
-            Mul(a, b) if k(&b) == Some(1.0) => *a,
-            Mul(a, b) if k(&a) == Some(1.0) => *b,
-            Div(a, b) if k(&b) == Some(1.0) => *a,
+            Add(a, b) if k(&b) == Some(0.0) => a.into_expr(),
+            Add(a, b) if k(&a) == Some(0.0) => b.into_expr(),
+            Sub(a, b) if k(&b) == Some(0.0) => a.into_expr(),
+            Mul(a, b) if k(&b) == Some(1.0) => a.into_expr(),
+            Mul(a, b) if k(&a) == Some(1.0) => b.into_expr(),
+            Div(a, b) if k(&b) == Some(1.0) => a.into_expr(),
             Mix(a, b, t) => match k(&t) {
-                Some(0.0) => *a,
-                Some(1.0) => *b,
+                Some(0.0) => a.into_expr(),
+                Some(1.0) => b.into_expr(),
                 _ => Mix(a, b, t),
             },
             other => other,
@@ -757,7 +898,7 @@ impl Expr {
     /// The same expression with the event's value in place of `Payload`.
     pub fn with_payload(&self, v: f32) -> Expr {
         use Expr::*;
-        let b = |e: &Expr| Box::new(e.with_payload(v));
+        let b = |e: &Kid| Kid::new(e.with_payload(v));
         match self {
             Payload => K(v),
             K(_) | P(_) | H(_) | Vel(_) | Letter(_) => self.clone(),
@@ -788,52 +929,52 @@ impl Expr {
         self.folded()
     }
         pub fn mix(self, b: impl Into<Expr>, t: impl Into<Expr>) -> Expr {
-        Expr::Mix(Box::new(self), Box::new(b.into()), Box::new(t.into())).folded()
+        Expr::Mix(Kid::new(self), Kid::new(b.into()), Kid::new(t.into())).folded()
     }
     pub fn gt(self, o: impl Into<Expr>) -> Expr {
-        Expr::Gt(Box::new(self), Box::new(o.into())).folded()
+        Expr::Gt(Kid::new(self), Kid::new(o.into())).folded()
     }
     pub fn and(self, o: impl Into<Expr>) -> Expr {
-        Expr::And(Box::new(self), Box::new(o.into())).folded()
+        Expr::And(Kid::new(self), Kid::new(o.into())).folded()
     }
     pub fn or(self, o: impl Into<Expr>) -> Expr {
-        Expr::Or(Box::new(self), Box::new(o.into())).folded()
+        Expr::Or(Kid::new(self), Kid::new(o.into())).folded()
     }
     pub fn not(self) -> Expr {
-        Expr::Not(Box::new(self)).folded()
+        Expr::Not(Kid::new(self)).folded()
     }
     pub fn min(self, o: impl Into<Expr>) -> Expr {
-        Expr::Min(Box::new(self), Box::new(o.into())).folded()
+        Expr::Min(Kid::new(self), Kid::new(o.into())).folded()
     }
     pub fn max(self, o: impl Into<Expr>) -> Expr {
-        Expr::Max(Box::new(self), Box::new(o.into())).folded()
+        Expr::Max(Kid::new(self), Kid::new(o.into())).folded()
     }
     pub fn clamp(self, a: f32, b: f32) -> Expr {
         self.max(a).min(b)
     }
     pub fn abs(self) -> Expr {
-        Expr::Abs(Box::new(self)).folded()
+        Expr::Abs(Kid::new(self)).folded()
     }
     pub fn sin(self) -> Expr {
-        Expr::Sin(Box::new(self)).folded()
+        Expr::Sin(Kid::new(self)).folded()
     }
     pub fn cos(self) -> Expr {
-        Expr::Cos(Box::new(self)).folded()
+        Expr::Cos(Kid::new(self)).folded()
     }
     pub fn floor(self) -> Expr {
-        Expr::Floor(Box::new(self)).folded()
+        Expr::Floor(Kid::new(self)).folded()
     }
     pub fn ceil(self) -> Expr {
-        Expr::Ceil(Box::new(self)).folded()
+        Expr::Ceil(Kid::new(self)).folded()
     }
     pub fn smoothstep(self, a: f32, b: f32) -> Expr {
-        Expr::Smoothstep(a, b, Box::new(self)).folded()
+        Expr::Smoothstep(a, b, Kid::new(self)).folded()
     }
     pub fn un(self, f: Un) -> Expr {
-        Expr::Un(f, Box::new(self)).folded()
+        Expr::Un(f, Kid::new(self)).folded()
     }
     pub fn bin(self, f: Bin, o: impl Into<Expr>) -> Expr {
-        Expr::Bin(f, Box::new(self), Box::new(o.into())).folded()
+        Expr::Bin(f, Kid::new(self), Kid::new(o.into())).folded()
     }
 }
 
@@ -876,25 +1017,25 @@ macro_rules! operator {
         impl<T: Into<Expr>> $op_trait<T> for Expr {
             type Output = Expr;
             fn $method(self, o: T) -> Expr {
-                Expr::$variant(Box::new(self), Box::new(o.into())).folded()
+                Expr::$variant(Kid::new(self), Kid::new(o.into())).folded()
             }
         }
         impl<T: Into<Expr>> $op_trait<T> for PropId {
             type Output = Expr;
             fn $method(self, o: T) -> Expr {
-                Expr::$variant(Box::new(self.into()), Box::new(o.into())).folded()
+                Expr::$variant(Kid::new(self.into()), Kid::new(o.into())).folded()
             }
         }
         impl $op_trait<Expr> for f32 {
             type Output = Expr;
             fn $method(self, o: Expr) -> Expr {
-                Expr::$variant(Box::new(self.into()), Box::new(o)).folded()
+                Expr::$variant(Kid::new(self.into()), Kid::new(o)).folded()
             }
         }
         impl $op_trait<PropId> for f32 {
             type Output = Expr;
             fn $method(self, o: PropId) -> Expr {
-                Expr::$variant(Box::new(self.into()), Box::new(o.into())).folded()
+                Expr::$variant(Kid::new(self.into()), Kid::new(o.into())).folded()
             }
         }
     };

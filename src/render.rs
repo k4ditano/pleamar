@@ -8095,7 +8095,7 @@ mod follows_tests {
     #[test]
     fn a_follow_is_worked_out_again_only_for_what_it_read() {
         // follow p = if(fact 0, fact 1, 7): the dock's place under the mouse, with no dock up.
-        let to = Expr::Mix(Box::new(Expr::K(7.0)), Box::new(Expr::H(FactId(1))), Box::new(Expr::H(FactId(0))));
+        let to = Expr::Mix(crate::scene::Kid::new(Expr::K(7.0)), crate::scene::Kid::new(Expr::H(FactId(1))), crate::scene::Kid::new(Expr::H(FactId(0))));
         let behaviors = vec![Behavior::Follow { prop: PropId(0), to: to.clone() }];
         let props = vec![Animated::at(0.0, Spring::LIVELY)];
         let mut follows = Follows::default();
