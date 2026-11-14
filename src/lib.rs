@@ -399,7 +399,7 @@ pub fn run_with(options: Vec<String>) {
                 let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::run(instance, from_render, letters, to_logic, blocked, op)));
                 if run.is_err() {
                     eprintln!("render · it panicked: leaving, so that it can be started again");
-                    std::process::exit(70);
+                    leave(70);
                 }
                 RENDER_DONE.store(true, std::sync::atomic::Ordering::SeqCst);
             })
@@ -655,7 +655,28 @@ fn quit() -> ! {
     }
     #[cfg(feature = "luau")]
     logic_luau::stop_children();
-    std::process::exit(0)
+    leave(0)
+}
+
+/// Out of the process once everything of ours is done, with what it said written out,
+/// but without the exit handlers of the libraries it loaded. NVIDIA's driver (620)
+/// takes its own down in one of them, while a thread of ours may still be inside it
+/// —the card being let go on another thread—: the process that had finished its work
+/// then died on its way out
+/// (a segfault, `free(): invalid pointer`, `corrupted double-linked list`, or hung).
+/// The system takes back the card, the memory and the files of a process that ends;
+/// nothing of ours waits for those handlers (the logic's children are stopped above).
+fn leave(code: i32) -> ! {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    #[cfg(unix)]
+    // SAFETY: _exit ends the process at once; what had to be done before is done above.
+    unsafe {
+        libc::_exit(code)
+    }
+    #[cfg(not(unix))]
+    std::process::exit(code)
 }
 
 /// `kill` (SIGTERM), Ctrl+C at its terminal (SIGINT) or that terminal going
