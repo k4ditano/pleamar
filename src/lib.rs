@@ -38,7 +38,7 @@ mod render;
 pub mod terminal;
 
 pub use platform::{host_keymap, provide_layer_hooks, provide_platform, provide_windows, set_host_keymap, LayerHooks, NestSender, Platform, PlatformWindow};
-pub use gpu::{Frames, NewSheet, Sent, Target, View};
+pub use gpu::{Frames, NewSheet, Sent, SoleWindow, Target, View};
 /// The same wgpu the render paints with, for a platform that lends it textures.
 pub use wgpu;
 pub use scenes::from_file::read as read_scene;

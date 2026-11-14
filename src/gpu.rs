@@ -153,6 +153,12 @@ pub struct DrawList {
     /// Where each window was drawn this frame: its slot, its box and what it
     /// lives under. It is what a click on it is measured against.
     pub windows_drawn: Vec<(usize, [f32; 4], Affine)>,
+    /// Of each piece of a program's window in the windows' texture: its layer,
+    /// the program's buffer it is (none: pixels it copied), its pixels and
+    /// the part of them shown. Only for a platform that shows a window's buffer
+    /// itself (`Frames::wants_sole`); apart from `window_tex`, which is compared
+    /// to know whether to compose again and must not change with every new buffer.
+    pub window_buffers: Vec<WindowBuffer>,
     /// Something is shown that moves without its elements changing —particles,
     /// a shader that reads the time, an image that moves—: comparing elements
     /// cannot say where the frame changed, so it is painted whole.
@@ -208,6 +214,75 @@ struct ShapeMemo {
 pub struct WindowTex {
     pub geometry: [f32; 4],
     pub pieces: Vec<(u32, [f32; 4], [f32; 4], bool)>,
+}
+
+/// A piece of a program's window, as `DrawList::window_buffers` keeps it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindowBuffer {
+    pub layer: u32,
+    pub buffer: Option<u64>,
+    pub px: (u32, u32),
+    pub src: [f32; 4],
+}
+
+/// A monitor's frame that would be exactly one program's buffer: what
+/// `Frames::sole_window` is told, for a platform that can show it as it is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SoleWindow {
+    /// The buffer, by the number the platform gave it (`DmabufPiece::buffer`).
+    pub buffer: u64,
+    /// Its format has no alpha (whether the program says it is opaque the platform knows).
+    pub opaque: bool,
+}
+
+/// Whether the frame of the view `v` (in the scene's plane), `px` pixels, would be
+/// exactly one program's buffer: the last thing painted on it is a piece of a
+/// window that covers it all, pixel for pixel, upright, unclipped, at full opacity
+/// and painted directly (not in a group of its own); whatever is under it is
+/// hidden. Otherwise, what there is instead.
+pub fn sole_window(elements: &[f32], groups: &[(Range<u32>, usize)], buffers: &[WindowBuffer], v: [f32; 4], px: (u32, u32)) -> Result<SoleWindow, &'static str> {
+    let touches = |e: &[f32]| e[4] < v[2] && e[6] > v[0] && e[5] < v[3] && e[7] > v[1];
+    let n = elements.len() / PER_ELEMENT;
+    let Some(k) = (0..n).rev().find(|k| touches(&elements[k * PER_ELEMENT..(k + 1) * PER_ELEMENT])) else {
+        return Err("nothing is drawn on it");
+    };
+    let e = &elements[k * PER_ELEMENT..(k + 1) * PER_ELEMENT];
+    let window = |e: &[f32]| e[0] == 1.0 && e[2] < 0.0;
+    if !window(e) {
+        let any = (0..k).any(|j| {
+            let e = &elements[j * PER_ELEMENT..(j + 1) * PER_ELEMENT];
+            window(e) && touches(e)
+        });
+        return Err(if any { "the scene draws over the window" } else { "no window covers it" });
+    }
+    let Some(b) = buffers.iter().find(|b| b.layer as f32 == e[1]) else {
+        return Err("the scene draws over the window");
+    };
+    let near = |a: f32, b: f32| (a - b).abs() < 0.01;
+    if !(near(e[36], v[0]) && near(e[37], v[1]) && near(e[36] + e[38], v[2]) && near(e[37] + e[39], v[3])) {
+        return Err("the window does not cover the monitor exactly");
+    }
+    if e[3] < 0.999 {
+        return Err("the window is not at full opacity");
+    }
+    let mut upright = [0f32; 8];
+    Affine::IDENTITY.encode(&mut upright);
+    if e[44..52].iter().zip(&upright).any(|(a, b)| !near(*a, *b)) {
+        return Err("the window is turned or scaled");
+    }
+    if e[32..36].iter().any(|c| *c >= 0.0) {
+        return Err("the window is clipped");
+    }
+    if groups.iter().any(|(span, _)| span.contains(&(k as u32))) {
+        return Err("the window is in a group with opacity or effects");
+    }
+    let Some(buffer) = b.buffer else {
+        return Err("the window's buffer is not on the card (shared memory)");
+    };
+    if b.px != px || !(near(b.src[0], 0.0) && near(b.src[1], 0.0) && near(b.src[2], px.0 as f32) && near(b.src[3], px.1 as f32)) {
+        return Err("the window's buffer is not the monitor's size, pixel for pixel");
+    }
+    Ok(SoleWindow { buffer, opaque: e[2] == -2.0 })
 }
 
 /// The draw list of the previous frame, to know **where** something has changed.
@@ -3594,6 +3669,18 @@ pub trait Frames: Send {
     /// The surface is closed: show nothing, holding as little as possible —its
     /// frames let go, made again when it next paints—.
     fn rest(&mut self, _device: &wgpu::Device) {}
+    /// Whether it would show a program's buffer itself when a frame is exactly
+    /// that (direct scanout): only then is `sole_window` asked, before each frame.
+    fn wants_sole(&self) -> bool {
+        false
+    }
+    /// Before painting a frame: whether it would be exactly one program's buffer
+    /// (`Err`: what else there is). `true`: the platform shows that buffer
+    /// itself, and this frame is neither painted nor presented; the next one
+    /// painted is painted whole.
+    fn sole_window(&mut self, _sole: Result<SoleWindow, &'static str>) -> bool {
+        false
+    }
 }
 
 /// What the platform hands the render thread for each surface.
@@ -5773,6 +5860,20 @@ impl Gpu {
         // because of waiting for the monitor.
         let timing = timing_enabled();
         let t0 = timing.then(std::time::Instant::now);
+        // A platform that shows a program's buffer itself when the frame is just
+        // that (direct scanout): told before painting; if it shows it, nothing is
+        // painted, and what its frames held is forgotten, so that the next one
+        // painted —leaving it— is painted whole.
+        if let Target::Frames(frames) = &mut l.target {
+            if frames.wants_sole() {
+                let sole = sole_window(&d.elements, &d.offscreen_groups, &d.window_buffers, l.view.bounds(), l.px);
+                if frames.sole_window(sole) {
+                    l.painted_as.clear();
+                    l.damage_log.clear();
+                    return true;
+                }
+            }
+        }
         let frame = match &mut l.target {
             Target::Surface(surface) => match surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Frame::Surface(t),
@@ -6453,6 +6554,11 @@ impl Sheet {
         self.window.cursor(c);
     }
 
+    /// Whether its platform would show a program's buffer itself (`Frames::wants_sole`).
+    pub fn wants_sole(&self) -> bool {
+        matches!(&self.target, Target::Frames(f) if f.wants_sole())
+    }
+
     /// Request the capture of what is behind: after presenting, the one from
     /// the next time the compositor paints; otherwise, the one from when
     /// something changes behind.
@@ -6508,6 +6614,74 @@ impl Sheet {
 
 /// Header, frame history and, at the end, the lens: whether there is a background to show.
 pub const N_UNIFORMS: usize = 8 + 120 + 4 + 4 + 4;
+
+#[cfg(test)]
+mod sole_window_tests {
+    use super::{sole_window, Range, WindowBuffer, PER_ELEMENT};
+    use crate::shapes::Affine;
+
+    const V: [f32; 4] = [0.0, 0.0, 1920.0, 1080.0];
+    const PX: (u32, u32) = (1920, 1080);
+
+    /// A box of the scene (kind 0) or a window's piece (kind 1, from layer 3).
+    fn element(kind: f32, rect: [f32; 4], alpha: f32) -> Vec<f32> {
+        let mut e = vec![0f32; PER_ELEMENT];
+        e[0] = kind;
+        e[4..8].copy_from_slice(&[rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]]);
+        e[32..36].copy_from_slice(&[-1.0; 4]);
+        Affine::IDENTITY.encode(&mut e[44..52]);
+        if kind == 1.0 {
+            e[1] = 3.0;
+            e[2] = -2.0;
+            e[3] = alpha;
+            e[36..40].copy_from_slice(&rect);
+        }
+        e
+    }
+    fn buffers(px: (u32, u32)) -> Vec<WindowBuffer> {
+        vec![WindowBuffer { layer: 3, buffer: Some(42), px, src: [0.0, 0.0, px.0 as f32, px.1 as f32] }]
+    }
+    fn ask(list: &[Vec<f32>], groups: &[(Range<u32>, usize)], px: (u32, u32)) -> Result<u64, &'static str> {
+        sole_window(&list.concat(), groups, &buffers(px), V, PX).map(|s| s.buffer)
+    }
+
+    #[test]
+    fn a_window_covering_the_monitor_is_its_frame_whatever_is_under_it() {
+        let under = element(0.0, V_RECT, 1.0);
+        let w = element(1.0, V_RECT, 1.0);
+        assert_eq!(ask(&[w.clone()], &[], PX), Ok(42));
+        assert_eq!(ask(&[under, w], &[], PX), Ok(42));
+    }
+
+    const V_RECT: [f32; 4] = [0.0, 0.0, 1920.0, 1080.0];
+
+    #[test]
+    fn anything_over_it_smaller_faded_clipped_or_in_a_group_is_not() {
+        let w = element(1.0, V_RECT, 1.0);
+        assert!(ask(&[w.clone(), element(0.0, [10.0, 10.0, 50.0, 20.0], 1.0)], &[], PX).is_err());
+        assert!(ask(&[element(1.0, [0.0, 0.0, 1900.0, 1080.0], 1.0)], &[], PX).is_err());
+        assert!(ask(&[element(1.0, V_RECT, 0.5)], &[], PX).is_err());
+        let mut clipped = w.clone();
+        clipped[32] = 0.0;
+        assert!(ask(&[clipped], &[], PX).is_err());
+        assert!(ask(&[element(0.0, V_RECT, 1.0), w.clone()], &[(1..2, 0)], PX).is_err());
+        let mut turned = w.clone();
+        Affine { m: [0.0, -1.0, 1.0, 0.0], t: [0.0, 0.0] }.encode(&mut turned[44..52]);
+        assert!(ask(&[turned], &[], PX).is_err());
+    }
+
+    #[test]
+    fn its_buffer_has_to_be_the_monitors_pixels_and_on_the_card() {
+        let w = element(1.0, V_RECT, 1.0);
+        assert!(ask(&[w.clone()], &[], (960, 540)).is_err());
+        let shm = vec![WindowBuffer { layer: 3, buffer: None, px: PX, src: [0.0, 0.0, 1920.0, 1080.0] }];
+        assert!(sole_window(&w, &[], &shm, V, PX).is_err());
+        // Something on another monitor (outside this view) does not count.
+        let elsewhere = element(0.0, [2000.0, 0.0, 100.0, 100.0], 1.0);
+        assert_eq!(ask(&[w, elsewhere], &[], PX), Ok(42));
+        assert_eq!(sole_window(&[], &[], &[], V, PX), Err("nothing is drawn on it"));
+    }
+}
 
 #[cfg(test)]
 mod tests {
