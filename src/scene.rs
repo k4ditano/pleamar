@@ -1882,7 +1882,16 @@ impl Scene {
         self.zone_springs.shrink_to_fit();
         self.behaviors.shrink_to_fit();
         self.spans.shrink_to_fit();
+        self.pages.shrink_to_fit();
         self.prop_aliases.shrink_to_fit();
+    }
+
+    /// The pages (`include … while`) whose condition does not hold now.
+    pub fn pages_asleep(&self, c: Ctx) -> Vec<&Page> {
+        if self.pages.is_empty() {
+            return Vec::new();
+        }
+        self.pages.iter().filter(|p| !p.when.is_true(c)).collect()
     }
 
     /// Siblings with `z:` sorted by it (the same value: as declared), each
@@ -2454,6 +2463,11 @@ pub struct Scene {
     /// the render skips its part entirely. Without this, two copies were twice
     /// the scene per frame even if one was not visible.
     pub spans: Vec<Span>,
+    /// The parts included with a `while` (`include "pages/settings.plm" while panel
+    /// == settings`): while its condition does not hold, a page is asleep —its
+    /// rules, its drawing, its zones and its behaviors are not looked at—, as a
+    /// closed copy's span is. A page inside another is listed after it.
+    pub pages: Vec<Page>,
     /// With `screens: each`, a rule that comes out the same in every copy —it
     /// names nothing of its own copy, only the scene's facts and props— is the
     /// same rule written twice: for each one, the first of its twins. Only one
@@ -2471,6 +2485,20 @@ pub struct Scene {
 #[derive(Clone, Debug, Default)]
 pub struct Span {
     pub surface: usize,
+    pub instrs: std::ops::Range<usize>,
+    pub behaviors: std::ops::Range<usize>,
+    pub rules: std::ops::Range<usize>,
+}
+
+/// A part included with `while`: what of the scene's lists is its own, and when it is there.
+#[derive(Clone, Debug)]
+pub struct Page {
+    /// The file, as the `include` writes it: for what is said about it.
+    pub file: String,
+    /// While this holds, the page is there. It reads nothing of the page itself.
+    pub when: Expr,
+    /// How long it is kept after its condition stops holding, in seconds; `None`: for ever.
+    pub keep: Option<f32>,
     pub instrs: std::ops::Range<usize>,
     pub behaviors: std::ops::Range<usize>,
     pub rules: std::ops::Range<usize>,

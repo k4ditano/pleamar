@@ -1,0 +1,8 @@
+// A page that uses the scene's component, and declares one of its own.
+part Chips {
+    component Pill(x) {
+        box { from: x, 100; size: 30, 14; corner: 7; color: ink }
+    }
+    Chip(20)
+    Pill(80)
+}

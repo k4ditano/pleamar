@@ -1,0 +1,16 @@
+// expect: ok
+// A page that is there only while its condition holds: the scene opens it with a
+// fact, it reads the scene's names and writes its facts, and nothing outside names it.
+scene Paged {
+    surface { size: 300, 160 }
+    fact panel: none | settings = none
+    fact wifi = true
+    event asked
+    let ink = #f5f7f5
+    let x0 = 20
+    box { from: 10, 10; size: 20, 20; color: ink }
+    zone box open { from: 10, 10; size: 20, 20 }
+    on press open { panel = if(panel == settings, none, settings) }
+    include "parts/settings-page.plm" while panel == settings keep 30s
+    text "{wifi}" { at: 280, 20; anchor: right center; size: 12; color: ink }
+}

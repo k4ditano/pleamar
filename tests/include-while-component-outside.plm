@@ -1,0 +1,12 @@
+// expect: error «the component 'Pill' lives in the page»
+// A component declared in a page is used in it, not outside it.
+scene PillOutside {
+    surface { size: 300, 160 }
+    fact panel: none | chips = none
+    let ink = #f5f7f5
+    component Chip(x) {
+        box { from: x, 60; size: 40, 20; color: ink }
+    }
+    include "parts/page-chips.plm" while panel == chips
+    Pill(10)
+}

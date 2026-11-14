@@ -1,6 +1,6 @@
 # Design: a page loaded only while it is open (`include … while`)
 
-**State: design, not implemented.** From pleamar#153: Vitreus's Settings, included in its bar's scene, is 6 812 of the scene's 24 451 properties and about 105 MB of the process's PSS. That is 407–409 MB with it and 298–308 MB without it (AMD), or 725 → 535 MB (natepayn3's NVIDIA), open or closed. The ask: build such a page when it opens, and let it go a while after it closes.
+**State: phase 1 done** (`include … while` sleeps, and the compiler keeps the page's names inside it: section 9); **phase 2 not started**, see section 10. From pleamar#153: Vitreus's Settings, included in its bar's scene, is 6 812 of the scene's 24 451 properties and about 105 MB of the process's PSS. That is 407–409 MB with it and 298–308 MB without it (AMD), or 725 → 535 MB (natepayn3's NVIDIA), open or closed. The ask: build such a page when it opens, and let it go a while after it closes.
 
 ## 1. What a property costs (measured)
 
@@ -48,6 +48,19 @@ What would cut it, for every scene (not done here: it touches every expression t
 - Or, smaller, **leaves inline**: a constant, a property or a fact kept in its parent instead of in a box of its own (most of a tree's nodes are leaves).
 
 **Leaves inline is done** (`Kid`, 2026-11-14): Vitreus's boxes 3.63 → 1.45 million, PSS with Settings 386–413 → 286 MB, and a frame's putting together 15 % faster. The flat form would take the rest. Either goes before or with phase 2 of this design: a page unloaded no longer holds its expressions, but every scene pays them while it is open.
+
+**Each tree in one block: tried and parked** (branch `exp2-flat`, `acc2850`, on exp.15). The same `Expr`, but each expression the compiler reads is moved, once read, into one allocation of its nodes side by side (a child points inside its parent's block), and the old boxes are freed. Evaluation did not change a line. Measured on the RTX 2060 against exp.15, alternating builds:
+
+| | exp.15 | `exp2-flat` |
+| --- | --- | --- |
+| Vitreus's 32-byte boxes | 1.45 M | 340 k (the rest: nodes the compiler makes outside `expr`: components, colours, opacity products) |
+| Vitreus with Settings: PSS / anonymous | 285–288 / 228–230 MB | 274–275 / 217–218 MB (−12 MB, −4 %) |
+| without Settings: PSS / anonymous | 257–259 / 200–202 MB | 250 / 192–193 MB (−8 MB) |
+| heap once read | 115.9 / 84.7 MB | the same (the same bytes in fewer blocks) |
+| reading the scene (`--check`, median of 9) | 1 572 / 1 082 ms; the 7 040-property panel 115 ms | **1 651 / 1 143 ms; 121 ms (+5 %)** |
+| putting a frame together, 7 000 rows moving | 7.14 ms | 6.79 ms (−5 %) |
+
+It was estimated at 15–20 MB and gave 8–12. It was parked: a scene read 5 % slower is felt at every start and every save, and the rule for this work is that nothing gets slower. To get the rest without that, the compiler would have to build each expression in its block from the start instead of moving it there (more work, and touching every place that makes nodes).
 
 ## 2. Syntax
 
@@ -126,7 +139,7 @@ The render reaches a scene's things by their place in its lists: an instruction'
 | # | What | Gives | Risk |
 | --- | --- | --- | --- |
 | 0 ✅ | The general cut (`exp2-mem`): small instructions and styles, lists without spare room | every scene, ~1 KB less an instruction; the panel 30 → 12.5 MB | low: the same frames, a size test |
-| 1 | `include … while` that only **sleeps** (rules and drawing skipped, as a closed copy's `Span`), plus the compiler's rule of section 4 | the CPU of a closed page; the language and its errors settled | low: it reuses what closed copies already do |
+| 1 ✅ | `include … while` that only **sleeps** (rules and drawing skipped, as a closed copy's `Span`), plus the compiler's rule of section 4 | the CPU of a closed page; the language and its errors settled | low: it reuses what closed copies already do |
 | 2 | **Unloading**: places set aside, a page's instructions in their own list, zones and rules emptied, load and unload with `keep` | the memory of what the page holds (on the panel, most of its 12.5 MB) | **high**: every index into the instructions; tests open, close and reopen pages with films, the agent's tree and AccessKit's |
 | 3 | What the render keeps for a page (laid-out texts, glyphs, pictures), measured first on Vitreus's scene | the rest of Vitreus's 105 MB | medium: who else uses a laid-out text or a picture |
 | 4 | Reading ahead (`prefetch`) and compiling when idle | a first opening without a late frame | low |
@@ -136,3 +149,30 @@ Risks along the way:
 - A page whose `while` flips often (a hover) loads and unloads all the time. `keep` covers it, and a page under a second old is never let go.
 - Hot reload: a page saved while closed loads its new version, or the scene reloads if its counts changed. Saving while open reloads the scene as today.
 - `screens: each` copies and `repeat` inside a page: each copy is a page of its own, or the page is one for all copies. To be decided in phase 2; phase 1 treats a page in a copy as part of that copy.
+
+## 9. Phase 1, as built (`exp2-include`)
+
+- **Syntax** as in section 2: `include "pages/settings.plm" while panel == settings [keep 30s | keep forever]`. `keep` is read and kept (`Page::keep`); while only sleeping it changes nothing.
+- **Where the page is.** The include is put in place as always, between two marks: the `include` line, which carries the condition, and a bare `include` where the part ends (one no one can write). In the drawing pass the first mark notes how long the instructions, behaviors and rules are, and the second one makes the page's spans of them (`Scene::pages`, as `Scene::spans` for a monitor's copy). A page inside a copy per monitor is one page per copy, with its condition read in that copy. A loose `clip` in a page holds until its end, so that what is skipped is whole. Each edge of a page gets an instruction that does nothing (a transform that moves nothing and its end): a zone stands at the place of the instruction after it, so without them the button written just before the page —the one that opens it— stood at the page's first place and slept with it, and the page's last zone stood outside it.
+- **Asleep**: while its condition does not hold, its instruction span is skipped by the drawing (`draw.skip`) and is absent for the zones, the agent and the screen reader (`absent`, `gone`), its behaviors do not run (they catch up when it wakes, as a copy's), and its rules are not looked at (`asleep_rules`).
+- **Section 4 in the compiler.** Before reading, each file is known to be a page's or not (the files between its marks, its own includes too). What a page declares that is not its boundary —props, zones, measures, `let`s, components— is noted as its, and reading one from outside the page (its condition too) is an error, said where it is read. Checked where a name is resolved to a property, a `let` or a zone, and where a component is used; in a copy of a component, by where the copy is placed (a component of the scene used both in the page and outside it is fine: each copy's names are its own). Vitreus with `include "pages/settings_panel.plm" while panel == settings or ds > 0.001` (the `or ds` keeps the drawer's fade-out) loads as it is: nothing outside its Settings names anything of it.
+- **Measured** (RTX 2060, headless, Vitreus `2c8cda4` with `run:` and D-Bus off; exp.15 and this branch alternating, 7 rounds for memory and CPU, 11 for reading):
+
+| | exp.15, plain include | this branch, `while` |
+| --- | --- | --- |
+| PSS / anonymous, Settings closed | 283–310 / 225–252 MB | 282–310 / 225–252 MB |
+| the same, opened (`fact panel 6`) | 287–314 / 227–254 MB | 287–316 / 228–256 MB |
+| CPU over 10 s of a pointer along the bar, closed | 2 060–2 200 ms (mean 2 130) | 1 970–2 070 ms (mean 2 023, −5 %) |
+| reading the scene: CPU (median) · instructions | 1 543 ms · 8.674 G | 1 582 ms · 8.851 G (+2 %: its names checked) |
+
+  A scene without a `while` reads as on exp.15: the same instructions (Vitreus with Settings 8.674 / 8.677 G, without 5.996 / 5.996 G, the 7 040-property panel 0.590 / 0.590 G, counted with `perf_event_open`), CPU within 0–10 ms. Seventeen scenes film the same frames. Memory does not change, as expected: sleeping frees nothing. The CPU saved is small on Vitreus because it already gates its Settings by hand (its rules say `while panel == settings`, its drawing is hidden); a scene that does not gets more. Opening is instant (nothing to build).
+
+## 10. Phase 2: what was learned before starting it
+
+- **A first opening would not be 120–150 ms.** Section 6 estimated it from the made-up panel (16 µs a property). Vitreus's Settings adds **about 470 ms of CPU** to reading the scene on this PC (1 543 against 1 074 ms, with and without it; 2.7 G instructions): 70 µs a property, its expressions being written inline and unfolded by `repeat`s and components. Compiling the page alone would cost about that, so a first opening would be some 30 frames late here (less on the author's CPU), and every opening after `keep` ran out.
+- **Compiling a page alone** is what this compiler is least made for. A scene is read in three passes over the whole tree (declarations; `let`s and layers; drawing, with rules gathered and read at the end), and the page's drawing depends on the state at its include: the scopes (a copy per monitor's, a component's), the transforms and clips it is under, the `z:` parents, the `let`s read so far (a group does not keep its lets: the page reads whatever is loose before it), the components, colours and springs. Two ways:
+  - **(a) Read the whole scene again** on another thread when the page opens, and take its part (its instructions moved to their own list, section 7, step 2). Simple to get right, but the opening is as late as reading the scene: ~1.6 s here.
+  - **(b) Keep what the page needs at its include** (a snapshot of that state, the page's syntax and the `let`s it reads) and compile only it: ~0.5 s here. The snapshot is kept in memory, and it is a new way into the compiler that every statement has to respect.
+- Either needs section 7, step 2 (a page's instructions in a list of their own, every index into the instructions made page-aware), which is the riskiest part of all.
+- **What it would free**: Settings costs 24–28 MB of PSS here, ~59 MB in the author's session.
+- So before phase 2: decide whether a late first opening (~0.5 s, then instant within `keep`) is worth ~25–60 MB, or go first for reading ahead (phase 4: compiled on another thread when a hint says it is about to open), or make a property cheaper to compile and to keep (which also helps every scene).

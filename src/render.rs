@@ -2123,7 +2123,7 @@ pub fn run(
         // ── an agent's hand ─────────────────────────────────────
         if acting.is_some() || !acts.is_empty() || !reader_acts.is_empty() {
             let c = Ctx { props: &props, facts: &facts, seen: None };
-            let absent: Vec<std::ops::Range<usize>> = scene.spans.iter().filter(|t| scene.surfaces.get(t.surface).is_some_and(|s| s.instance > 0) && !sheets.iter().any(|l| l.view.surface == t.surface)).map(|t| t.instrs.clone()).collect();
+            let absent: Vec<std::ops::Range<usize>> = scene.spans.iter().filter(|t| scene.surfaces.get(t.surface).is_some_and(|s| s.instance > 0) && !sheets.iter().any(|l| l.view.surface == t.surface)).map(|t| t.instrs.clone()).chain(scene.pages_asleep(c).into_iter().map(|p| p.instrs.clone())).collect();
             let gone = |at: usize| draw.hidden.get(at).copied().unwrap_or(false) || absent.iter().any(|r| r.contains(&at));
             let rank = z_memo.as_ref().and_then(|(_, a)| a.as_ref()).map(|a| a.zone_rank.clone());
             let sight = crate::agent::Sight {
@@ -2633,10 +2633,13 @@ pub fn run(
         // The copies of a `screens: each` surface for monitors that are not
         // there (see `asleep`, below): their zones catch nothing.
         let absent_spans: Vec<&crate::scene::Span> = scene.spans.iter().filter(|t| scene.surfaces.get(t.surface).is_some_and(|s| s.instance > 0) && !sheets.iter().any(|l| l.view.surface == t.surface)).collect();
-        let absent: Vec<std::ops::Range<usize>> = absent_spans.iter().map(|t| t.instrs.clone()).collect();
+        // And the pages (`include … while`) whose condition does not hold: nothing of
+        // theirs is there, as nothing of a copy whose monitor is not.
+        let pages_asleep: Vec<&crate::scene::Page> = scene.pages_asleep(Ctx { props: &props, facts: &facts, seen: None });
+        let absent: Vec<std::ops::Range<usize>> = absent_spans.iter().map(|t| t.instrs.clone()).chain(pages_asleep.iter().map(|p| p.instrs.clone())).collect();
         // Nor do their `follow`s follow: nothing of theirs is seen. When the
         // monitor comes, they catch up with what changed meanwhile.
-        let absent_behaviors: Vec<std::ops::Range<usize>> = absent_spans.iter().map(|t| t.behaviors.clone()).collect();
+        let absent_behaviors: Vec<std::ops::Range<usize>> = absent_spans.iter().map(|t| t.behaviors.clone()).chain(pages_asleep.iter().map(|p| p.behaviors.clone())).collect();
         awake.update(&scene.behaviors, &absent_behaviors);
         // Zones: who has the mouse over them.
         let mut edges: Vec<(bool, usize)> = Vec::new(); // (enters, zone)
@@ -3340,7 +3343,10 @@ pub fn run(
                 })
                 .collect()
         };
-        let rule_asleep = |k: usize| asleep.iter().any(|t| t.rules.contains(&k));
+        // A page asleep, as a copy: neither its rules nor its drawing. (Its condition
+        // read again: the rules of the round before may have changed it.)
+        let pages_asleep: Vec<&crate::scene::Page> = scene.pages_asleep(Ctx { props: &props, facts: &facts, seen: None });
+        let rule_asleep = |k: usize| asleep.iter().any(|t| t.rules.contains(&k)) || pages_asleep.iter().any(|t| t.rules.contains(&k));
 
         // What is bound is brought up to date before the rules too, when a
         // fact has changed since it was computed. A big `let` is a property
@@ -3386,7 +3392,7 @@ pub fn run(
             rule_index.build(&scene.rules);
         }
         rule_index.look(&facts, &props);
-        let asleep_rules: Vec<std::ops::Range<usize>> = asleep.iter().map(|t| t.rules.clone()).collect();
+        let asleep_rules: Vec<std::ops::Range<usize>> = asleep.iter().map(|t| t.rules.clone()).chain(pages_asleep.iter().map(|p| p.rules.clone())).collect();
         rule_index.wake(&asleep_rules, &scene.rules);
         // Under the pointer and not covered, for `hover … for` and `away`: the
         // topmost zone there is this one, or one drawn inside it (a button in
@@ -4632,7 +4638,7 @@ pub fn run(
         let to_paint: &[Instr] = if warning.is_some() { &with_warning } else { &scene.instrs };
         draw.set_attached_edges(scene.surface().anchor.attached_edges());
         let reading = crate::clock::now();
-        let skip: Vec<std::ops::Range<usize>> = asleep.iter().map(|t| t.instrs.clone()).collect();
+        let skip: Vec<std::ops::Range<usize>> = asleep.iter().map(|t| t.instrs.clone()).chain(pages_asleep.iter().map(|p| p.instrs.clone())).collect();
         draw.skip = skip;
         // A selection whose text was not painted last frame (closed, gone) is forgotten.
         if selection.as_ref().is_some_and(|s| !draw.selectable.iter().any(|t| t.at == s.at)) {

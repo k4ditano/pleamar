@@ -573,6 +573,50 @@ struct Compiler<'a> {
     turns: HashMap<(*const Node, Option<usize>, i64), Rc<Scope>>,
     /// What each fold's last link computes for the scene.
     folds: HashMap<String, String>,
+    /// The pages (`include "…" while …`), as written: the file it includes and the page
+    /// it is inside of.
+    page_defs: Vec<(String, Option<usize>)>,
+    /// Which page each file belongs to, by its number: a page's own and what it includes.
+    page_of_file: Vec<Option<usize>>,
+    /// What a page declares that nothing outside it may name: its properties, zones,
+    /// measures, `let`s and components (not its facts, texts, models or events).
+    page_names: HashMap<String, usize, Fnv>,
+    /// Of those, the shapes, zones and measures: what is lit on them or measured
+    /// (`row.hover`, `card.width`) is theirs too.
+    page_parts: HashSet<String, Fnv>,
+    /// What is named from outside the page that declares it, said at the end.
+    page_reach: std::cell::RefCell<Vec<CompileError>>,
+    /// The pages being read (pass 2): which one in `e.pages`, and where its lists stood.
+    open_pages: Vec<OpenPage>,
+}
+
+/// What `page_names` is hashed with (FNV-1a): it is asked about every property and `let`
+/// a scene with pages reads, and the default hasher was most of that check's cost.
+type Fnv = std::hash::BuildHasherDefault<FnvHasher>;
+
+#[derive(Default)]
+struct FnvHasher(u64);
+
+impl std::hash::Hasher for FnvHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut h = if self.0 == 0 { 0xcbf2_9ce4_8422_2325 } else { self.0 };
+        for b in bytes {
+            h = (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
+        }
+        self.0 = h;
+    }
+}
+
+/// A page being read: its place in `Scene::pages`, and how long each list was at its start.
+struct OpenPage {
+    k: usize,
+    instrs: usize,
+    behaviors: usize,
+    rules: usize,
+    clips: usize,
 }
 
 /// A name the scene declares, with its location: what the editor needs to
@@ -619,6 +663,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
         scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), declaring_zone: false, zone_springs: Vec::new(), zone_springs_named: HashSet::new(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, brought_scenes, event_fields: HashMap::new(), boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(), type_index: Default::default(),
+        page_defs: Vec::new(), page_of_file: Vec::new(), page_names: HashMap::default(), page_parts: HashSet::default(), page_reach: Default::default(), open_pages: Vec::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -646,6 +691,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     if let Some(d) = o.dirs.first() {
         crate::text::set_scene_folder(d.clone());
     }
+    o.find_pages(body, None);
     o.declare_measures_early(body);
     // `time`: the seconds since the scene started, for whoever wants something
     // that never stops —a shader's aurora, a `noise(time)` wobble—. Only if the
@@ -767,6 +813,15 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     for t in &mut o.e.spans {
         let (a, b) = (t.rules.start.min(starts_at.len() - 1), t.rules.end.min(starts_at.len() - 1));
         t.rules = starts_at[a]..starts_at[b];
+    }
+    for t in &mut o.e.pages {
+        let (a, b) = (t.rules.start.min(starts_at.len() - 1), t.rules.end.min(starts_at.len() - 1));
+        t.rules = starts_at[a]..starts_at[b];
+    }
+    // What was named from outside a page, once each place.
+    let reached = std::mem::take(&mut *o.page_reach.borrow_mut());
+    for f in reached {
+        o.push_error(f);
     }
     o.e.twin_of = twins(&o.e.rules, &o.e.spans);
     if let Some((tokens, (l, col))) = o.pending_keyboard.take() {
@@ -1259,6 +1314,154 @@ impl<'a> Compiler<'a> {
         Some(format!("{}{}", &n[..k], &rest[digits..]))
     }
 
+
+    /// The page the scene is being read in: where it is written, or —in a copy of a
+    /// component— where that copy is placed, the outermost one.
+    fn page_here(&self) -> Option<usize> {
+        let line = self.scopes.iter().find_map(|e| e.instance.as_ref().map(|(_, l)| *l)).unwrap_or_else(|| PEEKED.with(|m| m.get().0));
+        self.page_of_file.get(line / super::PER_FILE).copied().flatten()
+    }
+
+    /// Whether what page `page` declares can be named from `here`: in it, or in a page inside it.
+    fn within(&self, mut here: Option<usize>, page: usize) -> bool {
+        while let Some(k) = here {
+            if k == page {
+                return true;
+            }
+            here = self.page_defs.get(k).and_then(|d| d.1);
+        }
+        false
+    }
+
+    /// A `let` of the scene, as `reach`: one read once per monitor's copy is stored with its mark.
+    #[inline(never)]
+    fn reach_let(&self, n: &str) {
+        match n.contains("#screen").then(|| self.strip_screen_suffix(n)).flatten() {
+            Some(base) => self.reach(n, &base),
+            None => self.reach(n, n),
+        }
+    }
+
+    /// `g`, a property, a `let` or a zone of the scene, named here as `n`: refused if a
+    /// page that is not always there declares it and this is not inside it (see
+    /// `Scene::pages`). What is lit on a zone or measured on a shape (`row.hover`) is its.
+    #[inline(never)]
+    fn reach(&self, n: &str, g: &str) {
+        let page = self.page_names.get(g).copied().or_else(|| {
+            // (With its copy's marks: a copy's names reach here through its aliases, `row#screen0.hover`.)
+            let (base, _) = g.rsplit_once('.')?;
+            let k = self.page_names.get(base).copied()?;
+            self.page_parts.contains(base).then_some(k)
+        });
+        let Some(page) = page else { return };
+        if self.within(self.page_here(), page) {
+            return;
+        }
+        let (line, col) = match (PEEKED.with(std::cell::Cell::get), NAMED.with(std::cell::Cell::get)) {
+            (m, n) if n.0 == m.0 && n.0 > 0 => n,
+            (m, _) => m,
+        };
+        let mut v = self.page_reach.borrow_mut();
+        if !v.iter().any(|f| f.line == line && f.col == col) {
+            let file = &self.page_defs[page].0;
+            v.push(CompileError::at(line, col, format!("'{n}' lives in the page `{file}`, which is there only while its `while` holds: tell it with a fact, or listen to one of its events")));
+        }
+    }
+
+    /// Where each page (`include … while`) is, before anything is read: which files are
+    /// its own, so that what is declared in them is known to be its.
+    fn find_pages(&mut self, entries: &'a [Entry], inside: Option<usize>) {
+        let mut inside = inside;
+        let mut stack: Vec<Option<usize>> = Vec::new();
+        for e in entries {
+            let Entry::Node(n) = e else { continue };
+            if matches!(n.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "include") {
+                if n.head.len() == 1 {
+                    if let Some(up) = stack.pop() {
+                        inside = up;
+                    }
+                } else {
+                    let which = match n.head.get(1).map(|t| &t.kind) {
+                        Some(TokenKind::Str(w)) => w.clone(),
+                        _ => String::new(),
+                    };
+                    self.page_defs.push((which, inside));
+                    stack.push(inside);
+                    inside = Some(self.page_defs.len() - 1);
+                }
+                continue;
+            }
+            if let Some(k) = inside {
+                let file = n.line / super::PER_FILE;
+                if self.page_of_file.len() <= file {
+                    self.page_of_file.resize(file + 1, None);
+                }
+                if self.page_of_file[file].is_none() {
+                    self.page_of_file[file] = Some(k);
+                }
+            }
+            if let Some(b) = &n.body {
+                self.find_pages(b, inside);
+            }
+        }
+    }
+
+    /// The marks of a page (pass 2): where it starts, with its condition, and where it ends.
+    fn page_mark(&mut self, n: &'a Node, clips: &mut usize) {
+        if self.pass != 2 || self.hoisting.is_some() {
+            return;
+        }
+        if n.head.len() == 1 {
+            let Some(open) = self.open_pages.pop() else { return };
+            // A loose `clip` holds until the end of the page, not beyond it: what is
+            // asleep is jumped over whole.
+            for _ in open.clips..*clips {
+                self.e.paint(Instr::Clip(None));
+            }
+            *clips = (*clips).min(open.clips);
+            self.page_edge();
+            let (i, b, r) = (self.e.instrs.len(), self.e.behaviors.len(), self.rules.len());
+            let p = &mut self.e.pages[open.k];
+            p.instrs = open.instrs..i;
+            p.behaviors = open.behaviors..b;
+            p.rules = open.rules..r;
+            return;
+        }
+        let file = match n.head.get(1).map(|t| &t.kind) {
+            Some(TokenKind::Str(w)) => w.clone(),
+            _ => String::new(),
+        };
+        let keep_at = n.head.iter().position(|t| matches!(&t.kind, TokenKind::Id(w) if w == "keep")).unwrap_or(n.head.len());
+        let keep = match n.head.get(keep_at + 1).map(|t| &t.kind) {
+            Some(TokenKind::Dur(d)) => Some(*d),
+            Some(_) => None,
+            None => Some(10.0),
+        };
+        // Read where the `include` is: nothing of the page itself.
+        let when = {
+            let mut c = Cur::new(&n.head[3..keep_at], n.line, n.head[3].col);
+            match self.expr(&mut c).and_then(|e| c.expect_end().map(|_| e)) {
+                Ok(e) => e,
+                Err(f) => {
+                    self.push_error(f);
+                    Expr::K(1.0)
+                }
+            }
+        };
+        self.page_edge();
+        self.e.pages.push(crate::scene::Page { file, when, keep, instrs: 0..0, behaviors: 0..0, rules: 0..0 });
+        self.open_pages.push(OpenPage { k: self.e.pages.len() - 1, instrs: self.e.instrs.len(), behaviors: self.e.behaviors.len(), rules: self.rules.len(), clips: *clips });
+    }
+
+    /// An instruction that does nothing (a transform that moves nothing, and its end) at
+    /// each edge of a page: a zone stands at the place of the instruction after it, and
+    /// one written just before the page —the button that opens it— stood at the page's
+    /// first place, and slept with it; the page's last one stood outside it.
+    fn page_edge(&mut self) {
+        self.e.paint(Instr::Transform(Some(Transform::at((0.0.into(), 0.0.into())))));
+        self.e.paint(Instr::Transform(None));
+    }
+
     fn global(&self, n: &str) -> String {
         // Where this has been named: it is what the editor shows in "where is it used".
         if !self.unwatched.get() {
@@ -1568,6 +1771,28 @@ impl<'a> Compiler<'a> {
     }
 
     fn declare(&mut self, local: &str) -> String {
+        let g = self.declare_here(local);
+        if !self.page_defs.is_empty() {
+            self.note_page_name(&g);
+        }
+        g
+    }
+
+    /// What a page declares is its own, but for its boundary: facts, texts, models, events…
+    #[inline(never)]
+    fn note_page_name(&mut self, g: &str) {
+        let Some(k) = self.page_here() else { return };
+        let private = self.declaring_zone
+            || !(matches!(self.current_class.as_str(), "fact" | "event" | "image" | "figure" | "shader" | "model" | "service" | "surface" | "windows" | "font" | "translations" | "permissions")
+                || (self.current_class == "text" && self.pass == 0));
+        let boundary = self.facts.contains_key(g) || self.texts.contains_key(g) || self.signals.contains_key(g) || self.models.contains_key(g);
+        if private && !boundary {
+            self.page_names.insert(g.to_owned(), k);
+            self.page_parts.insert(g.to_owned());
+        }
+    }
+
+    fn declare_here(&mut self, local: &str) -> String {
         let interpolated = self.interpolate(local);
         // The location of the name that has just been read, if it is on this same line.
         let (line, col) = match (PEEKED.with(std::cell::Cell::get), NAMED.with(std::cell::Cell::get)) {
@@ -1632,6 +1857,7 @@ impl<'a> Compiler<'a> {
             }
         }
     }
+
 
     /// One more error, up to eight. The same error in the same place is reported once:
     /// a badly written component fails in every copy, and it is the same typo.
@@ -1718,7 +1944,12 @@ impl<'a> Compiler<'a> {
     fn prop(&self, c: &mut Cur) -> R<PropId> {
         let n = self.global(&c.id("a property name")?);
         match self.props.get(&n) {
-            Some(p) => Ok(*p),
+            Some(p) => {
+                if !self.page_names.is_empty() {
+                    self.reach(&n, &n);
+                }
+                Ok(*p)
+            }
             None => self.unknown(c, "no property", &n, self.props.keys().collect()),
         }
     }
@@ -1746,7 +1977,12 @@ impl<'a> Compiler<'a> {
     fn zone(&self, c: &mut Cur) -> R<ZoneId> {
         let n = self.global(&c.id("the name of a shape or a zone")?);
         match self.zone_named(&n) {
-            Some(z) => Ok(z),
+            Some(z) => {
+                if !self.page_names.is_empty() {
+                    self.reach(&n, &n);
+                }
+                Ok(z)
+            }
             None => self.unknown(c, "no named shape or zone", &n, self.zones.keys().collect()),
         }
     }
@@ -2069,8 +2305,14 @@ impl<'a> Compiler<'a> {
             _ => n,
         };
         if let Some(e) = self.lets.get(n) {
+            if !self.page_names.is_empty() {
+                self.reach_let(n);
+            }
             Ok(e.clone())
         } else if let Some(p) = self.props.get(n) {
+            if !self.page_names.is_empty() {
+                self.reach(n, n);
+            }
             Ok(p.e())
         } else if let Some(h) = self.facts.get(n) {
             Ok(h.e())
@@ -2701,6 +2943,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn statement(&mut self, n: &'a Node, clips: &mut usize) -> R<()> {
+        if matches!(n.head.first().map(|t| &t.kind), Some(TokenKind::Id(w)) if w == "include") {
+            self.page_mark(n, clips);
+            return Ok(());
+        }
         if is_definition(n) {
             return self.element(n);
         }
@@ -3179,6 +3425,15 @@ impl<'a> Compiler<'a> {
                     // stepped on the `let out = place` 2,700 lines further up, and she
                     // dropped 46 px every time something opened. Reading the same line
                     // again —once per screen copy— does not count.
+                    // A page's own `let`s are not named outside it (see `reach`).
+                    if !self.page_defs.is_empty() && self.scopes.iter().all(|e| e.suffix.starts_with("#screen")) {
+                        // The last one read is what the name means from then on (one outside a
+                        // page with the same name as a page's takes its place, as `lets` does).
+                        match self.page_of_file.get(n.line / super::PER_FILE).copied().flatten() {
+                            Some(k) => self.page_names.insert(name.clone(), k),
+                            None => self.page_names.remove(&name),
+                        };
+                    }
                     if self.scopes.is_empty() {
                         if let Some(&before) = self.let_lines.get(&name) {
                             if before != n.line && before / super::PER_FILE == n.line / super::PER_FILE {
@@ -5984,6 +6239,9 @@ impl<'a> Compiler<'a> {
             let hint = closest_match(name, self.props.keys()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
             return Err(CompileError::at(line, col, format!("there is no property called '{name}'.{hint}")));
         };
+        if !self.page_names.is_empty() {
+            self.reach(name, name);
+        }
         let mut c = Cur::new(value, line, col);
         let a = self.expr(&mut c)?;
         // Without `~`, the property's. Writing `prop padlock = 0 ~150ms` and then having
@@ -6076,6 +6334,9 @@ impl<'a> Compiler<'a> {
         if let Some(repeated) = slots.iter().enumerate().find(|(k, h)| slots[..*k].contains(h)).map(|(_, h)| h.clone()) {
             let which = if repeated.is_empty() { "a single unnamed `children`".to_owned() } else { format!("a single slot called '{repeated}'") };
             return Err(CompileError::at(n.line, n.col, format!("a component has {which}: give the other one a name (`children footer`)")));
+        }
+        if let Some(k) = self.page_of_file.get(n.line / super::PER_FILE).copied().flatten() {
+            self.page_names.insert(name.clone(), k);
         }
         self.components.insert(name, Component { strict, slots, params, node: n });
         Ok(())
@@ -6253,6 +6514,12 @@ impl<'a> Compiler<'a> {
     fn instantiate(&mut self, n: &'a Node, c: &mut Cur) -> R<()> {
         let name = c.tokens[0].kind.clone();
         let TokenKind::Id(name) = name else { unreachable!() };
+        if let Some(&k) = self.page_names.get(&name).filter(|_| self.components.contains_key(&name)) {
+            let here = self.scopes.iter().find_map(|e| e.instance.as_ref().map(|(_, l)| *l)).unwrap_or(n.line);
+            if !self.within(self.page_of_file.get(here / super::PER_FILE).copied().flatten(), k) {
+                return Err(CompileError::at(n.line, n.col, format!("the component '{name}' lives in the page `{}`, which is there only while its `while` holds: it is used inside it, or declared outside it", self.page_defs[k].0)));
+            }
+        }
         let (params, body) = {
             let k = &self.components[&name];
             (k.params.clone(), k.node.body.as_deref().unwrap_or(&[]))

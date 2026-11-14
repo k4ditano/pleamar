@@ -127,9 +127,29 @@ impl Reader {
                 out.push(e);
                 continue;
             }
-            let (Some(TokenKind::Str(which)), 2, None) = (n.head.get(1).map(|f| &f.kind), n.head.len(), &n.body) else {
-                return Err(CompileError::at(n.line, n.col, "an include is `include \"path/to/the/part.plm\"`: a piece of this scene, in a file of its own"));
+            // `include "pages/settings.plm" while panel == settings keep 30s`: a page that
+            // is there only while its condition holds (see `Scene::pages`).
+            let usage = "an include is `include \"path/to/the/part.plm\"`: a piece of this scene, in a file of its own. Or, for a page that is there only while something holds, `include \"pages/settings.plm\" while panel == settings`, and after it `keep 30s` or `keep forever`";
+            let paged = matches!(n.head.get(2).map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "while");
+            let (Some(TokenKind::Str(which)), true, None) = (n.head.get(1).map(|f| &f.kind), n.head.len() == 2 || paged, &n.body) else {
+                return Err(CompileError::at(n.line, n.col, usage));
             };
+            if paged {
+                let keep = n.head.iter().position(|t| matches!(&t.kind, TokenKind::Id(w) if w == "keep"));
+                let condition = &n.head[3..keep.unwrap_or(n.head.len())];
+                if condition.is_empty() {
+                    return Err(CompileError::at(n.line, n.head[2].col, "`while` says when the page is there: `while panel == settings`"));
+                }
+                if let Some(k) = keep {
+                    let fine = match n.head.get(k + 1..).unwrap_or(&[]) {
+                        [t] => matches!(&t.kind, TokenKind::Dur(_)) || matches!(&t.kind, TokenKind::Id(w) if w == "forever"),
+                        _ => false,
+                    };
+                    if !fine {
+                        return Err(CompileError::at(n.line, n.head[k].col, "`keep` says how long the page stays after its condition stops holding: `keep 30s`, or `keep forever`"));
+                    }
+                }
+            }
             let target = path.parent().unwrap_or(Path::new(".")).join(which);
             let target = target.canonicalize().map_err(|e| CompileError::at(n.line, n.head[1].col, format!("cannot find '{which}' (looking in {}): {e}", target.display())))?;
             if self.open_stack.contains(&target) {
@@ -165,7 +185,15 @@ impl Reader {
             }
             self.resolve_includes(&target, &mut body)?;
             self.open_stack.pop();
+            // A page goes between two marks: the `include` itself, which carries its
+            // condition, and a bare `include` where it ends (no one can write that one).
+            if paged {
+                out.push(tree::Entry::Node(tree::Node { head: n.head.clone(), body: None, line: n.line, col: n.col }));
+            }
             out.extend(body);
+            if paged {
+                out.push(tree::Entry::Node(tree::Node { head: n.head[..1].to_vec(), body: None, line: n.line, col: n.col }));
+            }
         }
         *entries = out;
         Ok(())
@@ -655,6 +683,30 @@ mod tests {
             }
         }
         props
+    }
+
+    #[test]
+    fn a_page_included_with_while_owns_its_part_of_each_list() {
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/include-while.plm")).unwrap();
+        assert_eq!(scene.pages.len(), 1);
+        let p = &scene.pages[0];
+        assert_eq!(p.file, "parts/settings-page.plm");
+        assert_eq!(p.keep, Some(30.0));
+        // Its drawing, its zone, its rule and its `follow`, and nothing of the scene's.
+        assert!(!p.instrs.is_empty() && p.instrs.end < scene.instrs.len(), "{:?} of {}", p.instrs, scene.instrs.len());
+        let row = scene.zones.iter().find(|z| z.id == "row").expect("its zone");
+        let open = scene.zones.iter().find(|z| z.id == "open").expect("the scene's zone");
+        // (Not the button just before it, which opens it, nor what comes right after.)
+        assert!(p.instrs.contains(&row.at) && !p.instrs.contains(&open.at), "page {:?}, row at {}, open at {}", p.instrs, row.at, open.at);
+        assert_eq!(p.rules.len(), 1);
+        assert_eq!(p.behaviors.len(), 1);
+        // Asleep while `panel` is `none`, there when it is `settings`.
+        let mut facts: Vec<f32> = scene.facts.iter().map(|(_, v)| *v).collect();
+        let props = settled(&scene, &facts);
+        assert_eq!(scene.pages_asleep(Ctx { props: &props, facts: &facts, seen: None }).len(), 1);
+        let panel = scene.facts.iter().position(|(n, _)| *n == "panel").unwrap();
+        facts[panel] = 1.0;
+        assert!(scene.pages_asleep(Ctx { props: &props, facts: &facts, seen: None }).is_empty());
     }
 
     #[test]

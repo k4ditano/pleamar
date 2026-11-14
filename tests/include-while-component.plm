@@ -1,0 +1,15 @@
+// expect: ok
+// A component of the scene, with a zone lit on hover, used outside the page and in it:
+// each copy's zone is its own, and the one outside is not the page's.
+scene ChipsBoth {
+    surface { size: 300, 160 }
+    fact panel: none | chips = none
+    let ink = #f5f7f5
+    component Chip(x) {
+        zone box touch { from: x, 60; size: 40, 20 }
+        box { from: x, 60; size: 40, 20; corner: 6; color: ink; opacity: if(touch.hover, 100%, 30%) }
+    }
+    Chip(200)
+    include "parts/page-chips.plm" while panel == chips
+    Chip(250)
+}

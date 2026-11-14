@@ -1,0 +1,10 @@
+// expect: error «'row_glow' lives in the page»
+// Nor by its own condition: it is read when the page is not there.
+scene ReachedCondition {
+    surface { size: 300, 160 }
+    fact wifi = true
+    event asked
+    let ink = #f5f7f5
+    let x0 = 20
+    include "parts/settings-page.plm" while row_glow > 0
+}

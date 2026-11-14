@@ -1,0 +1,11 @@
+// A page that is there only while the scene's `panel` says so (`include … while`):
+// it reads the scene's facts and props, writes its facts, and keeps its own names.
+part SettingsPage {
+    prop row_glow = 0 ~quick
+    let pad = 12
+    box { from: x0 + pad, 40; size: 140, 30; corner: 8; color: #1d2b27; opacity: 0.6 + row_glow * 0.4 }
+    zone box row { from: x0 + pad, 40; size: 140, 30 }
+    on press row { toggle wifi; emit asked }
+    follow row_glow = if(row.hover > 0.5, 1, 0)
+    text "Wi-Fi" { at: x0 + pad + 10, 55; anchor: left center; size: 13; color: ink }
+}
