@@ -569,7 +569,7 @@ pub use compiler::Symbol;
 /// What is wrong and what there is: both in one pass, which is how the editor wants them.
 /// The line of each name already comes without the file number, and with it apart.
 pub fn index(path: &str, unsaved: Vec<(PathBuf, String)>) -> (Vec<Diagnostic>, Vec<(PathBuf, Symbol)>) {
-    let (r, symbols) = read_with_symbols(path, unsaved);
+    let (r, symbols) = read_with_symbols(path, unsaved, true);
     let files: Vec<PathBuf> = match &r {
         Ok((_, f)) => f.clone(),
         Err((_, f)) => f.iter().map(|(p, _)| p.clone()).collect(),
@@ -602,13 +602,13 @@ fn diagnostics_for(path: &str, r: Result<(Scene, Vec<PathBuf>), (Vec<CompileErro
 }
 
 fn read_with(path: &str, unsaved: Vec<(PathBuf, String)>) -> Result<(Scene, Vec<PathBuf>), (Vec<CompileError>, Vec<(PathBuf, String)>)> {
-    let (r, _) = read_with_symbols(path, unsaved);
+    let (r, _) = read_with_symbols(path, unsaved, false);
     r
 }
 
 /// The same, and also the names the scene declares with their location: the editor
 /// needs them even when the file is half-written and does not compile.
-fn read_with_symbols(path: &str, unsaved: Vec<(PathBuf, String)>) -> (Result<(Scene, Vec<PathBuf>), (Vec<CompileError>, Vec<(PathBuf, String)>)>, Vec<compiler::Symbol>) {
+fn read_with_symbols(path: &str, unsaved: Vec<(PathBuf, String)>, wanted: bool) -> (Result<(Scene, Vec<PathBuf>), (Vec<CompileError>, Vec<(PathBuf, String)>)>, Vec<compiler::Symbol>) {
     let mut l = Reader { unsaved, ..Default::default() };
     let main = Path::new(path).canonicalize().unwrap_or_else(|_| PathBuf::from(path));
     let mut symbols = Vec::new();
@@ -634,7 +634,7 @@ fn read_with_symbols(path: &str, unsaved: Vec<(PathBuf, String)>) -> (Result<(Sc
         }
         let names: Vec<String> = l.files.iter().map(|(r, _)| r.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect();
         let dirs: Vec<PathBuf> = l.files.iter().map(|(r, _)| r.parent().map_or_else(PathBuf::new, Path::to_owned)).collect();
-        let (r, s) = compiler::compile(&rest, &names, &dirs, &l.strict, &l.libraries, &l.brought_scenes);
+        let (r, s) = compiler::compile(&rest, &names, &dirs, &l.strict, &l.libraries, &l.brought_scenes, wanted);
         symbols = s;
         r
     })();

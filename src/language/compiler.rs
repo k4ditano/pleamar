@@ -10,7 +10,52 @@ use super::tokens::{Token, TokenKind};
 use super::vocabulary as vocab;
 use super::{closest_match, CompileError};
 use crate::scene::*;
-use std::collections::{HashMap, HashSet};
+// The compiler's maps are looked up for every name it reads: with the default hasher (SipHash,
+// made to resist an attacker who chooses the keys) hashing was an eighth of reading a big
+// scene. Its keys are the scene's own names, and nothing depends on the maps' order (the
+// default one changes every run), so they use Fx, the one rustc uses for the same job.
+type HashMap<K, V> = std::collections::HashMap<K, V, Fx>;
+type HashSet<K> = std::collections::HashSet<K, Fx>;
+type Fx = std::hash::BuildHasherDefault<FxHasher>;
+
+#[derive(Default, Clone, Copy)]
+pub(crate) struct FxHasher(u64);
+
+impl std::hash::Hasher for FxHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for c in &mut chunks {
+            self.add(u64::from_le_bytes(c.try_into().unwrap()));
+        }
+        let rest = chunks.remainder();
+        if !rest.is_empty() {
+            let mut last = [0u8; 8];
+            last[..rest.len()].copy_from_slice(rest);
+            self.add(u64::from_le_bytes(last));
+        }
+    }
+    fn write_u8(&mut self, i: u8) {
+        self.add(u64::from(i));
+    }
+    fn write_u32(&mut self, i: u32) {
+        self.add(u64::from(i));
+    }
+    fn write_u64(&mut self, i: u64) {
+        self.add(i);
+    }
+    fn write_usize(&mut self, i: usize) {
+        self.add(i as u64);
+    }
+}
+
+impl FxHasher {
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+}
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -34,7 +79,7 @@ thread_local! {
     // statement it belongs to says so once it has been read (issue #58).
     static LEFTOVER: std::cell::RefCell<Vec<(usize, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
     // Those already said: a component or a monitor's copy reads the same value again.
-    static LEFTOVER_SAID: std::cell::RefCell<HashSet<(usize, usize)>> = std::cell::RefCell::new(HashSet::new());
+    static LEFTOVER_SAID: std::cell::RefCell<HashSet<(usize, usize)>> = std::cell::RefCell::new(HashSet::default());
 }
 
 /// A value read and then let go with something after it would drop that
@@ -472,7 +517,7 @@ struct Compiler<'a> {
     in_cursor: std::cell::Cell<bool>,
     /// `translations`: each language with its table, original → translated. And, per
     /// language, the texts found without a translation, to say so once at the end.
-    translations: Vec<(String, HashMap<String, String>)>,
+    translations: Vec<(String, std::collections::HashMap<String, String>)>,
     untranslated: std::cell::RefCell<Vec<std::collections::BTreeSet<String>>>,
     props: HashMap<String, PropId>,
     facts: HashMap<String, FactId>,
@@ -515,6 +560,16 @@ struct Compiler<'a> {
     errors: Vec<CompileError>,
     /// Each name that is declared, with its location: for the editor.
     declared: Vec<Symbol>,
+    /// A bare name read as a value (`expr_atom`): where its token is, and what `global` made
+    /// of it. Whether it is an enum is asked right after (`enum_between`, for every operand of a
+    /// sum, a product and a comparison): this way the name is not worked out a second time.
+    noting: std::cell::Cell<Option<(usize, usize)>>,
+    /// A string to build a name to look up in, without making a new one each time.
+    scratch: std::cell::RefCell<String>,
+    resolved_name: std::cell::RefCell<Option<(usize, usize, String)>>,
+    /// Whether the names declared and used are noted (`declared`, `used`): only the editor
+    /// asks for them. Noting every name read was some 4 % of reading a big scene.
+    symbols: bool,
     /// And every time something is named, for "where is it used" and for renaming it.
     /// As names are resolved without being able to write (`&self`), it goes in a cell.
     used: std::cell::RefCell<Vec<Symbol>>,
@@ -528,7 +583,7 @@ struct Compiler<'a> {
     /// computes: the same `let` read again in another monitor's copy is the
     /// same property, not one more. Only the first copy's are kept: those are
     /// the ones the render always moves (a copy whose monitor is not there is not).
-    let_props: HashMap<String, PropId>,
+    let_props: HashMap<u64, Vec<(Expr, PropId)>>,
     /// The properties of the loose `let`s that are each monitor's copy's own:
     /// the one the scene reads, which has one more per copy. A `let` that
     /// reads one of these is each copy's own too.
@@ -580,34 +635,14 @@ struct Compiler<'a> {
     page_of_file: Vec<Option<usize>>,
     /// What a page declares that nothing outside it may name: its properties, zones,
     /// measures, `let`s and components (not its facts, texts, models or events).
-    page_names: HashMap<String, usize, Fnv>,
+    page_names: HashMap<String, usize>,
     /// Of those, the shapes, zones and measures: what is lit on them or measured
     /// (`row.hover`, `card.width`) is theirs too.
-    page_parts: HashSet<String, Fnv>,
+    page_parts: HashSet<String>,
     /// What is named from outside the page that declares it, said at the end.
     page_reach: std::cell::RefCell<Vec<CompileError>>,
     /// The pages being read (pass 2): which one in `e.pages`, and where its lists stood.
     open_pages: Vec<OpenPage>,
-}
-
-/// What `page_names` is hashed with (FNV-1a): it is asked about every property and `let`
-/// a scene with pages reads, and the default hasher was most of that check's cost.
-type Fnv = std::hash::BuildHasherDefault<FnvHasher>;
-
-#[derive(Default)]
-struct FnvHasher(u64);
-
-impl std::hash::Hasher for FnvHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        let mut h = if self.0 == 0 { 0xcbf2_9ce4_8422_2325 } else { self.0 };
-        for b in bytes {
-            h = (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
-        }
-        self.0 = h;
-    }
 }
 
 /// A page being read: its place in `Scene::pages`, and how long each list was at its start.
@@ -631,7 +666,7 @@ pub struct Symbol {
     pub col: usize,
 }
 
-pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path::PathBuf], strict_files: &'a [usize], libraries: &'a [Library], brought_scenes: &'a [BroughtScene]) -> (Result<Scene, Vec<CompileError>>, Vec<Symbol>) {
+pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path::PathBuf], strict_files: &'a [usize], libraries: &'a [Library], brought_scenes: &'a [BroughtScene], symbols: bool) -> (Result<Scene, Vec<CompileError>>, Vec<Symbol>) {
     // Nothing left over from a compilation before this one (a reload runs on the same thread).
     LEFTOVER.with(|l| l.borrow_mut().clear());
     LEFTOVER_SAID.with(|s| s.borrow_mut().clear());
@@ -650,8 +685,8 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         e: Scene::default(),
         generated: &generated,
         translations: Vec::new(), untranslated: Default::default(),
-        props: HashMap::new(), facts: HashMap::new(), signals: HashMap::new(), texts: HashMap::new(), images: HashMap::new(), figures: HashMap::new(), shaders: HashMap::new(), models: HashMap::new(),
-        measurements: HashMap::new(), gestures: HashMap::new(), zones: HashMap::new(), lets: HashMap::new(), let_lines: HashMap::new(), scene_let_lines: Default::default(), twice_noted: Default::default(), auto_window: None, last_alpha: std::cell::RefCell::new(Expr::K(1.0)), color_alpha: HashMap::new(), loose_lets: HashMap::new(), groups: Vec::new(), colors: HashMap::new(),
+        props: HashMap::default(), facts: HashMap::default(), signals: HashMap::default(), texts: HashMap::default(), images: HashMap::default(), figures: HashMap::default(), shaders: HashMap::default(), models: HashMap::default(),
+        measurements: HashMap::default(), gestures: HashMap::default(), zones: HashMap::default(), lets: HashMap::default(), let_lines: HashMap::default(), scene_let_lines: Default::default(), twice_noted: Default::default(), auto_window: None, last_alpha: std::cell::RefCell::new(Expr::K(1.0)), color_alpha: HashMap::default(), loose_lets: HashMap::default(), groups: Vec::new(), colors: HashMap::default(),
         springs: vocab::SPRINGS.iter().map(|n| ((*n).to_owned(), match *n {
             "lively" => Spring::LIVELY,
             "calm" => Spring::CALM,
@@ -661,8 +696,8 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             "pose" => Spring::POSE,
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
-        under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), declaring_zone: false, zone_springs: Vec::new(), zone_springs_named: HashSet::new(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, brought_scenes, event_fields: HashMap::new(), boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(), arrays: HashMap::new(), elements: HashMap::new(), hoisted: HashSet::new(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::new(), fold_scope: None, turns: HashMap::new(), folds: HashMap::new(), image_sites: HashMap::new(), type_index: Default::default(),
+        under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), symbols, noting: Default::default(), scratch: Default::default(), resolved_name: Default::default(), used: Default::default(), current_class: String::new(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), declaring_zone: false, zone_springs: Vec::new(), zone_springs_named: HashSet::default(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, brought_scenes, event_fields: HashMap::default(), boundary_of: HashMap::default(), permissions_of: HashMap::default(), pass: 0, next_origin: 0.0, values: HashMap::default(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::default(), copies: 0, let_props: HashMap::default(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::default(), arrays: HashMap::default(), elements: HashMap::default(), hoisted: HashSet::default(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::default(), fold_scope: None, turns: HashMap::default(), folds: HashMap::default(), image_sites: HashMap::default(), type_index: Default::default(),
         page_defs: Vec::new(), page_of_file: Vec::new(), page_names: HashMap::default(), page_parts: HashSet::default(), page_reach: Default::default(), open_pages: Vec::new(),
     };
     // Two facts that always exist: what the surface really measures. The
@@ -709,7 +744,22 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     // wherever the block is —at the end, or in an imported library—.
     o.read_translations(body);
     // Four passes: declarations; names and layers; drawing; rules.
+    // (`PLEAMAR_TIMING=1` says how long each took.)
+    let timing = std::env::var_os("PLEAMAR_TIMING").is_some();
+    let mut lap = crate::clock::now();
+    let mut laps: Vec<(&str, f64)> = Vec::new();
+    let mut note = |what: &'static str, laps: &mut Vec<(&str, f64)>| {
+        if timing {
+            let now = crate::clock::now();
+            laps.push((what, (now - lap).as_secs_f64() * 1000.0));
+            lap = now;
+        }
+    };
+    note("before the passes", &mut laps);
     for pass in 0..3 {
+        if pass > 0 {
+            note(["", "pass 0 (declarations)", "pass 1 (lets, layers)"][pass as usize], &mut laps);
+        }
         o.pass = pass;
         // The pages' facts, wherever they are written: before anything else,
         // so that anything can read them and set them (`settings = look`) and
@@ -795,7 +845,9 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             o.errors.push(CompileError::at(line, 1, format!("'{name}{i}{k}]' is never defined{more}: each element of an array is defined once, `{name}{} = ...` in a `repeat`", if i.len() > 1 { "[i][j]" } else { "[i]" })));
         }
     }
+    note("pass 2 (drawing)", &mut laps);
     o.materialize_zones();
+    note("zones", &mut laps);
     // From rule nodes to compiled rules: one can give several, or none.
     // For each node it is noted at which compiled one it starts, and with that the span of
     // each copy becomes a span of compiled ones.
@@ -823,6 +875,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     for f in reached {
         o.push_error(f);
     }
+    note("rules", &mut laps);
     o.e.twin_of = twins(&o.e.rules, &o.e.spans);
     if let Some((tokens, (l, col))) = o.pending_keyboard.take() {
         o.scopes.clear();
@@ -1092,6 +1145,10 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     symbols.extend(o.used.take().into_iter().filter(|s| seen_places.insert((s.local.clone(), s.line, s.col))));
     crate::scene::settle_effects(&mut o.e.instrs);
     o.note_loose_clips(body);
+    note("the rest", &mut laps);
+    if timing {
+        eprintln!("timing · compiling: {}", laps.iter().skip(1).map(|(w, ms)| format!("{w} {ms:.0} ms")).collect::<Vec<_>>().join(" · "));
+    }
     (if o.errors.is_empty() { Ok(o.e) } else { Err(o.errors) }, symbols)
 }
 
@@ -1219,7 +1276,7 @@ fn fold_targets(entries: &[Entry]) -> Vec<String> {
             }
         }
     }
-    let (mut folded, mut own) = (Vec::new(), HashSet::new());
+    let (mut folded, mut own) = (Vec::new(), HashSet::default());
     walk(entries, &mut folded, &mut own);
     folded.retain(|n| !own.contains(n));
     folded
@@ -1464,7 +1521,7 @@ impl<'a> Compiler<'a> {
 
     fn global(&self, n: &str) -> String {
         // Where this has been named: it is what the editor shows in "where is it used".
-        if !self.unwatched.get() {
+        if self.symbols && !self.unwatched.get() {
             let (line, col) = NAMED.with(|m| m.get());
             if line > 0 {
                 self.used.borrow_mut().push(Symbol { local: n.to_owned(), class: "use".to_owned(), line, col });
@@ -1799,7 +1856,7 @@ impl<'a> Compiler<'a> {
             (m, n) if n.0 == m.0 => n,
             (m, _) => m,
         };
-        if line > 0 {
+        if self.symbols && line > 0 {
             let class = if self.current_class.is_empty() { "name".to_owned() } else { self.current_class.clone() };
             self.declared.push(Symbol { local: interpolated.clone(), class, line, col });
         }
@@ -2129,7 +2186,12 @@ impl<'a> Compiler<'a> {
 
     fn enum_between(&self, c: &Cur, from: usize, until: usize) -> Option<(String, Vec<String>)> {
         let [Token { kind: TokenKind::Id(n), .. }] = c.tokens.get(from..until)? else { return None };
-        let g = self.global_quiet(n);
+        // Just read as a value: what `global` made of it then (see `noting`).
+        let known = self.resolved_name.borrow();
+        let g = match &*known {
+            Some((tokens, at, g)) if *tokens == c.tokens.as_ptr() as usize && *at == from => std::borrow::Cow::Borrowed(g.as_str()),
+            _ => std::borrow::Cow::Owned(self.global_quiet(n)),
+        };
         match self.type_of(&g) {
             Some((_, FactType::Enum(names))) => Some((n.clone(), names.clone())),
             _ => None,
@@ -2201,6 +2263,8 @@ impl<'a> Compiler<'a> {
                 if c.sym("[") {
                     return self.indexed(n, c);
                 }
+                self.resolved_name.borrow_mut().take();
+                self.noting.set(Some((c.tokens.as_ptr() as usize, c.i - 1)));
                 self.resolve(c, n)
             }
             _ => c.error("expected a number, a name or a parenthesis here"),
@@ -2280,30 +2344,44 @@ impl<'a> Compiler<'a> {
 
     /// What a name is worth here: a parameter, a `let`, a prop, a fact or an enum's value.
     fn resolve(&self, c: &Cur, n: &str) -> R<Expr> {
+        let noting = self.noting.take();
         // First what is inside —parameters and `let`s of the component—, then what is outside.
         if let Some(e) = self.scopes.iter().rev().find_map(|e| e.exprs.get(n)) {
             return Ok(e.clone());
         }
-        let n = &self.global(n);
+        let g = self.global(n);
+        let r = self.resolve_global(c, &g);
+        if let Some((tokens, at)) = noting {
+            *self.resolved_name.borrow_mut() = Some((tokens, at, g));
+        }
+        r
+    }
+
+    /// `resolve`, once the name is the scene's (`global`).
+    fn resolve_global(&self, c: &Cur, n: &String) -> R<Expr> {
         // Inside a screen copy, a `let` that was read once per
         // copy is stored with its mark: that is its own.
+        // (Made in a scratch string, kept only when it is one: this is asked for every name read.)
         let marked = self
             .scopes
             .iter()
             .rev()
             .find_map(|e| if e.suffix.starts_with("#screen") { Some(&e.suffix) } else if !e.let_mark.is_empty() { Some(&e.let_mark) } else { None })
-            .map(|mark| format!("{n}{mark}"))
-            .filter(|m| self.lets.contains_key(m));
+            .and_then(|mark| {
+                let mut m = self.scratch.borrow_mut();
+                m.clear();
+                m.push_str(n);
+                m.push_str(mark);
+                self.lets.contains_key(m.as_str()).then(|| m.clone())
+            });
         let n = match &marked {
             Some(m) => m,
             None => n,
         };
         // Marked by the screen copy and not declared that way: it is the scene's.
-        let base = self.strip_screen_suffix(n);
-        let n = match &base {
-            Some(base) if !self.lets.contains_key(n.as_str()) && !self.props.contains_key(n.as_str()) && !self.facts.contains_key(n.as_str()) && (self.lets.contains_key(base) || self.props.contains_key(base) || self.facts.contains_key(base)) => base,
-            _ => n,
-        };
+        let known = |x: &str| self.lets.contains_key(x) || self.props.contains_key(x) || self.facts.contains_key(x);
+        let base = if n.contains("#screen") && !known(n) { self.strip_screen_suffix(n).filter(|b| known(b)) } else { None };
+        let n = base.as_ref().unwrap_or(n);
         if let Some(e) = self.lets.get(n) {
             if !self.page_names.is_empty() {
                 self.reach_let(n);
@@ -2656,7 +2734,7 @@ impl<'a> Compiler<'a> {
     // ── the block of a node, seen as properties ─────────────────
 
     fn properties<'n>(&self, n: &'n Node, valid: &[&str]) -> R<HashMap<&'n str, Cur<'n>>> {
-        let mut m = HashMap::new();
+        let mut m = HashMap::default();
         for e in n.body.as_deref().unwrap_or(&[]) {
             if let Entry::Prop { name, value, line, col } = e {
                 if !valid.contains(&name.as_str()) {
@@ -4369,7 +4447,7 @@ impl<'a> Compiler<'a> {
         let k = match self.translations.iter().position(|(c, _)| *c == code) {
             Some(k) => k,
             None => {
-                self.translations.push((code.clone(), HashMap::new()));
+                self.translations.push((code.clone(), std::collections::HashMap::new()));
                 self.translations.len() - 1
             }
         };
@@ -6098,15 +6176,24 @@ impl<'a> Compiler<'a> {
     /// The property a big `let` is computed in, once per frame: the one that
     /// already computes the same thing, or a new one.
     fn computed_once(&mut self, name: &str, e: Expr) -> PropId {
-        let key = format!("{e:?}");
-        if let Some(p) = self.let_props.get(&key) {
+        // By what it computes (`Expr::same`), not by printing it: that was some 3 % of reading Vitreus.
+        let key = {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            e.same_hash(&mut h);
+            std::hash::Hasher::finish(&h)
+        };
+        if let Some((_, p)) = self.let_props.get(&key).and_then(|v| v.iter().find(|(x, _)| x.same(&e))) {
             return *p;
         }
         self.copies += 1;
         let p = self.e.prop_with(interned(&format!("·{name}{}", self.copies)), 0.0, Spring::LIVELY);
         self.e.behaviors.push(Behavior::Bind { prop: p, to: e });
         if !self.later_copy {
-            self.let_props.insert(key, p);
+            let e = match self.e.behaviors.last() {
+                Some(Behavior::Bind { to, .. }) => to.clone(),
+                _ => unreachable!("just pushed"),
+            };
+            self.let_props.entry(key).or_default().push((e, p));
         }
         p
     }
@@ -9419,6 +9506,8 @@ impl<'a> Compiler<'a> {
                             c.i -= 1;
                             let from = c.i;
                             let h = self.fact(&mut c)?;
+                            // (Read as a fact, not as a value: nothing noted of it.)
+                            self.resolved_name.borrow_mut().take();
                             let enum_fact = self.bare_enum(&c, from);
                             c.expect_sym("=")?;
                             // `mode = critical`: the value, from that fact's list.

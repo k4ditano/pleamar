@@ -176,3 +176,30 @@ Risks along the way:
 - Either needs section 7, step 2 (a page's instructions in a list of their own, every index into the instructions made page-aware), which is the riskiest part of all.
 - **What it would free**: Settings costs 24–28 MB of PSS here, ~59 MB in the author's session.
 - So before phase 2: decide whether a late first opening (~0.5 s, then instant within `keep`) is worth ~25–60 MB, or go first for reading ahead (phase 4: compiled on another thread when a hint says it is about to open), or make a property cheaper to compile and to keep (which also helps every scene).
+
+## 11. Reading a scene: where the time goes (`exp2-read`)
+
+Before unloading pages (phase 2), reading a scene had to get cheaper: a page compiled when it opens costs what it costs to read. Profiled on the RTX 2060 PC with a sampler of its own (`perf_event_open`, cycles with call chains, a build with frame pointers; there is no `perf` there) on `pleamar --check` of Vitreus's bar (exp.16):
+
+- **Almost all of it is the drawing pass.** `PLEAMAR_TIMING=1` now says it: pass 0 (declarations) 14–19 ms, pass 1 (`let`s, layers) 20–24 ms, **pass 2 (drawing) ~1 000 ms**, zones 17 ms, rules 31 ms. Before compiling, reading the files (tokens, includes) is ~7 %, and checking the Luau 2 %.
+- **Why 70 µs a property, against the made-up panel's 16:** not a cost per property, but how much expression each one carries. Vitreus writes its expressions inline (`at: floor(lx + 424 * pu + 0.5), …`) and unfolds them by `repeat`s and components: ~148 expression nodes a property (3.6 M for 24 460, section 1b), against ~10 in the panel. Per node, Vitreus is cheaper.
+- **Where a node's cost went** (share of the samples, exp.16): hashing names, 13–14 % (SipHash, for every name read, through each scope's aliases and the scene's maps); **working out every operand's name twice**, ~8 %: once to read it and once more to ask whether it is an enum one may not add to (`no_arithmetic`); allocation, ~15 % (malloc, free, copies); printing each big `let` with `{:?}` to find whether it was already computed once, ~3 %; noting every name read for the editor even when nobody asked, ~4 %; cloning a `let`'s tree into every place it is read, ~5 %; constant folding, ~3 %; a scope copied when something is declared in it after a rule kept it, ~3 %.
+
+**Cut** (all of it the same compiled scene: a hash of everything the compiler makes —instructions, rules, behaviors, zones, props, facts, texts, surfaces, `z:` blocks, pages, spans— is the same for all 387 scenes of `tests/`, `examples/` and Vitreus, against exp.16):
+
+1. The compiler's maps hash with Fx (the hasher rustc uses for the same job) instead of SipHash. Their keys are the scene's own names, and nothing depends on their order (the default one already changes each run).
+2. An operand just read as a value keeps the scene's name it was worked out to, and the enum check uses it instead of working it out again. This only covers the scene's names: a component's parameter or a turn's own is worked out as before (most of Vitreus's operands are such, so this gives back only part of those ~8 %).
+3. A big `let` computed once is found by its tree (`Expr::same`, `Expr::same_hash`: the same as its `{:?}` says, a number by its bits) instead of by printing it.
+4. The names for the editor (`declared`, `used`) are noted only when the editor asks for them (`index`).
+5. `resolve` builds a copy's marked name in a scratch string, and the name without the mark only when it is needed.
+
+| | exp.16 | `exp2-read` |
+| --- | --- | --- |
+| Vitreus with Settings: instructions · cycles | 8.68 G · 5.14 G | 6.52 G · 4.13 G (−25 % · −20 %) |
+| the same, wall (median of 11) | 1 601 ms | 1 301 ms (−19 %) |
+| without Settings: instructions · wall | 6.00 G · 1 104 ms | 4.40 G · 881 ms |
+| the 7 040-property panel: instructions · wall | 0.59 G · 116 ms | 0.44 G · 101 ms |
+
+**Running is the same.** Seventeen scenes film the same frames as exp.16. Putting a frame together with 7 000 rows moving: 7.08–7.29 ms on exp.16, 6.88–7.06 ms here. Vitreus with a pointer going along its bar for 10 s: its render thread runs 3.83 G cycles on exp.16 and 3.76 G here (IPC 2.1 both; 1.4 % more instructions, since it starts sooner and draws a few more frames in the same window). Its PSS once read is 285–310 MB on exp.16 and 271–278 MB here: less of the compiler's leftovers stays behind.
+
+**What is left, and would take more:** pass 2 is still ~1 s on Vitreus. The rest is spread: the scope alias walk in `global` and the enum check for a component's parameters (~6 %, kept as it was, for which names count as an enum must not change), cloning `let` trees into each use (sharing them would change `Expr`), the scopes copied on declaring, tokenizing. Reading pass 2 of the copies per monitor in parallel would not help Vitreus (one copy) and the compiler's state is not made to be shared.

@@ -769,6 +769,83 @@ pub fn pick_index(v: f32, n: usize) -> usize {
 }
 
 impl Expr {
+    /// Whether two expressions are written the same, as their `{:?}` would say: the same
+    /// tree, the same ids, each number by its bits (and every NaN alike). What the compiler
+    /// keys a big `let` it computes once by (`computed_once`), instead of printing it.
+    pub fn same(&self, o: &Expr) -> bool {
+        use Expr::*;
+        let k = |a: &Kid, b: &Kid| (*a.get()).same(&b.get());
+        let f = |a: f32, b: f32| a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan());
+        match (self, o) {
+            (K(a), K(b)) => f(*a, *b),
+            (P(a), P(b)) | (Vel(a), Vel(b)) => a == b,
+            (H(a), H(b)) => a == b,
+            (Add(a, b), Add(c, d)) | (Sub(a, b), Sub(c, d)) | (Mul(a, b), Mul(c, d)) | (Div(a, b), Div(c, d)) | (Min(a, b), Min(c, d)) | (Max(a, b), Max(c, d)) | (Gt(a, b), Gt(c, d)) | (And(a, b), And(c, d)) | (Or(a, b), Or(c, d)) => k(a, c) && k(b, d),
+            (Abs(a), Abs(b)) | (Floor(a), Floor(b)) | (Sin(a), Sin(b)) | (Cos(a), Cos(b)) | (Ceil(a), Ceil(b)) | (Not(a), Not(b)) => k(a, b),
+            (Smoothstep(a, b, x), Smoothstep(c, d, y)) => f(*a, *c) && f(*b, *d) && k(x, y),
+            (Mix(a, b, t), Mix(c, d, u)) => k(a, c) && k(b, d) && k(t, u),
+            (Un(u, a), Un(v, b)) => u == v && k(a, b),
+            (Bin(u, a, b), Bin(v, c, d)) => u == v && k(a, c) && k(b, d),
+            (Letter(a), Letter(b)) => a == b,
+            (Pick(i, a), Pick(j, b)) => k(i, j) && a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.same(y)),
+            (Payload, Payload) => true,
+            _ => false,
+        }
+    }
+
+    /// A hash that agrees with `same`.
+    pub fn same_hash<S: std::hash::Hasher>(&self, h: &mut S) {
+        use Expr::*;
+        let f = |x: f32, h: &mut S| h.write_u32(if x.is_nan() { u32::MAX } else { x.to_bits() });
+        // Which kind, by its place in the enum.
+        h.write_u8(match self {
+            K(_) => 0, P(_) => 1, H(_) => 2, Vel(_) => 3, Add(..) => 4, Sub(..) => 5, Mul(..) => 6, Div(..) => 7, Min(..) => 8, Max(..) => 9,
+            Abs(_) => 10, Floor(_) => 11, Sin(_) => 12, Cos(_) => 13, Ceil(_) => 14, Smoothstep(..) => 15, Mix(..) => 16, Gt(..) => 17,
+            And(..) => 18, Or(..) => 19, Not(_) => 20, Un(..) => 21, Bin(..) => 22, Letter(_) => 23, Pick(..) => 24, Payload => 25,
+        });
+        let kid = |k: &Kid, h: &mut S| (*k.get()).same_hash(h);
+        match self {
+            K(x) => f(*x, h),
+            P(p) | Vel(p) => h.write_u32(p.0),
+            H(x) => h.write_u32(x.0),
+            Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) | Gt(a, b) | And(a, b) | Or(a, b) => {
+                kid(a, h);
+                kid(b, h);
+            }
+            Abs(a) | Floor(a) | Sin(a) | Cos(a) | Ceil(a) | Not(a) => kid(a, h),
+            Smoothstep(a, b, x) => {
+                f(*a, h);
+                f(*b, h);
+                kid(x, h);
+            }
+            Mix(a, b, t) => {
+                kid(a, h);
+                kid(b, h);
+                kid(t, h);
+            }
+            Un(u, a) => {
+                h.write_u8(*u as u8);
+                kid(a, h);
+            }
+            Bin(u, a, b) => {
+                h.write_u8(*u as u8);
+                kid(a, h);
+                kid(b, h);
+            }
+            Letter(l) => h.write_u8(*l),
+            Pick(i, options) => {
+                kid(i, h);
+                h.write_usize(options.len());
+                for o in options {
+                    o.same_hash(h);
+                }
+            }
+            Payload => {}
+        }
+    }
+}
+
+impl Expr {
     pub fn eval(&self, c: Ctx) -> f32 {
         use Expr::*;
         match self {
