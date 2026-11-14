@@ -84,12 +84,12 @@ mod linux {
     fn read() -> Database {
         let cache_path = cache_path();
         let old = cache_path.as_deref().map(load_cache).unwrap_or_default();
-        let mut walk = Walk { db: Database::new(), old, new: HashMap::new(), parsed: 0, cached: 0 };
+        let mut walk = Walk { db: Database::new(), old, new: HashMap::new(), parsed: 0, cached: 0, aliases: Default::default() };
         walk.system_fonts();
-        // As `FontSystem::new` does, after reading them (it overrides what fontconfig said for these three).
-        walk.db.set_monospace_family("Noto Sans Mono");
-        walk.db.set_sans_serif_family("Open Sans");
-        walk.db.set_serif_family("DejaVu Serif");
+        // `FontSystem::new` overrides what fontconfig said for these three with Open Sans, DejaVu
+        // Serif and Noto Sans Mono, there or not (pleamar#154): they are those where they are
+        // installed, and else what fontconfig says, or a family that is everywhere.
+        crate::font_families::settle(&mut walk.db, &walk.aliases);
         let changed = walk.parsed > 0 || walk.new.len() != walk.old.len();
         if changed && let Some(p) = &cache_path {
             save_cache(p, &walk.new);
@@ -104,6 +104,8 @@ mod linux {
         new: HashMap<PathBuf, Entry>,
         parsed: usize,
         cached: usize,
+        /// What fontconfig says for sans-serif, serif and monospace.
+        aliases: crate::font_families::Aliases,
     }
 
     impl Walk {
@@ -148,6 +150,7 @@ mod linux {
                 let _ = fontconfig.merge_config(Path::new("/etc/fonts/fonts.conf"));
             }
             for fontconfig_parser::Alias { alias, default, prefer, accept } in fontconfig.aliases {
+                self.aliases.add(&alias, prefer.iter().chain(&accept).chain(&default).cloned());
                 let name = prefer.first().or_else(|| accept.first()).or_else(|| default.first());
                 if let Some(name) = name {
                     match alias.to_lowercase().as_str() {
@@ -428,12 +431,12 @@ mod linux {
         fn the_cached_fonts_are_the_ones_fontdb_reads() {
             let mut theirs = Database::new();
             theirs.load_system_fonts();
-            let mut ours = Walk { db: Database::new(), old: HashMap::new(), new: HashMap::new(), parsed: 0, cached: 0 };
+            let mut ours = Walk { db: Database::new(), old: HashMap::new(), new: HashMap::new(), parsed: 0, cached: 0, aliases: Default::default() };
             ours.system_fonts();
             let first: Vec<_> = ours.db.faces().map(|f| (f.source.clone(), f.index)).collect();
             // And once more from what the first walk would have kept.
             let old = std::mem::take(&mut ours.new);
-            let mut again = Walk { db: Database::new(), old, new: HashMap::new(), parsed: 0, cached: 0 };
+            let mut again = Walk { db: Database::new(), old, new: HashMap::new(), parsed: 0, cached: 0, aliases: Default::default() };
             again.system_fonts();
             assert_eq!(again.parsed, 0, "nothing changed: nothing parsed");
             for db in [&ours.db, &again.db] {
