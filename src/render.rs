@@ -4101,6 +4101,11 @@ pub fn run(
                         })
                     })
                     .collect();
+                // Which program's buffer each piece is: only for a platform that may show one itself.
+                draw.window_buffers.clear();
+                if sheets.iter().any(|l| l.wants_sole()) {
+                    draw.window_buffers.extend(nest_windows.iter().flat_map(|w| w.pieces.iter()).map(|p| crate::gpu::WindowBuffer { layer: p.layer, buffer: p.buffer, px: p.px, src: p.src }));
+                }
             }
             if let Some(send) = &nest {
                 // The size each window is told to have: only when it changes.
