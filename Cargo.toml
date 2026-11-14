@@ -52,6 +52,9 @@ wl-clipboard-rs = "0.9"
 # fontconfig gives the system's font aliases ("sans-serif" → whichever it is). Without it,
 # on Windows and macOS, fontdb reads the font folders directly.
 cosmic-text = { version = "0.19.0", default-features = false, features = ["fontconfig"] }
+# What fontconfig says for sans-serif, serif and monospace, read again after `FontSystem::new`
+# has put its own names on them (font_families.rs, #154): the same one fontdb reads it with.
+fontconfig-parser = "0.5"
 
 # The Luau logic brings a C++ compiler with it: Luau is built from its
 # sources. It is a feature so that the core can be checked against other

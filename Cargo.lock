@@ -1600,6 +1600,7 @@ dependencies = [
  "bytemuck",
  "chrono",
  "cosmic-text",
+ "fontconfig-parser",
  "glow",
  "image",
  "khronos-egl",

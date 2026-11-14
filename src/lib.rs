@@ -38,6 +38,9 @@ pub use gpu::{Frames, NewSheet, Sent, Target, View};
 /// The same wgpu the render paints with, for a platform that lends it textures.
 pub use wgpu;
 pub use scenes::from_file::read as read_scene;
+#[cfg(target_os = "linux")]
+mod font_families;
+mod fonts;
 mod text;
 
 use scene::*;

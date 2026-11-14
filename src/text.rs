@@ -252,7 +252,7 @@ struct Typesetter {
 impl Typesetter {
     fn new() -> Self {
         let t0 = std::time::Instant::now();
-        let fonts = FontSystem::new();
+        let fonts = crate::fonts::font_system();
         println!("text   · {} system fonts in {} ms", fonts.db().len(), t0.elapsed().as_millis());
         Typesetter { fonts, swash: SwashCache::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), pending_fit: Vec::new(), pending_pictures: Vec::new(), last_picture: 0, scale: 1.0, exhausted: false, frames: HashMap::new(), fonts_read: HashSet::new() }
     }
