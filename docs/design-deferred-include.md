@@ -47,7 +47,7 @@ What would cut it, for every scene (not done here: it touches every expression t
 - **Each expression flat**, its nodes in one list (one allocation, about 12 bytes a node) instead of one box each: the bar's 3.6 million boxes would be some 70 000 lists. Estimated: 174 MB → about 45 MB, evaluated as fast or faster (no pointers to follow).
 - Or, smaller, **leaves inline**: a constant, a property or a fact kept in its parent instead of in a box of its own (most of a tree's nodes are leaves).
 
-Either goes before or with phase 2 of this design: a page unloaded no longer holds its expressions, but every scene pays them while it is open.
+**Leaves inline is done** (`Kid`, 2026-11-14): Vitreus's boxes 3.63 → 1.45 million, PSS with Settings 386–413 → 286 MB, and a frame's putting together 15 % faster. The flat form would take the rest. Either goes before or with phase 2 of this design: a page unloaded no longer holds its expressions, but every scene pays them while it is open.
 
 ## 2. Syntax
 

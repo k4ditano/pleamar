@@ -3283,7 +3283,7 @@ mod tests {
     #[test]
     fn a_log_says_what_was_read_since_it_began_once_each() {
         // fact 1 + prop 0 + prop 0, with something read before the log began.
-        let e = Expr::Add(Box::new(Expr::Add(Box::new(Expr::H(FactId(1))), Box::new(Expr::P(PropId(0))))), Box::new(Expr::P(PropId(0))));
+        let e = Expr::Add(Kid::new(Expr::Add(Kid::new(Expr::H(FactId(1))), Kid::new(Expr::P(PropId(0))))), Kid::new(Expr::P(PropId(0))));
         let props = animated(&[3.0, 4.0]);
         let mut seen = Seen::default();
         seen.reset(2, 2);
@@ -3305,7 +3305,7 @@ mod tests {
     #[test]
     fn what_an_evaluation_reads_is_only_what_it_reached() {
         // if(fact 0, fact 1 + prop 0, 7): with fact 0 false, nothing else is read.
-        let e = Expr::Mix(Box::new(Expr::K(7.0)), Box::new(Expr::Add(Box::new(Expr::H(FactId(1))), Box::new(Expr::P(PropId(0))))), Box::new(Expr::H(FactId(0))));
+        let e = Expr::Mix(Kid::new(Expr::K(7.0)), Kid::new(Expr::Add(Kid::new(Expr::H(FactId(1))), Kid::new(Expr::P(PropId(0))))), Kid::new(Expr::H(FactId(0))));
         let props = animated(&[3.0]);
         let mut seen = Seen::default();
         seen.reset(70, 1);
@@ -3319,7 +3319,7 @@ mod tests {
         assert_eq!((facts, read_props), (vec![0, 1], vec![0]));
         assert_eq!(seen.facts().count() + seen.props().count(), 0);
         // A condition stops at its first false side; a fact past the first word is noted too.
-        let both = Expr::And(Box::new(Expr::H(FactId(0))), Box::new(Expr::H(FactId(65))));
+        let both = Expr::And(Kid::new(Expr::H(FactId(0))), Kid::new(Expr::H(FactId(65))));
         let mut facts = [0.0; 70];
         both.eval(Ctx { props: &props, facts: &facts, seen: Some(&seen) });
         assert_eq!(seen.facts().collect::<Vec<_>>(), [0]);
@@ -3439,5 +3439,38 @@ mod sizes {
     fn an_instruction_stays_small() {
         assert!(std::mem::size_of::<super::Instr>() <= 448, "Instr is {} bytes", std::mem::size_of::<super::Instr>());
         assert!(std::mem::size_of::<super::Style>() <= 384, "Style is {} bytes", std::mem::size_of::<super::Style>());
+    }
+
+    /// A leaf kept in place comes back as it went, whatever its value; a tree is a box,
+    /// cloned and freed as one (pleamar#153).
+    #[test]
+    fn a_kid_keeps_a_leaf_in_place_and_a_tree_in_a_box() {
+        use super::{Animated, Ctx, Expr, FactId, Kid, KidRef, PropId};
+        assert_eq!(std::mem::size_of::<Kid>(), 8);
+        for v in [0.0f32, -0.0, 1.0, -3.5, f32::MAX, f32::MIN_POSITIVE, f32::INFINITY, f32::NEG_INFINITY] {
+            let k = Kid::new(Expr::K(v));
+            assert!(matches!(k.get(), KidRef::Leaf(Expr::K(x)) if x.to_bits() == v.to_bits()), "{v}");
+            assert_eq!(k.constant().map(f32::to_bits), Some(v.to_bits()));
+        }
+        assert!(matches!(Kid::new(Expr::K(f32::NAN)).get(), KidRef::Leaf(Expr::K(x)) if x.is_nan()));
+        assert!(matches!(Kid::new(Expr::P(PropId(u32::MAX))).get(), KidRef::Leaf(Expr::P(PropId(u32::MAX)))));
+        assert!(matches!(Kid::new(Expr::H(FactId(7))).get(), KidRef::Leaf(Expr::H(FactId(7)))));
+        assert!(matches!(Kid::new(Expr::Vel(PropId(3))).get(), KidRef::Leaf(Expr::Vel(PropId(3)))));
+        assert!(matches!(Kid::new(Expr::Letter(1)).get(), KidRef::Leaf(Expr::Letter(1))));
+        assert!(matches!(Kid::new(Expr::Payload).get(), KidRef::Leaf(Expr::Payload)));
+        // A tree: the same value, cloned, taken out, with its payload, as a box always gave.
+        let props = [Animated::at(2.0, super::Spring::at(0.2))];
+        let facts = [10.0f32, 0.25];
+        let c = Ctx { props: &props, facts: &facts, seen: None };
+        let e = (Expr::P(PropId(0)) * 3.0 + Expr::H(FactId(0))).mix(Expr::Payload, Expr::H(FactId(1)));
+        let want = e.eval(c);
+        let k = Kid::new(e.clone());
+        assert!(matches!(k.get(), KidRef::Tree(_)));
+        let k2 = k.clone();
+        drop(k);
+        assert_eq!(k2.eval(c).to_bits(), want.to_bits());
+        assert_eq!(k2.with_payload(4.0).eval(c).to_bits(), e.with_payload(4.0).eval(c).to_bits());
+        assert_eq!(k2.into_expr().eval(c).to_bits(), want.to_bits());
+        assert_eq!(format!("{:?}", Kid::new(Expr::K(2.0))), format!("{:?}", Expr::K(2.0)));
     }
 }
