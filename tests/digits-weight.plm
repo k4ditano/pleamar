@@ -1,0 +1,11 @@
+// expect: ok
+language 0.1
+// What tests/font_digits.rs films with a fontconfig that has only Noto Sans (Regular) and an emoji font:
+// the same digits at weight 600 in the default family, at 600 in Noto Sans by its name, and at 400.
+scene Digits {
+    surface { size: 460, 150 }
+    box { from: 0, 0; size: 460, 150; color: #14181c }
+    text "16:36 0123456789 #*" { at: 10, 10; size: 28; weight: 600; color: #f5f7f5 }
+    text "16:36 0123456789 #*" { at: 10, 60; size: 28; weight: 600; color: #f5f7f5; family: "Noto Sans" }
+    text "16:36 0123456789 #*" { at: 10, 110; size: 28; color: #f5f7f5 }
+}
