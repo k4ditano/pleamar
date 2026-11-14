@@ -22,6 +22,33 @@ Where it went in exp.12: 25.7 of the 30.3 MB were seven lists. Every instruction
 
 The general cut (`exp2-mem`) helps every scene, open or not: about 1 KB less per instruction. Deferring a page saves what is left of it, and more for the parts this panel does not have.
 
+## 1b. Vitreus itself (measured)
+
+`natepayn3/Vitreus` at `2c8cda4`, its bar's scene and its Luau only, inside pleamar. It ran as a client of a headless pleamar-wm on the RTX 2060, with a fresh HOME. Its `run:` programs could not start (an empty `PATH`) and its D-Bus services were turned off (no bus), so nothing of the system answered it. Sampled 25 s in, after pleamar gives back what reading the scene used (`release_memory`).
+
+| | with Settings | without (the `include` commented out) | Settings |
+| --- | --- | --- | --- |
+| scene | 24 460 properties, 70 753 instructions | 17 658, 51 233 | 6 802, 19 520 |
+| exp.12: PSS / anonymous | 471 / 414 MB | 379 / 326 MB | **92 MB** |
+| `exp2-mem`: PSS / anonymous | 384 / 331 MB | 325 / 272 MB | **59 MB** |
+| `exp2-mem`: heap once read | 163.7 MB | 117.1 MB | 46.6 MB |
+| `exp2-mem`: heap at rest | 182.4 MB | 131.7 MB | 50.7 MB |
+| render's own parts | 5.5 MB | 4.5 MB | 1.0 MB |
+| Expressions' nodes (32-byte boxes) | 3 627 101 (110.7 MB) | 2 538 428 (77.5 MB) | 1 088 673 (33.2 MB) |
+
+- The general cut alone takes **87 MB** off the bar with Settings (−18 %), and Settings' own cost goes from 92 to 59 MB.
+- Its absolute PSS is not the author's 407/303 MB: there is no compositor, card or services of his here. The difference with and without Settings is comparable, and it is near his (92 MB here against his 104, 725 → 535 MB on NVIDIA).
+- **What Settings costs is its compiled scene**: 46.6 of its 50.7 MB of heap, against 1 MB for the render's parts. And its compiled scene is mostly **expressions**: about 160 nodes for each of its properties, 56 for each instruction. They are written inline, as Vitreus does throughout (`at: floor(lx + 424 * pu + 0.5), floor(lry + (lr * 44 + 4 + 9) * pu + 0.5)`), and copied once more for every turn of a `repeat` and every use of a component.
+- Each node is an allocation of its own: 32 bytes asked for, 48 taken by glibc. Over the 3.6 million nodes of the whole bar that is about 174 MB of resident memory, close to half the process. This is where the ~15 KB a property goes.
+- `let`s are not the culprit: one of more than 8 nodes is already worked out once, as a property (`computed_once`).
+
+What would cut it, for every scene (not done here: it touches every expression the language makes):
+
+- **Each expression flat**, its nodes in one list (one allocation, about 12 bytes a node) instead of one box each: the bar's 3.6 million boxes would be some 70 000 lists. Estimated: 174 MB → about 45 MB, evaluated as fast or faster (no pointers to follow).
+- Or, smaller, **leaves inline**: a constant, a property or a fact kept in its parent instead of in a box of its own (most of a tree's nodes are leaves).
+
+Either goes before or with phase 2 of this design: a page unloaded no longer holds its expressions, but every scene pays them while it is open.
+
 ## 2. Syntax
 
 ```plm
