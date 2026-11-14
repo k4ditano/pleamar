@@ -727,6 +727,8 @@ scene Walk {
 }
 ```
 
+**What a text with no `family:` is set in.** `sans-serif` (and `serif` and `monospace`, which `family:` also takes): on Linux, the first of these that is installed. Open Sans, DejaVu Serif and Noto Sans Mono, which every scene has been drawn with; else what fontconfig says for it, in its order; else a few families that are everywhere (Noto Sans, DejaVu Sans, Liberation Sans…); else any family that is not an emoji or symbol font. A machine without Open Sans used to have a sans-serif that is not there, and a text at a weight none of its faces has (a 600 where there are 400 and 700) could draw its digits from the emoji font.
+
 **A font of its own: `font file "fonts/pixel.ttf"`.** A scene can bring the
 lettering it is drawn with —a game its pixel font, a theme its face— instead of
 asking whoever runs it to install it. The file (TrueType or OpenType, `.ttf`,
