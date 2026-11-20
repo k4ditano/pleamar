@@ -881,6 +881,8 @@ struct WaylandWindow {
     /// first frame, still waiting for the card, and a lock screen with no
     /// buffer was killed by Hyprland (`Null buffer attached`, issue 49).
     shown: Arc<Mutex<Option<Sender<Show>>>>,
+    /// Whether a "you can paint another one now" notice is asked and not yet answered.
+    frame: OneFrame,
 }
 
 impl WaylandWindow {
@@ -937,7 +939,9 @@ impl PlatformWindow for WaylandWindow {
     /// It applies with the `commit` the driver itself does when presenting, like
     /// the input region: the notice arrives when the compositor wants another one.
     fn request_frame(&self) {
-        self.wl.frame(&self.qh, FrameFor(self.id));
+        if self.frame.take() {
+            self.wl.frame(&self.qh, FrameFor(self.id, self.frame.clone()));
+        }
     }
 
     fn own_frames(&self) -> Option<Box<dyn gpu::Frames>> {
@@ -1193,12 +1197,32 @@ impl<I: Proxy> Dispatch2<I, State> for Silent {
 /// The compositor has already shown that sheet's last frame and wants another.
 /// What isn't seen —a monitor that's off— doesn't get notified: that silence is what
 /// lets the render stop painting for nobody.
-struct FrameFor(u32);
+struct FrameFor(u32, OneFrame);
 impl Dispatch2<wayland_client::protocol::wl_callback::WlCallback, State> for FrameFor {
     fn event(&self, e: &mut State, _: &wayland_client::protocol::wl_callback::WlCallback, ev: wayland_client::protocol::wl_callback::Event, _: &Connection, _: &QueueHandle<State>) {
         if let wayland_client::protocol::wl_callback::Event::Done { .. } = ev {
+            self.1.answered();
             let _ = e.to_render.send(ToRender::Frame(self.0));
         }
+    }
+}
+
+/// One notice asked per surface at a time. The compositor answers all of a surface's
+/// notices together when it next shows it, so a second one adds nothing; and while it
+/// does not show it (under the lock screen, a fullscreen window) it answers none, so
+/// each one asked meanwhile was kept until then: after a night locked, hundreds of
+/// thousands answered at once, more than the compositor would queue for us, and it hung up.
+#[derive(Clone, Default)]
+struct OneFrame(Arc<std::sync::atomic::AtomicBool>);
+
+impl OneFrame {
+    /// Whether to ask for one now: none was pending, and from now one is.
+    fn take(&self) -> bool {
+        !self.0.swap(true, Ordering::AcqRel)
+    }
+
+    fn answered(&self) {
+        self.0.store(false, Ordering::Release);
     }
 }
 
@@ -2054,7 +2078,7 @@ impl PopupHandler for State {
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: a.id,
                 target: gpu::Target::Surface(surface),
-                window: Box::new(WaylandWindow { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursors: e.cursors.clone(), serial: e.serial.clone(), layer: None, qh: e.qh.clone(), id: a.id, effect: Mutex::new(None), backdrop: a.backdrop.clone(), shown: Default::default() }),
+                window: Box::new(WaylandWindow { wl: a.popup.wl_surface().clone(), compositor: self.compositor.clone(), cursors: e.cursors.clone(), serial: e.serial.clone(), layer: None, qh: e.qh.clone(), id: a.id, effect: Mutex::new(None), backdrop: a.backdrop.clone(), shown: Default::default(), frame: Default::default() }),
                 scale: a.parent.scale,
                 size: a.size,
                 mhz: a.parent.mhz,
@@ -2277,7 +2301,7 @@ impl State {
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: p.id,
                 target: gpu::Target::Surface(surface),
-                window: Box::new(WaylandWindow { wl: p.role.wl().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: p.role.layer().cloned(), qh: self.qh.clone(), id: p.id, effect: Mutex::new(None), backdrop: p.backdrop.clone(), shown: Default::default() }),
+                window: Box::new(WaylandWindow { wl: p.role.wl().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: p.role.layer().cloned(), qh: self.qh.clone(), id: p.id, effect: Mutex::new(None), backdrop: p.backdrop.clone(), shown: Default::default(), frame: Default::default() }),
                 scale: p.scale,
                 size,
                 mhz,
@@ -2350,7 +2374,7 @@ impl smithay_client_toolkit::session_lock::SessionLockHandler for State {
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: face.id,
                 target: gpu::Target::Surface(paints),
-                window: Box::new(WaylandWindow { wl: face.surface.wl_surface().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: None, qh: self.qh.clone(), id: face.id, effect: Mutex::new(None), backdrop: None, shown: Default::default() }),
+                window: Box::new(WaylandWindow { wl: face.surface.wl_surface().clone(), compositor: self.compositor.clone(), cursors: self.cursors.clone(), serial: self.serial.clone(), layer: None, qh: self.qh.clone(), id: face.id, effect: Mutex::new(None), backdrop: None, shown: Default::default(), frame: Default::default() }),
                 scale: 1.0,
                 size,
                 mhz: face.mhz,
@@ -2976,6 +3000,19 @@ fn icon_dirs_in(home: &str, data_home: &str, data_dirs: &str, config: &str) -> V
 #[cfg(test)]
 mod tests {
     use super::icon_dirs_in;
+
+    /// Asked once, not again until answered: a surface the compositor does not show
+    /// answers none, and the ones asked meanwhile all came back at once when it did.
+    #[test]
+    fn one_frame_callback_at_a_time() {
+        let gate = super::OneFrame::default();
+        let callback = gate.clone();
+        assert!(gate.take(), "nothing pending: ask");
+        assert!(!gate.take(), "one pending: do not ask again");
+        assert!(!gate.take());
+        callback.answered();
+        assert!(gate.take(), "answered: ask again");
+    }
 
     fn file(path: &std::path::Path, text: &str) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
