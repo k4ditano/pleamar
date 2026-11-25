@@ -32,6 +32,11 @@ fn note_plugins(path: &str, e: &Scene) {
     *PLUGIN_LOGIC.lock().unwrap() = Some((path.to_owned(), e.plugins.iter().map(|p| p.logic.to_string_lossy().into_owned()).collect()));
 }
 
+/// The files the last compilation of `path` read (empty if it was another scene).
+pub fn files_read(path: &str) -> Vec<std::path::PathBuf> {
+    FILES.lock().unwrap().as_ref().filter(|(p, _)| p == path).map(|(_, f)| f.clone()).unwrap_or_default()
+}
+
 fn compile(path: &str) -> Result<Scene, String> {
     let (mut e, mut files) = crate::language::read_file(path)?;
     e.shrink();

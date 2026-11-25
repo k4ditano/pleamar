@@ -2,6 +2,12 @@
 
 The highlights of each line of releases; every release, with what changed, is in [Releases](https://github.com/k4ditano/pleamar/releases).
 
+- **Language 0.11 (exp2): installed libraries.** `import "lib:tide/tokens"
+  version "1.2"` brings a library installed once for several programs, looked
+  for with `--lib`, `PLEAMAR_LIB_PATH`, a `lib/` next to the scene and
+  `~/.local/share/pleamar/lib`; each library says its name, version and language
+  in a `pleamar-lib` manifest, `--check` says which copy was used, and
+  `pleamar lib vendor` copies them next to a program that carries its interface.
 - **0.8 (experimental, on the `exp2` branch)**: several scenes in one process
   that talk to each other, checked at both ends (`import scene`, `uses scene`,
   events that say what they carry); text as people and agents write it

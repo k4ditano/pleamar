@@ -6,6 +6,7 @@
 //! knowing what they mean, and `compiler` gives them meaning and checks the names.
 
 mod compiler;
+pub mod libs;
 mod figure;
 mod tokens;
 mod tree;
@@ -22,7 +23,7 @@ pub(crate) const PER_FILE: usize = 1_000_000;
 /// The version of the language this program understands. The first number changes
 /// when something written stops being valid; the second, when something is added. A file
 /// can say which one it needs (`language 0.1`) and find out on load, not halfway through.
-pub const VERSION: (u32, u32) = (0, 10);
+pub const VERSION: (u32, u32) = (0, 11);
 
 #[derive(Debug)]
 pub struct CompileError {
@@ -232,20 +233,37 @@ impl Reader {
                 continue;
             }
             // `import "menu.plm" as menu`: its components are `menu.Row`, so two
-            // libraries with a `Row` each can live in the same scene.
-            let surname = match (n.head.get(2).map(|f| &f.kind), n.head.get(3).map(|f| &f.kind), n.head.len()) {
-                (None, _, 2) => None,
-                (Some(TokenKind::Id(a)), Some(TokenKind::Id(s)), 4) if a == "as" && !s.contains('.') => Some(s.clone()),
-                _ => None,
+            // libraries with a `Row` each can live in the same scene. An installed library
+            // can also say which version it needs: `import "lib:tide/tokens" version "1.2"`.
+            let usage = "an import is `import \"path/to/the/library.plm\"`, or `import \"…\" as name` to call its components `name.Row`; an installed library is `import \"lib:name/file\"`, with `version \"1.2\"` after it if it needs one";
+            let (mut surname, mut wanted) = (None, None);
+            let mut k = 2;
+            while k < n.head.len() {
+                match (&n.head[k].kind, n.head.get(k + 1).map(|f| &f.kind)) {
+                    (TokenKind::Id(a), Some(TokenKind::Id(s))) if a == "as" && surname.is_none() && !s.contains('.') => surname = Some(s.clone()),
+                    (TokenKind::Id(a), Some(TokenKind::Str(v))) if a == "version" && wanted.is_none() => wanted = Some((v.clone(), n.head[k + 1].col)),
+                    _ => return Err(CompileError::at(n.head[k].line, n.head[k].col, usage)),
+                }
+                k += 2;
+            }
+            let (Some(TokenKind::Str(which)), None) = (n.head.get(1).map(|f| &f.kind), &n.body) else {
+                return Err(CompileError::at(n.line, n.col, usage));
             };
-            let (Some(TokenKind::Str(which)), None, true) = (n.head.get(1).map(|f| &f.kind), &n.body, n.head.len() == 2 || surname.is_some()) else {
-                return Err(CompileError::at(n.line, n.col, "an import is `import \"path/to/the/library.plm\"`, or `import \"…\" as name` to call its components `name.Row`"));
-            };
+            if wanted.is_some() && !which.starts_with("lib:") {
+                return Err(CompileError::at(n.line, wanted.as_ref().map_or(n.col, |w| w.1), "`version` is for an installed library: `import \"lib:name/file\" version \"1.2\"`"));
+            }
             // `pleamar:ui` is one of pleamar's own libraries: it comes inside the
             // program, so it is there wherever the scene is and whoever runs it.
             // Anything else is a path, relative to the importing file, not to
             // where it is launched from.
-            let target = if let Some(name) = which.strip_prefix("pleamar:") {
+            let target = if let Some(spec) = which.strip_prefix("lib:") {
+                // An installed library, looked for along the search path (libs.rs), from the
+                // main scene's folder: the same for every file of the scene.
+                let main = self.open_stack.first().cloned().unwrap_or_else(|| path.to_owned());
+                let found = libs::resolve(spec, wanted.as_ref().map(|w| w.0.as_str()), main.parent().unwrap_or(Path::new(".")), VERSION)
+                    .map_err(|e| CompileError::at(n.line, n.head[1].col, e))?;
+                found.file
+            } else if let Some(name) = which.strip_prefix("pleamar:") {
                 let Some(source) = builtin_library(name) else {
                     return Err(CompileError::at(n.line, n.head[1].col, format!("pleamar has no library '{name}': there is {}", BUILTIN_LIBRARIES.iter().map(|(n, _)| format!("pleamar:{n}")).collect::<Vec<_>>().join(", "))));
                 };
@@ -683,6 +701,35 @@ mod tests {
             }
         }
         props
+    }
+
+    /// Language 0.11: `import "lib:name/file"` from a `lib/` next to the scene, with its logic,
+    /// its version checked, and what is not allowed refused at the import.
+    #[test]
+    fn an_installed_library_is_imported_from_lib_next_to_the_scene() {
+        let d = std::env::temp_dir().join(format!("pleamar-lib-scene-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let lib = d.join("lib/tide");
+        std::fs::create_dir_all(lib.join("parts")).unwrap();
+        std::fs::write(lib.join(super::libs::MANIFEST), "name tide\nversion 1.3.0\nlanguage 0.11\n").unwrap();
+        std::fs::write(lib.join("tokens.plm"), "library Tokens {\n  let ink = #123456\n}\n").unwrap();
+        std::fs::write(lib.join("parts/chip.plm"), "library Chip {\n    component Chip() {\n        box { from: 0, 0; size: 10, 10; color: #ff0000 }\n    }\n}\n").unwrap();
+        std::fs::write(lib.join("parts/chip.luau"), "-- the library's logic\n").unwrap();
+        let scene = |imports: &str| {
+            std::fs::write(d.join("app.plm"), format!("language 0.11\n{imports}\nscene App {{\n    surface {{ size: 40, 40; anchor: center }}\n    box {{ from: 0, 0; size: 40, 40; color: ink }}\n}}\n")).unwrap();
+            super::read_file(d.join("app.plm").to_str().unwrap())
+        };
+        let (_, files) = scene("import \"lib:tide/tokens\" version \"1.2\"\nimport \"lib:tide/parts/chip\" as chip").unwrap();
+        assert!(files.iter().any(|f| f.ends_with("lib/tide/tokens.plm")) && files.iter().any(|f| f.ends_with("lib/tide/parts/chip.plm")), "{files:?}");
+        assert_eq!(super::libs::libraries_read(&files).len(), 1, "one library, read once");
+        let err = |imports: &str| scene(imports).err().unwrap_or_default();
+        assert!(err("import \"lib:tide/tokens\" version \"2\"").contains("asks for tide 2"));
+        assert!(err("import \"lib:tide/../secret\"").contains("without '..'"));
+        assert!(err("import \"lib:/etc/passwd\"").contains("is not a library name"));
+        assert!(err("import \"lib:nowhere/x\"").contains("cannot find the library 'nowhere'"));
+        assert!(err("import \"common.plm\" version \"1\"").contains("`version` is for an installed library"));
+        assert!(err("import \"lib:tide/tokens\" like \"1\"").contains("an installed library is"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// pleamar#169: a row's presence goes with its `z:` group when the groups are sorted.

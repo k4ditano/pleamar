@@ -3,20 +3,20 @@
 **What this note is.** The complete, exact description of what the language accepts. [The language — the guide](09-language-v0.md) is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
 ```sh
-pleamar --version                  # pleamar 0.8.0-exp.24 · language 0.10
+pleamar --version                  # pleamar 0.8.0-exp.45 · language 0.11
 pleamar --check scene.plm      # reads it, with whatever it imports; says whether it is fine, exits
 ./run-tests.sh                        # tests/*.plm, examples/*.plm and the examples in this note
 ```
 
 ## 1. Version
 
-The language has a number of its own, apart from the program's: **0.10**. The first changes when something already written stops being valid; the second, when something is added. A file can say which one it needs, on its first line:
+The language has a number of its own, apart from the program's: **0.11**. The first changes when something already written stops being valid; the second, when something is added. A file can say which one it needs, on its first line:
 
 ```
 language 0.1
 ```
 
-If it asks for a different first number, or a second one higher than the program understands, it is an error on load —`this file asks for language 0.99, and this pleamar understands 0.10`— and not a half-built scene. A file that asks for 0.1 is still read by 0.10: what 0.2 added —a group's own `shader:`, workspaces, `pick`, `import … as`, `drag.over`— and what 0.3 added —what a zone tells an agent: `label:`, `agent:`, `role:`, `value:`, `checked:`, `selected:`—, what 0.4 added —a sheet of pictures' `cell:` and `pixels` for pixel art—, and what 0.5 added —a list that sticks to its end (`stick: end`), a child placed on its own across its layout (`place:`), a text as wide as what it says (`tight: true`), a `lines:` that changes, `motion.reduced` and `color.scheme`, a `launch` with holes, a `text` chosen with `if`, and `hover`/`away` over several zones—, and what 0.6 added —a quote inside a text (`\"`), a block opened on the line after its header, and a `let` that is a colour chosen with `pick` or `if`—, what 0.7 added —a terminal drawn by the scene (`terminal`, §10.4)—, what 0.8 added —a window put aside, on no workspace (`send win(k) aside`)—, what 0.9 added —a zone that yields to what is below it (`yields: true`)—, and what 0.10 added —the programs' widgets drawn by the scene (`windows … desk N`)— it simply does not use. Without that line, it is read with whatever is there. While the first is 0, nothing is promised: this is a language still being made.
+If it asks for a different first number, or a second one higher than the program understands, it is an error on load —`this file asks for language 0.99, and this pleamar understands 0.11`— and not a half-built scene. A file that asks for 0.1 is still read by 0.11: what 0.2 added —a group's own `shader:`, workspaces, `pick`, `import … as`, `drag.over`— and what 0.3 added —what a zone tells an agent: `label:`, `agent:`, `role:`, `value:`, `checked:`, `selected:`—, what 0.4 added —a sheet of pictures' `cell:` and `pixels` for pixel art—, and what 0.5 added —a list that sticks to its end (`stick: end`), a child placed on its own across its layout (`place:`), a text as wide as what it says (`tight: true`), a `lines:` that changes, `motion.reduced` and `color.scheme`, a `launch` with holes, a `text` chosen with `if`, and `hover`/`away` over several zones—, and what 0.6 added —a quote inside a text (`\"`), a block opened on the line after its header, and a `let` that is a colour chosen with `pick` or `if`—, what 0.7 added —a terminal drawn by the scene (`terminal`, §10.4)—, what 0.8 added —a window put aside, on no workspace (`send win(k) aside`)—, what 0.9 added —a zone that yields to what is below it (`yields: true`)—, what 0.10 added —the programs' widgets drawn by the scene (`windows … desk N`)—, and what 0.11 added —installed libraries, `import "lib:name/file" version "1.2"` (§5.1)— it simply does not use. Without that line, it is read with whatever is there. While the first is 0, nothing is promised: this is a language still being made.
 
 ## 2. What it guarantees
 
@@ -42,7 +42,7 @@ Words of the language (they cannot be used as a name of one's own without confus
 In EBNF: `[ x ]` is optional, `{ x }` zero or more times, `|` alternatives, `"x"` literally. `end` is a newline or `;`.
 
 ```
-file         = [ "language" number end ] { ( "import" [ "scene" ] text [ "as" name ] | "uses" "scene" text "as" name ) end } ( scene | library ) ;
+file         = [ "language" number end ] { ( "import" [ "scene" ] text [ "as" name ] [ "version" text ] | "uses" "scene" text "as" name ) end } ( scene | library ) ;
 scene        = "scene" name "{" { statement } "}" ;
 library      = "library" name [ "strict" ] "{" { let | spring | component | boundary | inner | translations } "}" ;
 boundary     = permissions | fact | event | live_text | model | image_decl ;    (* lives under the library's name: `Clock.now` *)
@@ -165,6 +165,44 @@ color        = "#" hex | name | "mix" "(" color "," color "," expr ")" | "if" "(
 **`import "menu.plm" as menu`** gives the library's components a surname: from the scene they are `menu.Row(r)`, and inside the library they keep calling each other by their own names (`Row` inside `menu.Pair` is `menu.Row`). That is how two libraries that each have a `Row` are used together. A library has one name in a scene: imported once with `as menu` and again with `as other`, or without it, is an error. The surname is for components; a library's facts, texts and events already live under the library's name (`Menu.open`), and its `let`s and springs are still shared, so the scene can override a colour.
 
 **A big scene goes in pieces with `include`.** `include "pages/wifi.plm"` puts there, where the line is, what a **part** holds —`part Wifi { … }`, in a file of its own—, as if it had been written there: the same names (a part's `fact` is the scene's, and it reads the scene's lets, and those of the group it is included in), the same order (it paints where it is included). It can go inside a `group`, and a part can include others; its path is relative to the file that includes it. Inside a part there is no `import`: the scene imports the libraries, and its parts use them. But a part's **file** can bring, before its `part`, the `import`s of what it shows —their paths relative to that file—, and they are the scene's as if written at its top: so a program can write a list of plugins and the part that shows them (`import "weather/weather.plm" as weather` · `part Plugins { weather.Card() }`), and rewriting it adds, changes or takes away plugins hot, their logic included. Its errors say its own file and line, what it draws finds its images next to it, and saving it reloads the scene like any of its files. A part is not opened: `pleamar --check` on one says so. Unlike a library it has no name of its own to live under; it is the same scene, in more files.
+
+### 5.1. Installed libraries: `import "lib:name/file"`
+
+A library several programs share —a set of colours and components, a toolkit— is installed once and imported by name, instead of copying it into each program. pleamar knows none by name: it looks where it is told.
+
+```
+import "lib:tide/tokens"                    # tide/tokens.plm, inside the library «tide»
+import "lib:tide/parts/button" as button    # a file in a folder of it; `as` as always
+import "lib:tide/tokens" version "1.2"      # needs tide 1.2 or later, and below 2
+```
+
+**A library is a folder** named like it (lowercase letters, digits and `-`) with a manifest, **`pleamar-lib`**, and inside, ordinary `library Name { … }` files —with their `.luau` next to them if they have logic—, in folders if it wants. The manifest says three things, one a line (`#` starts a comment):
+
+```
+name tide
+version 1.3.0
+language 0.11
+```
+
+`name` is the folder's name; `version`, three numbers; `language`, the lowest language it needs. After `lib:` comes the library's name and the file's path inside it, without `.plm`: going up (`..`), an absolute path or an empty step are errors, so an import never leaves its library.
+
+**Where it is looked for**, in this order; the first folder that has `name/` is the one used:
+
+1. `--lib DIR`, as many as said, in their order (`pleamar --lib ~/src --scene app.plm`);
+2. `PLEAMAR_LIB_PATH`, folders separated by `:`;
+3. `lib/` next to the main scene —the copy a program carries with it—;
+4. `$XDG_DATA_HOME/pleamar/lib` (by default `~/.local/share/pleamar/lib`), the user's;
+5. each `$XDG_DATA_DIRS/pleamar/lib` (by default `/usr/local/share` and `/usr/share`), the system's.
+
+`pleamar lib path SCENE` lists them, and `pleamar --check` says which libraries a scene used and from where (`lib tide 1.3.0 ← /home/you/.local/share/pleamar/lib/tide`), so it is clear which copy won.
+
+**`version "1.2"`** asks for at least 1.2 without changing the first number (1.9 is fine, 2.0 is not); while the first is 0, the second is the one that breaks (`"0.3"` takes 0.3.x). The library found is the one checked: it is not chosen among several by version.
+
+**Errors**, on load and in `--check`, at the `import`: the library is nowhere (with every folder looked in), it has no such file, its version does not do (`the scene asks for tide 1.2 and the one in … is 1.1.0 (older: update it)`), it needs a newer language, or its manifest is missing or says something else. The scene does not load, as with any broken import.
+
+**A program that carries its interface** inside (and writes it out when it starts) carries the libraries too, the version it was tried with, in a `lib/` next to its scene: then it does not depend on what is installed, and a newer library installed for others does not change it. **`pleamar lib vendor SCENE --to DIR`** copies, whole, each installed library the scene uses into `DIR/name/` —replacing an older copy there, never a folder that is not a library—.
+
+**Permissions** do not change for being installed: a library with logic is a plugin like any other (below). It touches only what its own `permissions` declare —never the scene's— and only once whoever uses it approves them (`pleamar --approve`); unapproved, and always with `--no-permissions` or `--layout`, its logic runs with no permissions at all. Nothing is downloaded: only local folders. Saving a library's file reloads the scenes that use it, like any of their files.
 
 ```
 scene Marea {

@@ -85,7 +85,13 @@ use std::time::Duration;
 const HELP: &str = "pleamar [options]
   --scene FILE        the scene to open (.plm); it reloads itself when you save it. The test
                       benches written in Rust also work: marea, island, face, showcase, swarm
-  --check FILE        reads a scene, says whether it is fine, and exits
+  --check FILE        reads a scene, says whether it is fine (and which installed libraries
+                      it uses, from where), and exits
+  --lib DIR           looks for installed libraries (`import \"lib:name/file\"`) in DIR first;
+                      it can be said several times. Then PLEAMAR_LIB_PATH, lib/ next to the scene,
+                      ~/.local/share/pleamar/lib and $XDG_DATA_DIRS/pleamar/lib
+  lib vendor SCENE --to DIR   copies the installed libraries a scene uses into DIR/name/
+  lib path [SCENE]    where installed libraries are looked for, in order
   --approve SCENE     shows what the plugins of a scene ask for, and asks whether to approve them
                       (with --yes after it, it does not ask). Unapproved, a plugin runs touching nothing.
                       «--plugin NAME» only that one; «--json» asks nothing and writes, as JSON, what
@@ -177,6 +183,13 @@ fn args(given: Vec<String>) -> Args {
         let mut value = || it.next().unwrap_or_else(|| { eprintln!("{HELP}"); std::process::exit(2) });
         match op.as_str() {
             "--scene" => a.scene = value(),
+            // Where installed libraries are looked for first (`import "lib:name/file"`).
+            "--lib" => language::libs::add_dir(value()),
+            // `pleamar lib vendor SCENE --to DIR`: the libraries a scene uses, copied next to it.
+            "lib" => {
+                let rest: Vec<String> = it.by_ref().collect();
+                std::process::exit(lib_command(&rest));
+            }
             "--say" => {
                 // Several commands after the scene go down one connection, one line each, and
                 // the scene runs them in that order: a popup's texts are in place before its emit.
@@ -266,6 +279,10 @@ fn args(given: Vec<String>) -> Args {
                         // properties is let go with it, not taken apart piece by piece
                         // (a tenth of Atalaya's `--check`).
                         let e = std::mem::ManuallyDrop::new(e);
+                        // The installed libraries it uses, and from where: which copy won.
+                        for (root, m) in language::libs::libraries_read(&scenes::from_file::files_read(&path)) {
+                            println!("lib {} {} ← {}", m.name, m.version, root.display());
+                        }
                         if errors.is_empty() {
                             println!("{path}: ok · {} properties, {} instructions, {} layers, {} rules, {} zones, {} gestures{}", e.props.len(), e.instrs.len(), e.layers.len(), e.rules.len(), e.zones.len(), e.gestures.len(), if warnings.is_empty() { String::new() } else { format!(" · {} warnings", warnings.len()) });
                             0
@@ -310,6 +327,50 @@ fn args(given: Vec<String>) -> Args {
         std::process::exit(2);
     }
     a
+}
+
+/// `pleamar lib vendor SCENE --to DIR [--lib DIR…]`: copies each installed library the scene
+/// resolves, whole, into `DIR/name/` —an app that carries its interface carries the library it
+/// was tried with—. `pleamar lib path [SCENE]`: where libraries are looked for, in order.
+fn lib_command(rest: &[String]) -> i32 {
+    let usage = "pleamar lib vendor SCENE --to DIR   copies the libraries the scene uses into DIR/name/\npleamar lib path [SCENE]            where libraries are looked for, in order";
+    let mut words = Vec::new();
+    let mut to = None;
+    let mut it = rest.iter();
+    while let Some(w) = it.next() {
+        match w.as_str() {
+            "--to" => to = it.next().cloned(),
+            "--lib" => if let Some(d) = it.next() { language::libs::add_dir(d) },
+            _ => words.push(w.clone()),
+        }
+    }
+    match words.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["path", scene @ ..] if scene.len() <= 1 => {
+            let dir = scene.first().map_or_else(|| std::path::PathBuf::from("."), |s| std::path::Path::new(s).parent().unwrap_or(std::path::Path::new(".")).to_owned());
+            for (d, from) in language::libs::search_path(&dir) {
+                println!("{}{}  ({from})", d.display(), if d.is_dir() { "" } else { "  · does not exist" });
+            }
+            0
+        }
+        ["vendor", scene] => {
+            let Some(to) = to else { eprintln!("{usage}"); return 2 };
+            let files = match language::read_file(scene) {
+                Ok((_, files)) => files,
+                Err(e) => { eprintln!("{e}"); return 1 }
+            };
+            match language::libs::vendor(&files, std::path::Path::new(&to)) {
+                Ok(done) if done.is_empty() => { println!("{scene} uses no installed library: nothing copied"); 0 }
+                Ok(done) => {
+                    for (name, v) in done {
+                        println!("{name} {v} → {}", std::path::Path::new(&to).join(&name).display());
+                    }
+                    0
+                }
+                Err(e) => { eprintln!("{e}"); 1 }
+            }
+        }
+        _ => { eprintln!("{usage}"); 2 }
+    }
 }
 
 /// `pleamar --report`: see `report.rs`. `extra` is what a program built on

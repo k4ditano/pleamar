@@ -116,7 +116,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("ripple", "`ripple hit` — a rule sends a ring of light from the centre of that zone through the glass, without pressing it. As a glass property, `ripple: 100%` sets its strength."),
     ("gesture", "`gesture cheer { … }` — a timeline of poses: the render plays it whole."),
     ("posture", "`posture tired { … }` — a still face: where the poses rest."),
-    ("import", "`import \"common/palette.plm\"` — brings in a library: its colours, components and springs. `import \"menu.plm\" as menu` calls its components `menu.Row`."),
+    ("import", "`import \"common/palette.plm\"` — brings in a library: its colours, components and springs. `import \"menu.plm\" as menu` calls its components `menu.Row`. `import \"lib:tide/tokens\" version \"1.2\"` brings an installed one, looked for with `--lib`, `PLEAMAR_LIB_PATH`, `lib/` next to the scene and `~/.local/share/pleamar/lib`."),
     ("scene", "`scene Bar { … }` — everything a window shows, and what it reacts to."),
     ("library", "`library Palette { … }` — what several scenes share. With a `.luau` next to it, it is a plugin: its own frontier and its own permissions."),
     ("include", "`include \"pages/wifi.plm\"` — a piece of this scene kept in a file of its own, put right here as if it were written here: the same names, inside the same group. With `while panel == settings` it is a page that is there only while that holds; its own names are not named outside it."),
