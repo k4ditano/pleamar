@@ -47,7 +47,9 @@ impl CompileError {
         let n = self.line % PER_FILE;
         let line = source.lines().nth(n.saturating_sub(1)).unwrap_or("");
         let margin = format!("{n:>4} | ");
-        format!("{path}:{n}:{}: {}\n{margin}{line}\n{}^", self.col, self.message, " ".repeat(margin.len() + self.col.saturating_sub(1)))
+        // A mistake inside an installed library is the library's, not the scene's: said so.
+        let library = files.get(self.line / PER_FILE).and_then(|(r, _)| libs::library_of(r)).map_or(String::new(), |(root, m)| format!("\n{:>4} = inside the library '{}' {} ({})", "", m.name, m.version, root.display()));
+        format!("{path}:{n}:{}: {}\n{margin}{line}\n{}^{library}", self.col, self.message, " ".repeat(margin.len() + self.col.saturating_sub(1)))
     }
 }
 
@@ -729,6 +731,10 @@ mod tests {
         assert!(err("import \"lib:nowhere/x\"").contains("cannot find the library 'nowhere'"));
         assert!(err("import \"common.plm\" version \"1\"").contains("`version` is for an installed library"));
         assert!(err("import \"lib:tide/tokens\" like \"1\"").contains("an installed library is"));
+        // A mistake inside the library: its file and line, and whose it is.
+        std::fs::write(lib.join("broken.plm"), "library Broken {\n  let a = nothing_here\n}\n").unwrap();
+        let e = err("import \"lib:tide/broken\"");
+        assert!(e.contains("lib/tide/broken.plm:2:") && e.contains("inside the library 'tide' 1.3.0"), "{e}");
         let _ = std::fs::remove_dir_all(&d);
     }
 

@@ -188,7 +188,7 @@ language 0.11
 
 **Where it is looked for**, in this order; the first folder that has `name/` is the one used:
 
-1. `--lib DIR`, as many as said, in their order (`pleamar --lib ~/src --scene app.plm`);
+1. `--lib DIR` or `--lib=DIR`, anywhere on the command line, as many as said, in their order (`pleamar --lib ~/src --scene app.plm`, `pleamar --check app.plm --lib=$HOME/src`); a `--lib` without a folder is an error;
 2. `PLEAMAR_LIB_PATH`, folders separated by `:`;
 3. `lib/` next to the main scene —the copy a program carries with it—;
 4. `$XDG_DATA_HOME/pleamar/lib` (by default `~/.local/share/pleamar/lib`), the user's;

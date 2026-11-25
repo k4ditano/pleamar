@@ -88,7 +88,7 @@ const HELP: &str = "pleamar [options]
   --check FILE        reads a scene, says whether it is fine (and which installed libraries
                       it uses, from where), and exits
   --lib DIR           looks for installed libraries (`import \"lib:name/file\"`) in DIR first;
-                      it can be said several times. Then PLEAMAR_LIB_PATH, lib/ next to the scene,
+                      it can be said several times, anywhere, also as --lib=DIR. Then PLEAMAR_LIB_PATH, lib/ next to the scene,
                       ~/.local/share/pleamar/lib and $XDG_DATA_DIRS/pleamar/lib
   lib vendor SCENE --to DIR   copies the installed libraries a scene uses into DIR/name/
   lib path [SCENE]    where installed libraries are looked for, in order
@@ -178,13 +178,23 @@ struct Args {
 
 fn args(given: Vec<String>) -> Args {
     let mut a = Args { scene: String::new(), screen: None, stall: 600, naive: false, demo: false, mouse: None, seconds: None, margin: None, hud: true, reduced: false, no_vsync: false, record: Vec::new(), answer_as: None, film: None, layout: false, fps: 60, stall_said: false };
+    // `--lib` taken out first, wherever it is: `--check scene.plm --lib DIR` checks right away
+    // and would never have seen the one after it.
+    let given = match take_lib_dirs(given) {
+        Ok((rest, dirs)) => {
+            dirs.into_iter().for_each(language::libs::add_dir);
+            rest
+        }
+        Err(m) => {
+            eprintln!("{m}");
+            std::process::exit(2)
+        }
+    };
     let mut it = given.into_iter();
     while let Some(op) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| { eprintln!("{HELP}"); std::process::exit(2) });
         match op.as_str() {
             "--scene" => a.scene = value(),
-            // Where installed libraries are looked for first (`import "lib:name/file"`).
-            "--lib" => language::libs::add_dir(value()),
             // `pleamar lib vendor SCENE --to DIR`: the libraries a scene uses, copied next to it.
             "lib" => {
                 let rest: Vec<String> = it.by_ref().collect();
@@ -329,6 +339,32 @@ fn args(given: Vec<String>) -> Args {
     a
 }
 
+/// Every `--lib DIR` and `--lib=DIR` of the command line, in their order, and what is left. Up to
+/// `--say` or `--report`: what follows them is another program's (a command, a report's options).
+/// A `--lib` without a folder is an error, never let pass.
+fn take_lib_dirs(given: Vec<String>) -> Result<(Vec<String>, Vec<String>), String> {
+    let wants = "--lib wants a folder: --lib DIR or --lib=DIR";
+    let (mut rest, mut dirs) = (Vec::new(), Vec::new());
+    let mut it = given.into_iter();
+    while let Some(w) = it.next() {
+        if w == "--say" || w == "--report" {
+            rest.push(w);
+            rest.extend(it.by_ref());
+            break;
+        }
+        let dir = if w == "--lib" {
+            it.next().filter(|d| !d.is_empty() && !d.starts_with("--")).ok_or(wants)?
+        } else if let Some(d) = w.strip_prefix("--lib=") {
+            Some(d.to_owned()).filter(|d| !d.is_empty()).ok_or(wants)?
+        } else {
+            rest.push(w);
+            continue;
+        };
+        dirs.push(dir);
+    }
+    Ok((rest, dirs))
+}
+
 /// `pleamar lib vendor SCENE --to DIR [--lib DIR…]`: copies each installed library the scene
 /// resolves, whole, into `DIR/name/` —an app that carries its interface carries the library it
 /// was tried with—. `pleamar lib path [SCENE]`: where libraries are looked for, in order.
@@ -340,7 +376,6 @@ fn lib_command(rest: &[String]) -> i32 {
     while let Some(w) = it.next() {
         match w.as_str() {
             "--to" => to = it.next().cloned(),
-            "--lib" => if let Some(d) = it.next() { language::libs::add_dir(d) },
             _ => words.push(w.clone()),
         }
     }
@@ -1059,6 +1094,25 @@ fn autostart() -> i32 {
 
 #[cfg(test)]
 mod tests {
+    /// `--lib` counts wherever it is said, and as `--lib=DIR`; without a folder, an error.
+    #[test]
+    fn lib_is_taken_anywhere_and_never_let_pass() {
+        use super::take_lib_dirs;
+        let v = |s: &str| s.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        let (rest, dirs) = take_lib_dirs(v("--check t.plm --lib /a --lib=/b")).unwrap();
+        assert_eq!((rest, dirs), (v("--check t.plm"), v("/a /b")));
+        let (rest, dirs) = take_lib_dirs(v("--lib=/a --check t.plm")).unwrap();
+        assert_eq!((rest, dirs), (v("--check t.plm"), v("/a")));
+        let (rest, dirs) = take_lib_dirs(v("lib vendor t.plm --to out --lib /a")).unwrap();
+        assert_eq!((rest, dirs), (v("lib vendor t.plm --to out"), v("/a")));
+        for bad in ["--check t.plm --lib", "--lib= --check t.plm", "--lib --check t.plm"] {
+            assert!(take_lib_dirs(v(bad)).unwrap_err().contains("--lib wants a folder"), "{bad}");
+        }
+        // What follows --say is a command for a scene, not pleamar's options.
+        let (rest, dirs) = take_lib_dirs(v("--say bar --lib x")).unwrap();
+        assert_eq!((rest, dirs), (v("--say bar --lib x"), Vec::<String>::new()));
+    }
+
     /// What `--say bar …` says to the scene brought in as Bar is said to its names (G22).
     #[test]
     fn an_order_to_a_scene_brought_in_names_its_own() {
