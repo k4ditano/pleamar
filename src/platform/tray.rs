@@ -98,20 +98,93 @@ fn element(c: &Connection, full: &str) -> Option<Proxy<'static>> {
 /// They are saved as PNG, named after what they contain: if the icon
 /// changes, the path changes, and whoever paints it notices.
 fn from_pixels(pixmaps: Vec<(i32, i32, Vec<u8>)>) -> Option<String> {
-    // The biggest one there is: it gets scaled down later to whatever the scene asks for.
-    let (w, h, argb) = pixmaps.into_iter().filter(|(w, h, d)| *w > 0 && *h > 0 && d.len() == (*w * *h * 4) as usize).max_by_key(|(w, _, _)| *w)?;
+    let mut all: Vec<(i32, i32, Vec<u8>)> = pixmaps.into_iter().filter(|(w, h, d)| *w > 0 && *h > 0 && d.len() == (*w * *h * 4) as usize).collect();
+    all.sort_by_key(|(w, h, _)| (*w).max(*h));
+    all.dedup_by_key(|(w, h, _)| (*w).max(*h));
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    argb.hash(&mut hasher);
-    let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
-    let dir = std::path::Path::new(&base).join("pleamar").join("tray");
-    let path = dir.join(format!("{:016x}.png", hasher.finish()));
+    for (_, _, argb) in &all {
+        argb.hash(&mut hasher);
+    }
+    let path = tray_dir()?.join(format!("{:016x}.png", hasher.finish()));
     if !path.exists() {
-        std::fs::create_dir_all(&dir).ok()?;
         // They arrive as ARGB, with the high byte first.
-        let rgba: Vec<u8> = argb.chunks_exact(4).flat_map(|p| [p[1], p[2], p[3], p[0]]).collect();
-        image::RgbaImage::from_raw(w as u32, h as u32, rgba)?.save(&path).ok()?;
+        let save = |(w, h, argb): &(i32, i32, Vec<u8>), to: &std::path::Path| -> Option<()> {
+            let rgba: Vec<u8> = argb.chunks_exact(4).flat_map(|p| [p[1], p[2], p[3], p[0]]).collect();
+            image::RgbaImage::from_raw(*w as u32, *h as u32, rgba)?.save(to).ok()
+        };
+        // Every size it gives, beside it (`text::sized_source` takes the nearest to how it is drawn),
+        // and the biggest as the icon itself, last: that it is there says the rest are.
+        if all.len() > 1 {
+            let sizes = path.with_extension("sizes");
+            std::fs::create_dir_all(&sizes).ok()?;
+            for one in &all {
+                save(one, &sizes.join(format!("{}.png", one.0.max(one.1))))?;
+            }
+        }
+        save(all.last()?, &path)?;
     }
     Some(path.to_string_lossy().into_owned())
+}
+
+/// Where the tray's pictures are written: the runtime folder, gone with the session.
+fn tray_dir() -> Option<std::path::PathBuf> {
+    let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
+    let dir = std::path::Path::new(&base).join("pleamar").join("tray");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+/// An icon by its name in the folder a program brings (`IconThemePath`): at its top, or inside it as a
+/// theme is laid out (`hicolor/22x22/apps/name.png`), up to four folders down. A vector one is taken as
+/// it is; PNGs of several sizes become one icon with its sizes beside it, as `from_pixels` writes them.
+fn from_folder(dir: &std::path::Path, name: &str) -> Option<String> {
+    let mut found: Vec<std::path::PathBuf> = Vec::new();
+    let mut queue = vec![(dir.to_path_buf(), 0)];
+    let mut looked = 0;
+    while let Some((at, depth)) = queue.pop() {
+        let Ok(entries) = std::fs::read_dir(&at) else { continue };
+        for e in entries.flatten() {
+            looked += 1;
+            if looked > 4000 {
+                break;
+            }
+            let p = e.path();
+            if p.is_dir() {
+                if depth < 4 {
+                    queue.push((p, depth + 1));
+                }
+            } else if p.file_stem().is_some_and(|s| s == name) && p.extension().is_some_and(|x| x == "svg" || x == "png") {
+                found.push(p);
+            }
+        }
+    }
+    if let Some(svg) = found.iter().find(|p| p.extension().is_some_and(|x| x == "svg")) {
+        return Some(svg.to_string_lossy().into_owned());
+    }
+    let mut sized: Vec<(u32, std::path::PathBuf)> = found.into_iter().filter_map(|p| image::image_dimensions(&p).ok().map(|(w, h)| (w.max(h), p))).collect();
+    sized.sort_by_key(|(n, _)| *n);
+    sized.dedup_by_key(|(n, _)| *n);
+    match sized.len() {
+        0 => None,
+        1 => Some(sized[0].1.to_string_lossy().into_owned()),
+        _ => {
+            // Named after where they are and when they were written: a new icon there, a new name.
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            for (n, p) in &sized {
+                (n, p, std::fs::metadata(p).and_then(|m| m.modified()).ok()).hash(&mut hasher);
+            }
+            let path = tray_dir()?.join(format!("{:016x}.png", hasher.finish()));
+            if !path.exists() {
+                let sizes = path.with_extension("sizes");
+                std::fs::create_dir_all(&sizes).ok()?;
+                for (n, p) in &sized {
+                    std::fs::copy(p, sizes.join(format!("{n}.png"))).ok()?;
+                }
+                std::fs::copy(&sized.last()?.1, &path).ok()?;
+            }
+            Some(path.to_string_lossy().into_owned())
+        }
+    }
 }
 
 fn icon_of(p: &Proxy) -> String {
@@ -120,11 +193,8 @@ fn icon_of(p: &Proxy) -> String {
         // Some bring their own icon folder, outside the theme.
         let dir: String = p.get_property("IconThemePath").unwrap_or_default();
         if !dir.is_empty() {
-            for ext in ["svg", "png"] {
-                let path = std::path::Path::new(&dir).join(format!("{name}.{ext}"));
-                if path.exists() {
-                    return path.to_string_lossy().into_owned();
-                }
+            if let Some(found) = from_folder(std::path::Path::new(&dir), &name) {
+                return found;
             }
         }
         return name;
@@ -377,7 +447,7 @@ pub fn command(what: &str, args: &[SysValue]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::plain;
+    use super::{from_folder, plain};
 
     #[test]
     fn a_tooltip_body_is_read_as_plain_text() {
@@ -417,5 +487,23 @@ mod tests {
         assert_eq!(plain("<img src=\"/x.png\" alt=\"[new]\"/> mail"), "[new] mail");
         assert_eq!(plain("<img alt='a &amp; b' src='/x.png'>"), "a & b");
         assert_eq!(plain("<img src=\"/x.png\"/>"), "");
+    }
+
+    /// A program's own folder, laid out as a theme: its vector icon wherever it is, else its one PNG,
+    /// found folders down; nothing when it is not there.
+    #[test]
+    fn an_icon_is_found_inside_its_programs_folder() {
+        let dir = std::env::temp_dir().join(format!("pleamar-tray-folder-{}", std::process::id()));
+        let deep = dir.join("hicolor/22x22/apps");
+        std::fs::create_dir_all(&deep).unwrap();
+        image::RgbaImage::new(22, 22).save(deep.join("app.icon-1.png")).unwrap();
+        let found = from_folder(&dir, "app.icon-1").unwrap();
+        assert_eq!(std::path::PathBuf::from(&found), deep.join("app.icon-1.png"));
+        let svg = dir.join("hicolor/scalable/apps");
+        std::fs::create_dir_all(&svg).unwrap();
+        std::fs::write(svg.join("app.icon-1.svg"), "<svg/>").unwrap();
+        assert_eq!(std::path::PathBuf::from(from_folder(&dir, "app.icon-1").unwrap()), svg.join("app.icon-1.svg"), "the vector one first");
+        assert_eq!(from_folder(&dir, "other"), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

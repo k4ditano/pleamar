@@ -1799,21 +1799,51 @@ fn fit(img: image::RgbaImage, px: (u32, u32), sharp: bool) -> Vec<u8> {
 /// smaller first, in its own kind of pixels (a JPEG's three bytes, not four), the decoded one let go
 /// before it is turned into RGBA (no copy if it already is), put on a canvas only to be centred in a box
 /// of another shape, and premultiplied where it is. A photo of 8084 × 6264 had four of 200 MB at once.
+///
+/// One with see-through pixels is premultiplied before it is made smaller or bigger, not after: filtered
+/// straight, the colour of its clear pixels —black, mostly— bled into its edges, and a white tray icon
+/// on a light bar came out ringed in grey, blurred. A small one (an icon, 256 px a side or less) made
+/// smaller is filtered with Catmull-Rom, sharper than a triangle: at 24 → 18 px the triangle's
+/// softness was most of what was left of the edges.
 fn fit_decoded(img: image::DynamicImage, px: (u32, u32), sharp: bool) -> Vec<u8> {
+    use image::imageops::FilterType;
     let k = (px.0 as f32 / img.width() as f32).min(px.1 as f32 / img.height() as f32);
     let (w, h) = (((img.width() as f32 * k).round() as u32).clamp(1, px.0), ((img.height() as f32 * k).round() as u32).clamp(1, px.1));
-    let img = if (w, h) == (img.width(), img.height()) { img } else { img.resize_exact(w, h, if sharp { image::imageops::FilterType::Nearest } else { image::imageops::FilterType::Triangle }) };
-    let mut rgba = img.into_rgba8();
+    let resized = (w, h) != (img.width(), img.height());
+    let filter = if sharp {
+        FilterType::Nearest
+    } else if w < img.width() && img.width().max(img.height()) <= 256 {
+        FilterType::CatmullRom
+    } else {
+        FilterType::Triangle
+    };
+    let premultiply = |rgba: &mut image::RgbaImage| {
+        for p in rgba.pixels_mut() {
+            let a = p[3] as u16;
+            if a < 255 {
+                *p = image::Rgba([(p[0] as u16 * a / 255) as u8, (p[1] as u16 * a / 255) as u8, (p[2] as u16 * a / 255) as u8, p[3]]);
+            }
+        }
+    };
+    let mut rgba = if resized && img.color().has_alpha() {
+        let mut straight = img.into_rgba8();
+        premultiply(&mut straight);
+        let mut small = image::imageops::resize(&straight, w, h, filter);
+        // Catmull-Rom overshoots a little: a colour is never more than its alpha.
+        for p in small.pixels_mut() {
+            *p = image::Rgba([p[0].min(p[3]), p[1].min(p[3]), p[2].min(p[3]), p[3]]);
+        }
+        small
+    } else {
+        let img = if resized { img.resize_exact(w, h, filter) } else { img };
+        let mut rgba = img.into_rgba8();
+        premultiply(&mut rgba);
+        rgba
+    };
     if (w, h) != px {
         let mut canvas = image::RgbaImage::new(px.0, px.1);
         image::imageops::overlay(&mut canvas, &rgba, ((px.0 - w) / 2) as i64, ((px.1 - h) / 2) as i64);
         rgba = canvas;
-    }
-    for p in rgba.pixels_mut() {
-        let a = p[3] as u16;
-        if a < 255 {
-            *p = image::Rgba([(p[0] as u16 * a / 255) as u8, (p[1] as u16 * a / 255) as u8, (p[2] as u16 * a / 255) as u8, p[3]]);
-        }
     }
     rgba.into_raw()
 }
@@ -2033,9 +2063,34 @@ pub fn svg_icon(data: &[u8], side: u32) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn rasterize_image(path: &std::path::Path, px: (u32, u32), sharp: bool) -> Option<Vec<u8>> {
+    let path = &sized_source(path, px);
     let data = std::fs::read(path).ok()?;
     let is_svg = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
     rasterize_bytes(&data, is_svg, px, sharp)
+}
+
+/// An icon that comes in several sizes (a tray icon's pixmaps, its own theme folder: `platform::tray`)
+/// is the largest of them as `name.png` and every one in a folder beside it, `name.sizes/N.png`. Of
+/// those, the smallest that is still at least as big as it is drawn, in real pixels —the same size
+/// when there is one, not resampled at all—, or the largest if none is: made smaller from the nearest
+/// it keeps the edges its maker drew for that size, made smaller from 64 px they are averaged away.
+fn sized_source(path: &std::path::Path, px: (u32, u32)) -> std::path::PathBuf {
+    let dir = path.with_extension("sizes");
+    let Ok(entries) = std::fs::read_dir(&dir) else { return path.to_owned() };
+    let want = px.0.max(px.1);
+    let sizes: Vec<(u32, std::path::PathBuf)> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            let n = p.file_stem()?.to_str()?.parse::<u32>().ok()?;
+            p.extension().is_some_and(|x| x.eq_ignore_ascii_case("png")).then_some((n, p))
+        })
+        .collect();
+    let fits = sizes.iter().filter(|(n, _)| *n >= want).min_by_key(|(n, _)| *n);
+    match fits.or_else(|| sizes.iter().max_by_key(|(n, _)| *n)) {
+        Some((_, p)) => p.clone(),
+        None => path.to_owned(),
+    }
 }
 
 fn rasterize_bytes(data: &[u8], is_svg: bool, px: (u32, u32), sharp: bool) -> Option<Vec<u8>> {
@@ -2527,6 +2582,52 @@ mod tests {
         assert_eq!(boxed_px((8084, 6264), (1920.0, 1080.0), false), (1394, 1080));
         assert_eq!(boxed_px((800, 600), (3840.0, 2160.0), true), (800, 600), "never made bigger");
         assert_eq!(boxed_px((800, 600), (0.0, 0.0), true), (1, 1));
+    }
+
+    /// A white icon on clear black (as a tray's pixmaps come), made smaller: no grey round it —every
+    /// pixel's colour is as much as its alpha—, and its middle still white.
+    #[test]
+    fn an_icon_made_smaller_has_no_dark_ring() {
+        let icon = image::RgbaImage::from_fn(24, 24, |x, y| {
+            let inside = (4..20).contains(&x) && (4..20).contains(&y);
+            if inside { image::Rgba([255, 255, 255, 255]) } else { image::Rgba([0, 0, 0, 0]) }
+        });
+        let out = fit_decoded(image::DynamicImage::ImageRgba8(icon), (18, 18), false);
+        let mut edges = 0;
+        for p in out.chunks_exact(4) {
+            assert!(p[0] <= p[3] && p[1] <= p[3] && p[2] <= p[3], "premultiplied: {p:?}");
+            if p[3] > 20 {
+                assert!(p[0] as i32 >= p[3] as i32 - 2, "white all the way to its edge, not grey: {p:?}");
+            }
+            if p[3] > 0 && p[3] < 255 {
+                edges += 1;
+            }
+        }
+        assert!(edges > 0, "it was resampled");
+        let mid = &out[(9 * 18 + 9) * 4..(9 * 18 + 9) * 4 + 4];
+        assert_eq!(mid, &[255, 255, 255, 255]);
+    }
+
+    /// Of the sizes beside an icon, the smallest at least as big as it is drawn; the largest if none is;
+    /// the icon itself if it has none.
+    #[test]
+    fn the_size_an_icon_is_read_from_is_the_nearest_bigger() {
+        let dir = std::env::temp_dir().join(format!("pleamar-sized-{}", std::process::id()));
+        let sizes = dir.join("icon.sizes");
+        std::fs::create_dir_all(&sizes).unwrap();
+        let icon = dir.join("icon.png");
+        for n in [16u32, 22, 32, 64] {
+            image::RgbaImage::new(n, n).save(sizes.join(format!("{n}.png"))).unwrap();
+        }
+        image::RgbaImage::new(64, 64).save(&icon).unwrap();
+        assert_eq!(sized_source(&icon, (18, 18)), sizes.join("22.png"));
+        assert_eq!(sized_source(&icon, (22, 22)), sizes.join("22.png"), "the same size, not resampled");
+        assert_eq!(sized_source(&icon, (16, 16)), sizes.join("16.png"));
+        assert_eq!(sized_source(&icon, (36, 36)), sizes.join("64.png"));
+        assert_eq!(sized_source(&icon, (128, 128)), sizes.join("64.png"), "none big enough: the largest");
+        let alone = dir.join("alone.png");
+        assert_eq!(sized_source(&alone, (18, 18)), alone);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
