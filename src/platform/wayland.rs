@@ -76,7 +76,7 @@ static XRGB_LAYOUTS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
 /// The layouts the compositor reads a format in: where a capture of the screen can be left.
 pub fn backdrop_layouts(fourcc: u32) -> Vec<u64> {
-    if fourcc == crate::dmabuf::XRGB { XRGB_LAYOUTS.lock().unwrap().clone() } else { ARGB_LAYOUTS.lock().unwrap().clone() }
+    if fourcc == crate::dmabuf::XRGB { XRGB_LAYOUTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() } else { ARGB_LAYOUTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() }
 }
 
 /// Version 3 says each format and layout it reads, one by one.
@@ -85,12 +85,12 @@ impl Dispatch2<ZwpLinuxDmabufV1, State> for Layouts {
     fn event(&self, _: &mut State, _: &ZwpLinuxDmabufV1, ev: zwp_linux_dmabuf_v1::Event, _: &Connection, _: &QueueHandle<State>) {
         if let zwp_linux_dmabuf_v1::Event::Modifier { format, modifier_hi, modifier_lo } = ev {
             let m = ((modifier_hi as u64) << 32) | modifier_lo as u64;
-            let mut all = ARGB_LAYOUTS.lock().unwrap();
+            let mut all = ARGB_LAYOUTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if format == crate::dmabuf::ARGB && !all.contains(&m) {
                 all.push(m);
             }
             drop(all);
-            let mut all = XRGB_LAYOUTS.lock().unwrap();
+            let mut all = XRGB_LAYOUTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if format == crate::dmabuf::XRGB && !all.contains(&m) {
                 all.push(m);
             }
@@ -232,7 +232,7 @@ impl OwnFrames {
 
     fn make(&mut self, device: &wgpu::Device) -> Result<(), String> {
         let d = DMABUFS.get().ok_or("the compositor takes no frames on the card")?;
-        let mut layouts = ARGB_LAYOUTS.lock().unwrap().clone();
+        let mut layouts = ARGB_LAYOUTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
         // `PLEAMAR_OWN_FRAMES_LINEAR=1`: only the plain layout, rows one after
         // another, which every card and compositor read alike. To find out
         // whether the dots on Intel (#132) come from a tiled layout.
@@ -306,7 +306,7 @@ impl OwnFrames {
                         }
                     }
                 });
-                *self.shared.lock().unwrap() = Some(tx.clone());
+                *self.shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(tx.clone());
                 tx
             })
             .clone()
@@ -417,7 +417,7 @@ impl Drop for OwnFrames {
             }
         }
         // Back to the system's frames: the window commits by itself again.
-        *self.shared.lock().unwrap() = None;
+        *self.shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }
 }
 
@@ -472,20 +472,20 @@ impl BackdropTarget {
 
     /// A layer stuck to these edges with these margins (born so, or moved): where it is follows.
     fn place(&self, anchor: Anchor, margin: [i32; 4]) {
-        *self.placement.lock().unwrap() = Some((anchor, margin));
+        *self.placement.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((anchor, margin));
         self.locate();
     }
 
     /// Where a layer is, by the layer-shell rules, from its edges, its size and its monitor's.
     fn locate(&self) {
-        let (Some((anchor, margin)), Some(monitor)) = (*self.placement.lock().unwrap(), *self.monitor.lock().unwrap()) else { return };
-        let size = *self.size.lock().unwrap();
+        let (Some((anchor, margin)), Some(monitor)) = (*self.placement.lock().unwrap_or_else(std::sync::PoisonError::into_inner), *self.monitor.lock().unwrap_or_else(std::sync::PoisonError::into_inner)) else { return };
+        let size = *self.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if size.0 == 0 || size.1 == 0 {
             return;
         }
-        *self.position.lock().unwrap() = Some(position_on_output(anchor, margin, size, monitor));
+        *self.position.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(position_on_output(anchor, margin, size, monitor));
         // And let the next capture ask the compositor whether it's true.
-        *self.last_asked.lock().unwrap() = None;
+        *self.last_asked.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }
 
     /// On which monitor and where, now. With Hyprland it gets asked, at most
@@ -494,34 +494,34 @@ impl BackdropTarget {
     fn output_and_position(&self) -> Option<(wl_output::WlOutput, (i32, i32))> {
         if let BackdropKind::Popup { parent, offset } = &self.kind {
             let (output, (x, y)) = parent.output_and_position()?;
-            let r = *offset.lock().unwrap();
+            let r = *offset.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             return Some((output, (x + r.0, y + r.1)));
         }
-        let due = self.last_asked.lock().unwrap().is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(1));
+        let due = self.last_asked.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(1));
         if due && super::hyprland::is_present() {
-            *self.last_asked.lock().unwrap() = Some(std::time::Instant::now());
-            let size = *self.size.lock().unwrap();
+            *self.last_asked.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(std::time::Instant::now());
+            let size = *self.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             match self.kind {
                 BackdropKind::Layer => {
-                    let name = self.output.lock().unwrap().as_ref().map(|s| s.1.clone());
+                    let name = self.output.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map(|s| s.1.clone());
                     if let Some(position) = name.and_then(|n| super::hyprland::layer_position(&n, size)) {
-                        *self.position.lock().unwrap() = Some(position);
+                        *self.position.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(position);
                     }
                 }
                 BackdropKind::Window => {
                     if let Some((monitor, position, opacity)) = super::hyprland::window_position(size) {
-                        *self.opacity.lock().unwrap() = opacity;
-                        if let Some(o) = OUTPUTS.lock().unwrap().get(&monitor) {
-                            *self.output.lock().unwrap() = Some((o.clone(), monitor));
+                        *self.opacity.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = opacity;
+                        if let Some(o) = OUTPUTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&monitor) {
+                            *self.output.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((o.clone(), monitor));
                         }
-                        *self.position.lock().unwrap() = Some(position);
+                        *self.position.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(position);
                     }
                 }
                 BackdropKind::Popup { .. } => {}
             }
         }
-        let output = self.output.lock().unwrap().as_ref()?.0.clone();
-        Some((output, (*self.position.lock().unwrap())?))
+        let output = self.output.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref()?.0.clone();
+        Some((output, (*self.position.lock().unwrap_or_else(std::sync::PoisonError::into_inner))?))
     }
 }
 
@@ -574,7 +574,7 @@ const OUTPUTS_SETTLE: std::time::Duration = std::time::Duration::from_millis(150
 /// `OUTPUTS_SETTLE`, and then the render is woken, so that a glass whose
 /// capture was refused meanwhile gets a fresh one even if nothing else moves.
 fn outputs_changed(to_render: &Sender<ToRender>) {
-    *OUTPUTS_CHANGED.lock().unwrap() = Some(std::time::Instant::now());
+    *OUTPUTS_CHANGED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(std::time::Instant::now());
     let tx = to_render.clone();
     std::thread::spawn(move || {
         std::thread::sleep(OUTPUTS_SETTLE + std::time::Duration::from_millis(50));
@@ -702,7 +702,7 @@ impl Drop for MappedMemory {
 impl CaptureFor {
     /// Every capture of this surface still on the way is forgotten, this one among them, and a new one may be asked for.
     fn finish(&self) {
-        for f in self.target.frames.lock().unwrap().drain(..) {
+        for f in self.target.frames.lock().unwrap_or_else(std::sync::PoisonError::into_inner).drain(..) {
             f.destroy();
         }
         self.target.in_flight.store(false, Ordering::Relaxed);
@@ -724,10 +724,10 @@ impl Dispatch2<ZwlrScreencopyFrameV1, State> for CaptureFor {
             // offers XRGB, called it an invalid buffer and closed the program
             // (issue 50).
             E::Buffer { format: wayland_client::WEnum::Value(f), width, height, stride } if matches!(f, wl_shm::Format::Argb8888 | wl_shm::Format::Xrgb8888) => {
-                *self.format.lock().unwrap() = Some((width, height, stride, f));
+                *self.format.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((width, height, stride, f));
             }
             E::LinuxDmabuf { format, width, height } if matches!(format, crate::dmabuf::ARGB | crate::dmabuf::XRGB) => {
-                *self.dmabuf.lock().unwrap() = Some((format, width, height));
+                *self.dmabuf.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((format, width, height));
                 CARD_OFFERED.store(true, Ordering::Relaxed);
             }
             E::Flags { flags } => {
@@ -743,9 +743,9 @@ impl Dispatch2<ZwlrScreencopyFrameV1, State> for CaptureFor {
                 // the compositor copies straight into it, and the processor never sees the pixels.
                 // Only a capture of the whole box: one of parts is put together by the processor.
                 if self.part.is_none()
-                    && let (Some(offer), Some(d)) = (*self.dmabuf.lock().unwrap(), DMABUFS.get())
+                    && let (Some(offer), Some(d)) = (*self.dmabuf.lock().unwrap_or_else(std::sync::PoisonError::into_inner), DMABUFS.get())
                     && super::card_backdrops_allowed()
-                    && let Some(card) = super::CARD_BACKDROPS.lock().unwrap().as_ref().and_then(|m| m.get(&id).cloned())
+                    && let Some(card) = super::CARD_BACKDROPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().and_then(|m| m.get(&id).cloned())
                     && card.fourcc == offer.0
                     && card.size == (offer.1, offer.2)
                 {
@@ -760,7 +760,7 @@ impl Dispatch2<ZwlrScreencopyFrameV1, State> for CaptureFor {
                             old.destroy();
                         }
                     }
-                    *self.on_card.lock().unwrap() = Some(card);
+                    *self.on_card.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(card);
                     let buffer = &e.card_buffers[&id].1;
                     if self.on_change {
                         frame.copy_with_damage(buffer);
@@ -769,7 +769,7 @@ impl Dispatch2<ZwlrScreencopyFrameV1, State> for CaptureFor {
                     }
                     return;
                 }
-                let (Some(size), Some((_, shm))) = (*self.format.lock().unwrap(), SCREENCOPY.get()) else {
+                let (Some(size), Some((_, shm))) = (*self.format.lock().unwrap_or_else(std::sync::PoisonError::into_inner), SCREENCOPY.get()) else {
                     self.finish();
                     return;
                 };
@@ -797,9 +797,9 @@ impl Dispatch2<ZwlrScreencopyFrameV1, State> for CaptureFor {
             E::Ready { .. } => {
                 let id = self.target.id;
                 // Without us in it, there is nothing of ours to take out of it: as if ours were not there.
-                let opacity = if self.without_us.load(Ordering::Relaxed) { 0.0 } else { *self.target.opacity.lock().unwrap() };
+                let opacity = if self.without_us.load(Ordering::Relaxed) { 0.0 } else { *self.target.opacity.lock().unwrap_or_else(std::sync::PoisonError::into_inner) };
                 let Some((parts, k)) = &self.part else {
-                    if let Some(card) = self.on_card.lock().unwrap().take() {
+                    if let Some(card) = self.on_card.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take() {
                         let _ = e.to_render.send(ToRender::Backdrop(Box::new(super::Backdrop { sheet: id, width: card.size.0, height: card.size.1, stride: 0, opacity, data: None, rects: Vec::new(), card: Some(card), offer: None })));
                     } else if let Some(f) = e.capture_buffers.get(&(id, 0)) {
                         // (pleamar-wm hands them upright already: then they come the right way round.)
@@ -813,16 +813,16 @@ impl Dispatch2<ZwlrScreencopyFrameV1, State> for CaptureFor {
                         }
                         let data: Arc<dyn AsRef<[u8]> + Send + Sync> = f.map.clone();
                         // The compositor could have written on the card and nothing there was ready: the render is told.
-                        let offer = (*self.dmabuf.lock().unwrap()).filter(|_| super::card_backdrops_allowed() && !super::card_refused(id));
+                        let offer = (*self.dmabuf.lock().unwrap_or_else(std::sync::PoisonError::into_inner)).filter(|_| super::card_backdrops_allowed() && !super::card_refused(id));
                         let _ = e.to_render.send(ToRender::Backdrop(Box::new(super::Backdrop { sheet: id, width: f.size.0, height: f.size.1, stride: f.size.2, opacity, data: Some(data), rects: Vec::new(), card: None, offer })));
                     }
                     return self.finish();
                 };
-                let mut ps = parts.lock().unwrap();
+                let mut ps = parts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 if ps.over {
                     return;
                 }
-                let (Some(size), Some(src)) = (*self.format.lock().unwrap(), e.capture_buffers.get(&(id, *k)).map(|f| f.map.clone())) else {
+                let (Some(size), Some(src)) = (*self.format.lock().unwrap_or_else(std::sync::PoisonError::into_inner), e.capture_buffers.get(&(id, *k)).map(|f| f.map.clone())) else {
                     ps.over = true;
                     self.failed(e);
                     return self.finish();
@@ -870,15 +870,15 @@ impl Dispatch2<ZwlrScreencopyFrameV1, State> for CaptureFor {
             // So the render doesn't stay waiting for it.
             E::Failed => {
                 // A copy on the card that failed (another card, a layout it will not write): shared memory from now on.
-                if self.on_card.lock().unwrap().take().is_some() {
-                    super::CARD_REFUSED.lock().unwrap().push((self.target.id, std::time::Instant::now()));
-                    if let Some(m) = super::CARD_BACKDROPS.lock().unwrap().as_mut() {
+                if self.on_card.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take().is_some() {
+                    super::CARD_REFUSED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((self.target.id, std::time::Instant::now()));
+                    if let Some(m) = super::CARD_BACKDROPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_mut() {
                         m.remove(&self.target.id);
                     }
                     println!("render · the compositor would not copy a capture onto the card: shared memory for this glass");
                 }
                 if let Some((parts, _)) = &self.part {
-                    let mut ps = parts.lock().unwrap();
+                    let mut ps = parts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     if ps.over {
                         return;
                     }
@@ -953,7 +953,7 @@ struct WaylandWindow {
 impl WaylandWindow {
     /// What it has changed, committed: in its turn after the frames, if it has frames of its own.
     fn commit(&self) {
-        match self.shown.lock().unwrap().as_ref() {
+        match self.shown.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
             Some(tx) => {
                 let _ = tx.send(Show::Commit);
             }
@@ -1014,13 +1014,13 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn own_frames(&self) -> Option<Box<dyn gpu::Frames>> {
-        (DMABUFS.get().is_some() && !ARGB_LAYOUTS.lock().unwrap().is_empty()).then(|| Box::new(OwnFrames { wl: self.wl.clone(), px: (0, 0), frames: Vec::new(), latest: None, failed: false, to_show: None, shared: self.shown.clone(), viewport: self.viewport, empty: None, made_before: false }) as Box<dyn gpu::Frames>)
+        (DMABUFS.get().is_some() && !ARGB_LAYOUTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty()).then(|| Box::new(OwnFrames { wl: self.wl.clone(), px: (0, 0), frames: Vec::new(), latest: None, failed: false, to_show: None, shared: self.shown.clone(), viewport: self.viewport, empty: None, made_before: false }) as Box<dyn gpu::Frames>)
     }
 
     fn desktop_place(&self) -> Option<(String, (i32, i32))> {
         let d = self.backdrop.as_ref()?;
         let (_, at) = d.output_and_position()?;
-        let name = d.output.lock().unwrap().as_ref()?.1.clone();
+        let name = d.output.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref()?.1.clone();
         Some((name, at))
     }
 
@@ -1036,12 +1036,12 @@ impl PlatformWindow for WaylandWindow {
         };
         // A monitor that went away (sleep, unplugged) leaves its handle behind, and asking
         // the compositor to photograph it is a fatal protocol error ("invalid output").
-        if !output.is_alive() || !OUTPUTS.lock().unwrap().values().any(|o| o == &output) {
+        if !output.is_alive() || !OUTPUTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).values().any(|o| o == &output) {
             crate::lens::log_not_asked(d.id, "its monitor is gone");
             return false;
         }
         // Not while monitors are coming and going: the one it is on may already be gone over there.
-        if OUTPUTS_CHANGED.lock().unwrap().is_some_and(|t| t.elapsed() < OUTPUTS_SETTLE) {
+        if OUTPUTS_CHANGED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_some_and(|t| t.elapsed() < OUTPUTS_SETTLE) {
             crate::lens::log_not_asked(d.id, "monitors are coming and going");
             return false;
         }
@@ -1059,12 +1059,12 @@ impl PlatformWindow for WaylandWindow {
                 return;
             }
             // From here the compositor has it (or it is not asked at all): its time to arrive counts from now.
-            *d.sent.lock().unwrap() = Some(std::time::Instant::now());
+            *d.sent.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(std::time::Instant::now());
             if !d.in_flight.load(Ordering::Relaxed) || !output.is_alive() {
                 return;
             }
             let Some((manager, _)) = SCREENCOPY.get() else { return };
-            let mut frames = d.frames.lock().unwrap();
+            let mut frames = d.frames.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             // (Again under the lock `cancel_backdrop` takes: forgotten while on its way here, none of it is asked.)
             if d.asked.load(Ordering::Relaxed) != this {
                 return;
@@ -1072,7 +1072,7 @@ impl PlatformWindow for WaylandWindow {
             // A glass whose captures go onto the card is captured whole: the compositor copies it card to card,
             // and the parts are only worth it when the processor reads them back.
             // On a monitor that stands turned the picture comes turned: whole, and through the processor, which stands it upright.
-            let turn = TURNS.lock().unwrap().get(&output.id()).copied().unwrap_or(0);
+            let turn = TURNS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&output.id()).copied().unwrap_or(0);
             let on_card = CARD_OFFERED.load(Ordering::Relaxed) && DMABUFS.get().is_some() && super::card_backdrops_allowed() && !super::card_refused(d.id);
             if rects.len() >= 2 && !PARTS_BROKEN.load(Ordering::Relaxed) && !on_card && turn % 2 == 0 {
                 let parts = Arc::new(Mutex::new(Parts { hull: bounds, rects: rects.clone(), valid: Vec::new(), over: false }));
@@ -1086,12 +1086,12 @@ impl PlatformWindow for WaylandWindow {
         // With frames of its own, after the frame just handed over, from the thread that hands
         // it over once the card has finished it: asked before that, it would see the frame before.
         if DEFERRED_CAPTURE.load(Ordering::Relaxed) {
-            if let Some(tx) = self.shown.lock().unwrap().as_ref() {
-                *target.sent.lock().unwrap() = None;
+            if let Some(tx) = self.shown.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
+                *target.sent.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
                 if tx.send(Show::Run(Box::new(ask))).is_ok() {
                     return true;
                 }
-                *target.sent.lock().unwrap() = Some(std::time::Instant::now());
+                *target.sent.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(std::time::Instant::now());
                 target.in_flight.store(false, Ordering::Relaxed);
                 return false;
             }
@@ -1101,19 +1101,19 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn capture_sent(&self) -> Option<Option<std::time::Instant>> {
-        Some(*self.backdrop.as_ref()?.sent.lock().unwrap())
+        Some(*self.backdrop.as_ref()?.sent.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     fn cancel_backdrop(&self) {
         let Some(d) = &self.backdrop else { return };
-        let mut frames = d.frames.lock().unwrap();
+        let mut frames = d.frames.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // One still in the queue stays there unsent; nothing is on the way any more.
         d.asked.fetch_add(1, Ordering::Relaxed);
         for m in frames.drain(..) {
             m.destroy();
         }
         drop(frames);
-        *d.sent.lock().unwrap() = Some(std::time::Instant::now());
+        *d.sent.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(std::time::Instant::now());
         d.in_flight.store(false, Ordering::Relaxed);
     }
 
@@ -1121,8 +1121,8 @@ impl PlatformWindow for WaylandWindow {
     fn begin_move(&self, edges: u32) {
         use wayland_protocols::xdg::shell::client::xdg_toplevel::ResizeEdge;
         let (Some(top), Some(pp)) = (&self.toplevel, POPUPS.get()) else { return };
-        let Some((serial, when, from)) = pp.last_press.lock().unwrap().clone() else { return };
-        let Some(seat) = from.or_else(|| pp.seat.lock().unwrap().clone()) else { return };
+        let Some((serial, when, from)) = pp.last_press.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() else { return };
+        let Some(seat) = from.or_else(|| pp.seat.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()) else { return };
         let seat = &seat;
         // Only from a press just made: the compositor refuses an old one anyway.
         if when.elapsed() > std::time::Duration::from_millis(1500) {
@@ -1147,7 +1147,7 @@ impl PlatformWindow for WaylandWindow {
 
     fn update_blur_region(&self, boxes: &[[i32; 4]]) {
         let Some(effects) = BACKGROUND_EFFECTS.get() else { return };
-        let mut effect = self.effect.lock().unwrap();
+        let mut effect = self.effect.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if effect.is_none() && boxes.is_empty() {
             return;
         }
@@ -1165,7 +1165,7 @@ impl PlatformWindow for WaylandWindow {
     fn cursor(&self, c: Cursor) {
         let shape = shape_of(c);
         CURSOR_SHAPE.store(c.code(), Ordering::Relaxed);
-        if let Some(d) = self.cursors.lock().unwrap().as_ref() {
+        if let Some(d) = self.cursors.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
             d.set_shape(self.serial.load(Ordering::Relaxed), shape);
         }
     }
@@ -1325,7 +1325,7 @@ static IME: std::sync::OnceLock<Ime> = std::sync::OnceLock::new();
 /// Said by the render: the field being written in, or none.
 pub fn ime_field(field: Option<super::ImeField>) {
     let Some(ime) = IME.get() else { return };
-    let mut st = ime.state.lock().unwrap();
+    let mut st = ime.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     st.want = field;
     ime_apply(ime, &mut st);
 }
@@ -1334,9 +1334,9 @@ pub fn ime_field(field: Option<super::ImeField>) {
 /// what the render wants, while it is on a surface of ours.
 fn ime_apply(ime: &Ime, st: &mut ImeState) {
     if std::env::var_os("PLEAMAR_DEBUG_IME").is_some() {
-        eprintln!("ime    · input {} · entered {} · enabled {} · wanted {:?}", ime.input.lock().unwrap().is_some(), st.entered, st.enabled, st.want);
+        eprintln!("ime    · input {} · entered {} · enabled {} · wanted {:?}", ime.input.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_some(), st.entered, st.enabled, st.want);
     }
-    let Some(input) = ime.input.lock().unwrap().clone() else { return };
+    let Some(input) = ime.input.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() else { return };
     if !st.entered {
         return;
     }
@@ -1381,7 +1381,7 @@ impl Dispatch2<ZwpTextInputV3, State> for ImeFor {
         if std::env::var_os("PLEAMAR_DEBUG_IME").is_some() {
             eprintln!("ime    · {event:?}");
         }
-        let mut st = ime.state.lock().unwrap();
+        let mut st = ime.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match event {
             zwp_text_input_v3::Event::Enter { .. } => {
                 st.entered = true;
@@ -1464,7 +1464,7 @@ struct ExportFor(u32);
 impl Dispatch2<ZxdgExportedV2, State> for ExportFor {
     fn event(&self, _: &mut State, _: &ZxdgExportedV2, ev: zxdg_exported_v2::Event, _: &Connection, _: &QueueHandle<State>) {
         if let zxdg_exported_v2::Event::Handle { handle } = ev {
-            let mut all = super::EXPORTED_WINDOWS.lock().unwrap();
+            let mut all = super::EXPORTED_WINDOWS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             all.retain(|(id, _)| *id != self.0);
             all.push((self.0, handle));
         }
@@ -1570,12 +1570,12 @@ impl State {
     fn place_on(&mut self, output: &wl_output::WlOutput, qh: &QueueHandle<State>) {
         let Some(info) = self.outputs.info(output) else { return };
         let name = info.name.clone().unwrap_or_default();
-        OUTPUTS.lock().unwrap().insert(name.clone(), output.clone());
+        OUTPUTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(name.clone(), output.clone());
         // Which monitor number it is: the order in which the compositor counts them.
         let number = self.outputs.outputs().position(|o| &o == output).unwrap_or(0);
         let mhz = info.modes.iter().find(|m| m.current).map_or(0, |m| m.refresh_rate);
         if let Some(c) = LOCKS.get() {
-            let mut m = c.monitors.lock().unwrap();
+            let mut m = c.monitors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if !m.iter().any(|(s, _, _)| s == output) {
                 m.push((output.clone(), name.clone(), mhz));
             }
@@ -1613,7 +1613,7 @@ impl State {
                 window.commit();
                 // A name for it that other programs can be given: a system dialog then belongs to it.
                 if let Some(x) = EXPORTER.get() {
-                    EXPORTS.lock().unwrap().push(x.export_toplevel(window.wl_surface(), qh, ExportFor(id)));
+                    EXPORTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(x.export_toplevel(window.wl_surface(), qh, ExportFor(id)));
                 }
                 let role = Role::Window(window);
                 let viewport = self.viewporter.as_ref().map(|v| v.get_viewport(role.wl(), qh, Silent));
@@ -1640,12 +1640,12 @@ impl State {
             backdrop.place(edges, margin);
             // One whose margins move: the pointer on it is said with how far they have taken it, from its first press.
             if p.margin_from.is_some() {
-                CARRIED.lock().unwrap().insert(which, carried_by(edges, margin));
+                CARRIED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(which, carried_by(edges, margin));
             }
             // Noted down, in case the scene moves it to another edge while running,
             // or a reload gives it another size, edge, margin, room or level.
             if let Some(c) = MOVABLE_LAYERS.get() {
-                c.placed.lock().unwrap().push((which, layer.clone(), margin, stretch, backdrop.clone()));
+                c.placed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((which, layer.clone(), margin, stretch, backdrop.clone()));
             }
             layer.set_size(size.0, size.1);
             // With a condition, none until the render says it holds (or what it last said, for a copy placed later).
@@ -1682,7 +1682,7 @@ impl State {
         for p in self.placed.iter().filter(|p| moved(p, wanted)) {
             let _ = self.to_render.send(ToRender::SheetGone(p.id));
             if let Some(c) = MOVABLE_LAYERS.get() {
-                c.placed.lock().unwrap().retain(|(_, layer, _, _, _)| layer.wl_surface() != p.role.wl());
+                c.placed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|(_, layer, _, _, _)| layer.wl_surface() != p.role.wl());
             }
         }
         self.placed.retain(|p| !moved(p, wanted));
@@ -1701,7 +1701,7 @@ impl State {
     /// the monitors it no longer names, and onto the one it does. The render
     /// keeps its sheet's state, as for a monitor that comes back.
     fn rescreen(&mut self, qh: &QueueHandle<State>) {
-        let asked = std::mem::take(&mut *RESCREENS.lock().unwrap());
+        let asked = std::mem::take(&mut *RESCREENS.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
         if asked.is_empty() {
             return;
         }
@@ -1718,7 +1718,7 @@ impl State {
                 let _ = self.to_render.send(ToRender::SheetGone(p.id));
                 forget_parent(p.role.wl());
                 if let Some(c) = MOVABLE_LAYERS.get() {
-                    c.placed.lock().unwrap().retain(|(_, layer, _, _, _)| layer.wl_surface() != p.role.wl());
+                    c.placed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|(_, layer, _, _, _)| layer.wl_surface() != p.role.wl());
                 }
             }
             self.placed.retain(|p| !leaves(p));
@@ -1736,9 +1736,9 @@ impl State {
     }
 
     fn remove_from(&mut self, output: &wl_output::WlOutput) {
-        OUTPUTS.lock().unwrap().retain(|_, o| o != output);
+        OUTPUTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|_, o| o != output);
         if let Some(c) = LOCKS.get() {
-            c.monitors.lock().unwrap().retain(|(s, _, _)| s != output);
+            c.monitors.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|(s, _, _)| s != output);
         }
         for id in lock_face_for_gone_monitor(output) {
             let _ = self.to_render.send(ToRender::SheetGone(id));
@@ -1747,7 +1747,7 @@ impl State {
             let _ = self.to_render.send(ToRender::SheetGone(p.id));
             forget_parent(p.role.wl());
             if let Some(c) = MOVABLE_LAYERS.get() {
-                c.placed.lock().unwrap().retain(|(_, layer, _, _, _)| layer.wl_surface() != p.role.wl());
+                c.placed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|(_, layer, _, _, _)| layer.wl_surface() != p.role.wl());
             }
         }
         self.placed.retain(|p| &p.output != output);
@@ -1924,7 +1924,7 @@ static LOCKS: std::sync::OnceLock<Locks> = std::sync::OnceLock::new();
 /// `false`: it could not be asked yet (the Wayland side is not ready): ask again.
 pub fn lock_screen(copies: Vec<(usize, ((u32, u32), (f32, f32), Screens))>) -> bool {
     let Some(c) = LOCKS.get() else { return false };
-    let mut engaged = c.engaged.lock().unwrap();
+    let mut engaged = c.engaged.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if copies.is_empty() {
         if let Some(e) = engaged.take() {
             e.lock.unlock();
@@ -1948,7 +1948,7 @@ pub fn lock_screen(copies: Vec<(usize, ((u32, u32), (f32, f32), Screens))>) -> b
     // One face per monitor, and all at once: until they're all there, the
     // compositor doesn't consider the session locked. The monitors the scene is
     // not on (`screens:`) are covered all the same, in black.
-    let monitors = c.monitors.lock().unwrap();
+    let monitors = c.monitors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let names: Vec<&str> = monitors.iter().map(|(_, name, _)| name.as_str()).collect();
     let screens: Vec<&Screens> = copies.iter().map(|k| &k.screens).collect();
     let chosen = lock_faces(&screens, &names);
@@ -2055,7 +2055,7 @@ fn lock_shows(screens: &Screens, name: &str, number: usize) -> bool {
 /// render, so one that showed the scene at once would stay on the wrong monitor.
 fn lock_face_for_new_monitor(output: &wl_output::WlOutput, name: &str, number: usize, mhz: i32) {
     let Some(c) = LOCKS.get() else { return };
-    let mut engaged = c.engaged.lock().unwrap();
+    let mut engaged = c.engaged.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(e) = engaged.as_mut() else { return };
     if e.faces.iter().any(|f| &f.output == output) {
         return;
@@ -2071,7 +2071,7 @@ fn lock_face_for_new_monitor(output: &wl_output::WlOutput, name: &str, number: u
         std::thread::spawn(|| {
             std::thread::sleep(LOCK_GRACE);
             let Some(c) = LOCKS.get() else { return };
-            let mut engaged = c.engaged.lock().unwrap();
+            let mut engaged = c.engaged.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(e) = engaged.as_mut() {
                 promote_first_cover(c, e);
             }
@@ -2121,7 +2121,7 @@ fn promote_first_cover(c: &Locks, e: &mut Engaged) {
 /// the render has to let go of.
 fn lock_face_for_gone_monitor(output: &wl_output::WlOutput) -> Vec<u32> {
     let Some(c) = LOCKS.get() else { return Vec::new() };
-    let mut engaged = c.engaged.lock().unwrap();
+    let mut engaged = c.engaged.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(e) = engaged.as_mut() else { return Vec::new() };
     let mut gone = Vec::new();
     let (going, staying): (Vec<LockFace>, Vec<LockFace>) = std::mem::take(&mut e.faces).into_iter().partition(|f| &f.output == output);
@@ -2141,7 +2141,7 @@ fn lock_face_for_gone_monitor(output: &wl_output::WlOutput) -> Vec<u32> {
 /// went while locked, it can be destroyed now.
 pub fn sheet_released(id: u32) {
     let Some(c) = LOCKS.get() else { return };
-    let mut engaged = c.engaged.lock().unwrap();
+    let mut engaged = c.engaged.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(e) = engaged.as_mut() else { return };
     let before = e.retiring.len();
     e.retiring.retain(|f| f.id != id);
@@ -2228,7 +2228,7 @@ struct Said {
 
 /// What the render last said of surface `which` (see `MovableLayers::said`).
 fn said_of(which: usize) -> Said {
-    MOVABLE_LAYERS.get().and_then(|c| c.said.lock().unwrap().get(&which).copied()).unwrap_or_default()
+    MOVABLE_LAYERS.get().and_then(|c| c.said.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&which).copied()).unwrap_or_default()
 }
 static MOVABLE_LAYERS: std::sync::OnceLock<MovableLayers> = std::sync::OnceLock::new();
 /// Surfaces the render asked to go to another monitor (`rescreen`), for the
@@ -2239,7 +2239,7 @@ static RESCREENS: Mutex<Vec<(usize, String)>> = Mutex::new(Vec::new());
 /// with a round trip of its own, which wakes it.
 pub fn rescreen(which: usize, screen: &str) {
     let Some(c) = MOVABLE_LAYERS.get() else { return };
-    RESCREENS.lock().unwrap().push((which, screen.to_owned()));
+    RESCREENS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((which, screen.to_owned()));
     c.connection.display().sync(&c.qh, Rescreen);
     let _ = c.connection.flush();
 }
@@ -2270,9 +2270,9 @@ fn layer_of(level: Level) -> Layer {
 
 pub fn relayer(which: usize, level: Level) {
     let Some(c) = MOVABLE_LAYERS.get() else { return };
-    c.said.lock().unwrap().entry(which).or_default().level = Some(level);
+    c.said.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(which).or_default().level = Some(level);
     let mut any = false;
-    for (k, layer, _, _, _) in c.placed.lock().unwrap().iter() {
+    for (k, layer, _, _, _) in c.placed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter() {
         if *k == which {
             layer.set_layer(layer_of(level));
             layer.commit();
@@ -2302,13 +2302,13 @@ fn carried_by(edges: Anchor, m: [i32; 4]) -> (f32, f32) {
 /// A layer's margins while running: `margin:` with facts in it.
 pub fn remargin(which: usize, new: [i32; 4]) {
     let Some(c) = MOVABLE_LAYERS.get() else { return };
-    c.said.lock().unwrap().entry(which).or_default().margin = Some(new);
+    c.said.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(which).or_default().margin = Some(new);
     let mut goes = None;
-    for (k, layer, margin, stretch, backdrop) in c.placed.lock().unwrap().iter_mut() {
+    for (k, layer, margin, stretch, backdrop) in c.placed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter_mut() {
         if *k != which {
             continue;
         }
-        CARRIED.lock().unwrap().entry(which).or_insert_with(|| carried_by(stretch.edges, *margin));
+        CARRIED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(which).or_insert_with(|| carried_by(stretch.edges, *margin));
         *margin = new;
         layer.set_margin(new[0], new[1], new[2], new[3]);
         backdrop.place(stretch.edges, new);
@@ -2326,16 +2326,16 @@ struct Remargined(usize, (f32, f32));
 impl Dispatch2<wayland_client::protocol::wl_callback::WlCallback, State> for Remargined {
     fn event(&self, _: &mut State, _: &wayland_client::protocol::wl_callback::WlCallback, ev: wayland_client::protocol::wl_callback::Event, _: &Connection, _: &QueueHandle<State>) {
         if let wayland_client::protocol::wl_callback::Event::Done { .. } = ev {
-            CARRIED.lock().unwrap().insert(self.0, self.1);
+            CARRIED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(self.0, self.1);
         }
     }
 }
 
 pub fn rezone(which: usize, zone: i32) {
     let Some(c) = MOVABLE_LAYERS.get() else { return };
-    c.said.lock().unwrap().entry(which).or_default().zone = Some(zone);
+    c.said.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(which).or_default().zone = Some(zone);
     let mut any = false;
-    for (k, layer, _, _, _) in c.placed.lock().unwrap().iter() {
+    for (k, layer, _, _, _) in c.placed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter() {
         if *k == which {
             layer.set_exclusive_zone(zone);
             layer.commit();
@@ -2349,9 +2349,9 @@ pub fn rezone(which: usize, zone: i32) {
 
 pub fn reanchor(which: usize, anchor: SurfaceAnchor) {
     let Some(c) = MOVABLE_LAYERS.get() else { return };
-    c.said.lock().unwrap().entry(which).or_default().anchor = Some(anchor);
+    c.said.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(which).or_default().anchor = Some(anchor);
     let mut any = false;
-    for (k, layer, margin, stretch, backdrop) in c.placed.lock().unwrap().iter_mut() {
+    for (k, layer, margin, stretch, backdrop) in c.placed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter_mut() {
         if *k != which {
             continue;
         }
@@ -2379,13 +2379,13 @@ pub fn reanchor(which: usize, anchor: SurfaceAnchor) {
 pub fn reshape(which: usize, p: &crate::scene::Surface) {
     let Some(c) = MOVABLE_LAYERS.get() else { return };
     // Its edge and level are the reloaded scene's now (the render says them again if they still depend on something).
-    if let Some(said) = c.said.lock().unwrap().get_mut(&which) {
+    if let Some(said) = c.said.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_mut(&which) {
         said.anchor = None;
         said.level = None;
         said.margin = None;
     }
     let mut any = false;
-    for (k, layer, margin, stretch, backdrop) in c.placed.lock().unwrap().iter_mut() {
+    for (k, layer, margin, stretch, backdrop) in c.placed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter_mut() {
         if *k != which {
             continue;
         }
@@ -2400,8 +2400,8 @@ pub fn reshape(which: usize, p: &crate::scene::Surface) {
         layer.set_margin(margin[0], margin[1], margin[2], margin[3]);
         backdrop.place(edges, *margin);
         match p.margin_from {
-            Some(_) => CARRIED.lock().unwrap().insert(which, carried_by(edges, *margin)),
-            None => CARRIED.lock().unwrap().remove(&which),
+            Some(_) => CARRIED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(which, carried_by(edges, *margin)),
+            None => CARRIED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&which),
         };
         layer.set_size(size.0, size.1);
         // With a condition, the render sets its room as it holds.
@@ -2424,7 +2424,7 @@ static POPUPS: std::sync::OnceLock<Popups> = std::sync::OnceLock::new();
 /// frame still on the monitor it left.
 fn forget_parent(wl: &wl_surface::WlSurface) {
     if let Some(pp) = POPUPS.get() {
-        let mut parent = pp.parent.lock().unwrap();
+        let mut parent = pp.parent.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if parent.as_ref().is_some_and(|p| p.surface.wl() == wl) {
             *parent = None;
         }
@@ -2434,17 +2434,17 @@ fn forget_parent(wl: &wl_surface::WlSurface) {
 pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
     let Some(e) = POPUPS.get() else { return };
     let Some(([x, y, w, h], origin)) = what else {
-        e.open.lock().unwrap().retain(|a| a.k != k);
+        e.open.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|a| a.k != k);
         let _ = e.connection.flush();
         return;
     };
     // Out of another popup (`parent:`): that one's surface is its parent, and its place is inside it.
-    let above = super::POPUP_PARENTS.lock().unwrap().iter().find(|(c, _)| *c == k).map(|(_, p)| *p);
-    let nested = above.and_then(|p| e.open.lock().unwrap().iter().find(|a| a.k == p).map(|a| (a.popup.xdg_surface().clone(), a.parent.clone(), a.backdrop.clone())));
+    let above = super::POPUP_PARENTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().find(|(c, _)| *c == k).map(|(_, p)| *p);
+    let nested = above.and_then(|p| e.open.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().find(|a| a.k == p).map(|a| (a.popup.xdg_surface().clone(), a.parent.clone(), a.backdrop.clone())));
     if above.is_some() && nested.is_none() {
         return;
     }
-    let Some(parent) = nested.as_ref().map(|n| n.1.clone()).or_else(|| e.parent.lock().unwrap().clone()) else { return };
+    let Some(parent) = nested.as_ref().map(|n| n.1.clone()).or_else(|| e.parent.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()) else { return };
     let open = || -> Option<OpenPopup> {
         let positioner = XdgPositioner::new(&e.xdg).ok()?;
         positioner.set_size(w, h);
@@ -2470,10 +2470,10 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
         // If it opens because of a click or a key a moment ago, let a click outside close it;
         // one that takes the keyboard (`keyboard: true`) grabs it whenever it can: the
         // compositor gives it the keyboard while it is open.
-        let keyboard = super::KEYBOARD_POPUPS.lock().unwrap().contains(&k);
+        let keyboard = super::KEYBOARD_POPUPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains(&k);
         // With the seat that press came from (an agent's hands are a seat of their own).
-        if let Some((serial, when, from)) = e.last_press.lock().unwrap().clone() {
-            if let Some(seat) = from.or_else(|| e.seat.lock().unwrap().clone()) {
+        if let Some((serial, when, from)) = e.last_press.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() {
+            if let Some(seat) = from.or_else(|| e.seat.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()) {
                 if keyboard || when.elapsed() < std::time::Duration::from_millis(1500) {
                     popup.xdg_popup().grab(&seat, serial);
                 }
@@ -2499,13 +2499,13 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
         };
         let backdrop = behind.map(|m| {
             let d = BackdropTarget::new(id, None, BackdropKind::Popup { parent: m, offset: Mutex::new((0, 0)) });
-            *d.size.lock().unwrap() = (w as u32, h as u32);
+            *d.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (w as u32, h as u32);
             d
         });
         Some(OpenPopup { k, id, backdrop, origin, size: (w as u32, h as u32), pending: Some(surface), viewport, _fractional_scale: fractional_scale, parent: parent.clone(), popup })
     };
     match open() {
-        Some(a) => e.open.lock().unwrap().push(a),
+        Some(a) => e.open.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(a),
         None => eprintln!("popup  · the compositor did not let it open"),
     }
     let _ = e.connection.flush();
@@ -2530,12 +2530,12 @@ impl WindowHandler for State {
 impl PopupHandler for State {
     fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, popup: &Popup, conf: PopupConfigure) {
         let Some(e) = POPUPS.get() else { return };
-        let mut open = e.open.lock().unwrap();
+        let mut open = e.open.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(a) = open.iter_mut().find(|a| a.popup.wl_surface() == popup.wl_surface()) else { return };
         // Where the compositor has put it relative to its parent: it may have
         // flipped it so that it fits.
         if let Some(BackdropKind::Popup { offset, .. }) = a.backdrop.as_ref().map(|d| &d.kind) {
-            *offset.lock().unwrap() = conf.position;
+            *offset.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = conf.position;
         }
         if let Some(v) = &a.viewport {
             v.set_destination(a.size.0 as i32, a.size.1 as i32);
@@ -2557,7 +2557,7 @@ impl PopupHandler for State {
     /// Someone clicked outside, or the compositor removed it. The render releases its stuff and closes it.
     fn done(&mut self, _: &Connection, _: &QueueHandle<Self>, popup: &Popup) {
         let Some(e) = POPUPS.get() else { return };
-        if let Some(a) = e.open.lock().unwrap().iter().find(|a| a.popup.wl_surface() == popup.wl_surface()) {
+        if let Some(a) = e.open.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().find(|a| a.popup.wl_surface() == popup.wl_surface()) {
             let _ = self.to_render.send(ToRender::PopupClosed(a.k));
         }
     }
@@ -2734,7 +2734,7 @@ impl State {
             wl_output::Transform::Flipped270 => 7,
             _ => 0,
         });
-        TURNS.lock().unwrap().insert(output.id(), turn);
+        TURNS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(output.id(), turn);
     }
 
     /// A surface was closed: its monitor left, or someone closed the window.
@@ -2745,7 +2745,7 @@ impl State {
         forget_parent(wl);
         self.placed.retain(|p| p.role.wl() != wl);
         if let Some(c) = MOVABLE_LAYERS.get() {
-            c.placed.lock().unwrap().retain(|(_, layer, _, _, _)| layer.wl_surface() != wl);
+            c.placed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|(_, layer, _, _, _)| layer.wl_surface() != wl);
         }
     }
 
@@ -2763,12 +2763,12 @@ impl State {
         }
         // Where it lands inside its monitor: what's needed to photograph what's behind.
         if let Some(d) = &p.backdrop {
-            *d.size.lock().unwrap() = size;
-            *d.last_asked.lock().unwrap() = None;
+            *d.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = size;
+            *d.last_asked.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         }
         if let (Role::Layer(_), Some(d)) = (&p.role, &p.backdrop) {
             if let Some((w, h)) = self.outputs.info(&p.output).and_then(|i| i.logical_size) {
-                *d.monitor.lock().unwrap() = Some((w, h));
+                *d.monitor.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((w, h));
                 d.locate();
                 // `monitor.width`, `monitor.height`: what the scene's own surface has around it.
                 if p.which == 0 {
@@ -2786,7 +2786,7 @@ impl State {
                 // While the mouse hasn't been seen on any, popups hang from the first one:
                 // a layer, or a normal window (a scene that is only a window had none, and
                 // its popups never opened).
-                pp.parent.lock().unwrap().get_or_insert_with(|| Parent { surface: ParentSurface::of(&p.role), backdrop: p.backdrop.clone(), scale: p.scale, name: name.clone(), mhz });
+                pp.parent.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(|| Parent { surface: ParentSurface::of(&p.role), backdrop: p.backdrop.clone(), scale: p.scale, name: name.clone(), mhz });
             }
             let _ = self.to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
                 id: p.id,
@@ -2831,7 +2831,7 @@ impl smithay_client_toolkit::session_lock::SessionLockHandler for State {
         _: u32,
     ) {
         let Some(c) = LOCKS.get() else { return };
-        let mut engaged = c.engaged.lock().unwrap();
+        let mut engaged = c.engaged.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(e) = engaged.as_mut() else { return };
         let Some(face) = e.faces.iter_mut().find(|k| k.surface.wl_surface() == surface.wl_surface()) else { return };
         let size = conf.new_size;
@@ -2869,10 +2869,10 @@ impl PointerHandler for State {
             let (mut x, mut y) = (e.position.0 as f32, e.position.1 as f32);
             if let Some(pp) = POPUPS.get() {
                 // Inside a popup, the mouse is in the piece of scene it shows.
-                let on_lock = LOCKS.get().and_then(|c| c.engaged.lock().unwrap().as_ref().and_then(|ec| ec.faces.iter().find(|k| k.surface.wl_surface() == &e.surface).map(|k| k.view_origin)));
+                let on_lock = LOCKS.get().and_then(|c| c.engaged.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().and_then(|ec| ec.faces.iter().find(|k| k.surface.wl_surface() == &e.surface).map(|k| k.view_origin)));
                 if let Some(view_origin) = on_lock {
                     (x, y) = (x + view_origin.0, y + view_origin.1);
-                } else if let Some(a) = pp.open.lock().unwrap().iter().find(|a| a.popup.wl_surface() == &e.surface) {
+                } else if let Some(a) = pp.open.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().find(|a| a.popup.wl_surface() == &e.surface) {
                     (x, y) = (x + a.origin.0, y + a.origin.1);
                 } else if let Some(p) = self.placed.iter().find(|p| p.role.wl() == &e.surface) {
                     let info = self.outputs.info(&p.output);
@@ -2881,7 +2881,7 @@ impl PointerHandler for State {
                     (x, y) = (x + origin.0, y + origin.1);
                     // Popups hang from where the mouse was last seen: a layer or a normal window.
                     {
-                        *pp.parent.lock().unwrap() = Some(Parent {
+                        *pp.parent.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Parent {
                             surface: ParentSurface::of(&p.role),
                             backdrop: p.backdrop.clone(),
                             scale: p.scale,
@@ -2898,12 +2898,12 @@ impl PointerHandler for State {
                         let _ = self.to_render.send(ToRender::KeyboardOn(p.which));
                     }
                     let seat = self.pointer_seats.iter().find(|(p, _)| p == pointer).map(|(_, s)| s.clone());
-                    *pp.last_press.lock().unwrap() = Some((serial, std::time::Instant::now(), seat));
+                    *pp.last_press.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((serial, std::time::Instant::now(), seat));
                 }
             }
             // A drag out starts from the press that began it: the compositor asks for its serial.
             if let (PointerEventKind::Press { serial, .. }, Some(d)) = (&e.kind, DRAGS.get()) {
-                *d.press.lock().unwrap() = Some((*serial, e.surface.clone()));
+                *d.press.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((*serial, e.surface.clone()));
             }
             // `PLEAMAR_DEBUG_ZONES=1`: which surface the compositor gives the mouse to,
             // when it enters, leaves or presses —not every motion—.
@@ -2913,7 +2913,7 @@ impl PointerHandler for State {
             }
             // On a surface its margins carry, the pointer is said with how far it has gone.
             let carried = {
-                let m = CARRIED.lock().unwrap();
+                let m = CARRIED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 if m.is_empty() { None } else { self.placed.iter().find(|p| p.role.wl() == &e.surface).and_then(|p| m.get(&p.which).copied()) }
             };
             let pointer_at = |x: f32, y: f32| carried.map_or(ToRender::Pointer(Some((x, y))), |by| ToRender::PointerOn((x, y), by));
@@ -2921,7 +2921,7 @@ impl PointerHandler for State {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                     if let PointerEventKind::Enter { serial } = e.kind {
                         self.serial.store(serial, Ordering::Relaxed);
-                        if let Some(d) = self.cursors.lock().unwrap().as_ref() {
+                        if let Some(d) = self.cursors.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
                             let c = Cursor::from_code(CURSOR_SHAPE.load(Ordering::Relaxed));
                             d.set_shape(serial, shape_of(c));
                         }
@@ -3063,8 +3063,8 @@ static DRAGS: std::sync::OnceLock<Drags> = std::sync::OnceLock::new();
 /// links go as a list of addresses (and as their text); anything else, as text.
 pub fn start_drag(text: &str, icon: Option<&str>) -> bool {
     let Some(d) = DRAGS.get() else { return false };
-    let Some((serial, origin)) = d.press.lock().unwrap().clone() else { return false };
-    let Some(device) = d.device.lock().unwrap().clone() else { return false };
+    let Some((serial, origin)) = d.press.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() else { return false };
+    let Some(device) = d.device.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() else { return false };
     let offers = super::drag_offers(text);
     if offers.is_empty() {
         return false;
@@ -3079,12 +3079,12 @@ pub fn start_drag(text: &str, icon: Option<&str>) -> bool {
     // The picture under the pointer, if the zone gave one and it can be read: its top left is a little up and to the left of the pointer, so the pointer is not hidden.
     let held = icon.and_then(|path| drag_icon(d, path));
     device.start_drag(Some(&source), &origin, held.as_ref().map(|(s, _, _, _)| s), serial);
-    if let Some(old) = d.icon.lock().unwrap().take() {
+    if let Some(old) = d.icon.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take() {
         drop_icon(old);
     }
-    *d.icon.lock().unwrap() = held;
+    *d.icon.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = held;
     let _ = d.connection.flush();
-    if let Some((old, _)) = d.under_way.lock().unwrap().replace((source, offers)) {
+    if let Some((old, _)) = d.under_way.lock().unwrap_or_else(std::sync::PoisonError::into_inner).replace((source, offers)) {
         old.destroy();
     }
     true
@@ -3095,7 +3095,7 @@ impl DataSourceHandler for State {
     // The program it was let go on asks for it in one of the kinds offered.
     fn send_request(&mut self, _: &Connection, _: &QueueHandle<Self>, source: &wayland_client::protocol::wl_data_source::WlDataSource, mime: String, mut pipe: WritePipe) {
         let Some(d) = DRAGS.get() else { return };
-        let data = d.under_way.lock().unwrap().as_ref().filter(|(s, _)| s == source).and_then(|(_, o)| o.iter().find(|(m, _)| *m == mime).map(|(_, b)| b.clone()));
+        let data = d.under_way.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().filter(|(s, _)| s == source).and_then(|(_, o)| o.iter().find(|(m, _)| *m == mime).map(|(_, b)| b.clone()));
         if let Some(bytes) = data {
             let _ = std::io::Write::write_all(&mut pipe, &bytes);
         }
@@ -3112,10 +3112,10 @@ impl DataSourceHandler for State {
 
 fn end_drag(source: &wayland_client::protocol::wl_data_source::WlDataSource) {
     let Some(d) = DRAGS.get() else { return };
-    let mut under_way = d.under_way.lock().unwrap();
+    let mut under_way = d.under_way.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if under_way.as_ref().is_some_and(|(s, _)| s == source) {
         *under_way = None;
-        if let Some(held) = d.icon.lock().unwrap().take() {
+        if let Some(held) = d.icon.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take() {
             drop_icon(held);
         }
     }
@@ -3189,7 +3189,7 @@ impl KeyboardHandler for State {
         // Which surface of the scene it went to: a copy of `screens: each` is one per
         // monitor, and the keys are that copy's, not always the first's (#156).
         let which = self.placed.iter().find(|p| p.role.wl() == surface).map(|p| p.which).or_else(|| {
-            LOCKS.get().and_then(|c| c.engaged.lock().unwrap().as_ref().and_then(|ec| ec.faces.iter().find(|k| k.surface.wl_surface() == surface).and_then(|k| k.copy.as_ref().map(|c| c.which))))
+            LOCKS.get().and_then(|c| c.engaged.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().and_then(|ec| ec.faces.iter().find(|k| k.surface.wl_surface() == surface).and_then(|k| k.copy.as_ref().map(|c| c.which))))
         });
         if let Some(which) = which {
             let _ = self.to_render.send(ToRender::KeyboardOn(which));
@@ -3206,7 +3206,7 @@ impl KeyboardHandler for State {
         let typed = e.utf8.clone().filter(|t| !t.is_empty() && !t.chars().any(char::is_control));
         // A key is an input as a press is: a popup opened by it may grab with its serial.
         if let Some(pp) = POPUPS.get() {
-            *pp.last_press.lock().unwrap() = Some((serial, std::time::Instant::now(), None));
+            *pp.last_press.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((serial, std::time::Instant::now(), None));
         }
         let _ = self.to_render.send(ToRender::Key(key_name(&e), typed, self.mods, e.raw_code));
     }
@@ -3256,12 +3256,12 @@ impl SeatHandler for State {
             return;
         }
         if let Some(pp) = POPUPS.get() {
-            pp.seat.lock().unwrap().get_or_insert_with(|| seat.clone());
+            pp.seat.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(|| seat.clone());
         }
         if c == Capability::Pointer && self.pointer.is_none() {
             self.pointer = self.seats.get_pointer(qh, &seat).ok();
             if let (Some(p), Some(m)) = (&self.pointer, &self.cursor_shapes) {
-                *self.cursors.lock().unwrap() = Some(m.get_shape_device(p, qh));
+                *self.cursors.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(m.get_shape_device(p, qh));
             }
             if let Some(p) = &self.pointer {
                 self.pointer_seats.push((p.clone(), seat.clone()));
@@ -3280,14 +3280,14 @@ impl SeatHandler for State {
         if self.data_device.is_none() {
             self.data_device = self.drag_and_drop.as_ref().map(|m| m.get_data_device(qh, &seat));
             if let (Some(d), Some(dd)) = (DRAGS.get(), &self.data_device) {
-                *d.device.lock().unwrap() = Some(dd.inner().clone());
+                *d.device.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(dd.inner().clone());
             }
         }
         if c == Capability::Keyboard && self.keyboard.is_none() && self.wanted.iter().any(|s| s.keyboard != Keyboard::Never) {
             self.keyboard = self.seats.get_keyboard(qh, &seat, None).ok();
             // Your input method writes where your keyboard does.
             if let Some(ime) = IME.get() {
-                ime.input.lock().unwrap().get_or_insert_with(|| ime.manager.get_text_input(&seat, qh, ImeFor));
+                ime.input.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(|| ime.manager.get_text_input(&seat, qh, ImeFor));
             }
         }
     }
@@ -3368,7 +3368,7 @@ impl OutputHandler for State {
         }
         let Some(c) = MOVABLE_LAYERS.get() else { return };
         let mut any = false;
-        for (_, layer, _, stretch, _) in c.placed.lock().unwrap().iter_mut() {
+        for (_, layer, _, stretch, _) in c.placed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter_mut() {
             if !(stretch.width && stretch.height) || stretch.monitor.is_none() || stretch.monitor == Some((w, h)) {
                 continue;
             }
@@ -3426,7 +3426,7 @@ pub fn icon(name: &str) -> Option<std::path::PathBuf> {
     static DIRS: Mutex<Option<(Instant, Arc<Vec<std::path::PathBuf>>)>> = Mutex::new(None);
     let find = |dirs: &[std::path::PathBuf]| dirs.iter().flat_map(|d| ["svg", "png"].map(|e| d.join(format!("{name}.{e}")))).find(|p| p.is_file());
     let (read, dirs) = {
-        let mut kept = DIRS.lock().unwrap();
+        let mut kept = DIRS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let (read, dirs) = kept.get_or_insert_with(|| (Instant::now(), Arc::new(icon_dirs())));
         (*read, dirs.clone())
     };
@@ -3437,7 +3437,7 @@ pub fn icon(name: &str) -> Option<std::path::PathBuf> {
         return None;
     }
     let fresh = Arc::new(icon_dirs());
-    *DIRS.lock().unwrap() = Some((Instant::now(), fresh.clone()));
+    *DIRS.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((Instant::now(), fresh.clone()));
     find(&fresh)
 }
 
