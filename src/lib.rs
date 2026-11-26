@@ -8,6 +8,26 @@
 //! monitor, their scale and the mouse); the logic one, which decides; and the render one, which is the
 //! only one that animates.
 
+// What pleamar says on its standard output and error output, and nothing else, if they are gone. `println!`
+// panics when its write fails, and a program started by another with its error output into a pipe —Fhinder
+// opening a picture in Mirilla— had that pipe closed under it when the other one ended: the next line said
+// panicked the thread saying it, with a mutex taken, and the cleanup found that mutex poisoned and aborted.
+// These shadow the standard ones in every module below (they are declared before any of them).
+macro_rules! println {
+    () => {{ use std::io::Write as _; let _ = writeln!(std::io::stdout()); }};
+    ($($t:tt)*) => {{ use std::io::Write as _; let _ = writeln!(std::io::stdout(), $($t)*); }};
+}
+macro_rules! eprintln {
+    () => {{ use std::io::Write as _; let _ = writeln!(std::io::stderr()); }};
+    ($($t:tt)*) => {{ use std::io::Write as _; let _ = writeln!(std::io::stderr(), $($t)*); }};
+}
+macro_rules! print {
+    ($($t:tt)*) => {{ use std::io::Write as _; let _ = write!(std::io::stdout(), $($t)*); }};
+}
+macro_rules! eprint {
+    ($($t:tt)*) => {{ use std::io::Write as _; let _ = write!(std::io::stderr(), $($t)*); }};
+}
+
 pub mod scene;
 mod scenes;
 mod clock;
