@@ -903,16 +903,31 @@ fn shade(e: VertexOut) -> vec4<f32> {
             // varies says nothing of it).
             // Wide apart: a wallpaper's one sharp edge weighs in a single spot,
             // where text has edges in all of them.
-            let reach = 26.0 * u.header.w;
+            // Only what is behind the glass counts: a point round it that falls
+            // outside —past its edge, or where nothing is known— weighs nothing,
+            // fading out over the last px before the edge. Counted, a hard edge
+            // just outside (a window 12 px above a dock) made a point land on it
+            // for a row or two of the glass only, and the glass went from clear
+            // to frosted there and back: a line from side to side. (How far a
+            // point is inside: the distance here plus how far it goes along the
+            // edge's normal, which is exact along a straight edge.)
+            let reach = 26.0;
             let spots = array<vec2<f32>, 5>(vec2<f32>(0.0), vec2<f32>(reach, reach * 0.5), vec2<f32>(-reach, reach * 0.5), vec2<f32>(reach * 0.5, -reach), vec2<f32>(-reach * 0.5, -reach));
             var busy = 0.0;
+            var weight = 0.0;
             for (var k = 0; k < 5; k++) {
-                let at = behind_at(q + spots[k]);
+                let at = behind_at(q + spots[k] * u.header.w);
                 let ms = textureSampleLevel(backdrop_sharp, backdrop_sampler, at, 0.0);
                 let mf = textureSampleLevel(backdrop_blurred, backdrop_sampler, at, 0.0);
-                busy += abs(dot(ms.rgb / max(ms.a, 0.001) - mf.rgb / max(mf.a, 0.001), vec3<f32>(0.299, 0.587, 0.114)));
+                var w = smoothstep(0.3, 0.7, min(ms.a, mf.a));
+                if (k > 0) { w *= 1.0 - smoothstep(-6.0, -1.0, d + dot(normal, spots[k])); }
+                busy += w * abs(dot(ms.rgb / max(ms.a, 0.001) - mf.rgb / max(mf.a, 0.001), vec3<f32>(0.299, 0.587, 0.114)));
+                weight += w;
             }
-            frost = smoothstep(0.02, 0.045, busy * 0.2);
+            // From clear to frosted over a wider step than before (0.02–0.045),
+            // so that as a point comes onto an edge behind the glass the frost
+            // grows over a few px instead of switching in one.
+            frost = smoothstep(0.012, 0.06, busy / max(weight, 0.001));
         }
         let in_bevel = 1.0 - t_rim;
         // The bevel shows what is behind sharp only as much as it bends it
