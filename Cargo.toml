@@ -11,6 +11,8 @@ repository = "https://github.com/k4ditano/pleamar"
 # `windows … desk N`, for the programs' widgets on the desktop drawn inside the scene.
 [package.metadata.pleamar-wm]
 desk = true
+# `provide_activation_token`: the tray's clicks bring a program forward (pleamar-wm's build.rs).
+activation = true
 
 [dependencies]
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control", "image-data"] }

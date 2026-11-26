@@ -1061,6 +1061,22 @@ pub fn provide_before_quit(f: Box<dyn FnOnce() + Send>) {
     *BEFORE_QUIT.lock().unwrap() = Some(f);
 }
 
+type TokenMaker = Box<dyn Fn() -> Option<String> + Send + Sync>;
+static ACTIVATION_TOKEN: std::sync::Mutex<Option<TokenMaker>> = std::sync::Mutex::new(None);
+
+/// Who makes the xdg-activation tokens the tray hands a program before a click on its icon or
+/// its menu (`ProvideXdgActivationToken`): the compositor the scene is part of (pleamar-wm). With
+/// it, the program shown again from the tray comes forward with the keyboard, even put away; a
+/// program that asks with no such token only asks for attention.
+pub fn provide_activation_token(f: TokenMaker) {
+    *ACTIVATION_TOKEN.lock().unwrap() = Some(f);
+}
+
+/// A fresh token, if a compositor provides them; none elsewhere.
+pub(crate) fn activation_token() -> Option<String> {
+    ACTIVATION_TOKEN.lock().unwrap().as_ref().and_then(|f| f())
+}
+
 /// The user's pleamar folder, the one for their dotfiles: `PLEAMAR_CONFIG`, or
 /// `$XDG_CONFIG_HOME/pleamar` (`~/.config/pleamar`).
 pub fn config_dir() -> Option<std::path::PathBuf> {

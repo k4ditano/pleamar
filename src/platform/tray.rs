@@ -349,6 +349,15 @@ pub fn command(what: &str, args: &[SysValue]) -> Result<(), String> {
     let c = CONNECTION.get().ok_or("the tray is not running: sys.watch(\"tray\", …) is missing")?;
     let [SysValue::Text(key), rest @ ..] = args else { return Err(format!("'{what}' wants the icon's `key`")) };
     let p = element(c, key).ok_or("that icon is gone")?;
+    // A click of the person's: before it, the program gets a token to come forward with
+    // (KDE's `ProvideXdgActivationToken`, which Qt and others use for the window they show
+    // next), so that a window put away comes back even from its menu. One who does not know
+    // the method just says so, and nothing changes.
+    if matches!(what, "tray.activate" | "tray.secondary" | "tray.context" | "tray.menu_click") {
+        if let Some(token) = crate::activation_token() {
+            let _ = p.call_method("ProvideXdgActivationToken", &(token.as_str(),));
+        }
+    }
     let result = match (what, rest) {
         // Where on the screen it was clicked. We do not know (Wayland does not tell): 0, 0.
         ("tray.activate", []) => p.call_method("Activate", &(0i32, 0i32)),
