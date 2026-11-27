@@ -3236,6 +3236,19 @@ impl KeyboardHandler for State {
     }
 }
 
+/// The pointers of `seat`, and the rest as they were.
+fn seat_pointers_apart<P, S: PartialEq>(all: Vec<(P, S)>, seat: &S) -> (Vec<P>, Vec<(P, S)>) {
+    let (mut gone, mut kept) = (Vec::new(), Vec::new());
+    for (p, s) in all {
+        if &s == seat {
+            gone.push(p);
+        } else {
+            kept.push((p, s));
+        }
+    }
+    (gone, kept)
+}
+
 impl SeatHandler for State {
     fn seat_state(&mut self) -> &mut SeatState {
         &mut self.seats
@@ -3248,7 +3261,7 @@ impl SeatHandler for State {
         // the keyboard left these windows listening to the agent's.
         let agents = self.seats.info(&seat).and_then(|i| i.name).is_some_and(|n| n.starts_with("cua-agent"));
         if agents {
-            if c == Capability::Pointer {
+            if c == Capability::Pointer && !self.pointer_seats.iter().any(|(_, s)| s == &seat) {
                 if let Ok(p) = self.seats.get_pointer(qh, &seat) {
                     self.pointer_seats.push((p, seat.clone()));
                 }
@@ -3272,9 +3285,13 @@ impl SeatHandler for State {
             }
         } else if c == Capability::Pointer {
             // Another seat's pointer: an agent's, which has hands of its own. It
-            // is heard too, so that its presses are known to be its.
-            if let Ok(p) = self.seats.get_pointer(qh, &seat) {
-                self.pointer_seats.push((p, seat.clone()));
+            // is heard too, so that its presses are known to be its. The same
+            // seat announcing its pointer again (a suspend, another VT) is not
+            // another hand: a second one there heard every press twice (#173).
+            if !self.pointer_seats.iter().any(|(_, s)| s == &seat) {
+                if let Ok(p) = self.seats.get_pointer(qh, &seat) {
+                    self.pointer_seats.push((p, seat.clone()));
+                }
             }
         }
         if self.data_device.is_none() {
@@ -3296,6 +3313,29 @@ impl SeatHandler for State {
     /// by then, and keeping it is what stopped `new_capability` from taking
     /// the new one: no key reached a scene again, a lock's field among them.
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, seat: wl_seat::WlSeat, c: Capability) {
+        // The pointer the same way (#173): the one a seat loses is let go of, yours or an
+        // agent's, so that the one it is given back is the only one that is heard.
+        if c == Capability::Pointer {
+            let (gone, kept) = seat_pointers_apart(std::mem::take(&mut self.pointer_seats), &seat);
+            self.pointer_seats = kept;
+            for p in gone {
+                if self.pointer.as_ref() == Some(&p) {
+                    self.pointer = None;
+                    // What hung from it: its cursor's shape and its two fingers.
+                    if let Some(shape) = self.cursors.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take() {
+                        shape.destroy();
+                    }
+                    if let Some(pinch) = self.pinch.take() {
+                        pinch.destroy();
+                    }
+                }
+                // `release` came with version 3: before it, there is only letting go.
+                if p.version() >= 3 {
+                    p.release();
+                }
+            }
+            return;
+        }
         // Only the seat it came from takes it away: another one losing its
         // own (an agent's, a second person's) is not yours going.
         let from_here = self
@@ -3540,6 +3580,18 @@ mod tests {
 
     /// Asked once, not again until answered: a surface the compositor does not show
     /// answers none, and the ones asked meanwhile all came back at once when it did.
+    /// pleamar#173: a seat that loses its pointer takes its own away, and nobody else's.
+    #[test]
+    fn a_seat_that_loses_its_pointer_takes_only_its_own() {
+        let all = vec![("yours", 1), ("agent", 2), ("yours again", 1)];
+        let (gone, kept) = super::seat_pointers_apart(all, &1);
+        assert_eq!(gone, ["yours", "yours again"]);
+        assert_eq!(kept, [("agent", 2)]);
+        let (gone, kept) = super::seat_pointers_apart(kept, &3);
+        assert!(gone.is_empty());
+        assert_eq!(kept.len(), 1);
+    }
+
     #[test]
     fn one_frame_callback_at_a_time() {
         let gate = super::OneFrame::default();
