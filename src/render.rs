@@ -2608,12 +2608,17 @@ pub fn run(
                     // The one it was in, if it is there; if not, it stays parked for later.
                     let here = parked.as_ref().is_some_and(|e| exclusive.is_empty() || draw.fields.iter().filter(|f| f.text == e.field).any(|f| on_exclusive(&f)));
                     let parked_here = if here { parked.take() } else { None };
+                    // Only a field that is there: one hidden (`show:` false —a viewer's page box, shown only
+                    // for a PDF—, or in a hidden group, which the fallback to the scene's first field took)
+                    // took the arrows, Enter and Escape from the scene's rules. Before the first frame has
+                    // placed any, none: the next round looks again.
+                    let shown = |zone: &str| scene.zones.iter().filter(|z| z.id == zone).any(|z| z.active.is_true(Ctx { props: &props, facts: &facts, seen: None }));
                     editing = parked_here.or_else(|| {
                         draw.fields
                             .iter()
+                            .filter(|f| shown(f.zone))
                             .find(on_exclusive)
                             .map(|f| f.text)
-                            .or_else(|| if exclusive.is_empty() { scene.instrs.iter().find_map(|i| if let Instr::Field { text, .. } = i { Some(text.0 as usize) } else { None }) } else { None })
                             .map(|k| Editing::at(k, texts[k].len(), texts[k].len()))
                     });
                 }
@@ -2867,6 +2872,12 @@ pub fn run(
                             }) {
                                 l.begin_move(edges);
                             }
+                            // A press as any other for its rules (`on press bar`), the first of a pair
+                            // too: before 0.12 only the logic heard it.
+                            pressed = Some(k);
+                            if !watchers.is_empty() {
+                                heard_events.push(("press", scene.zones[k].id));
+                            }
                             let _ = to_logic.send(Event::Press(scene.zones[k].id));
                             continue;
                         }
@@ -2898,7 +2909,7 @@ pub fn run(
                     if let Some((t, p)) = on_text {
                         let (lx, ly) = t.local(p.0, p.1);
                         let b = t.layout.byte_at(lx, ly).min(t.text.len());
-                        let again = now.duration_since(clicks.0) < Duration::from_millis(450) && (p.0 - clicks.1 .0).hypot(p.1 - clicks.1 .1) < 5.0;
+                        let again = now.duration_since(clicks.0) < double_click() && (p.0 - clicks.1 .0).hypot(p.1 - clicks.1 .1) < 5.0;
                         clicks = (now, p, if again { clicks.2 % 3 + 1 } else { 1 });
                         let (anchor, cursor) = match clicks.2 {
                             1 => (b, b),
@@ -2928,7 +2939,7 @@ pub fn run(
                             let b = b.min(texts[placed.text].len());
                             // A second click in a row takes the word it lands on (in «cat.png», «cat»
                             // or «png»), as on a text that can be selected; a third takes all of it.
-                            let again = now.duration_since(clicks.0) < Duration::from_millis(450) && (p.0 - clicks.1 .0).hypot(p.1 - clicks.1 .1) < 5.0;
+                            let again = now.duration_since(clicks.0) < double_click() && (p.0 - clicks.1 .0).hypot(p.1 - clicks.1 .1) < 5.0;
                             clicks = (now, p, if again { clicks.2 % 3 + 1 } else { 1 });
                             // (A secret one is a single word: where its words break would say what it hides.)
                             let (anchor, cursor) = match clicks.2 {
@@ -3506,6 +3517,7 @@ pub fn run(
         };
         let some_event = !edges.is_empty()
             || pressed.is_some()
+            || doubled.is_some()
             || pressed_with.is_some()
             || released.is_some()
             || !keys.is_empty()
@@ -8934,11 +8946,19 @@ mod pace_tests {
     }
 }
 
+/// How soon a second click has to come to make a double one: 450 ms, or what
+/// `PLEAMAR_DOUBLE_CLICK_MS` says (100 to 2000), for a hand that clicks slower. For a word
+/// on a text, a terminal's and `on double`.
+pub(crate) fn double_click() -> Duration {
+    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    Duration::from_millis(*MS.get_or_init(|| std::env::var("PLEAMAR_DOUBLE_CLICK_MS").ok().and_then(|v| v.trim().parse::<u64>().ok()).map_or(450, |ms| ms.clamp(100, 2000))))
+}
+
 /// Whether this press of the left button on zone `k` is the second of a pair (`on double`): on
 /// the same zone as the one before, soon after it and close to it, as a double click is taken on
-/// a text (450 ms, 5 px). The pair is spent: a third press starts another.
+/// a text (`double_click`, 5 px). The pair is spent: a third press starts another.
 fn double_press(last: &mut Option<(usize, Instant, (f32, f32))>, k: usize, p: (f32, f32), now: Instant) -> bool {
-    let twice = last.is_some_and(|(z, t, at)| z == k && now.duration_since(t) < Duration::from_millis(450) && (p.0 - at.0).hypot(p.1 - at.1) < 5.0);
+    let twice = last.is_some_and(|(z, t, at)| z == k && now.duration_since(t) < double_click() && (p.0 - at.0).hypot(p.1 - at.1) < 5.0);
     *last = if twice { None } else { Some((k, now, p)) };
     twice
 }

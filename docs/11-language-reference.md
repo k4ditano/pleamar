@@ -1858,7 +1858,8 @@ those of the scene's first window. They exist in every scene, worth what is said
 compositor tells otherwise (with no screen, `--film`, they stay so).
 
 **`on double zone`** fires on the second press of a pair: on the same zone, within 450 ms and 5 px of
-the first, as a double click selects a word. The first press is a `press` as any other, and a third
+the first, as a double click selects a word (`PLEAMAR_DOUBLE_CLICK_MS`, from 100 to 2000, changes both
+for a hand that clicks slower). The first press is a `press` as any other, and a third
 starts another pair. On a `handle: self` zone the second press does not start another carry, so the
 compositor is not carrying the window while it is asked to maximize it. `on double` with no zone
 after it, `on double { … }`, is still an event called `double`, as `maximize = 1` still writes a fact

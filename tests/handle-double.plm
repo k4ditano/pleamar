@@ -1,0 +1,13 @@
+// expect: ok
+language 0.12
+// What tests/handle_double.rs films: a window's own bar (`handle: self`) that counts its presses and its
+// double presses. Each press is a `press`; the second of a pair, quick and close, is also a `double`.
+scene HandleDouble {
+    surface { size: 300, 200; kind: window; decorations: none }
+    fact presses = 0
+    fact doubles = 0
+    box { from: 0, 0; size: 300, 200; color: #16181c }
+    zone box bar { from: 0, 0; size: 300, 40; handle: self }
+    on press bar { presses = presses + 1 }
+    on double bar { doubles = doubles + 1 }
+}

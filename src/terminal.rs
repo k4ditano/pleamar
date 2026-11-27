@@ -978,7 +978,7 @@ pub fn press(t: &PlacedTerminal, p: (f32, f32), button: u8, shift: bool, ctrl: b
                 }
             }
             0 => {
-                let again = now.duration_since(hands.clicks.0) < Duration::from_millis(450) && (p.0 - hands.clicks.1 .0).hypot(p.1 - hands.clicks.1 .1) < 5.0;
+                let again = now.duration_since(hands.clicks.0) < crate::render::double_click() && (p.0 - hands.clicks.1 .0).hypot(p.1 - hands.clicks.1 .1) < 5.0;
                 let n = if again { hands.clicks.2 % 3 + 1 } else { 1 };
                 hands.clicks = (now, p, n);
                 s.select_start(col, row, n);
