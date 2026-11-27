@@ -1040,6 +1040,49 @@ scene W {
     }
 
     #[test]
+    fn a_property_each_copy_follows_is_that_copys_own() {
+        use crate::scene::{Behavior, Instr};
+        // With two monitors every copy of a `screens: each` scene followed the scene's one property,
+        // and the last copy's `follow` won: under the pointer on the first monitor its zones were
+        // entered and their light stayed at 0 (Bahía's Dock with two screens: its names never showed).
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/hover-each-copy.plm")).unwrap();
+        let copy_of = |instr: usize| scene.spans.iter().find(|s| s.instrs.contains(&instr)).map_or(0, |s| scene.surfaces[s.surface].instance);
+        // The pointer over the zones of one copy: what each copy's boxes show, once the follows have followed.
+        let lit = |on: usize| -> Vec<(usize, f32)> {
+            let facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+            let mut props: Vec<Animated> = scene.props.iter().map(|(_, x, _)| Animated::at(*x, Spring::LIVELY)).collect();
+            for (z, hover, _) in &scene.zone_springs {
+                let id = scene.zones[z.0 as usize].id;
+                let copy = if id.contains("#screen1") { 1 } else { 0 };
+                props[hover.0 as usize].x = if copy == on { 1.0 } else { 0.0 };
+            }
+            for b in &scene.behaviors {
+                if let Behavior::Follow { prop, to } | Behavior::Bind { prop, to } = b {
+                    let v = to.eval(Ctx { props: &props, facts: &facts, seen: None });
+                    props[prop.0 as usize].x = v;
+                }
+            }
+            let c = Ctx { props: &props, facts: &facts, seen: None };
+            scene.instrs.iter().enumerate().filter_map(|(k, i)| match i {
+                Instr::Fill { alpha, .. } | Instr::Solid { alpha, .. } => Some((copy_of(k), alpha.eval(c))),
+                _ => None,
+            }).collect()
+        };
+        for on in 0..2 {
+            let shown = lit(on);
+            // Three lights in each copy (the Dock's two, the tip): lit in the copy under the pointer, dark in the other.
+            for copy in 0..2 {
+                let alphas: Vec<f32> = shown.iter().filter(|(c, _)| *c == copy).map(|(_, a)| *a).collect();
+                assert_eq!(alphas.len(), 3, "copy {copy}: {shown:?}");
+                let want = if copy == on { 1.0 } else { 0.0 };
+                assert!(alphas.iter().all(|a| *a == want), "pointer on monitor {on}: copy {copy} shows {alphas:?}");
+            }
+        }
+        // The first copy's is the scene's own, as it is said and read from outside (`--say get sh.h.0`).
+        assert!(scene.props.iter().any(|p| p.0 == "sh.h.0") && scene.props.iter().any(|p| p.0 == "sh.h.0#screen1"));
+    }
+
+    #[test]
     fn a_zone_named_in_a_repeat_inside_a_for_is_each_rows_own() {
         use crate::scene::Trigger;
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/zone-in-repeat-in-for.plm")).unwrap();

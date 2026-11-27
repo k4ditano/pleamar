@@ -600,6 +600,11 @@ struct Compiler<'a> {
     copy_props: std::collections::HashSet<u32>,
     /// Reading a monitor's copy other than the first.
     later_copy: bool,
+    /// A property of the scene's that a monitor's copy other than the first
+    /// `follow`s: that copy's own, by the property's name and the copy's mark
+    /// (`sh.h.0#screen1`). From the `follow` on, what that copy reads and its
+    /// rules set is this one, and the first copy's is the property itself.
+    twins: HashMap<String, PropId>,
     /// How many groups with effects are open around what is being read.
     effects_depth: usize,
     /// Inside a `row` or a `column`, a child does not say where it goes: it goes to its slot.
@@ -707,7 +712,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), symbols, noting: Default::default(), scratch: Default::default(), resolved_name: Default::default(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), declaring_zone: false, zone_springs: Vec::new(), zone_springs_named: HashSet::default(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, brought_scenes, event_fields: HashMap::default(), boundary_of: HashMap::default(), permissions_of: HashMap::default(), pass: 0, next_origin: 0.0, values: HashMap::default(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::default(), copies: 0, let_props: HashMap::default(), copy_props: Default::default(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::default(), arrays: HashMap::default(), elements: HashMap::default(), hoisted: HashSet::default(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::default(), fold_scope: None, turns: HashMap::default(), folds: HashMap::default(), image_sites: HashMap::default(), type_index: Default::default(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), pending_margins: Vec::new(), pending_keyboards: Vec::new(), pending_rates: Vec::new(), hover_mentions: Default::default(), declaring_zone: false, zone_springs: Vec::new(), zone_springs_named: HashSet::default(), pending_anchors: Vec::new(), pending_screens: Vec::new(), files, dirs, strict_files, libraries, brought_scenes, event_fields: HashMap::default(), boundary_of: HashMap::default(), permissions_of: HashMap::default(), pass: 0, next_origin: 0.0, values: HashMap::default(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), hiding_noted: Default::default(), extra_noted: Default::default(), in_letters: Default::default(), in_cursor: Default::default(), scopes: Vec::new(), components: HashMap::default(), copies: 0, let_props: HashMap::default(), copy_props: Default::default(), later_copy: false, twins: HashMap::default(), effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::default(), arrays: HashMap::default(), elements: HashMap::default(), hoisted: HashSet::default(), in_hoisted: 0, hoisting: None, top: &[], rows: HashSet::default(), fold_scope: None, turns: HashMap::default(), folds: HashMap::default(), image_sites: HashMap::default(), type_index: Default::default(),
         page_defs: Vec::new(), page_of_file: Vec::new(), page_names: HashMap::default(), page_parts: HashSet::default(), page_reach: Default::default(), open_pages: Vec::new(),
     };
     // Two facts that always exist: what the surface really measures. The
@@ -2081,6 +2086,9 @@ impl<'a> Compiler<'a> {
 
     fn prop(&self, c: &mut Cur) -> R<PropId> {
         let n = self.global(&c.id("a property name")?);
+        if let Some(t) = self.twin_of(&n) {
+            return Ok(t);
+        }
         match self.props.get(&n) {
             Some(p) => {
                 if !self.page_names.is_empty() {
@@ -2091,6 +2099,35 @@ impl<'a> Compiler<'a> {
             None => self.unknown(c, "no property", &n, self.props.keys().collect()),
         }
     }
+    /// The copy's own of a property of the scene's (see `twins`), read or set in that copy.
+    fn twin_of(&self, n: &str) -> Option<PropId> {
+        if self.twins.is_empty() {
+            return None;
+        }
+        let mark = self.screen_mark()?;
+        self.twins.get(&format!("{n}{mark}")).copied()
+    }
+
+    /// `follow p = …` in a monitor's copy other than the first, where `p` is the scene's
+    /// one property and not the copy's: it gets one of its own, as that copy's zones
+    /// and `let`s are. Followed by every copy, the one property was the last copy's —the
+    /// last monitor's—: a `follow sh.h = if(dz.hover > 0.5, 1, 0)` under the pointer on
+    /// the first monitor stayed at 0, its `on enter` fired and its `hover` never showed.
+    fn twin_for_follow(&mut self, p: PropId) -> PropId {
+        let Some(mark) = self.screen_mark().filter(|_| self.later_copy) else { return p };
+        let (name, initial, spring) = self.e.props[p.0 as usize];
+        if name.contains("#screen") {
+            return p;
+        }
+        let own = format!("{name}{mark}");
+        if let Some(t) = self.twins.get(&own) {
+            return *t;
+        }
+        let t = self.e.prop_with(interned(&own), initial, spring);
+        self.twins.insert(own, t);
+        t
+    }
+
     fn fact(&self, c: &mut Cur) -> R<FactId> {
         let n = self.global(&c.id("a fact name")?);
         match self.facts.get(&n) {
@@ -2440,6 +2477,9 @@ impl<'a> Compiler<'a> {
 
     /// `resolve`, once the name is the scene's (`global`).
     fn resolve_global(&self, c: &Cur, n: &String) -> R<Expr> {
+        if let Some(t) = self.twin_of(n) {
+            return Ok(t.e());
+        }
         // Inside a screen copy, a `let` that was read once per
         // copy is stored with its mark: that is its own.
         // (Made in a scratch string, kept only when it is one: this is asked for every name read.)
@@ -6510,7 +6550,7 @@ impl<'a> Compiler<'a> {
     fn transition(&self, name: &str, value: &[Token], line: usize, col: usize) -> R<Transition> {
         PEEKED.with(|m| m.set((line, col)));
         let name = &self.global(name);
-        let Some(prop) = self.props.get(name).copied() else {
+        let Some(prop) = self.twin_of(name).or_else(|| self.props.get(name).copied()) else {
             let hint = closest_match(name, self.props.keys()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
             return Err(CompileError::at(line, col, format!("there is no property called '{name}'.{hint}")));
         };
@@ -10049,6 +10089,7 @@ impl<'a> Compiler<'a> {
             // follow chip.w = label.width + 32
             "follow" => {
                 let prop = self.prop(c)?;
+                let prop = self.twin_for_follow(prop);
                 c.expect_sym("=")?;
                 Behavior::Follow { prop, to: self.expr(c)? }
             }

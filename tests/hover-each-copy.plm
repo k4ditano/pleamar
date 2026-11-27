@@ -1,0 +1,22 @@
+// expect: ok
+language 0.12
+// What src/language/mod.rs reads (`a_property_each_copy_follows_is_that_copys_own`): a scene on every monitor
+// (`screens: each`) whose zones light through a property they `follow`, as Bahía's Dock and its bar's tips do.
+// Each copy follows its own: under the pointer on either monitor, that monitor's lights.
+scene HoverEach {
+    surface { size: full, full; screens: each max 2 }
+    repeat k in 0..2 {
+        zone box dz.$k { from: 100 + 100 * k, 1020; size: 80, 60 }
+        prop sh.h.$k = 0
+        follow sh.h.$k = if(dz.$k.hover > 0.5, 1, 0)
+        box { from: 100 + 100 * k, 1020; size: 80, 60; color: #ffffff; opacity: sh.h.$k }
+    }
+    group {
+        repeat d in 0..1 {
+            zone box tip.$d { from: 600, 0; size: 80, 30 }
+            prop tv.$d = 0
+            follow tv.$d = tip.$d.hover
+            box { from: 600, 0; size: 80, 30; color: #ffffff; opacity: tv.$d }
+        }
+    }
+}
