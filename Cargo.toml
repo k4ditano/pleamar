@@ -13,6 +13,8 @@ repository = "https://github.com/k4ditano/pleamar"
 desk = true
 # `provide_activation_token`: the tray's clicks bring a program forward (pleamar-wm's build.rs).
 activation = true
+# `ToNest::Maximized`: a scene's `maximized:` reaches its compositor's programs (pleamar-wm's build.rs).
+maximized = true
 
 [dependencies]
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control", "image-data"] }

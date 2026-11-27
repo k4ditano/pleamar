@@ -1143,6 +1143,7 @@ impl PlatformWindow for WaylandWindow {
             };
             top.resize(seat, serial, edge);
         }
+        flush_now(&self.wl);
     }
 
     fn own_window(&self, what: crate::scene::OwnWindow, maximized: bool, fullscreen: bool) -> bool {
@@ -1159,6 +1160,9 @@ impl PlatformWindow for WaylandWindow {
             W::ToggleFullscreen if fullscreen => top.unset_fullscreen(),
             W::ToggleFullscreen => top.set_fullscreen(None),
         }
+        // Out now: what is asked from a key (F11, Escape) changes nothing on screen, so no frame
+        // would carry it, and the window waited for the next thing to move (Proeasy, Fhinder).
+        flush_now(&self.wl);
         true
     }
 
@@ -2606,6 +2610,14 @@ impl raw_window_handle::HasDisplayHandle for SessionDisplay {
         Ok(unsafe { raw_window_handle::DisplayHandle::borrow_raw(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(ptr))) })
     }
 }
+/// What was asked of the compositor goes out at once, not with the next frame: for a request
+/// that changes nothing on screen by itself (`own_window`, `begin_move`).
+fn flush_now(surface: &wl_surface::WlSurface) {
+    if let Some(backend) = surface.backend().upgrade() {
+        let _ = backend.flush();
+    }
+}
+
 pub fn session_display() -> Option<SessionDisplay> {
     session_connection().map(SessionDisplay)
 }
