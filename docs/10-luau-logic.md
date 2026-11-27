@@ -215,7 +215,7 @@ On a machine with no sound server it says so once, and nothing is heard.
 
 Whatever is not a service yet can be got out with `spawn` and `run`, but that ties the script to one system: it is a stopgap until the service exists. `bar.luau` used to read the volume that way; it no longer calls anything of Linux's.
 
-On exit, the program stops everything the logic left running; on reloading the logic, too. And if it is killed outright, it all goes with it just the same (on Linux the kernel is asked to see to it).
+On exit, the program stops everything the logic left running; on reloading the logic, too, and only that logic's: saving a plugin's file stops what the plugin started, not what the scene's logic or another plugin did. And if it is killed outright, it all goes with it just the same (on Linux the kernel is asked to see to it).
 
 ## Plugins: one logic per library
 
@@ -242,7 +242,7 @@ What an event brings —a number, a text, a table (six levels, without functions
 
 Each plugin has its own Luau state —its memory, its timers, its processes— **and its own thread**: one that gets stuck does not hold back the others or the scene's logic. The scene may have no logic at all.
 
-`require("lib/format")` loads `lib/format.luau` from that logic's folder (the scene's, or the plugin's), once; whatever it returns is the module. No `..`, no whole paths: it does not leave its folder. Saving a module reloads the logic, like saving the main file. A module shares the logic's globals (`on`, `fact`, `sys`…), not its `local`s: what it needs from the main file goes to it as an argument, `require("pages/wifi")(shared)`.
+`require("lib/format")` loads `lib/format.luau` from that logic's folder (the scene's, or the plugin's), once; whatever it returns is the module. No `..`, no whole paths: it does not leave its folder. Saving a module reloads the logic that required it, like saving its main file (a plugin's module, that plugin's logic and no other). A module shares the logic's globals (`on`, `fact`, `sys`…), not its `local`s: what it needs from the main file goes to it as an argument, `require("pages/wifi")(shared)`.
 
 A **scene brought into another** (`import scene "bar.plm" as Bar`, see the
 reference) keeps its logic: `bar.luau` runs as a plugin's does, in its own

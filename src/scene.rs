@@ -3398,6 +3398,10 @@ pub enum Event {
     Data(String, crate::platform::SysValue),
     /// The logic file has changed.
     ReloadLogic,
+    /// These logic files have changed (a scene's, a plugin's, a module one of them
+    /// requires): only the logic they belong to starts again, and the others keep
+    /// what they had running.
+    ReloadLogicOf(std::sync::Arc<[std::path::PathBuf]>),
     /// The scene has been reloaded: these are now its facts and its texts.
     NewScene(Vec<(&'static str, f32)>, Vec<(&'static str, String)>, Permissions, Vec<Model>, Vec<(String, FactType)>, Vec<Plugin>, Vec<&'static str>, Vec<Service>, Translations),
     /// A layer has changed hands: (layer, who wins now).

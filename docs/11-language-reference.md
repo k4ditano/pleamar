@@ -236,7 +236,7 @@ library Clock strict {
 - Its boundary **lives under the name of the library**: inside it is written `now`; from the scene, `Clock.now`. Two plugins can each have their own `count`, and neither treads on the scene's.
 - Its logic runs in **its own Luau state**, and there `text.now` is `Clock.now`: it cannot name —cannot read, write or emit— anything that is not its own, neither the scene's nor another plugin's. It does not hear the keyboard, or the mouse, or anybody else's events; it does not ask for gestures or move the writing cursor.
 - What it touches of the system is set by **its** `permissions`. The scene's are no good to it, and its own are no good to the scene. On start-up this is printed: `logic  · plugin 'Clock' · permissions · commands: date · services: none`.
-- A scene may have no logic of its own and use plugins that do. Saving a plugin's `.plm` or `.luau` reloads hot, like everything else.
+- A scene may have no logic of its own and use plugins that do. Saving a plugin's `.plm` or `.luau` reloads hot, like everything else, and saving its `.luau` starts only that plugin's logic again: the scene's and the other plugins' keep their timers and the programs they started. The same for one that arrives while the scene runs (a part's file rewritten to import it).
 
 Asking for permissions without a `.luau` next to it is an error: there is nobody to use them.
 

@@ -60,6 +60,8 @@ struct Shared {
     /// And the libraries the scenes import, whose boundary a scene brought in owns as one alone does.
     libraries: Vec<String>,
     handlers: HashMap<String, Vec<Function>>,
+    /// The modules this logic loaded with `require`: saving one starts this logic again, and no other.
+    required: Vec<std::path::PathBuf>,
     timers: Vec<Timer>,
     processes: HashMap<u32, Function>,
     /// The commands still running: who gets told each line, and how to stop them.
@@ -977,6 +979,21 @@ impl LuauScript {
     /// its processes) goes with it and the old one goes on as it was. Before,
     /// the old one was stopped first, and a failed reload left timers pointing
     /// at a Lua already gone: the next one to fire brought the thread down.
+    /// The file is executed right on the logic's thread, with the scene delivered.
+    fn run_script(&mut self) {
+        // Before the file runs: a `bluetooth.connect` at its top level
+        // would otherwise pair as if nobody could be asked.
+        self.offer_pairing();
+        self.load_script();
+        self.subscribe_services();
+    }
+
+    /// Whether one of these files is this logic's: its own, or a module it requires.
+    fn owns(&self, changed: &[std::path::PathBuf]) -> bool {
+        let c = self.c.lock().unwrap();
+        changed.iter().any(|f| f.as_path() == std::path::Path::new(&self.logic) || c.required.contains(f))
+    }
+
     fn load_script(&mut self) {
         // Said before loading: if the script trips over a permission it does not have, let it be known why.
         if let (Some(p), true) = (&self.prefix, self.c.lock().unwrap().unapproved) {
@@ -1014,9 +1031,19 @@ impl LuauScript {
                 }
             }
             Err(e) => {
-                // What the failed one started goes with it; the old one, as it was.
+                // What the failed one started goes with it; the old one, as it was. But a
+                // module the failed one got to require is still this logic's: mending it
+                // has to start this logic again.
+                let tried = std::mem::take(&mut self.c.lock().unwrap().required);
                 self.release();
                 self.c = old;
+                let mut c = self.c.lock().unwrap();
+                for path in tried {
+                    if !c.required.contains(&path) {
+                        c.required.push(path);
+                    }
+                }
+                drop(c);
                 eprintln!("logic  · the previous one stays as it was:\n{e}");
             }
         }
@@ -1660,6 +1687,7 @@ impl LuauScript {
         // It is loaded once; whatever it returns is the module.
         let folder = std::path::Path::new(&self.logic).parent().map(std::path::Path::to_owned).unwrap_or_default();
         let loaded = lua.create_table()?;
+        let mine = self.c.clone();
         g.set("require", lua.create_function(move |lua, name: String| {
             let clean = !name.is_empty() && name.split('/').all(|t| !t.is_empty() && t != ".." && t != "." && t.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-'));
             if !clean {
@@ -1674,6 +1702,12 @@ impl LuauScript {
                 let mut r = REQUIRED.lock().unwrap();
                 if !r.contains(&path) {
                     r.push(path.clone());
+                }
+            }
+            {
+                let mut c = mine.lock().unwrap();
+                if !c.required.contains(&path) {
+                    c.required.push(path.clone());
                 }
             }
             let source = std::fs::read_to_string(&path).map_err(|e| mlua::Error::runtime(format!("require(\"{name}\"): {}: {e}", path.display())))?;
@@ -1818,12 +1852,12 @@ impl Script for LuauScript {
         let number = |v: f32| Value::Number(v as f64);
         match e {
             // The file is executed right on the logic's thread, with the scene delivered.
-            Event::Alarm("start") | Event::ReloadLogic => {
-                // Before the file runs: a `bluetooth.connect` at its top level
-                // would otherwise pair as if nobody could be asked.
-                self.offer_pairing();
-                self.load_script();
-                self.subscribe_services();
+            Event::Alarm("start") | Event::ReloadLogic => self.run_script(),
+            // Everyone hears which files changed; only whose they are starts again.
+            Event::ReloadLogicOf(changed) => {
+                if self.owns(&changed) {
+                    self.run_script();
+                }
             }
             Event::Signal(n, payload) => self.dispatch(n, payload.map_or(Value::Nil, number)),
             // `emit moved(x: a, y: b)`: a table, `{x = …, y = …}`; unnamed, `{…, …}` by place.
@@ -2482,6 +2516,68 @@ mod tests {
         // The scene set its degrees and its hours before emitting: the plugin had them when it heard.
         assert_eq!(texts.get("Weather.got").map(String::as_str), Some("clear 30 1"), "{texts:?}");
         assert!(!texts.contains_key("Weather.heard"), "the plugin heard its own write: {texts:?}");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Saving a logic starts that logic again and no other: a plugin's leaves the scene's
+    /// running (and whatever it started), the scene's leaves its plugins', and a module
+    /// belongs to whoever required it.
+    #[test]
+    fn saving_a_logic_starts_only_that_one_again() {
+        use super::{LuauScript, Script};
+        use crate::scene::{Event, ToRender};
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("pleamar-reload-of-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("lib/weather.plm"), "library Weather strict {\n    text out = \"\"\n}\n").unwrap();
+        std::fs::write(dir.join("lib/unit.luau"), "return \"p\"\n").unwrap();
+        // Each start adds a letter to what the text already said: it counts the starts.
+        std::fs::write(dir.join("lib/weather.luau"), "text.out = text.out .. require(\"unit\")\n").unwrap();
+        let (scene, logic) = (dir.join("owner.plm"), dir.join("owner.luau"));
+        std::fs::write(&scene, "import \"lib/weather.plm\"\nscene Owner {\n    surface { size: 10, 10 }\n    text seen = \"\"\n}\n").unwrap();
+        std::fs::write(&logic, "text.seen = text.seen .. \"s\"\n").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (to_logic, letters) = std::sync::mpsc::channel();
+        let blocked = std::sync::Arc::default();
+        let mut s = LuauScript::new(&scene.to_string_lossy(), &logic.to_string_lossy(), tx.clone(), to_logic, std::sync::Arc::clone(&blocked));
+        s.scene();
+        let mut ctx = crate::logic::Context::for_plugin(tx, blocked);
+        let mut texts: std::collections::HashMap<&str, String> = Default::default();
+        // Gives it an event and waits for both texts to say what is expected, or for a while.
+        let mut after = |s: &mut LuauScript, e: Event, seen: &str, out: &str| {
+            s.on_event(e, &mut ctx);
+            let until = std::time::Instant::now() + Duration::from_secs(5);
+            let mut settled = None;
+            while std::time::Instant::now() < until {
+                while let Ok(e) = letters.try_recv() {
+                    s.on_event(e, &mut ctx);
+                }
+                for m in rx.try_iter() {
+                    if let ToRender::Text(k, v) = m {
+                        texts.insert(k, v);
+                    }
+                }
+                let there = texts.get("seen").map(String::as_str) == Some(seen) && texts.get("Weather.out").map(String::as_str) == Some(out);
+                // Once there, a moment more: a logic that should not have started again would say so now.
+                match (there, settled) {
+                    (true, None) => settled = Some(std::time::Instant::now()),
+                    (true, Some(t)) if t.elapsed() > Duration::from_millis(200) => break,
+                    (false, Some(_)) => break,
+                    _ => {}
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!((texts.get("seen").map(String::as_str), texts.get("Weather.out").map(String::as_str)), (Some(seen), Some(out)), "{texts:?}");
+        };
+        let files = |names: &[&str]| -> std::sync::Arc<[std::path::PathBuf]> { names.iter().map(|n| dir.join(n)).collect() };
+        after(&mut s, Event::Alarm("start"), "s", "p");
+        after(&mut s, Event::ReloadLogicOf(files(&["lib/weather.luau"])), "s", "pp");
+        after(&mut s, Event::ReloadLogicOf(files(&["owner.luau"])), "ss", "pp");
+        // The module is the plugin's: the scene, which never required it, stays.
+        after(&mut s, Event::ReloadLogicOf(files(&["lib/unit.luau"])), "ss", "ppp");
+        after(&mut s, Event::ReloadLogicOf(files(&["owner.luau", "lib/weather.luau"])), "sss", "pppp");
         drop(s);
         let _ = std::fs::remove_dir_all(&dir);
     }

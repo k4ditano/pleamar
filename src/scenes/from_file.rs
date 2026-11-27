@@ -69,7 +69,7 @@ impl FromFile {
         let logic = logic_path_for(&self.path);
         let wants = match e {
             Event::NewScene(_, _, _, _, _, plugins, _, services, _) => !plugins.is_empty() || !services.is_empty() || std::path::Path::new(&logic).is_file(),
-            Event::ReloadLogic => std::path::Path::new(&logic).is_file(),
+            Event::ReloadLogic | Event::ReloadLogicOf(_) => std::path::Path::new(&logic).is_file(),
             _ => false,
         };
         if !wants {
@@ -228,46 +228,49 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
     std::thread::Builder::new()
         .name("reload-logic".into())
         .spawn(move || {
-            // The scene's and its plugins': touching any of them reloads them.
-            let all = |scene: &str| -> Vec<String> {
+            // The scene's logic, its plugins' and the modules they load with `require`: saving
+            // one starts again the logic it belongs to, and only that one.
+            let plugins_now = |scene: &str| PLUGIN_LOGIC.lock().unwrap().as_ref().filter(|(p, _)| p == scene).map(|(_, l)| l.clone());
+            let date = |r: &str| std::fs::metadata(r).and_then(|m| m.modified()).ok();
+            let with_modules = |plugins: &[String]| -> Vec<String> {
                 let mut v = vec![logic.clone()];
-                let known = PLUGIN_LOGIC.lock().unwrap().as_ref().filter(|(p, _)| p == scene).map(|(_, l)| l.clone());
-                match known {
-                    Some(l) => v.extend(l),
-                    None => {
-                        if let Ok(e) = read(scene) {
-                            v.extend(e.plugins.iter().map(|p| p.logic.to_string_lossy().into_owned()));
-                        }
-                    }
-                }
-                v
-            };
-            let date = |v: &[String]| v.iter().map(|r| std::fs::metadata(r).and_then(|m| m.modified()).ok()).collect::<Vec<_>>();
-            // And the modules it loads with `require`, as it loads them.
-            let with_modules = |v: &[String]| -> Vec<String> {
-                #[allow(unused_mut)]
-                let mut v = v.to_vec();
+                v.extend(plugins.iter().cloned());
                 #[cfg(feature = "luau")]
                 v.extend(crate::logic_luau::REQUIRED.lock().unwrap().iter().map(|p| p.to_string_lossy().into_owned()));
                 v
             };
-            let mut watched = all(&scene_for_logic);
-            let mut last = date(&with_modules(&watched));
+            // Before the scene has been read here: read once to know its plugins.
+            let mut plugins = plugins_now(&scene_for_logic)
+                .or_else(|| read(&scene_for_logic).ok().map(|e| e.plugins.iter().map(|p| p.logic.to_string_lossy().into_owned()).collect()))
+                .unwrap_or_default();
+            let mut watched = with_modules(&plugins);
+            let mut last: Vec<_> = watched.iter().map(|r| date(r)).collect();
             loop {
                 std::thread::sleep(Duration::from_millis(250));
-                let now = date(&with_modules(&watched));
-                // A module required for the first time: watched from here on.
-                if now.len() != last.len() {
+                // A reload of the scene may have brought a plugin, and a logic may have required
+                // a module for the first time: watched from here on, as they are now (they have
+                // just been read: arriving is not changing). A plugin brought hot was never
+                // watched before, and saving its logic did nothing.
+                if let Some(p) = plugins_now(&scene_for_logic) {
+                    plugins = p;
+                }
+                let current = with_modules(&plugins);
+                if current != watched {
+                    last = current.iter().map(|r| watched.iter().position(|w| w == r).map_or_else(|| date(r), |i| last[i])).collect();
+                    watched = current;
+                }
+                let now: Vec<_> = watched.iter().map(|r| date(r)).collect();
+                let changed: Vec<std::path::PathBuf> = watched.iter().zip(now.iter().zip(&last)).filter(|(_, (n, l))| n.is_some() && n != l).map(|(r, _)| r.into()).collect();
+                if changed.is_empty() {
+                    // One that is gone is remembered as gone: coming back is a change.
                     last = now;
                     continue;
                 }
-                if now != last && now.iter().any(Option::is_some) {
-                    std::thread::sleep(Duration::from_millis(80));
-                    watched = all(&scene_for_logic);
-                    last = date(&with_modules(&watched));
-                    if to_logic.send(Event::ReloadLogic).is_err() {
-                        return;
-                    }
+                // An editor saves in steps: let it finish.
+                std::thread::sleep(Duration::from_millis(80));
+                last = watched.iter().map(|r| date(r)).collect();
+                if to_logic.send(Event::ReloadLogicOf(changed.into())).is_err() {
+                    return;
                 }
             }
         })
