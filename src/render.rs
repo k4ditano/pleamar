@@ -33,6 +33,8 @@ struct NestWindow {
     geometry: [i32; 4],
     pieces: Vec<NestPiece>,
     ask: Option<(i32, i32)>,
+    /// Whether it was last told it is maximized (`maximized:`).
+    maximized: Option<bool>,
 }
 
 /// One surface of a window: its layer of the windows' texture, where it goes,
@@ -1171,6 +1173,7 @@ pub fn run(
                                 p.uploaded = false;
                             }
                             w.ask = None;
+                            w.maximized = None;
                         }
                         nest_size = (0, 0);
                     }
@@ -1760,6 +1763,10 @@ pub fn run(
                                 nest_screens.resize(n.max, 0);
                             }
                             nest_screens[slot] = screen;
+                            // A new program in the slot has not been told whether it is maximized.
+                            if let Some(w) = nest_windows.get_mut(slot) {
+                                w.maximized = None;
+                            }
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.screen"), screen as f32);
                             // What the window before it in this slot looked like is not its own:
                             // the compositor says this one's next.
@@ -4899,11 +4906,20 @@ pub fn run(
                 // another monitor—): it asked for another size too, and the
                 // window was told two sizes over and over (Discord, black).
                 for i in found.iter().filter(|k| !absent.iter().any(|r| r.contains(&**k)) && !draw.hidden.get(**k).copied().unwrap_or(false)).map(|k| &to_paint[*k]) {
-                    let Instr::Window { slot, ask, alpha, .. } = i else { continue };
+                    let Instr::Window { slot, ask, alpha, maximized, .. } = i else { continue };
                     // Only where it is shown: with a copy of the scene per monitor,
                     // the copies where it is not would ask it for another size.
                     if alpha.eval(c) <= 0.001 {
                         continue;
+                    }
+                    // Maximized or not, as the scene says: only when it changes. (Said before its
+                    // size, so the program has both in one configure where it can.)
+                    if let (Some(m), Some(w)) = (maximized, nest_windows.get_mut(*slot)) {
+                        let yes = m.eval(c) > 0.5;
+                        if w.maximized != Some(yes) {
+                            w.maximized = Some(yes);
+                            send(ToNest::Maximized(*slot, yes));
+                        }
                     }
                     // `ask: 0, 0`: the size it chooses (a dialog of its own size);
                     // `ask: -1, -1`: nothing, a picture of it (a dock's preview) that

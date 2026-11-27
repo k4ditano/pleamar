@@ -1674,7 +1674,9 @@ pub enum Instr {
     /// (`windows`): what it last drew, stretched over `target` (x, y, width,
     /// height). `ask` is the size it is told to have; while the box travels on
     /// its springs, the window keeps its size and is only stretched.
-    Window { slot: usize, target: (Expr, Expr, Expr, Expr), alpha: Expr, ask: (Expr, Expr) },
+    /// `maximized`: whether the scene has it maximized (`maximized: tile.$i == 1`), told to its
+    /// compositor and by it to the program (language 0.12); `None`, the scene does not say.
+    Window { slot: usize, target: (Expr, Expr, Expr, Expr), alpha: Expr, ask: (Expr, Expr), maximized: Option<Expr> },
     /// A terminal (`terminal NAME`): a shell on a pty of its own, its screen
     /// drawn over `target` in cells of the font `family` at `px` (see
     /// `crate::terminal`). `run`: while it holds the shell lives, drawn or not;
@@ -3312,6 +3314,9 @@ pub enum ToNest {
     Promote(usize),
     /// That window to fullscreen, or back from it.
     Fullscreen(usize),
+    /// The scene has that window maximized (true) or not (false): its program is told so, and
+    /// its own «maximize» button asks for what it is not (`window … { maximized: … }`, 0.12).
+    Maximized(usize, bool),
     /// That window put away (true), or brought back (false).
     Minimize(usize, bool),
     /// That window floating over the layout (true), or back in it (false).

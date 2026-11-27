@@ -1661,7 +1661,11 @@ reloads on save while the programs in it keep running.
 travel on its springs and `ask` be where it is going, and the program is only
 asked once, not every frame. While box and `ask` differ, the window is scaled
 by as much as its box is; a program that cannot be that small comes out cut at
-its box, not squashed. The window is a zone with its name —`on press win.$i`,
+its box, not squashed. `maximized: tile.$i == 1` (0.12) says when the scene has it
+maximized —filling its monitor, however the scene decided it—: its program is told so (and draws
+its «restore» button, its square corners), and whoever lists the windows. Its own «maximize» or
+«restore» then reaches the scene as `window_maximize(i)` only when it asks for what it is not: a
+scene that does not say `maximized:` gets every «maximize», as before, and no «restore». The window is a zone with its name —`on press win.$i`,
 `win.$i.hover`— and the mouse and the keys reach it through it: the pointer in
 its own pixels, the keys while it has the keyboard, except the ones the scene
 has a rule for (`on key Alt+Return`, or `on key Escape while overview` while
@@ -2180,7 +2184,7 @@ properties.path: at size
 properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight opacity show
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown link code quote heading strike images code_block paragraph list_indent place tight
 properties.image: at size opacity tint cell fit show grow place
-properties.window: at size ask opacity show
+properties.window: at size ask opacity show maximized
 properties.terminal: at size family font_size line_height colors cursor selection command folder env run opacity show label agent place grow
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow place
 properties.shader: at size corner opacity show values colors grow place

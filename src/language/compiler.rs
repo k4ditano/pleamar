@@ -9059,12 +9059,17 @@ impl<'a> Compiler<'a> {
             Some(c) => alpha * self.expr(c)?.clamp(0.0, 1.0),
             None => alpha,
         };
+        // `maximized: tile.$i == 1` (0.12): the scene has it so, and the program is told.
+        let maximized = match p.get_mut("maximized") {
+            Some(c) => Some(self.expr(c)?),
+            None => None,
+        };
         // Its zone: where it is drawn, and only while it can be seen. Not for a
         // picture of it (`ask: -1, -1`, a preview): the mouse over the picture
         // is not over the window.
         let picture = matches!((&ask.0, &ask.1), (Expr::K(a), Expr::K(b)) if *a < 0.0 && *b < 0.0);
         if picture {
-            self.e.paint(Instr::Window { slot, target: (x, y, w, h), alpha, ask });
+            self.e.paint(Instr::Window { slot, target: (x, y, w, h), alpha, ask, maximized: None });
             return Ok(());
         }
         let zone = self.declare_zone(&local);
@@ -9088,7 +9093,7 @@ impl<'a> Compiler<'a> {
             handle: None,
             yields: None,
         });
-        self.e.paint(Instr::Window { slot, target: (x, y, w, h), alpha, ask });
+        self.e.paint(Instr::Window { slot, target: (x, y, w, h), alpha, ask, maximized });
         Ok(())
     }
 

@@ -3190,7 +3190,7 @@ impl DrawList {
                         self.picture_marks.push((at as u32, slot.page));
                     }
                 }
-                Instr::Window { slot, target, alpha, ask } => {
+                Instr::Window { slot, target, alpha, ask, .. } => {
                     let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
                     if a <= 0.001 {
                         continue;

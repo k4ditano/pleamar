@@ -7,7 +7,8 @@ The highlights of each line of releases; every release, with what changed, is in
   `toggle maximize self` and `toggle fullscreen self` ask the compositor for the
   scene's own window; `self.maximized`, `self.fullscreen` and `self.active` say
   what it did, and `self.can_minimize`… what it can do; `on double bar` hears a
-  double press, so a title bar maximizes on it. Scenes from before read the same.
+  double press, so a title bar maximizes on it. A compositor scene tells a program
+  it has maximized it with `maximized:` on its `window`. Scenes from before read the same.
   Also: a part brought with `include` finds `lib:` and `import scene` as the
   scene does, and `--say … "fact x 1" "emit go"` reaches the logic in that order.
 - **Language 0.11 (exp2): installed libraries.** `import "lib:tide/tokens"

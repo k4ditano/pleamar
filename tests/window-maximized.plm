@@ -1,0 +1,11 @@
+// expect: ok
+language 0.12
+// The scene says when it has one of its windows maximized: its program is told (`maximized:`).
+scene Maxed {
+    surface { size: 800, 600; kind: window }
+    windows win max 2
+    fact big = 0
+    window win.0 { at: 0, 0; size: if(big, 800, 400), if(big, 600, 300); maximized: big }
+    on window_maximize(v) while v == 0 { big = if(big, 0, 1) }
+    event window_maximize
+}
