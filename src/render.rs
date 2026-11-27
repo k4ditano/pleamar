@@ -657,6 +657,10 @@ pub fn run(
     let mut clicks: (Instant, (f32, f32), u32) = (crate::clock::now(), (0.0, 0.0), 0);
     // The last press of the left button on a zone, for `on double` (see `double_press`).
     let mut last_click: Option<(usize, Instant, (f32, f32))> = None;
+    // A press on a `handle: self` zone that has not carried the window yet: where, and by which edges.
+    // A carry (edges 0) starts only once the pointer goes `CARRY_SLOP` from there with the button
+    // down, as GTK does with a title bar: a click, or the two of a double click, never carry it.
+    let mut handle_pending: Option<((f32, f32), u32)> = None;
     // The zone a drag out was tried from, until the button is let go.
     let mut carry_tried: Option<usize> = None;
     let mut repeat: Option<(String, Option<String>, Mods, Instant)> = None;
@@ -2866,10 +2870,15 @@ pub fn run(
                             let twice = double_press(&mut last_click, k, p, now) && scene.rules.iter().any(|r| matches!(r.when, Trigger::Double(z) if z.0 as usize == k));
                             if twice {
                                 doubled = Some(k);
+                                handle_pending = None;
+                            } else if edges == 0 {
+                                // Carried once the pointer moves (see `handle_pending`).
+                                handle_pending = Some((p, 0));
                             } else if let Some(l) = sheets.iter().filter(|l| l.view.popup.is_none()).find(|l| {
                                 let v = l.view.bounds();
                                 p.0 >= v[0] && p.0 < v[2] && p.1 >= v[1] && p.1 < v[3]
                             }) {
+                                // An edge stretches from the press, as a frame's edge does.
                                 l.begin_move(edges);
                             }
                             // A press as any other for its rules (`on press bar`), the first of a pair
@@ -2960,6 +2969,8 @@ pub fn run(
                     }
                 }
                 (0, false) => {
+                    // Let go before it moved: it was a click on the bar, not a carry.
+                    handle_pending = None;
                     crate::terminal::release(&draw.terminals, pointer, &mut term_hands);
                     if let Some(s) = &mut selection {
                         s.dragging = false;
@@ -3074,6 +3085,18 @@ pub fn run(
             if let Some(t) = draw.selectable.iter().find(|t| t.at == s.at) {
                 let (lx, ly) = t.local(p.0, p.1);
                 s.cursor = t.layout.byte_at(lx, ly).min(t.text.len());
+            }
+        }
+        // A window's own bar pressed and the pointer gone far enough with the button down: now it is carried.
+        if let (Some((from, edges)), Some(p)) = (handle_pending, pointer)
+            && carry_starts(from, p)
+        {
+            handle_pending = None;
+            if let Some(l) = sheets.iter().filter(|l| l.view.popup.is_none()).find(|l| {
+                let v = l.view.bounds();
+                from.0 >= v[0] && from.0 < v[2] && from.1 >= v[1] && from.1 < v[3]
+            }) {
+                l.begin_move(edges);
             }
         }
         let dragged = match (drag, pointer) {
@@ -8946,6 +8969,15 @@ mod pace_tests {
     }
 }
 
+/// How far the pointer goes, button down, from a press on a window's own bar (`handle: self`)
+/// before the window is carried: GTK's drag threshold.
+const CARRY_SLOP: f32 = 8.0;
+
+/// Whether a press on a window's own bar at `from` has become a carry with the pointer at `p`.
+fn carry_starts(from: (f32, f32), p: (f32, f32)) -> bool {
+    (p.0 - from.0).hypot(p.1 - from.1) >= CARRY_SLOP
+}
+
 /// How soon a second click has to come to make a double one: 450 ms, or what
 /// `PLEAMAR_DOUBLE_CLICK_MS` says (100 to 2000), for a hand that clicks slower. For a word
 /// on a text, a terminal's and `on double`.
@@ -8980,5 +9012,15 @@ mod double_press_tests {
         assert!(!double_press(&mut last, 4, (12.0, 11.0), ms(1000)), "on another zone");
         assert!(!double_press(&mut last, 4, (30.0, 11.0), ms(1100)), "too far");
         assert!(double_press(&mut last, 4, (31.0, 12.0), ms(1300)));
+    }
+
+    /// A press on a window's own bar carries it only once the pointer has gone GTK's 8 px.
+    #[test]
+    fn a_window_is_carried_from_its_bar_only_once_the_pointer_moves() {
+        use super::carry_starts;
+        assert!(!carry_starts((100.0, 20.0), (100.0, 20.0)), "pressed and still");
+        assert!(!carry_starts((100.0, 20.0), (104.0, 23.0)), "a hand that shakes a little");
+        assert!(carry_starts((100.0, 20.0), (108.0, 20.0)));
+        assert!(carry_starts((100.0, 20.0), (90.0, 30.0)));
     }
 }

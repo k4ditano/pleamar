@@ -1124,8 +1124,9 @@ impl PlatformWindow for WaylandWindow {
         let Some((serial, when, from)) = pp.last_press.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() else { return };
         let Some(seat) = from.or_else(|| pp.seat.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()) else { return };
         let seat = &seat;
-        // Only from a press just made: the compositor refuses an old one anyway.
-        if when.elapsed() > std::time::Duration::from_millis(1500) {
+        // Only from a press still held (the render asks only then; a carry starts once the pointer
+        // moves): an old one the compositor refuses anyway. A minute is a hand that waits before moving.
+        if when.elapsed() > std::time::Duration::from_secs(60) {
             return;
         }
         if edges == 0 {

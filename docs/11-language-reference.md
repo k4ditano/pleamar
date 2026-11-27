@@ -1630,7 +1630,7 @@ reloads on save while the programs in it keep running.
 | `win.$i.rule.NAME` | what the compositor's window rules set for it with `set NAME VALUE` (pleamar-wm's `window app=X set NAME VALUE` in `session.conf`); 0 while no rule sets it. NAME is any word of the scene's own (`rule.opacity`, `rule.noshadow`): `--check` accepts any, and the scene decides what each means |
 | `win.$i.held` · `win.$i.edges` | what it asks from its own title bar or edges while the button is down: 1 to be carried with the mouse, 2 to be stretched by `edges` (1 top, 2 bottom, 4 left, 8 right, added: 10 is the bottom right corner); 0 when the button is let go. Floating windows follow `cursor.x`, `cursor.y` while it lasts |
 | `yields: true` (on a zone) | the zone only counts a press that nothing below the scene takes. A window manager that puts programs' widgets under its own scene (pleamar-wm: a clock on the desktop, on layer-shell's bottom level) gives them the press first where the zone is; where there is none, the zone gets it. A desktop's right button over the whole screen, without taking the clicks of the widgets on it. Anywhere else, a zone like any other. It may be an expression |
-| `handle: self` · `handle: self, bottom_right` (on a zone) | in a window that draws its own frame (`decorations: none` on its `surface`), pressing the zone has the compositor carry the window, or stretch it by that edge, until the button is let go. If the zone has an `on double` rule, its second press of a pair is that, not another carry (§10.5) |
+| `handle: self` · `handle: self, bottom_right` (on a zone) | in a window that draws its own frame (`decorations: none` on its `surface`), pressing the zone and moving the pointer 8 px with the button down has the compositor carry the window, until the button is let go; pressing an edge's zone stretches it by that edge at once. A click, or the two presses of a double click (§10.5), never carry it |
 | `handle: i` · `handle: i, left` (on a zone) | the zone is window `i`'s handle: by which it is carried, or stretched by that edge (`top`, `bottom`, `left`, `right`, `top_left`, `top_right`, `bottom_left`, `bottom_right`). When the window asks from its own title bar or edges (`win.$i.held`), the zone is pressed for it, on the monitor's copy the mouse is over, and let go with the button: its `press`, `drag` and `release` rules are the ones that carry or stretch it, the same as when the zone itself is pressed. An edge that has no zone of its own gets the one that shares the most of it; a zone that is not `active:` is not pressed |
 | `win.$i.fullscreen` | it is fullscreen: it asked (a video, a game, F11) or the scene did. Where it goes is still the scene's: draw it over the whole monitor, and ask it for that size |
 | `win.$i.workspace` | the workspace it is on, by its turn in its monitor's stack (from 1): the one its monitor showed when it opened, or the one it was sent to. It changes when one above it dries up |
@@ -1860,8 +1860,10 @@ compositor tells otherwise (with no screen, `--film`, they stay so).
 **`on double zone`** fires on the second press of a pair: on the same zone, within 450 ms and 5 px of
 the first, as a double click selects a word (`PLEAMAR_DOUBLE_CLICK_MS`, from 100 to 2000, changes both
 for a hand that clicks slower). The first press is a `press` as any other, and a third
-starts another pair. On a `handle: self` zone the second press does not start another carry, so the
-compositor is not carrying the window while it is asked to maximize it. `on double` with no zone
+starts another pair. On a `handle: self` zone a press carries the window only once the pointer moves 8 px with the
+button down (as GTK does with a title bar), so a click or a double click never carries it: the
+compositor is not carrying the window —nor a desktop un-maximizing it to carry it— while it is asked to
+maximize it or bring it back. `on double` with no zone
 after it, `on double { … }`, is still an event called `double`, as `maximize = 1` still writes a fact
 called `maximize`: scenes from before 0.12 read the same.
 
