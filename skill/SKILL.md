@@ -275,6 +275,10 @@ scene Notices {
   works out which rows are seen; `stick: end` keeps it at its end, as a chat.
 - **Windows and popups**: `decorations: none` on a window's surface draws its
   own frame, and a zone with `handle: self` carries it (`handle: self, bottom_right` stretches it);
+  its buttons ask for it what a compositor's frame would (0.12): `minimize self`, `toggle maximize self`,
+  `restore self`, `toggle fullscreen self`, and `on double bar` maximizes on a double press. It knows
+  what the compositor did with `self.maximized`, `self.fullscreen`, `self.active` (dim the bar without
+  it) and `self.can_minimize` (hide «–» where windows are never put away): `examples/own-frame.plm`;
   a `popup` can take the keyboard (`keyboard: true`, Escape closes it) and open
   out of another (`parent: menu`).
 - **Ready pieces**: `import "pleamar:ui"` brings `Button`, `Switch`, `Tabs`,

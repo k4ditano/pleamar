@@ -1145,6 +1145,23 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
+    fn own_window(&self, what: crate::scene::OwnWindow, maximized: bool, fullscreen: bool) -> bool {
+        use crate::scene::OwnWindow as W;
+        let Some(top) = &self.toplevel else { return false };
+        match what {
+            W::Minimize => top.set_minimized(),
+            W::Maximize => top.set_maximized(),
+            W::Fullscreen => top.set_fullscreen(None),
+            W::Restore if fullscreen => top.unset_fullscreen(),
+            W::Restore => top.unset_maximized(),
+            W::ToggleMaximize if maximized => top.unset_maximized(),
+            W::ToggleMaximize => top.set_maximized(),
+            W::ToggleFullscreen if fullscreen => top.unset_fullscreen(),
+            W::ToggleFullscreen => top.set_fullscreen(None),
+        }
+        true
+    }
+
     fn update_blur_region(&self, boxes: &[[i32; 4]]) {
         let Some(effects) = BACKGROUND_EFFECTS.get() else { return };
         let mut effect = self.effect.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1293,6 +1310,8 @@ struct State {
     capture_hulls: std::collections::HashMap<u32, Assembled>,
     /// The buffers on the card the compositor copies captures into, by sheet.
     card_buffers: std::collections::HashMap<u32, (Arc<super::CardBackdrop>, WlBuffer)>,
+    /// What was last said of the scene's own window (`own_state`): none yet, the scene's defaults.
+    own_said: Option<[bool; 6]>,
 }
 
 /// The Wayland objects that tell us nothing.
@@ -2523,6 +2542,7 @@ impl WindowHandler for State {
     }
     fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, v: &Window, conf: WindowConfigure, _: u32) {
         let size = (conf.new_size.0.map_or(0, |x| x.get()), conf.new_size.1.map_or(0, |x| x.get()));
+        self.own_state(v.wl_surface(), &conf);
         self.configured(&v.wl_surface().clone(), size);
     }
 }
@@ -2642,6 +2662,7 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
         capture_buffers: std::collections::HashMap::new(),
         capture_hulls: std::collections::HashMap::new(),
         card_buffers: std::collections::HashMap::new(),
+        own_said: None,
         instance,
         wanted,
         extra_height,
@@ -2747,6 +2768,35 @@ impl State {
         if let Some(c) = MOVABLE_LAYERS.get() {
             c.placed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|(_, layer, _, _, _)| layer.wl_surface() != wl);
         }
+    }
+
+    /// What the compositor says of the scene's window in each configure, as the facts
+    /// `self.maximized`, `self.fullscreen`, `self.active` and what it can do with it,
+    /// `self.can_minimize`, `self.can_maximize`, `self.can_fullscreen` (language 0.12). Of the
+    /// scene's first window, if it has several; each one only when it changes.
+    fn own_state(&mut self, wl: &wl_surface::WlSurface, conf: &WindowConfigure) {
+        use smithay_client_toolkit::reexports::csd_frame::{WindowManagerCapabilities as Can, WindowState as Is};
+        let first = self.placed.iter().filter(|p| matches!(p.role, Role::Window(_))).min_by_key(|p| p.which);
+        if first.is_none_or(|p| p.role.wl() != wl) {
+            return;
+        }
+        let now = [
+            conf.state.contains(Is::MAXIMIZED),
+            conf.state.contains(Is::FULLSCREEN),
+            conf.state.contains(Is::ACTIVATED),
+            conf.capabilities.contains(Can::MINIMIZE),
+            conf.capabilities.contains(Can::MAXIMIZE),
+            conf.capabilities.contains(Can::FULLSCREEN),
+        ];
+        const NAMES: [&str; 6] = ["self.maximized", "self.fullscreen", "self.active", "self.can_minimize", "self.can_maximize", "self.can_fullscreen"];
+        // Before the first one, what the scene starts with (`ALWAYS_ONE` in the compiler).
+        let was = self.own_said.unwrap_or([false, false, true, true, true, true]);
+        for k in 0..NAMES.len() {
+            if now[k] != was[k] {
+                let _ = self.to_render.send(ToRender::ExternalFact(NAMES[k], if now[k] { "1" } else { "0" }.into()));
+            }
+        }
+        self.own_said = Some(now);
     }
 
     /// Until the compositor configures it nothing can be attached to it: it's now

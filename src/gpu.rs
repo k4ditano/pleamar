@@ -6861,6 +6861,9 @@ impl Sheet {
     }
 
     /// The compositor carries or stretches its window (`handle: self`).
+    pub fn own_window(&self, what: crate::scene::OwnWindow, maximized: bool, fullscreen: bool) -> bool {
+        self.window.own_window(what, maximized, fullscreen)
+    }
     pub fn begin_move(&self, edges: u32) {
         self.window.begin_move(edges);
     }

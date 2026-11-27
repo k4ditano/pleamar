@@ -809,7 +809,21 @@ pub fn run_with(options: Vec<String>) {
                 }
                 // What is set from outside, the logic has to know: it did not set it itself.
                 // What is written is understood according to what that fact is: `true`, `critical`, `3`.
-                "fact" => tx.send(ToRender::ExternalFact(scene::intern(who), rest.to_owned())),
+                // To the logic at once as well, as `emit` and `text` go: through the render alone a
+                // `fact x 1` followed by `emit go` in one order reached the logic after the `emit`.
+                // What it is worth is read here, as the render would; a fact this scene does not have,
+                // or words it cannot be, go to the render, which says so.
+                "fact" => {
+                    let name = scene::intern(who);
+                    let worth = scene::SAID_FACTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().find(|(n, _)| *n == name).and_then(|(_, kind)| said_fact(kind.as_ref(), rest));
+                    match worth {
+                        Some(v) => {
+                            let _ = to_logic.send(Event::Fact(name, v));
+                            tx.send(ToRender::ExternalFactTold(name, v))
+                        }
+                        None => tx.send(ToRender::ExternalFact(name, rest.to_owned())),
+                    }
+                }
                 "text" => {
                     let _ = to_logic.send(Event::Text(scene::intern(who), rest.to_owned()));
                     tx.send(ToRender::Text(scene::intern(who), rest.to_owned()))
@@ -881,6 +895,16 @@ pub fn run_with(options: Vec<String>) {
 /// What is said to a scene brought in (G22) is said to its names: `--say bar emit rang`
 /// is `emit Bar.rang` for the scene that brought it in as Bar. The orders that name
 /// something take the name; the others (`wait`, `watch`, `describe`…) are the scene's as they are.
+/// What `--say fact name words` makes the fact worth, as the render reads it (`ToRender::ExternalFact`):
+/// by its kind first (`critical`, `true`), else as a number, else `true` / `false`.
+fn said_fact(kind: Option<&scene::FactType>, written: &str) -> Option<f32> {
+    kind.and_then(|t| t.from_text(written)).or_else(|| written.parse().ok()).or(match written {
+        "true" => Some(1.0),
+        "false" => Some(0.0),
+        _ => None,
+    })
+}
+
 fn under(prefix: &str, line: &str) -> String {
     let t = line.trim();
     if prefix.is_empty() {

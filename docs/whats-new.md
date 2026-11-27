@@ -2,6 +2,14 @@
 
 The highlights of each line of releases; every release, with what changed, is in [Releases](https://github.com/k4ditano/pleamar/releases).
 
+- **Language 0.12 (exp2): a window with a frame of its own does what a
+  compositor's frame does.** `minimize self`, `maximize self`, `restore self`,
+  `toggle maximize self` and `toggle fullscreen self` ask the compositor for the
+  scene's own window; `self.maximized`, `self.fullscreen` and `self.active` say
+  what it did, and `self.can_minimize`… what it can do; `on double bar` hears a
+  double press, so a title bar maximizes on it. Scenes from before read the same.
+  Also: a part brought with `include` finds `lib:` and `import scene` as the
+  scene does, and `--say … "fact x 1" "emit go"` reaches the logic in that order.
 - **Language 0.11 (exp2): installed libraries.** `import "lib:tide/tokens"
   version "1.2"` brings a library installed once for several programs, looked
   for with `--lib`, `PLEAMAR_LIB_PATH`, a `lib/` next to the scene and

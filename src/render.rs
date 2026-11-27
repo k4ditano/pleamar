@@ -653,6 +653,8 @@ pub fn run(
     // clicks in a row on it: a second one takes a word, a third the whole text.
     let mut selection: Option<TextSelection> = None;
     let mut clicks: (Instant, (f32, f32), u32) = (crate::clock::now(), (0.0, 0.0), 0);
+    // The last press of the left button on a zone, for `on double` (see `double_press`).
+    let mut last_click: Option<(usize, Instant, (f32, f32))> = None;
     // The zone a drag out was tried from, until the button is let go.
     let mut carry_tried: Option<usize> = None;
     let mut repeat: Option<(String, Option<String>, Mods, Instant)> = None;
@@ -1002,7 +1004,7 @@ pub fn run(
                     ToRender::Frame(_) => 0,
                     ToRender::Cursor(..) => 1,
                     ToRender::Pointer(_) | ToRender::PointerOn(..) => 2,
-                    ToRender::Fact(..) | ToRender::ExternalFact(..) => 3,
+                    ToRender::Fact(..) | ToRender::ExternalFact(..) | ToRender::ExternalFactTold(..) => 3,
                     ToRender::Text(..) => 4,
                     ToRender::Command(_) => 5,
                     ToRender::Workshop(_) => 6,
@@ -1043,6 +1045,8 @@ pub fn run(
                 }
                 ToRender::Scene(fresh) => {
                     *crate::scene::LOGIC_HEARS.lock().unwrap() = fresh.signals.iter().filter(|s| s.1).map(|s| s.0).collect();
+                    *crate::scene::SAID_FACTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                        fresh.facts.iter().map(|(n, _)| (*n, fresh.types.iter().find(|(t, _)| t == n).map(|(_, t)| t.clone()))).collect();
                     let swapping = crate::clock::now();
                     crate::platform::release_memory();
                     crate::platform::CURSOR_WANTED.store(fresh.wants_cursor, std::sync::atomic::Ordering::Relaxed);
@@ -1493,6 +1497,11 @@ pub fn run(
                         let _ = to_logic.send(Event::Fact(scene.facts[h].0, 0.0));
                     }
                 }
+                // (`--say fact`, read where it was said and told to the logic there.)
+                ToRender::ExternalFactTold(name, v) => match names.fact(&scene, name) {
+                    Some(i) => facts[i] = v,
+                    None => eprintln!("render · I don't know the fact '{name}'"),
+                },
                 ToRender::ExternalFact(name, written) => match names.fact(&scene, name) {
                     Some(i) => {
                         let kind = scene.types.iter().find(|(n, _)| n == name).map(|(_, t)| t);
@@ -2811,6 +2820,8 @@ pub fn run(
             buttons = kept;
         }
         let (mut pressed, mut pressed_with, mut released) = (None, None, None);
+        // The zone pressed a second time in a row (`on double`).
+        let mut doubled: Option<usize> = None;
         // A drag let go with speed: the zone pressed, where, and how fast the pointer went (px/s).
         let mut thrown: Option<(usize, (f32, f32), (f32, f32))> = None;
         let held_shift = keys_held.iter().any(|(_, n)| n.starts_with("Shift"));
@@ -2837,7 +2848,13 @@ pub fn run(
                         let c = Ctx { props: &props, facts: &facts, seen: None };
                         if let Some(h) = scene.zones[k].handle.as_ref().filter(|h| h.window.eval(c) < -0.5) {
                             let edges = h.edges;
-                            if let Some(l) = sheets.iter().filter(|l| l.view.popup.is_none()).find(|l| {
+                            // A second press on a header that has an `on double` (to maximize it) is
+                            // that, not the start of another carry: the compositor would be carrying
+                            // the window while it is asked to maximize it.
+                            let twice = double_press(&mut last_click, k, p, now) && scene.rules.iter().any(|r| matches!(r.when, Trigger::Double(z) if z.0 as usize == k));
+                            if twice {
+                                doubled = Some(k);
+                            } else if let Some(l) = sheets.iter().filter(|l| l.view.popup.is_none()).find(|l| {
                                 let v = l.view.bounds();
                                 p.0 >= v[0] && p.0 < v[2] && p.1 >= v[1] && p.1 < v[3]
                             }) {
@@ -2886,6 +2903,11 @@ pub fn run(
                     }
                     selection = None;
                     pressed = hovered;
+                    if let (Some(k), Some(p)) = (hovered, pointer)
+                        && double_press(&mut last_click, k, p, now)
+                    {
+                        doubled = Some(k);
+                    }
                     if let Some(k) = hovered.filter(|_| !watchers.is_empty()) {
                         heard_events.push(("press", scene.zones[k].id));
                     }
@@ -3538,6 +3560,7 @@ pub fn run(
                     Trigger::Enter(z) => edges.contains(&(true, z.0 as usize)),
                     Trigger::Leave(z) => edges.contains(&(false, z.0 as usize)),
                     Trigger::Press(z) => pressed == Some(z.0 as usize),
+                    Trigger::Double(z) => doubled == Some(z.0 as usize),
                     Trigger::PressWith(z, b) => pressed_with == Some((z.0 as usize, *b)),
                     Trigger::Release(z) => released == Some(z.0 as usize),
                     Trigger::Wheel(z) => wheel != 0.0 && inside[z.0 as usize],
@@ -4042,6 +4065,23 @@ pub fn run(
                         texts[k] = v;
                     }
                     Effect::Quit => crate::quit_from_scene(),
+                    // `minimize self`, `toggle maximize self`…: the window the mouse is on (the one whose
+                    // button was pressed), or else the scene's first window that is one of its own.
+                    Effect::OwnWindow(what) => {
+                        let said = |name: &str| scene.facts.iter().position(|(n, _)| *n == name).is_some_and(|k| facts[k] > 0.5);
+                        let (maximized, fullscreen) = (said("self.maximized"), said("self.fullscreen"));
+                        let under = |l: &&Sheet| {
+                            pointer.is_some_and(|p| {
+                                let v = l.view.bounds();
+                                p.0 >= v[0] && p.0 < v[2] && p.1 >= v[1] && p.1 < v[3]
+                            })
+                        };
+                        let windows = || sheets.iter().filter(|l| l.view.popup.is_none());
+                        let done = windows().filter(under).any(|l| l.own_window(what, maximized, fullscreen)) || windows().any(|l| l.own_window(what, maximized, fullscreen));
+                        if !done {
+                            eprintln!("render · `{what:?}` asks for the scene's own window, and it has none the system can do that with (a panel is not one)");
+                        }
+                    }
                     Effect::FocusTerminal(name) => {
                         parked = None;
                         editing = None;
@@ -8875,5 +8915,34 @@ mod pace_tests {
         // With no lead, a 59.95 Hz copy is the same rate as the default and a 30 Hz one is slower.
         assert!(!waits_for_its_last_frame(59_950, lead_pace_mhz(std::iter::empty())));
         assert!(waits_for_its_last_frame(30_000, lead_pace_mhz(std::iter::empty())));
+    }
+}
+
+/// Whether this press of the left button on zone `k` is the second of a pair (`on double`): on
+/// the same zone as the one before, soon after it and close to it, as a double click is taken on
+/// a text (450 ms, 5 px). The pair is spent: a third press starts another.
+fn double_press(last: &mut Option<(usize, Instant, (f32, f32))>, k: usize, p: (f32, f32), now: Instant) -> bool {
+    let twice = last.is_some_and(|(z, t, at)| z == k && now.duration_since(t) < Duration::from_millis(450) && (p.0 - at.0).hypot(p.1 - at.1) < 5.0);
+    *last = if twice { None } else { Some((k, now, p)) };
+    twice
+}
+
+#[cfg(test)]
+mod double_press_tests {
+    use super::double_press;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn two_presses_close_in_time_and_place_on_one_zone_are_a_double_and_a_third_starts_again() {
+        let t = Instant::now();
+        let ms = |n| t + Duration::from_millis(n);
+        let mut last = None;
+        assert!(!double_press(&mut last, 3, (10.0, 10.0), t));
+        assert!(double_press(&mut last, 3, (12.0, 11.0), ms(300)), "soon after, 2 px away");
+        assert!(!double_press(&mut last, 3, (12.0, 11.0), ms(400)), "a third one is the first of another pair");
+        assert!(!double_press(&mut last, 3, (12.0, 11.0), ms(900)), "too late");
+        assert!(!double_press(&mut last, 4, (12.0, 11.0), ms(1000)), "on another zone");
+        assert!(!double_press(&mut last, 4, (30.0, 11.0), ms(1100)), "too far");
+        assert!(double_press(&mut last, 4, (31.0, 12.0), ms(1300)));
     }
 }

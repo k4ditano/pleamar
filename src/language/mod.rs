@@ -23,7 +23,7 @@ pub(crate) const PER_FILE: usize = 1_000_000;
 /// The version of the language this program understands. The first number changes
 /// when something written stops being valid; the second, when something is added. A file
 /// can say which one it needs (`language 0.1`) and find out on load, not halfway through.
-pub const VERSION: (u32, u32) = (0, 11);
+pub const VERSION: (u32, u32) = (0, 12);
 
 #[derive(Debug)]
 pub struct CompileError {
@@ -163,12 +163,19 @@ impl Reader {
             // Its `import`s first, then its part.
             let is_import = |e: &tree::Entry| matches!(e, tree::Entry::Node(x) if matches!(x.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "import"));
             let imports = theirs.iter().take_while(|e| is_import(e)).count();
+            // Their paths are the part's file's, so they are made whole here, from its folder:
+            // `import "x.plm"` and the scene's of `import scene "bar.plm" as Bar` (its third word).
+            // Not `pleamar:` nor `lib:`, which are found the same from anywhere: `lib:` from the
+            // main scene's folder, as for any file of it.
             for mut i in theirs.drain(..imports) {
-                if let tree::Entry::Node(x) = &mut i
-                    && let Some(TokenKind::Str(which)) = x.head.get_mut(1).map(|f| &mut f.kind)
-                    && !which.starts_with("pleamar:")
-                {
-                    *which = target.parent().unwrap_or(Path::new(".")).join(&*which).to_string_lossy().into_owned();
+                if let tree::Entry::Node(x) = &mut i {
+                    let at = if matches!(x.head.get(1).map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "scene") { 2 } else { 1 };
+                    if let Some(TokenKind::Str(which)) = x.head.get_mut(at).map(|f| &mut f.kind)
+                        && !which.starts_with("pleamar:")
+                        && !which.starts_with("lib:")
+                    {
+                        *which = target.parent().unwrap_or(Path::new(".")).join(&*which).to_string_lossy().into_owned();
+                    }
                 }
                 self.hoisted.push(i);
             }
@@ -736,6 +743,72 @@ mod tests {
         let e = err("import \"lib:tide/broken\"");
         assert!(e.contains("lib/tide/broken.plm:2:") && e.contains("inside the library 'tide' 1.3.0"), "{e}");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A part brought with `include` from a folder of its own imports as the scene does:
+    /// `lib:` is an installed library, not a file beside the part (exp.45–48 took it for one),
+    /// and the scene of `import scene` is found beside the part, as its other paths are.
+    #[test]
+    fn the_imports_of_an_included_part_are_found_as_the_scenes() {
+        let d = std::env::temp_dir().join(format!("pleamar-part-imports-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let lib = d.join("lib/demo");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::create_dir_all(d.join("parts")).unwrap();
+        std::fs::write(lib.join(super::libs::MANIFEST), "name demo\nversion 0.1.0\nlanguage 0.11\n").unwrap();
+        std::fs::write(lib.join("a.plm"), "library Demo {\n    let side = 10\n}\n").unwrap();
+        std::fs::write(d.join("parts/bar.plm"), "language 0.12\nscene Bar {\n    surface { size: 100, 20; kind: window }\n}\n").unwrap();
+        std::fs::write(d.join("parts/p.plm"), "import \"lib:demo/a\" version \"0.1\"\nimport scene \"bar.plm\" as Bar\npart P {\n    box { from: 0, 0; size: side, side; color: #ff0000 }\n}\n").unwrap();
+        std::fs::write(d.join("s.plm"), "language 0.12\nscene S {\n    surface { size: 100, 100; kind: window }\n    include \"parts/p.plm\"\n}\n").unwrap();
+        let (_, files) = super::read_file(d.join("s.plm").to_str().unwrap()).unwrap();
+        assert!(files.iter().any(|f| f.ends_with("lib/demo/a.plm")), "{files:?}");
+        assert!(files.iter().any(|f| f.ends_with("parts/bar.plm")), "{files:?}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Language 0.12: a window that draws its own frame asks for itself what its compositor's
+    /// frame would (`minimize self`…), knows what it is (`self.maximized`…), and hears a double
+    /// press (`on double`). `double` and `maximize` are still a scene's own names where they were.
+    #[test]
+    fn a_window_with_a_frame_of_its_own_minimizes_maximizes_and_restores_itself() {
+        use crate::scene::{Effect, OwnWindow, Trigger};
+        let path = std::env::temp_dir().join(format!("pleamar-own-window-{}.plm", std::process::id()));
+        std::fs::write(&path, "language 0.12
+scene W {
+    surface { size: 300, 200; kind: window; decorations: none }
+    fact maximize = 0
+    event double ->
+    zone box head { from: 0, 0; size: 300, 32; handle: self }
+    zone box min { from: 200, 8; size: 16, 16 }
+    zone box max { from: 230, 8; size: 16, 16 }
+    on press min { minimize self }
+    on press max while self.maximized { restore self }
+    on press max while self.maximized == 0 { maximize self }
+    on double head { toggle maximize self }
+    on key F11 { toggle fullscreen self }
+    on key Escape while self.fullscreen { restore self }
+    on key F10 { fullscreen self }
+    on double { maximize = 1 }
+    on key m { toggle maximize }
+}
+").unwrap();
+        let read = super::read_file(path.to_str().unwrap());
+        let _ = std::fs::remove_file(&path);
+        let (scene, _) = read.unwrap();
+        let own: Vec<OwnWindow> = scene.rules.iter().flat_map(|r| r.effects.iter()).filter_map(|e| if let Effect::OwnWindow(w) = e { Some(*w) } else { None }).collect();
+        assert_eq!(own, [OwnWindow::Minimize, OwnWindow::Restore, OwnWindow::Maximize, OwnWindow::ToggleMaximize, OwnWindow::ToggleFullscreen, OwnWindow::Restore, OwnWindow::Fullscreen]);
+        let head = scene.zones.iter().position(|z| z.id == "head").unwrap();
+        assert!(scene.rules.iter().any(|r| matches!(r.when, Trigger::Double(z) if z.0 as usize == head)), "`on double head`");
+        assert!(scene.rules.iter().any(|r| matches!(r.when, Trigger::On(_))), "`on double {{ … }}` is still the event `double`");
+        assert!(scene.rules.iter().any(|r| r.effects.iter().any(|e| matches!(e, Effect::Fact(..)))), "`maximize = 1` still writes the fact");
+        assert!(scene.rules.iter().any(|r| r.effects.iter().any(|e| matches!(e, Effect::Toggle(_)))), "`toggle maximize` still toggles it");
+        let fact = |n: &str| scene.facts.iter().find(|(name, _)| *name == n).map(|(_, v)| *v);
+        assert_eq!(fact("self.maximized"), Some(0.0));
+        assert_eq!(fact("self.fullscreen"), Some(0.0));
+        assert_eq!(fact("self.active"), Some(1.0), "taken as having the keyboard until told");
+        assert_eq!(fact("self.can_minimize"), Some(1.0));
+        assert_eq!(fact("self.can_maximize"), Some(1.0));
+        assert_eq!(fact("self.can_fullscreen"), Some(1.0));
     }
 
     /// pleamar#169: a row's presence goes with its `z:` group when the groups are sorted.

@@ -2303,6 +2303,9 @@ pub enum Trigger {
     Leave(ZoneId),
     /// The left button.
     Press(ZoneId),
+    /// The left button pressed twice on it, the second soon after the first (450 ms) and
+    /// close to it (5 px): `on double head` (language 0.12). The first press is a press too.
+    Double(ZoneId),
     /// The left button pressed anywhere over it, on one of its children's zones too:
     /// a stack that scrolls notes where it was, so a drag that starts on one of its
     /// rows goes from there (see `Drag`, which reaches it the same way).
@@ -2395,6 +2398,10 @@ pub enum Effect {
     FocusTerminal(&'static str),
     /// `quit`: the program ends.
     Quit,
+    /// `minimize self`, `maximize self`, `restore self`, `fullscreen self`, `toggle maximize self`,
+    /// `toggle fullscreen self` (language 0.12): asked of the compositor for the scene's own
+    /// window, one that draws its frame (`decorations: none`).
+    OwnWindow(OwnWindow),
     /// A live text becomes that: `name = ""`, `label = draft`.
     Text(TextId, TextValue),
     /// Something done to a window of the compositor inside the scene: which
@@ -2434,6 +2441,21 @@ pub enum Effect {
     /// what to share of the screen): a window (`pick win(x)`, true), a monitor
     /// (`pick screen 1`, false), or nothing (`pick none`).
     Pick(Option<(bool, Expr)>),
+}
+
+/// What a scene asks of the compositor for its own window (`Effect::OwnWindow`). The
+/// compositor decides: what it did comes back as `self.maximized`, `self.fullscreen`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OwnWindow {
+    /// Put away. The program is not told it was (Wayland has no such state), nor brought back.
+    Minimize,
+    Maximize,
+    Fullscreen,
+    /// Back from maximized or from full screen, whichever it is.
+    Restore,
+    /// Maximized if it is not, back if it is (`self.maximized`, as the compositor last said).
+    ToggleMaximize,
+    ToggleFullscreen,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2504,6 +2526,9 @@ pub fn ms(n: u64) -> Duration {
 /// The events of the scene on show that the logic hears (`event x ->`): the render leaves them here
 /// with each scene, so that what is said from outside can reach the logic in its order.
 pub static LOGIC_HEARS: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+/// The scene's facts and what each one's words mean (`FactType`), for `--say fact`: it is
+/// read where it is said, so the logic hears it in its place among what is said around it.
+pub static SAID_FACTS: std::sync::Mutex<Vec<(&'static str, Option<FactType>)>> = std::sync::Mutex::new(Vec::new());
 
 #[derive(Default)]
 pub struct Scene {
@@ -2944,6 +2969,9 @@ pub enum ToRender {
     PointerOn((f32, f32), (f32, f32)),
     /// An input method wrote, or is composing, in the field being written in.
     Ime(crate::platform::ImeInput),
+    /// A fact said from outside (`--say fact x v`) that the logic has already been told, in its
+    /// place among the texts and events said around it: the render sets it and does not tell it again.
+    ExternalFactTold(&'static str, f32),
     /// The boundary: the logic tells what happens, and nothing more.
     Fact(&'static str, f32),
     Text(&'static str, String),

@@ -1497,6 +1497,13 @@ pub trait PlatformWindow: Send {
     /// those edges (1 top, 2 bottom, 4 left, 8 right) from the press just made
     /// on its `handle: self`: the compositor takes the pointer until it is let go.
     fn begin_move(&self, _edges: u32) {}
+    /// Asks the compositor to put away, maximize, put in full screen or bring back this window
+    /// (`minimize self`…, language 0.12). `false` if it is not a window of its own (a panel, a
+    /// popup) or the system has no such thing: then the next window of the scene is asked.
+    /// `maximized` and `fullscreen` are what the compositor last said, for the toggles.
+    fn own_window(&self, _what: crate::scene::OwnWindow, _maximized: bool, _fullscreen: bool) -> bool {
+        false
+    }
     /// Ask for what's shown on screen in that box of the window —x, y, width and
     /// height, logical—, **with the window on top**: it arrives as `ToRender::Backdrop`. It's
     /// what lets you see what's behind the glass: what the window itself painted

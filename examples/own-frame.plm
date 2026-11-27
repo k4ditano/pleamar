@@ -1,0 +1,64 @@
+// A window that draws its own title bar and its three buttons (language 0.12): no frame of
+// the compositor's (`decorations: none`), and what that frame would do, asked for itself.
+//
+//   - its bar carries it (`handle: self`), and a double press on it maximizes it or brings it back;
+//   - «–» puts it away, «□» maximizes it (and «❐» brings it back), «×» closes it;
+//   - `self.maximized` says what the compositor did, so the middle button shows what comes next,
+//     `self.active` dims the bar while another window has the keyboard, and `self.can_minimize`
+//     hides «–» where the compositor cannot put windows away.
+//
+// Everything is measured against `screen.width` and `screen.height`, what the window measures
+// now: maximized, it is the whole monitor.
+
+language 0.12
+import "common/palette.plm"
+
+scene OwnFrame {
+    surface { size: 520, 340; kind: window; title: "pleamar · its own frame"; app_id: "org.pleamar.own-frame"; decorations: none; min_size: 300, 180 }
+
+    let w = screen.width
+    let h = screen.height
+    // Maximized it has no corners: it meets the monitor's edges.
+    let round = if(self.maximized, 0, 12)
+    let lit = if(self.active, 1, 0.45)
+    let coral = #e0705c
+
+    box { from: 0, 0; size: w, h; corner: round; color: #121514 }
+    box { from: 0, 0; size: w, 38 + round; corner: round; color: #1b201e }
+    box { from: 0, 38; size: w, round; color: #121514 }
+    text "its own frame" { at: 16, 19; anchor: left; size: 13; weight: 600; color: ink; opacity: lit }
+
+    // The bar: pressed, the compositor carries the window; pressed twice, it maximizes or comes back.
+    zone box bar { from: 0, 0; size: w - 126, 38; handle: self }
+    on double bar { toggle maximize self }
+
+    // The three buttons, right to left: close, maximize or restore, minimize.
+    zone box shut { from: w - 42, 4; size: 34, 30; corner: 8; cursor: pointer; label: "Close" }
+    zone box big { from: w - 82, 4; size: 34, 30; corner: 8; cursor: pointer; label: if(self.maximized, "Restore", "Maximize") }
+    zone box away { from: w - 122, 4; size: 34, 30; corner: 8; cursor: pointer; label: "Minimize"; show: self.can_minimize }
+
+    box { from: w - 42, 4; size: 34, 30; corner: 8; color: coral; opacity: if(shut.hover, 0.9, 0) }
+    box { from: w - 82, 4; size: 34, 30; corner: 8; color: #2c3431; opacity: if(big.hover, 1, 0) }
+    box { from: w - 122, 4; size: 34, 30; corner: 8; color: #2c3431; opacity: if(away.hover, 1, 0); show: self.can_minimize }
+
+    // ×
+    path { at: w - 25, 19; stroke: 1.5; color: ink; opacity: lit; move -5, -5; line 5, 5 }
+    path { at: w - 25, 19; stroke: 1.5; color: ink; opacity: lit; move 5, -5; line -5, 5 }
+    // □ to maximize, ❐ to restore
+    box { at: w - 65, 19; size: 10, 10; corner: 1.5; stroke: 1.5; color: ink; opacity: lit; show: self.maximized == 0 }
+    box { at: w - 63, 17; size: 9, 9; corner: 1.5; stroke: 1.5; color: ink; opacity: lit * 0.6; show: self.maximized }
+    box { at: w - 66, 20; size: 9, 9; corner: 1.5; stroke: 1.5; color: ink; opacity: lit; show: self.maximized }
+    // –
+    path { at: w - 105, 19; stroke: 1.5; color: ink; opacity: lit; move -5, 0; line 5, 0; show: self.can_minimize }
+
+    on press shut { quit }
+    on press big { toggle maximize self }
+    on press away { minimize self }
+    // As a compositor's frame would: F11 for full screen, and Escape to come back from it.
+    on key F11 { toggle fullscreen self }
+    on key Escape while self.fullscreen { restore self }
+
+    text "{w} × {h}" { at: w / 2, h / 2; anchor: center; size: 12; color: ink; opacity: 35% }
+    // Stretched by its bottom right corner, while it is not maximized.
+    zone box corner { from: w - 18, h - 18; size: 18, 18; handle: self, bottom_right; show: self.maximized == 0 }
+}

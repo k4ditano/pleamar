@@ -114,6 +114,24 @@ fn a_burst_of_text_and_emit_reads_each_its_own_text() {
     assert_eq!(out, want, "each `x` read the text of its own call");
 }
 
+/// The same with a fact: `fact x.n <n>` and `emit x` in one order. The `emit` went to the logic
+/// straight away and the fact through the render, so each `x` read the fact of the call before.
+#[test]
+#[ignore = "films with a graphics card (software Vulkan on a machine without one); run with --ignored"]
+fn a_burst_of_fact_and_emit_reads_each_its_own_fact() {
+    if !has_card() {
+        eprintln!("no graphics card: not filmed");
+        return;
+    }
+    let run = Running::start("say-burst-fact");
+    let lines: Vec<String> = (1..=20).flat_map(|n| [format!("fact x.n {n}"), "emit x".to_owned()]).collect();
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    assert!(run.say(&refs).0, "the burst was said");
+    let facts = run.read("facts", |o| o.split('|').count() >= 20);
+    assert_eq!(facts, (1..=20).map(|n| n.to_string()).collect::<Vec<_>>().join("|"), "each `x` read the fact of its own call");
+    assert_eq!(run.get("x.n"), "20", "and the render has it too");
+}
+
 #[test]
 #[ignore = "films with a graphics card (software Vulkan on a machine without one); run with --ignored"]
 fn ten_programs_saying_at_once_each_read_their_own_text() {

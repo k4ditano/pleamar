@@ -150,6 +150,12 @@ impl<'a> Cur<'a> {
         self.i += hit as usize;
         hit
     }
+    /// That word and then `self` (`toggle maximize self`): both are taken, or neither.
+    fn self_after(&mut self, p: &str) -> bool {
+        let hit = matches!(self.peek(), Some(TokenKind::Id(x)) if x == p) && matches!(self.tokens.get(self.i + 1).map(|t| &t.kind), Some(TokenKind::Id(x)) if x == "self");
+        self.i += 2 * hit as usize;
+        hit
+    }
     /// A button's word before a zone (`on press back hit`): only when a name
     /// follows it, so that a zone called `back`, `right`… (`on press back { … }`)
     /// is still that zone.
@@ -324,7 +330,11 @@ pub struct Library {
 }
 
 /// The facts every scene has, which the render sets.
-const ALWAYS: [&str; 25] = ["screen.width", "screen.height", "screen.index", "monitor.width", "monitor.height", "pointer.x", "pointer.y", "cursor.x", "cursor.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "wheel.x", "wheel.y", "pinch.scale", "key.ctrl", "key.shift", "key.alt", "key.super", "lock.held", "drag.over", "motion.reduced", "color.scheme"];
+const ALWAYS: [&str; 31] = ["screen.width", "screen.height", "screen.index", "monitor.width", "monitor.height", "pointer.x", "pointer.y", "cursor.x", "cursor.y", "local.x", "local.y", "drag.dx", "drag.dy", "wheel", "wheel.x", "wheel.y", "pinch.scale", "key.ctrl", "key.shift", "key.alt", "key.super", "lock.held", "drag.over", "motion.reduced", "color.scheme", "self.maximized", "self.fullscreen", "self.active", "self.can_minimize", "self.can_maximize", "self.can_fullscreen"];
+/// Of those, the ones worth 1 until someone says otherwise: the scene's own window is taken as
+/// having the keyboard, and as one the compositor can put away, maximize and put in full screen,
+/// until the compositor says (as a Wayland client does when it is not told: xdg-shell before 5).
+const ALWAYS_ONE: [&str; 4] = ["self.active", "self.can_minimize", "self.can_maximize", "self.can_fullscreen"];
 
 /// A scene brought into the one opened (`import scene "bar.plm" as Bar`, G22): its name,
 /// the files it is written in (its own and its parts', not its libraries'), and its logic
@@ -708,7 +718,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     // (0 no preference, 1 dark, 2 light): what the system says, or what is said
     // to the scene; the first, with `--reduced-motion`, settles every spring.
     for n in ALWAYS {
-        let h = o.e.fact(n, 0.0);
+        let h = o.e.fact(n, if ALWAYS_ONE.contains(&n) { 1.0 } else { 0.0 });
         o.facts.insert(n.into(), h);
     }
     // A signal that always exists: `--demo` fires it, for scenes without a mouse.
@@ -9531,9 +9541,22 @@ impl<'a> Compiler<'a> {
                 Entry::Node(x) => {
                     let mut c = Cur::new(&x.head, x.line, x.col);
                     let p = c.id("an effect")?;
-                    let effect = match if vocab::EFFECTS.contains(&p.as_str()) { p.as_str() } else { "" } {
+                    // `maximize` became a word in 0.12: a fact of that name is still written (`maximize = 1`).
+                    let a_fact = p == "maximize" && matches!(c.peek(), Some(TokenKind::Sym(s)) if *s == "=" || *s == "[");
+                    let effect = match if vocab::EFFECTS.contains(&p.as_str()) && !a_fact { p.as_str() } else { "" } {
                         "ripple" => Effect::Ripple(self.zone(&mut c)?),
+                        // Language 0.12, the scene's own window (`decorations: none`, a frame of its own):
+                        // `toggle maximize self`, `toggle fullscreen self`. Only with `self` after it, so a
+                        // fact called `maximize` is still toggled as before.
+                        "toggle" if c.self_after("maximize") => Effect::OwnWindow(OwnWindow::ToggleMaximize),
+                        "toggle" if c.self_after("fullscreen") => Effect::OwnWindow(OwnWindow::ToggleFullscreen),
                         "toggle" => Effect::Toggle(self.fact(&mut c)?),
+                        // `minimize self`, `maximize self`, `fullscreen self`, `restore self`.
+                        "minimize" if c.word("self") => Effect::OwnWindow(OwnWindow::Minimize),
+                        "maximize" if c.word("self") => Effect::OwnWindow(OwnWindow::Maximize),
+                        "fullscreen" if c.word("self") => Effect::OwnWindow(OwnWindow::Fullscreen),
+                        "restore" if c.word("self") => Effect::OwnWindow(OwnWindow::Restore),
+                        "maximize" => return c.error("`maximize self` maximizes the scene's own window (one with `decorations: none`): `self` is the only one it maximizes. A window of the scene's compositor goes full with `fullscreen win.$i`"),
                         "blur" => Effect::FocusField(None),
                         // `quit`: the scene ends, as closing its window would (a terminal whose last shell ended).
                         "quit" => Effect::Quit,
@@ -9842,7 +9865,10 @@ impl<'a> Compiler<'a> {
         } else {
             let what = c.id("what has to happen: press, release, scroll, pinch, drag, hold, key, keyup, submit, focus, blur, drop, enter, leave, hover, away, idle, or an event")?;
             // Only what the vocabulary says is a trigger; anything else is the name of a signal.
-            match if vocab::TRIGGERS.contains(&what.as_str()) { what.as_str() } else { "" } {
+            // `double` (0.12) only with a zone after it: `on double { … }` and `on double(v)` are
+            // still an event of that name, as in a scene written before it was a word.
+            let an_event = what == "double" && !matches!(c.peek(), Some(TokenKind::Id(x)) if x != "while");
+            match if vocab::TRIGGERS.contains(&what.as_str()) && !an_event { what.as_str() } else { "" } {
                 // `on press orb`, or with another button: `on press right orb`.
                 "press" => {
                     if c.button("right") {
@@ -9861,6 +9887,8 @@ impl<'a> Compiler<'a> {
                         Trigger::Press(self.zone(c)?)
                     }
                 }
+                // `on double head`: pressed twice in a row (language 0.12).
+                "double" => Trigger::Double(self.zone(c)?),
                 "release" => Trigger::Release(self.zone(c)?),
                 "scroll" => Trigger::Wheel(self.zone(c)?),
                 "pinch" => Trigger::Pinch(self.zone(c)?),
