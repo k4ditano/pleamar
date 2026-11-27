@@ -1083,6 +1083,20 @@ scene W {
     }
 
     #[test]
+    fn a_rule_that_reads_what_its_copy_follows_answers_once() {
+        use crate::scene::Trigger;
+        // Since each copy follows its own (above), a rule in the copies that reads it came out
+        // different in each, so every copy answered: with two monitors, a program's own «maximize»
+        // filled its window and the second copy's answer freed it again (Bahía's `tile.$i`).
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/one-answer-each-copy.plm")).unwrap();
+        assert!(scene.props.iter().any(|p| p.0 == "seen.0#screen1"), "the second copy follows its own");
+        let on: Vec<usize> = scene.rules.iter().enumerate().filter(|(_, r)| matches!(r.when, Trigger::On(_))).map(|(k, _)| k).collect();
+        assert_eq!(on.len(), 4, "a rule for each window, in each copy");
+        let answering: Vec<usize> = on.iter().copied().filter(|&k| scene.twin_of.get(k).is_none_or(|&t| t == k)).collect();
+        assert_eq!(answering.len(), 2, "one answer for each window, not one for each monitor: {:?}", scene.twin_of);
+    }
+
+    #[test]
     fn a_zone_named_in_a_repeat_inside_a_for_is_each_rows_own() {
         use crate::scene::Trigger;
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/zone-in-repeat-in-for.plm")).unwrap();

@@ -1,0 +1,17 @@
+// expect: ok
+language 0.12
+// What src/language/mod.rs reads (`a_rule_that_reads_what_its_copy_follows_answers_once`): a scene on every
+// monitor (`screens: each`) that answers a program's own «maximize» (`window_maximize`, from pleamar-wm) as
+// Bahía does: only once the window has been seen, which each copy follows for itself. One event, one answer.
+scene OneAnswer {
+    surface { size: full, full; screens: each max 2 }
+    event window_maximize
+    repeat i in 0..2 {
+        fact tile.$i = 0
+        prop seen.$i = 0
+        follow seen.$i = 1
+        on window_maximize(v) while v == i and seen.$i > 0.9 {
+            tile.$i = if(tile.$i == 1, 0, 1)
+        }
+    }
+}

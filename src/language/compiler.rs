@@ -896,7 +896,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         o.push_error(f);
     }
     note("rules", &mut laps);
-    o.e.twin_of = twins(&o.e.rules, &o.e.spans);
+    o.e.twin_of = twins(&o.e.rules, &o.e.spans, &o.e.props);
     if let Some((tokens, (l, col))) = o.pending_keyboard.take() {
         o.scopes.clear();
         let mut c = Cur::new(tokens, l, col);
@@ -10274,16 +10274,34 @@ struct ParsedShape {
 /// same order, so the n-th rule of one copy is the n-th of the first; if they
 /// read the same —same trigger, same guard, same effects, all with the same
 /// ids— nothing in them belongs to a copy.
-fn twins(rules: &[crate::scene::Rule], spans: &[crate::scene::Span]) -> Vec<usize> {
+///
+/// A property a copy follows is that copy's own (`p#screen1`, see `twin_for_follow`), but it is
+/// still the scene's `p`: read as it, a rule that differs only by it is the same rule, and
+/// answers once —the first copy's, with the first copy's—. Told apart, a `seen.$i` that every
+/// copy follows made `on window_maximize(v) while seen.$i > 0.9 { tile = if(tile == 1, 0, 1) }`
+/// answer once per monitor: with two, it filled the window and freed it again.
+fn twins(rules: &[crate::scene::Rule], spans: &[crate::scene::Span], props: &[(&'static str, f32, crate::scene::Spring)]) -> Vec<usize> {
     let mut twin: Vec<usize> = (0..rules.len()).collect();
     let Some(first) = spans.first() else { return Vec::new() };
+    let index: HashMap<&str, usize> = props.iter().enumerate().map(|(k, p)| (p.0, k)).collect();
+    let own: Vec<(String, String)> = props
+        .iter()
+        .enumerate()
+        .filter_map(|(k, p)| {
+            let (scene, _) = p.0.split_once("#screen")?;
+            Some((format!("PropId({k})"), format!("PropId({})", index.get(scene)?)))
+        })
+        .collect();
+    let read_as_the_scene = |text: String| {
+        own.iter().fold(text, |text, (copy, scene)| if text.contains(copy.as_str()) { text.replace(copy.as_str(), scene) } else { text })
+    };
     let read: Vec<String> = first.rules.clone().map(|k| format!("{:?}", rules[k])).collect();
     for t in &spans[1..] {
         if t.rules.len() != first.rules.len() {
             continue;
         }
         for (i, k) in t.rules.clone().enumerate() {
-            if format!("{:?}", rules[k]) == read[i] {
+            if read_as_the_scene(format!("{:?}", rules[k])) == read[i] {
                 twin[k] = first.rules.start + i;
             }
         }
