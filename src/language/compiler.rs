@@ -4357,11 +4357,17 @@ impl<'a> Compiler<'a> {
             }
             None => None,
         };
+        // `border: 1, #ffffff 12%`, as a layout's: the colour's own alpha and how much of it
+        // shows are both kept (the colour alone dropped its alpha, and `#ffffff00` drew white).
         let border = match p.get_mut("border") {
             Some(c) => {
                 let w = self.expr(c)?;
                 c.expect_sym(",")?;
-                Some((w, self.color(c)?))
+                let col = self.color(c)?;
+                let said = self.take_alpha();
+                let alpha = if c.at_end() { Expr::K(1.0) } else { self.expr(c)?.clamp(0.0, 1.0) };
+                c.expect_end()?;
+                Some((w, col, if opaque(&said) { alpha } else { alpha * said }))
             }
             None => None,
         };

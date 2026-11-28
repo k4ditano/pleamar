@@ -31,7 +31,7 @@ It is a **declarative language that always terminates**. No free loops, no recur
 | Name | letters, digits, `_` and `.`; starts with a letter or `_`. Dots are part of the name: `orb.x`, `note.0.title`. Inside a `repeat`, `$i` is replaced by the number of the turn: `hit.$i` |
 | Number | `40`, `0.5`, `-3`. With a unit: `40px` (= 40), `34%` (= 0.34), `138deg` (to radians) |
 | Duration | `320ms`, `14s`. Where a duration is expected, a number without a unit is not valid |
-| Color | `#151616` or `#fff`; with how much of it shows after it, `#1516161f` or `#fff2`: whatever is painted with it (a shape, a body, a text, a layout's `fill:` and `border:`, a component's colour) is that much more see-through. A named colour keeps it (`let veil = #ffffff14`) |
+| Color | `#151616` or `#fff`; with how much of it shows after it, `#1516161f` or `#fff2`: whatever is painted with it (a shape, a body and its `border:`, a text, a layout's `fill:` and `border:`, a component's colour) is that much more see-through. A named colour keeps it (`let veil = #ffffff14`) |
 | Text | `"in quotes"`. A quote inside it is `\"`, and a backslash before a quote or another backslash, `\\`; any other backslash is itself (`"C:\Users"`). With slots, see §11 |
 | Symbols | `{ } ( ) [ ] , : ; = ~ + - * / < > <= >= == != .. -> % \|` |
 
@@ -650,7 +650,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `line` | `from` · `to` · `width` |
 | `path` | `at` (what its points hang from) · `size: w, h` (what it takes up in a layout), and inside it its steps: `move x, y` (once, the first one) · `line x, y` · `curve x, y via cx, cy` · `close`. Closed, it is filled; open, or with `stroke`, it is a line |
 | …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `carries` · `carry_icon` (below) · `show` · `label` · `agent` · `role` · `value` · `checked` · `selected` (§13, *Told to an agent*) |
-| `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `glass` · `lens` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
+| `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color[ how much shows]` (as a layout's, `border: 1, #ffffff 12%`) · `glass` · `lens` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` · and its effects: `gradient` · `outline` · `shadow` · `letter_move` · `letter_opacity` · `letter_scale` (§8.4) · `selectable` · `selection` · `markdown` |
 | `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `cell: which, columns, rows` (one picture of a sheet: below) · `fit: fill`, `contain` or `cover` (below) · `show` |
 | `particles` | `at` · `area` · `count` · `life` · `speed` · `direction` · `spread` · `gravity` · `drag` · `size` · `colors` · `opacity` · `shape` · `emit` or `burst` · `show`: §8.3 |

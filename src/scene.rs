@@ -1611,7 +1611,7 @@ pub enum Instr {
     Shape { shape: Shape, fusion: Expr },
     /// Paints the accumulated body: shadow, fill, light and rim. With `glass_spec`, from
     /// 0 to 1, the fill turns into glass: translucent, and with the light on the edges.
-    Fill { paint: Paint, alpha: Expr, rim: Expr, light: Option<Light>, border: Option<(Expr, Color)>, glass_spec: Option<Box<Glass>> },
+    Fill { paint: Paint, alpha: Expr, rim: Expr, light: Option<Light>, border: Option<(Expr, Color, Expr)>, glass_spec: Option<Box<Glass>> },
     /// Everything that comes after is clipped to this shape, as well as to the ones
     /// that were already there (up to four). `None` removes the last one.
     Clip(Option<(Shape, f32)>),

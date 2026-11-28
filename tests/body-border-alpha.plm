@@ -1,0 +1,16 @@
+// expect: ok
+language 0.12
+// A body's border shows as much as its colour says, and takes how much of it shows after
+// the colour, as a layout's does (`#ffffff00` and `#ffffff14` drew a white line).
+scene BodyBorder {
+    surface { size: 400, 200 }
+    fact on = 0
+    body { color: #202020; border: 6, #ffffff14; box { from: 10, 10; size: 60, 60; corner: 12 } }
+    body { color: #202020; border: 6, #ffffff00; box { from: 80, 10; size: 60, 60; corner: 12 } }
+    body { color: #202020; border: 6, #ffffff; box { from: 150, 10; size: 60, 60; corner: 12 } }
+    body { color: #202020; border: 1, #ffffff 12%; box { from: 220, 10; size: 60, 60; corner: 12 } }
+    body { color: #202020; border: 2, if(on, #ffffff40, #ffffff80) 50%; box { from: 290, 10; size: 60, 60; corner: 12 } }
+    row { at: 10, 100; padding: 8; fill: #202020; border: 2, if(on, #ffffff40, #ffffff80) 50%
+        text "row" { size: 12; color: #ffffff }
+    }
+}

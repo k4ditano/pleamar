@@ -3095,9 +3095,12 @@ impl DrawList {
                         if let Some(l) = light {
                             e[20..23].copy_from_slice(&[l.amount, l.from_y.eval(c), l.height]);
                         }
-                        if let Some((thickness, col)) = border {
+                        if let Some((thickness, col, shows)) = border {
                             e[23] = thickness.eval(c).max(0.0);
                             e[24..27].copy_from_slice(&color(col));
+                            // In `glass3.z`, which nothing else of a body uses, how much of it does
+                            // not show: the 0 every element starts with is an opaque border.
+                            e[58] = 1.0 - shows.eval(c).clamp(0.0, 1.0);
                         }
                         if let Some((sx, sy, sd, sa)) = shadow {
                             e[28..32].copy_from_slice(&[sx, sy, sd, sa]);
@@ -7015,6 +7018,41 @@ mod tests {
 
     use super::*;
     use crate::shapes::{Affine, FlatShape};
+
+    #[test]
+    fn a_bodys_border_shows_as_much_as_it_is_told() {
+        // `border: 6, #ffffff00` on a body drew a white line: its alpha never reached the shader.
+        use crate::scene::{Ctx, Instr, Shape};
+        let white = crate::scene::color(1.0, 1.0, 1.0);
+        let body = |x: f32, border: Option<(Expr, Color, Expr)>| {
+            let shape = Shape::Rect { center: ((x + 30.0).into(), 40.0.into()), half_size: (30.0.into(), 30.0.into()), radius: 12.0.into() };
+            [
+                Instr::Group { shadow: None },
+                Instr::Shape { shape, fusion: 0.0.into() },
+                Instr::Fill { paint: crate::scene::color(0.125, 0.125, 0.125).into(), alpha: 1.0.into(), rim: 0.0.into(), light: None, border, glass_spec: None },
+            ]
+        };
+        let instrs: Vec<Instr> = [
+            body(10.0, Some((6.0.into(), white.clone(), 1.0.into()))),
+            body(80.0, Some((6.0.into(), white.clone(), (20.0 / 255.0).into()))),
+            body(150.0, Some((6.0.into(), white.clone(), 0.0.into()))),
+            body(220.0, None),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let (to_render, _) = std::sync::mpsc::channel();
+        let mut tip = crate::text::Texts::open(to_render);
+        let mut d = DrawList::default();
+        d.compose(&instrs, Ctx { props: &[], facts: &[], seen: None }, &[], &mut tip, None, (400.0, 200.0), false);
+        let bodies: Vec<&[f32]> = d.elements.chunks(PER_ELEMENT).filter(|e| e[0] == 0.0).collect();
+        assert_eq!(bodies.len(), 4);
+        // What the shader multiplies the border by: `1 − glass3.z`. An opaque border, and a body
+        // without one, keep the 0 every element starts with.
+        let shows: Vec<f32> = bodies.iter().map(|e| ((1.0 - e[58]) * 255.0).round()).collect();
+        assert_eq!(shows, vec![255.0, 20.0, 0.0, 255.0]);
+        assert_eq!((bodies[0][58], bodies[3][58], bodies[3][23]), (0.0, 0.0, 0.0));
+    }
 
     /// A bar round the screen lit at its left end and at its right end is
     /// two pieces, not the screen; what overlaps is one; and never more than four.

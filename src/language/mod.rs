@@ -1132,6 +1132,27 @@ scene W {
     }
 
     #[test]
+    fn a_bodys_border_shows_as_much_as_a_layouts() {
+        use crate::scene::Instr;
+        let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/body-border-alpha.plm")).unwrap();
+        let on = scene.facts.iter().position(|f| f.0 == "on").unwrap();
+        let shown = |v: f32| -> (Vec<f32>, Vec<f32>) {
+            let mut facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+            facts[on] = v;
+            let props = settled(&scene, &facts);
+            let c = Ctx { props: &props, facts: &facts, seen: None };
+            let of = |a: &Expr| (a.eval(c) * 255.0).round();
+            let bodies = scene.instrs.iter().filter_map(|i| match i { Instr::Fill { border: Some((_, _, a)), .. } => Some(of(a)), _ => None }).collect();
+            let solids = scene.instrs.iter().filter_map(|i| match i { Instr::Solid { alpha, .. } => Some(of(alpha)), _ => None }).collect();
+            (bodies, solids)
+        };
+        // #…14 · #…00 · opaque · 12 % of white · if(on, #…40, #…80) at 50 %: 64 off, 32 on.
+        // The row's fill and its border, said the same way as the last body's, show the same.
+        assert_eq!(shown(0.0), (vec![20.0, 0.0, 255.0, 31.0, 64.0], vec![255.0, 64.0]));
+        assert_eq!(shown(1.0), (vec![20.0, 0.0, 255.0, 31.0, 32.0], vec![255.0, 32.0]));
+    }
+
+    #[test]
     fn a_text_can_take_its_family_from_a_text() {
         use crate::scene::Instr;
         let (scene, _) = super::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/family-from-a-text.plm")).unwrap();

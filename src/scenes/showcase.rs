@@ -39,7 +39,7 @@ impl Script for Showcase {
             alpha: 1.0.into(),
             rim: 0.0.into(),
             light: None,
-            border: Some((2.5.into(), white.clone())),
+            border: Some((2.5.into(), white.clone(), 1.0.into())),
             glass_spec: None,
         });
 

@@ -50,7 +50,7 @@ struct Element {
     t0: vec4<f32>,        // from screen to local, as in the shapes
     t1: vec4<f32>,
     glass2: vec4<f32>,    // glass: towards its light (x, y), whether it has one, dome
-    glass3: vec4<f32>,    // glass: dispersion, ripple, -, -
+    glass3: vec4<f32>,    // glass: dispersion, ripple, · body: how much of its border does not show, -
     glass4: vec4<f32>,    // glass: tint, saturation, mirror, highlight
 };
 
@@ -1073,7 +1073,7 @@ fn shade(e: VertexOut) -> vec4<f32> {
         }
     }
     if (el.light.w > 0.0) {
-        c = over(c, el.border.rgb, edge_coverage(abs(d + el.light.w * 0.5) - el.light.w * 0.5, el.border.rgb) * alpha);
+        c = over(c, el.border.rgb, edge_coverage(abs(d + el.light.w * 0.5) - el.light.w * 0.5, el.border.rgb) * alpha * (1.0 - el.glass3.z));
     }
     return c;
 }
