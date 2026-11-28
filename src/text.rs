@@ -428,7 +428,8 @@ impl Typesetter {
         // whole pixel and advances by whole pixels, as Pango does with hinted
         // metrics; its stems then fall on one column, not across two. (It
         // rounds the scene's units: only at a whole scale are they whole pixels.)
-        if hinting() != Hinting::None && self.scale.fract() == 0.0 {
+        let hinted = hinting() != Hinting::None && self.scale.fract() == 0.0;
+        if hinted {
             buffer.set_hinting(cosmic_text::Hinting::Enabled);
         }
         buffer.set_wrap(if width.is_some() { Wrap::WordOrGlyph } else { Wrap::None });
@@ -517,20 +518,45 @@ impl Typesetter {
         let starts: Vec<usize> = cosmic_text::LineIter::new(&c.text).map(|(r, _)| r.start).collect();
         for run in buffer.layout_runs() {
             let from = starts.get(run.line_i).copied().unwrap_or(0);
-            let mut line: Vec<(usize, f32)> = run.glyphs.iter().map(|g| (from + g.start, g.x)).collect();
-            let end = run.glyphs.iter().map(|g| (from + g.end, g.x + g.w)).max_by_key(|e| e.0);
+            // The last line `lines:` allows is laid out by cosmic-text from where the line
+            // before broke, the space it broke at included, so it started a space in (and
+            // centred, half a space off). A wrapped line starts with no space: it is taken out.
+            let blank = |g: &cosmic_text::LayoutGlyph| c.text.get(from + g.start..from + g.end).is_some_and(|t| t.chars().all(char::is_whitespace));
+            let leading = if run.rtl || run.glyphs.first().is_none_or(|g| g.start == 0) { 0 } else { run.glyphs.iter().take_while(|g| blank(g)).count() };
+            let gap = match (run.glyphs.first(), run.glyphs.get(leading)) {
+                (Some(a), Some(b)) if leading > 0 => b.x - a.x,
+                _ => 0.0,
+            };
+            let line_w = run.line_w - gap;
+            // Where the line would have started without it, worked out as cosmic-text does.
+            let shift = match (c.align, run.glyphs.get(leading)) {
+                (_, None) => 0.0,
+                (_, Some(_)) if gap == 0.0 => 0.0,
+                (TextAlign::Left, _) => gap,
+                (TextAlign::Center, Some(b)) => {
+                    let start = (width.unwrap_or(line_w) - line_w).max(0.0) / 2.0;
+                    b.x - if hinted { start.round() } else { start }
+                }
+                (TextAlign::Right, _) => 0.0,
+            };
+            let x_of = |k: usize, g: &cosmic_text::LayoutGlyph| if k < leading { g.x + gap - shift } else { g.x - shift };
+            let mut line: Vec<(usize, f32)> = run.glyphs.iter().enumerate().map(|(k, g)| (from + g.start, x_of(k, g))).collect();
+            let end = run.glyphs.iter().enumerate().map(|(k, g)| (from + g.end, x_of(k, g) + if k < leading { 0.0 } else { g.w })).max_by_key(|e| e.0);
             line.push(end.unwrap_or((from, 0.0)));
             line.sort_by_key(|k| k.0);
             lines.push(TextLine { top: run.line_top, bottom: run.line_top + run.line_height, cursors: line });
             if run.line_i == 0 && cursors.is_empty() {
-                cursors = run.glyphs.iter().map(|g| (g.start, g.x)).collect();
-                cursors.push((c.text.len(), run.line_w));
+                cursors = run.glyphs.iter().enumerate().map(|(k, g)| (g.start, x_of(k, g))).collect();
+                cursors.push((c.text.len(), line_w));
                 cursors.sort_by_key(|k| k.0);
             }
-            w = w.max(run.line_w);
+            w = w.max(line_w);
             h = h.max(run.line_top + run.line_height);
-            for g in run.glyphs {
-                let f = g.physical((0.0, 0.0), s);
+            for (k, g) in run.glyphs.iter().enumerate() {
+                if k < leading {
+                    continue;
+                }
+                let f = g.physical((-shift * s, 0.0), s);
                 let Some((slot, left, top, colored)) = self.glyph(f.cache_key, &mut full) else { continue };
                 let x = (f.x + left) as f32;
                 let y = ((run.line_y * s).round() as i32 + f.y - top) as f32;
@@ -2273,6 +2299,33 @@ mod tests {
         assert_eq!(m.lines.len(), 2, "{} lines", m.lines.len());
         let one = t.lay_out(&LayoutKey::new("one line", &style, Some(300.0)));
         assert!((m.size.1 - one.size.1 * 2.0).abs() < 2.0, "two lines tall: {} vs {}", m.size.1, one.size.1);
+    }
+
+    #[test]
+    fn the_last_line_allowed_starts_where_it_would_without_a_limit() {
+        // `lines: 3` drew «lleva pedidos,» / «facturas y» / « clientes de l…»: the last line
+        // kept the space it was broken at. Also when the text fits its lines without a cut.
+        use crate::scene::TextAlign;
+        let mut t = Typesetter::new();
+        let starts = |m: &Layout| -> Vec<f32> {
+            m.lines.iter().map(|l| m.glyphs.iter().filter(|g| g.rect[1] + g.rect[3] * 0.5 >= l.top && g.rect[1] + g.rect[3] * 0.5 < l.bottom).map(|g| g.rect[0]).fold(f32::INFINITY, f32::min)).collect()
+        };
+        for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
+            // Cut with its «…», its last line is not the one without a limit: only on the left
+            // do they start at the same place.
+            let cut_too = if align == TextAlign::Left { 2 } else { 1 };
+            for (text, width, n) in [("tu primer agente", 90.0, 2), ("lleva pedidos, facturas y clientes de la tienda", 110.0, 3)].into_iter().take(cut_too) {
+                let mut style = Style::new(12.0, crate::scene::color(0.0, 0.0, 0.0)).align(align);
+                let free = starts(&t.lay_out(&LayoutKey::new(text, &style, Some(width))));
+                style.max_lines = Some(n);
+                let cut = t.lay_out(&LayoutKey::new(text, &style, Some(width)));
+                assert_eq!(cut.lines.len(), n, "{text:?} {align:?}");
+                let (cut_starts, free_starts) = (starts(&cut), &free[..n]);
+                for (k, (a, b)) in cut_starts.iter().zip(free_starts).enumerate() {
+                    assert!((a - b).abs() < 0.5, "{text:?} {align:?}: line {k} starts at {a}, without a limit at {b}");
+                }
+            }
+        }
     }
 
     #[test]
